@@ -3,7 +3,8 @@
   const API = 'https://marsad-kpi-live.karim87nu.chatgpt.site';
   const TOKEN = '7000865f1220458f86506b41a97cab7d';
   const SESSION_KEY = 'arabicss_kpi_employee_session';
-  let employee = sessionStorage.getItem(SESSION_KEY) || '';
+  let employee = JSON.parse(sessionStorage.getItem(SESSION_KEY) || 'null');
+  let sessionToken = sessionStorage.getItem(SESSION_KEY + '_token') || '';
   let lastCall = null;
   let lastDuration = 0;
 
@@ -15,7 +16,7 @@
   function send(event) {
     return fetch(`${API}/api/events`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-device-token': TOKEN },
+      headers: { 'content-type': 'application/json', 'x-device-token': TOKEN, 'x-employee-session': sessionToken },
       body: JSON.stringify(event),
     }).catch(() => {});
   }
@@ -33,7 +34,8 @@
         <button id="kpi-end-shift" style="margin-top:10px;width:100%;padding:8px;border:0;border-radius:7px;cursor:pointer">إنهاء الشيفت</button>
       </div>
       <div id="kpi-session-form">
-        <input id="kpi-employee-input" autocomplete="off" placeholder="اكتب اسم الموظف أو الكود" style="box-sizing:border-box;width:100%;padding:9px;border-radius:7px;border:1px solid #64748b">
+        <select id="kpi-employee-input" style="box-sizing:border-box;width:100%;padding:9px;border-radius:7px;border:1px solid #64748b"><option value="">اختر اسم الموظف</option></select>
+        <input id="kpi-pin-input" type="password" inputmode="numeric" maxlength="8" placeholder="PIN الشخصي" style="box-sizing:border-box;width:100%;padding:9px;margin-top:8px;border-radius:7px;border:1px solid #64748b">
         <button id="kpi-start-shift" style="margin-top:8px;width:100%;padding:9px;border:0;border-radius:7px;background:#2dd4bf;color:#07131f;font-weight:700;cursor:pointer">بدء الشيفت</button>
         <div id="kpi-session-error" style="color:#fda4af;margin-top:7px"></div>
       </div>`;
@@ -41,18 +43,18 @@
     const render = () => {
       box.querySelector('#kpi-session-active').style.display = employee ? 'block' : 'none';
       box.querySelector('#kpi-session-form').style.display = employee ? 'none' : 'block';
-      box.querySelector('#kpi-employee-name').textContent = employee;
+      box.querySelector('#kpi-employee-name').textContent = employee?.name || '';
     };
-    box.querySelector('#kpi-start-shift').onclick = () => {
-      const value = box.querySelector('#kpi-employee-input').value.trim();
-      if (value.length < 2) {
-        box.querySelector('#kpi-session-error').textContent = 'اكتب الاسم أو الكود أولاً';
-        return;
-      }
-      employee = value;
-      sessionStorage.setItem(SESSION_KEY, employee);
-      render();
-      scan();
+    fetch(`${API}/api/employees/list`).then(r=>r.json()).then(d=>{box.querySelector('#kpi-employee-input').innerHTML='<option value="">اختر اسم الموظف</option>'+d.employees.map(e=>`<option value="${e.id}">${e.name}</option>`).join('')}).catch(()=>{});
+    box.querySelector('#kpi-start-shift').onclick = async () => {
+      const employeeId = Number(box.querySelector('#kpi-employee-input').value);
+      const pin = box.querySelector('#kpi-pin-input').value;
+      if (!employeeId || !/^\d{4,8}$/.test(pin)) { box.querySelector('#kpi-session-error').textContent = 'اختر اسمك وأدخل PIN الصحيح'; return; }
+      const r=await fetch(`${API}/api/session/start`,{method:'POST',headers:{'content-type':'application/json','x-device-token':TOKEN},body:JSON.stringify({employeeId,pin,extension:extensionNumber()})});
+      if(!r.ok){box.querySelector('#kpi-session-error').textContent='الـPIN غير صحيح';return}
+      const data=await r.json();employee=data.employee;sessionToken=data.token;
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify(employee));sessionStorage.setItem(SESSION_KEY+'_token',sessionToken);
+      box.querySelector('#kpi-pin-input').value='';render();scan();
     };
     box.querySelector('#kpi-end-shift').onclick = () => {
       if (lastCall) {
@@ -61,7 +63,7 @@
       }
       employee = '';
       sessionStorage.removeItem(SESSION_KEY);
-      box.querySelector('#kpi-employee-input').value = '';
+      sessionToken='';sessionStorage.removeItem(SESSION_KEY+'_token');box.querySelector('#kpi-employee-input').value = '';
       render();
     };
     render();
