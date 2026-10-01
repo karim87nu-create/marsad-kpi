@@ -9,6 +9,7 @@
   let lastDuration = 0;
   let breakStarted = null;
   const queueKey='arabicss_kpi_offline_queue';
+  let failures=0,circuitUntil=0,flushing=false,scanTimer=null;
 
   const injectHook=()=>{const root=document.documentElement||document.head;if(!root)return false;const hook=document.createElement('script');hook.src=browser.runtime.getURL('page-hook.js');hook.onload=()=>hook.remove();root.appendChild(hook);return true};if(!injectHook())document.addEventListener('readystatechange',injectHook,{once:true});
 
@@ -19,14 +20,17 @@
 
   async function enqueue(event){const q=(await browser.storage.local.get(queueKey))[queueKey]||[];q.push(event);await browser.storage.local.set({[queueKey]:q.slice(-2000)});}
   async function send(event) {
+    if(Date.now()<circuitUntil){await enqueue(event);return false}
+    const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),4000);
     try { const r=await fetch(`${API}/api/events`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-device-token': TOKEN, 'x-employee-session': sessionToken },
       body: JSON.stringify(event),
       keepalive:true,
-    }); if(!r.ok)throw new Error('send'); return true } catch { await enqueue(event); return false }
+      signal:controller.signal,
+    }); if(!r.ok)throw new Error('send');failures=0;return true } catch { failures++;if(failures>=5)circuitUntil=Date.now()+60000;await enqueue(event);return false } finally {clearTimeout(timeout)}
   }
-  async function flush(){if(!sessionToken)return;const q=(await browser.storage.local.get(queueKey))[queueKey]||[];if(!q.length)return;const left=[];for(const event of q){try{const r=await fetch(`${API}/api/events`,{method:'POST',headers:{'content-type':'application/json','x-device-token':TOKEN,'x-employee-session':sessionToken},body:JSON.stringify(event)});if(!r.ok)left.push(event)}catch{left.push(event)}}await browser.storage.local.set({[queueKey]:left})}
+  async function flush(){if(!sessionToken||flushing||Date.now()<circuitUntil)return;flushing=true;try{const q=(await browser.storage.local.get(queueKey))[queueKey]||[];if(!q.length)return;const batch=q.slice(0,25),left=q.slice(25);for(const event of batch){try{const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),4000);const r=await fetch(`${API}/api/events`,{method:'POST',headers:{'content-type':'application/json','x-device-token':TOKEN,'x-employee-session':sessionToken},body:JSON.stringify(event),signal:controller.signal});clearTimeout(timeout);if(!r.ok)left.push(event)}catch{left.push(event)}}await browser.storage.local.set({[queueKey]:left})}finally{flushing=false}}
   function activity(eventType,extra={}){const at=new Date().toISOString();return send({eventType,eventKey:`${extensionNumber()}:${employee?.id||'none'}:${eventType}:${at}`,extension:extensionNumber(),occurredAt:at,...extra})}
 
   function mountSessionBox() {
@@ -101,7 +105,8 @@
     }
   }
 
-  function boot(){mountSessionBox();new MutationObserver(scan).observe(document.body,{childList:true,subtree:true,characterData:true});scan()}
+  function scheduleScan(){if(scanTimer)return;scanTimer=setTimeout(()=>{scanTimer=null;scan()},250)}
+  function boot(){mountSessionBox();new MutationObserver(scheduleScan).observe(document.body,{childList:true,subtree:true,characterData:true});scan()}
   window.addEventListener('message',e=>{if(e.origin!==location.origin||e.data?.source!=='ARABICSS_KPI_SSE'||!employee)return;let payload={};try{payload=JSON.parse(e.data.data||'{}')}catch{};if(e.data.type==='breakenter'){breakStarted=new Date().toISOString();activity('break_start',{state:String(payload.breakname||payload.break||'Break'),payload})}if(e.data.type==='breakexit'){const seconds=breakStarted?Math.round((Date.now()-new Date(breakStarted).getTime())/1000):0;activity('break_end',{durationSeconds:seconds,state:'Available',payload});breakStarted=null}if(e.data.type==='agentloggedout')activity('arabicss_logout',{payload});if(e.data.type==='agentloggedin')activity('arabicss_login',{payload})});
   window.addEventListener('online',flush);setInterval(flush,10000);
   window.addEventListener('pagehide',()=>{if(employee)activity('page_closed',{state:'unexpected_or_navigation'})});
