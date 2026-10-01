@@ -10,7 +10,7 @@
   let breakStarted = null;
   const queueKey='arabicss_kpi_offline_queue';
 
-  const hook=document.createElement('script');hook.src=browser.runtime.getURL('page-hook.js');hook.onload=()=>hook.remove();(document.documentElement||document.head).appendChild(hook);
+  const injectHook=()=>{const root=document.documentElement||document.head;if(!root)return false;const hook=document.createElement('script');hook.src=browser.runtime.getURL('page-hook.js');hook.onload=()=>hook.remove();root.appendChild(hook);return true};if(!injectHook())document.addEventListener('readystatechange',injectHook,{once:true});
 
   function extensionNumber() {
     const title = document.querySelector('.issabel-callcenter-titulo-consola')?.textContent || '';
@@ -101,11 +101,10 @@
     }
   }
 
-  mountSessionBox();
+  function boot(){mountSessionBox();new MutationObserver(scan).observe(document.body,{childList:true,subtree:true,characterData:true});scan()}
   window.addEventListener('message',e=>{if(e.origin!==location.origin||e.data?.source!=='ARABICSS_KPI_SSE'||!employee)return;let payload={};try{payload=JSON.parse(e.data.data||'{}')}catch{};if(e.data.type==='breakenter'){breakStarted=new Date().toISOString();activity('break_start',{state:String(payload.breakname||payload.break||'Break'),payload})}if(e.data.type==='breakexit'){const seconds=breakStarted?Math.round((Date.now()-new Date(breakStarted).getTime())/1000):0;activity('break_end',{durationSeconds:seconds,state:'Available',payload});breakStarted=null}if(e.data.type==='agentloggedout')activity('arabicss_logout',{payload});if(e.data.type==='agentloggedin')activity('arabicss_login',{payload})});
   window.addEventListener('online',flush);setInterval(flush,10000);
   window.addEventListener('pagehide',()=>{if(employee)activity('page_closed',{state:'unexpected_or_navigation'})});
-  new MutationObserver(scan).observe(document.body, { childList: true, subtree: true, characterData: true });
-  scan();
+  if(document.body)boot();else document.addEventListener('DOMContentLoaded',boot,{once:true});
 })();
 
