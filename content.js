@@ -1,5 +1,7 @@
 (function(){
-  if(!location.hostname.includes('41.38.207.218'))return;
+  if(location.hostname!=='41.38.207.218')return;
+  // The reports administration has its own login; no employee gate here.
+  if(/^\/themes\/arabicssReportsInclude(?:\/|$)/i.test(location.pathname))return;
   const apiFetch=async(url,options={})=>{const r=await browser.runtime.sendMessage({type:'KPI_API',path:new URL(url).pathname+new URL(url).search,method:options.method||'GET',headers:options.headers||{},body:options.body});return{ok:r.ok,status:r.status,json:async()=>JSON.parse(r.body)}};
   const API='https://marsad-kpi-live.karim87nu.chatgpt.site',TOKEN='7000865f1220458f86506b41a97cab7d',SESSION='arabicss_kpi_employee_session',QUEUE='arabicss_kpi_offline_queue';
   let employee=JSON.parse(sessionStorage.getItem(SESSION)||'null'),sessionToken=sessionStorage.getItem(SESSION+'_token')||'',lastCall=null,lastDuration=0,breakStarted=null,failures=0,circuitUntil=0,flushing=false,scanTimer=null;
