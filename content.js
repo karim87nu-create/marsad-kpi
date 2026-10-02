@@ -1,6 +1,6 @@
 (function(){
  if(location.hostname!=='41.38.207.218'||/^\/themes\/arabicssReportsInclude(?:\/|$)/i.test(location.pathname))return;
- const API='https://marsad-kpi-live.karim87nu.chatgpt.site',TOKEN='7000865f1220458f86506b41a97cab7d',VERSION='2.3.0';
+ const API='https://marsad-kpi-live.karim87nu.chatgpt.site',TOKEN='7000865f1220458f86506b41a97cab7d',VERSION='2.4.0';
  const SESSION='arabicss_kpi_employee_session',STATE='arabicss_kpi_state',EPOCH='arabicss_kpi_runtime_epoch';
  let employee=null,sessionToken='',runtimeEpoch='',sourceConnection='unknown',sourceStateKnown=false,call=null,breakActive=false,breakStarted=null,scanTimer=null,refreshTimer=null,focusRefresh=null,flushing=false,initialized=false;
  const ext=()=>((document.querySelector('#issabel-callcenter-titulo-consola')?.textContent||'').match(/(?:IAX2|SIP)\/(\d+)/i)||[])[1]||'';
@@ -25,6 +25,7 @@
  function activity(eventType,extra={},token=sessionToken,extension=ext()||boundExtension()){
   const at=new Date().toISOString();return send({eventType,eventKey:extension+':'+eventType+':'+at+':'+crypto.randomUUID(),extension,occurredAt:at,...extra},token);
  }
+ async function registerSession(){if(!sessionToken)return;try{const r=await browser.runtime.sendMessage({type:'REGISTER_SESSION',token:sessionToken,deviceToken:TOKEN});if(r.duplicate)resetLocal()}catch{resetLocal()}}
  async function flush(){
   if(flushing)return;flushing=true;try{const result=await browser.runtime.sendMessage({type:'FLUSH_EVENTS',deviceToken:TOKEN});if(result.rejected)status('يوجد '+result.rejected+' حدث مرفوض محفوظ للمراجعة؛ البيانات قد تكون ناقصة')}catch{}finally{flushing=false}
  }
@@ -37,7 +38,8 @@
   const token=sessionToken,extension=ext()||boundExtension();
   if(!token){resetLocal();return}
   activity(reason==='manual'?'session_logout':'arabicss_logout',{state:reason},token,extension);
-  apiFetch('/api/session/end',{method:'POST',headers:{'content-type':'application/json','x-device-token':TOKEN,'x-employee-session':token},body:'{}'}).catch(()=>{});
+  browser.runtime.sendMessage({type:'UNREGISTER_SESSION',token}).catch(()=>{});
+  apiFetch('/api/session/end',{method:'POST',headers:{'content-type':'application/json','x-device-token':TOKEN,'x-employee-session':token},body:JSON.stringify({reason})}).catch(()=>{});
   resetLocal();
  }
  function callData(payload={}){
@@ -100,7 +102,7 @@
   if(refreshTimer)clearInterval(refreshTimer);if(focusRefresh)window.removeEventListener('focus',focusRefresh);
   if(document.getElementById('kpi-session-box'))return;
   const box=document.createElement('div');box.id='kpi-session-box';box.dir='rtl';
-  box.innerHTML='<div style="font-weight:700;margin-bottom:9px">جلسة الموظف — KPI · '+VERSION+'</div><div id="kpi-active"><div>الموظف: <b id="kpi-name"></b></div><div id="kpi-status" style="margin-top:8px">بانتظار تأكيد مصدر أرابيكس</div><button id="kpi-end">إنهاء الشيفت</button></div><div id="kpi-form"><select id="kpi-employee"></select><button id="kpi-refresh">تحديث الموظفين</button><input id="kpi-pin" type="password" inputmode="numeric" maxlength="8" placeholder="PIN الشخصي"><button id="kpi-start">بدء الشيفت</button><div id="kpi-error" role="status"></div></div>';
+  box.innerHTML='<div style="font-weight:700;margin-bottom:9px">جلسة الموظف — KPI · '+VERSION+'</div><div id="kpi-active"><div>الموظف: <b id="kpi-name"></b></div><div id="kpi-status" style="margin-top:8px">بانتظار تأكيد مصدر أرابيكس</div><div style="margin-top:8px;font-size:14px">الخروج مرتبط بالخروج من أرابيكس أو إغلاق المتصفح</div></div><div id="kpi-form"><select id="kpi-employee"></select><button id="kpi-refresh">تحديث الموظفين</button><input id="kpi-pin" type="password" inputmode="numeric" maxlength="8" placeholder="PIN الشخصي"><button id="kpi-start">بدء الشيفت</button><div id="kpi-error" role="status"></div></div>';
   document.body.appendChild(box);
   const render=()=>{box.querySelector('#kpi-active').hidden=!employee;box.querySelector('#kpi-form').hidden=!!employee;box.querySelector('#kpi-name').textContent=employee?.name||'';box.style.cssText='position:fixed;z-index:2147483647;color:white;padding:18px;border:1px solid #2dd4bf;font:17px Arial;'+(employee?'left:16px;bottom:16px;width:300px;border-radius:12px;background:#142033':'inset:0;display:grid;place-content:center;text-align:center;background:#101b2bee')};
   const refresh=async()=>{if(employee)return;const select=box.querySelector('#kpi-employee'),chosen=select.value;try{const r=await apiFetch('/api/employees/list?t='+Date.now());if(!r.ok)throw Error();const d=r.json();select.replaceChildren(new Option('اختر اسم الموظف',''));for(const e of d.employees)select.add(new Option(e.name,String(e.id)));select.value=chosen;box.querySelector('#kpi-error').textContent=d.employees.length?'':'لا يوجد موظفون نشطون'}catch{box.querySelector('#kpi-error').textContent='تعذر تحميل الموظفين؛ أعد المحاولة'}};
@@ -112,10 +114,10 @@
    button.disabled=true;
    try{const r=await apiFetch('/api/session/start',{method:'POST',headers:{'content-type':'application/json','x-device-token':TOKEN},body:JSON.stringify({employeeId,pin,extension:ext()})}),d=r.json();
     if(!r.ok){box.querySelector('#kpi-error').textContent=r.status===429?'محاولات كثيرة؛ انتظر 15 دقيقة':r.status===409?'توجد جلسة أخرى نشطة للموظف أو الاكستنشن':r.status===401?'PIN غير صحيح':'تعذر بدء الجلسة';return}
-    employee=d.employee;sessionToken=d.token;sessionStorage.setItem(SESSION,JSON.stringify(employee));sessionStorage.setItem(SESSION+'_token',sessionToken);sessionStorage.setItem(SESSION+'_version',VERSION);sessionStorage.setItem(EPOCH,runtimeEpoch);call=null;breakStarted=null;breakActive=false;saveState();box.querySelector('#kpi-pin').value='';render();if(ext())activity('session_login',{state:'verified'});scan();flush();
+    employee=d.employee;sessionToken=d.token;sessionStorage.setItem(SESSION,JSON.stringify(employee));sessionStorage.setItem(SESSION+'_token',sessionToken);sessionStorage.setItem(SESSION+'_version',VERSION);sessionStorage.setItem(EPOCH,runtimeEpoch);call=null;breakStarted=null;breakActive=false;saveState();box.querySelector('#kpi-pin').value='';await registerSession();render();if(ext())activity('session_login',{state:'verified'});scan();flush();
    }catch{box.querySelector('#kpi-error').textContent='تعذر الاتصال؛ لم تبدأ الجلسة'}finally{button.disabled=false}
   };
-  box.querySelector('#kpi-end').onclick=()=>{if(call){alert('أنهِ المكالمة قبل إنهاء الشيفت');return}finishSession()};render();
+  render();if(employee)registerSession();
  }
  const inject=()=>{const root=document.documentElement;if(!root)return false;const script=document.createElement('script');script.src=browser.runtime.getURL('page-hook.js');script.onload=()=>script.remove();root.appendChild(script);return true};
  if(!inject())document.addEventListener('readystatechange',inject,{once:true});
@@ -126,6 +128,7 @@
    if(same&&savedToken){const body=savedToken.split('.')[0],claims=JSON.parse(atob(body.replace(/-/g,'+').replace(/_/g,'/')));if(claims.exp>Date.now()){employee=JSON.parse(sessionStorage.getItem(SESSION)||'null');sessionToken=savedToken;restoreState()}}
    if(!employee){if(savedToken)apiFetch('/api/session/end',{method:'POST',headers:{'content-type':'application/json','x-device-token':TOKEN,'x-employee-session':savedToken},body:'{}'}).catch(()=>{});resetLocal()}
   }catch{resetLocal()}
+  if(sessionToken){try{const registration=await browser.runtime.sendMessage({type:'REGISTER_SESSION',token:sessionToken,deviceToken:TOKEN});if(registration.duplicate)resetLocal()}catch{resetLocal()}}
   initialized=true;mount();scan();flush();
  }
  function boot(){
@@ -137,7 +140,8 @@
  setInterval(async()=>{
   if(!employee||!sessionToken)return;
   try{const runtime=await browser.runtime.sendMessage({type:'EMPLOYEE_RUNTIME_EPOCH'});if(runtime.epoch!==runtimeEpoch){finishSession('extension_restarted');return}}catch{resetLocal();return}
-  if(ext())activity('heartbeat',{state:sourceConnection!=='connected'?'unknown':breakActive?'break':call?'on_call':sourceStateKnown?'ready':'unknown',payload:{sourceConnection}});
+  browser.runtime.sendMessage({type:'REGISTER_SESSION',token:sessionToken,deviceToken:TOKEN}).then(r=>{if(r.duplicate)resetLocal()}).catch(()=>{});
+  if(ext())activity('heartbeat',{state:sourceConnection!=='connected'?'unknown':breakActive?'break':call?'on_call':sourceStateKnown?'ready':'unknown',payload:{sourceConnection,breakStartedAt:breakStarted,callStartedAt:call?.startedAt||null,callId:call?.callId||'',phone:call?.phone||'',callType:call?.callType||'',queue:call?.queue||''}});
  },30000);
  window.addEventListener('pagehide',()=>{if(employee){saveState();activity('page_closed',{state:'navigation_or_closed'})}});
  if(document.body)boot();else document.addEventListener('DOMContentLoaded',boot,{once:true});
