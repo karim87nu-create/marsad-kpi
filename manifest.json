@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Arabicss KPI Connector",
-  "version": "2.1.2",
+  "version": "2.1.3",
   "description": "يربط جلسات ومكالمات Arabicss بنظام KPI المستقل",
   "permissions": [
     "storage",
@@ -17,7 +17,10 @@
         "content.js"
       ],
       "run_at": "document_start",
-      "all_frames": false
+      "all_frames": false,
+      "exclude_matches": [
+        "*://41.38.207.218/themes/arabicssReportsInclude/*"
+      ]
     }
   ],
   "web_accessible_resources": [
