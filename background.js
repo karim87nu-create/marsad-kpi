@@ -3,6 +3,22 @@ const employeeRuntimeEpoch=crypto.randomUUID();
 let queueLock=Promise.resolve();
 const withQueueLock=fn=>{const job=queueLock.then(fn,fn);queueLock=job.catch(()=>{});return job};
 const QUEUE='arabicss_kpi_offline_queue';
+const TAB_SESSIONS='arabicss_kpi_tab_sessions';
+async function endTracked(entry,reason){
+ try{const r=await request(API+'/api/session/end',{method:'POST',headers:{'content-type':'application/json','x-device-token':entry.deviceToken,'x-employee-session':entry.token},body:JSON.stringify({reason})});return r.ok||[401,403].includes(r.status)}catch{return false}
+}
+// Firefox may stop the background page before a shutdown request finishes.
+// Persist pending closure and retry at next startup; epoch forces fresh employee login.
+const startupCleanup=withQueueLock(async()=>{
+ const entries=(await browser.storage.local.get(TAB_SESSIONS))[TAB_SESSIONS]||{},left={};
+ for(const [id,entry] of Object.entries(entries))if(!await endTracked(entry,'browser_restarted'))left[id]={...entry,pendingClose:true};
+ await browser.storage.local.set({[TAB_SESSIONS]:left});
+});
+browser.tabs?.onRemoved?.addListener(tabId=>withQueueLock(async()=>{
+ const entries=(await browser.storage.local.get(TAB_SESSIONS))[TAB_SESSIONS]||{},entry=entries[tabId];if(!entry)return;
+ if(await endTracked(entry,'tab_closed'))delete entries[tabId];else entries[tabId]={...entry,pendingClose:true};
+ await browser.storage.local.set({[TAB_SESSIONS]:entries});
+}));
 let busy=false,liveBusy=false,status={message:'موصل الإدارة غير مفعّل'};
 const today=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Africa/Cairo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
 const config=async()=> (await browser.storage.local.get('historyCollector')).historyCollector;
@@ -35,6 +51,19 @@ async function collectLive(){
  }catch(e){status={...status,liveError:e.message||'تعذر سحب اللايف'}}finally{liveBusy=false}
 }
 browser.runtime.onMessage.addListener(async(message,sender)=>{
+ if(['REGISTER_SESSION','UNREGISTER_SESSION'].includes(message?.type)){
+  if(!sender.tab||new URL(sender.url||'').hostname!=='41.38.207.218')throw Error('invalid_sender');
+  await startupCleanup;
+  return withQueueLock(async()=>{
+   const entries=(await browser.storage.local.get(TAB_SESSIONS))[TAB_SESSIONS]||{};
+   if(message.type==='REGISTER_SESSION'){
+    if(!message.token||!message.deviceToken)throw Error('invalid_session');
+    if(Object.entries(entries).some(([id,e])=>Number(id)!==sender.tab.id&&e.token===message.token&&!e.pendingClose))return {ok:false,duplicate:true};
+    entries[sender.tab.id]={token:message.token,deviceToken:message.deviceToken};
+   }else if(entries[sender.tab.id]?.token===message.token)delete entries[sender.tab.id];
+   await browser.storage.local.set({[TAB_SESSIONS]:entries});return {ok:true};
+  });
+ }
  if(message?.type==='QUEUE_EVENT'||message?.type==='FLUSH_EVENTS'){
   if(!sender.tab||new URL(sender.url||'').hostname!=='41.38.207.218')throw Error('invalid_sender');
   return withQueueLock(async()=>{
