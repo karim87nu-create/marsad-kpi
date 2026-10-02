@@ -1,37 +1,144 @@
 (function(){
-  if(location.hostname!=='41.38.207.218')return;
-  // The reports administration has its own login; no employee gate here.
-  if(/^\/themes\/arabicssReportsInclude(?:\/|$)/i.test(location.pathname))return;
-  const apiFetch=async(url,options={})=>{const r=await browser.runtime.sendMessage({type:'KPI_API',path:new URL(url).pathname+new URL(url).search,method:options.method||'GET',headers:options.headers||{},body:options.body});return{ok:r.ok,status:r.status,json:async()=>JSON.parse(r.body)}};
-  const API='https://marsad-kpi-live.karim87nu.chatgpt.site',TOKEN='7000865f1220458f86506b41a97cab7d',SESSION='arabicss_kpi_employee_session',QUEUE='arabicss_kpi_offline_queue';
-  if(sessionStorage.getItem(SESSION+'_version')!=='2.2.1'){sessionStorage.removeItem(SESSION);sessionStorage.removeItem(SESSION+'_token')} let employee=JSON.parse(sessionStorage.getItem(SESSION)||'null'),sessionToken=sessionStorage.getItem(SESSION+'_token')||'',lastCall=null,lastDuration=0,breakStarted=null,breakActive=false,sourceStateKnown=false,failures=0,circuitUntil=0,flushing=false,scanTimer=null;
-  const BREAK_SESSION='arabicss_kpi_break',BOUND_EXTENSION='arabicss_kpi_extension';
-  function rememberBreak(){sessionStorage.setItem(BREAK_SESSION,JSON.stringify({token:sessionToken,extension:extensionNumber(),started:breakStarted,active:breakActive}))}
-  function restoreBreak(){let saved;try{saved=JSON.parse(sessionStorage.getItem(BREAK_SESSION)||'null')}catch{}if(saved?.token===sessionToken&&saved.extension===extensionNumber()&&saved.active){breakActive=true;breakStarted=saved.started||null}}
-  function clearSession(){employee=null;sessionToken='';breakActive=false;breakStarted=null;sourceStateKnown=false;for(const key of [SESSION,SESSION+'_token',BREAK_SESSION,BOUND_EXTENSION])sessionStorage.removeItem(key);document.getElementById('kpi-session-box')?.remove();if(document.body)mount()}
-  const cachedToken=sessionToken;sessionToken='';
-  browser.runtime.sendMessage({type:'EMPLOYEE_RUNTIME_EPOCH'}).then(result=>{
-    if(!result?.epoch||sessionStorage.getItem('arabicss_kpi_runtime_epoch')!==result.epoch){clearSession();sessionStorage.setItem('arabicss_kpi_runtime_epoch',result.epoch)}
-    else sessionToken=cachedToken;
-  }).catch(()=>clearSession());
-  const inject=()=>{const root=document.documentElement||document.head;if(!root)return false;const s=document.createElement('script');s.src=browser.runtime.getURL('page-hook.js');s.onload=()=>s.remove();root.appendChild(s);return true};if(!inject())document.addEventListener('readystatechange',inject,{once:true});
-  const extensionNumber=()=>{const title=document.querySelector('#issabel-callcenter-titulo-consola')?.textContent||'',text=document.querySelector('#kpi-session-box')?.parentElement?.textContent||document.body?.textContent||'';return((title||text).match(/(?:Agent Console:\s*)?(?:IAX2|SIP)\/(\d+)/i)||[])[1]||''};
-  const first=(o,keys)=>{for(const k of keys)if(o?.[k]!==undefined&&o[k]!==null&&o[k]!=='')return o[k];return null};
-  const seconds=v=>{if(typeof v==='number')return Math.max(0,Math.round(v));const s=String(v??'').trim();if(/^\d+$/.test(s))return Number(s);if(/^\d{1,2}:\d{2}(?::\d{2})?$/.test(s))return s.split(':').reduce((a,n)=>a*60+Number(n),0);return 0};
-  const callData=(payload,type)=>{const raw=payload?.call||payload?.data||payload||{},phone=String(first(raw,['phone','phonenumber','phone_number','callerid','caller_id','clid','number'])||''),queue=String(first(raw,['queue','queue_number','queueid','queue_id'])||''),occurredAt=String(first(raw,['occurredAt','timestamp','datetime','date','time'])||new Date().toISOString()),supplied=first(raw,['callId','callid','call_id','uniqueid','unique_id','id_llamada','id']),direction=String(first(raw,['direction','callType','call_type','type'])||'').toLowerCase();return{callId:String(supplied||`${extensionNumber()}:${phone||queue||'call'}:${occurredAt.slice(0,19)}`),phone,queue,callType:direction.includes('out')?'outgoing':'incoming',occurredAt,waitSeconds:seconds(first(raw,['waitSeconds','wait_seconds','waiting','wait','queue_wait','queueWait','holdtime'])),durationSeconds:seconds(first(raw,['durationSeconds','duration_seconds','duration','talktime','talk_time'])),state:type,payload}};
-  async function enqueue(event,ownerToken){const q=(await browser.storage.local.get(QUEUE))[QUEUE]||[];q.push({...event,_sessionToken:ownerToken});await browser.storage.local.set({[QUEUE]:q.slice(-2000)})}
-  async function send(event){const ownerToken=sessionToken;if(!ownerToken||!event.extension)return false;if(Date.now()<circuitUntil){await enqueue(event,ownerToken);return false}const c=new AbortController(),t=setTimeout(()=>c.abort(),4000);try{const r=await apiFetch(`${API}/api/events`,{method:'POST',headers:{'content-type':'application/json','x-device-token':TOKEN,'x-employee-session':ownerToken},body:JSON.stringify(event),keepalive:true,signal:c.signal});if(!r.ok)throw new Error('send');failures=0;const status=document.getElementById('kpi-status');if(status)status.textContent='متصل — Extension '+event.extension;return true}catch{const status=document.getElementById('kpi-status');if(status)status.textContent='تعذر إرسال البيانات — بانتظار الاتصال';failures++;if(failures>=5)circuitUntil=Date.now()+60000;await enqueue(event,ownerToken);return false}finally{clearTimeout(t)}}
-  async function flush(){if(!sessionToken||flushing||Date.now()<circuitUntil)return;flushing=true;try{const q=(await browser.storage.local.get(QUEUE))[QUEUE]||[],left=[];for(const event of q.slice(0,25)){if(!event._sessionToken){left.push(event);continue}try{const r=await apiFetch(`${API}/api/events`,{method:'POST',headers:{'content-type':'application/json','x-device-token':TOKEN,'x-employee-session':event._sessionToken},body:JSON.stringify(event)});if(!r.ok)left.push(event)}catch{left.push(event)}}left.push(...q.slice(25));await browser.storage.local.set({[QUEUE]:left})}finally{flushing=false}}
-  const activity=(eventType,extra={})=>{const at=new Date().toISOString(),ext=extensionNumber();return send({eventType,eventKey:`${ext}:${employee?.id||'none'}:${eventType}:${at}`,extension:ext,occurredAt:at,...extra})};
-  function mount(){if(document.getElementById('kpi-session-box'))return;const box=document.createElement('div');box.id='kpi-session-box';box.dir='rtl';box.innerHTML=`<div style="font-weight:700;margin-bottom:9px">جلسة الموظف — KPI</div><div id="kpi-active" style="display:none"><div>الموظف الحالي: <b id="kpi-name"></b></div><div id="kpi-status" style="color:#86efac;margin-top:6px">بانتظار تأكيد الاتصال</div><button id="kpi-end" style="margin-top:10px;width:100%;padding:8px;border:0;border-radius:7px">إنهاء الشيفت</button></div><div id="kpi-form"><select id="kpi-employee" style="box-sizing:border-box;width:100%;padding:12px;border-radius:7px;background:#fff;color:#111827;font:700 17px Arial"><option>جاري التحميل...</option></select><button id="kpi-refresh" style="margin-top:7px;width:100%;padding:7px;border:1px solid #64748b;border-radius:7px;background:transparent;color:#fff">تحديث قائمة الموظفين</button><input id="kpi-pin" type="password" inputmode="numeric" maxlength="8" placeholder="PIN الشخصي" style="box-sizing:border-box;width:100%;padding:12px;margin-top:8px;border-radius:7px;background:#fff;color:#111827;font:700 17px Arial"><button id="kpi-start" style="margin-top:8px;width:100%;padding:9px;border:0;border-radius:7px;background:#2dd4bf;color:#06251e;font:700 18px Arial">بدء الشيفت</button><div id="kpi-error" style="color:#fda4af;margin-top:7px"></div></div>`;document.body.appendChild(box);
-    const render=()=>{box.querySelector('#kpi-active').style.display=employee?'block':'none';box.querySelector('#kpi-form').style.display=employee?'none':'block';box.querySelector('#kpi-name').textContent=employee?.name||'';box.style.cssText='position:fixed;z-index:2147483647;color:#fff;border:1px solid #2dd4bf;padding:18px;font:17px Arial;box-shadow:0 8px 30px #0009;'+(employee?'left:16px;bottom:16px;width:280px;border-radius:12px;background:#142033':'inset:0;display:grid;place-content:center;text-align:center;background:#101b2bee')};
-    const refresh=async()=>{if(employee)return;const select=box.querySelector('#kpi-employee'),current=select.value;select.innerHTML='<option value="">جاري تحميل الموظفين...</option>';try{const r=await apiFetch(`${API}/api/employees/list?t=${Date.now()}`,{cache:'no-store'});if(!r.ok)throw 0;const d=await r.json();select.innerHTML='<option value="">اختر اسم الموظف</option>'+d.employees.map(e=>`<option value="${e.id}">${e.name}</option>`).join('');if([...select.options].some(o=>o.value===current))select.value=current;box.querySelector('#kpi-error').textContent=d.employees.length?'':'لا يوجد موظفون نشطون'}catch{select.innerHTML='<option value="">تعذر تحميل القائمة</option>';box.querySelector('#kpi-error').textContent='تعذر الاتصال — اضغط تحديث القائمة'}};
-    box.querySelector('#kpi-refresh').onclick=refresh;window.addEventListener('focus',refresh);setInterval(refresh,15000);refresh();
-    box.querySelector('#kpi-start').onclick=async()=>{const employeeId=Number(box.querySelector('#kpi-employee').value),pin=box.querySelector('#kpi-pin').value,ext=extensionNumber();if(!employeeId||!/^\d{4,8}$/.test(pin)){box.querySelector('#kpi-error').textContent='اختر اسمك وأدخل PIN الصحيح';return}const r=await apiFetch(`${API}/api/session/start`,{method:'POST',headers:{'content-type':'application/json','x-device-token':TOKEN},body:JSON.stringify({employeeId,pin,extension:ext})});if(!r.ok){box.querySelector('#kpi-error').textContent='الـPIN غير صحيح';return}const d=await r.json();employee=d.employee;sessionToken=d.token;sessionStorage.setItem(SESSION,JSON.stringify(employee));sessionStorage.setItem(SESSION+'_token',sessionToken);sessionStorage.setItem(SESSION+'_version','2.2.1');box.querySelector('#kpi-pin').value='';render();if(ext){await activity('session_login',{state:'verified'});flush();scan()}else{box.querySelector('#kpi-status').textContent='تم تأكيد هويتك — سجل دخول Arabicss ثم افتح Agent Console'}};
-    box.querySelector('#kpi-end').onclick=()=>{if(lastCall){alert('لا يمكن إنهاء الشيفت أثناء مكالمة جارية');return}activity('session_logout',{state:'manual'});clearSession()};render();
-  }
-  function scan(){if(!employee)return;if(document.querySelector('input[type="password"]')&&!document.querySelector('#issabel-callcenter-titulo-consola')){activity('arabicss_logout',{state:'arabicss_login_page'});clearSession();return}const ext=extensionNumber();if(!ext)return;const bound=sessionStorage.getItem(BOUND_EXTENSION);if(bound&&bound!==ext){activity('arabicss_logout',{state:'extension_changed'});clearSession();return}sessionStorage.setItem(BOUND_EXTENSION,ext);restoreBreak();const info=document.querySelector('#issabel-callcenter-llamada-info')?.innerText||'',callId=(info.match(/Internal Call ID:\s*([^\s]+)/i)||[])[1],phone=(info.match(/Phone number:\s*([+\d]+)/i)||[])[1],timer=document.querySelector('#issabel-callcenter-cronometro')?.textContent||'00:00:00',duration=seconds(timer);if(callId)lastDuration=duration;if(callId&&callId!==lastCall){lastCall=callId;send({eventType:'agentlinked',eventKey:`${ext}:${callId}:start`,callId,extension:ext,phone,callType:callId.startsWith('incoming')?'incoming':'outgoing',occurredAt:new Date().toISOString(),durationSeconds:0})}if(lastCall&&!callId){send({eventType:'agentunlinked',eventKey:`${ext}:${lastCall}:end`,callId:lastCall,extension:ext,occurredAt:new Date().toISOString(),durationSeconds:lastDuration});lastCall=null;lastDuration=0}}
-  const scheduleScan=()=>{if(scanTimer)return;scanTimer=setTimeout(()=>{scanTimer=null;scan()},250)};
-  window.addEventListener('message',e=>{if(e.origin!==location.origin||e.data?.source!=='ARABICSS_KPI_SSE'||!employee)return;let payload={};try{payload=JSON.parse(e.data.data||'{}')}catch{payload={raw:String(e.data.data||'')}}const type=String(e.data.type||'').toLowerCase(),ext=extensionNumber();if(type==='arabicss_state'){sourceStateKnown=true;restoreBreak();if(payload.break_id!=null){if(!breakActive){breakActive=true;breakStarted=null;activity('break_observed',{state:'break',payload:{...payload,durationKnown:false}})}rememberBreak()}else{if(breakActive)activity(breakStarted?'break_end':'break_end_unknown',{durationSeconds:breakStarted?Math.round((Date.now()-Date.parse(breakStarted))/1000):0,state:'Available',payload:{...payload,durationKnown:!!breakStarted}});breakActive=false;breakStarted=null;rememberBreak()}}else if(type==='breakenter'){sourceStateKnown=true;restoreBreak();if(!breakActive||!breakStarted){breakStarted=new Date().toISOString();activity('break_start',{state:String(payload.breakname||payload.break||'Break'),payload})}breakActive=true;rememberBreak()}else if(type==='breakexit'){sourceStateKnown=true;restoreBreak();activity(breakStarted?'break_end':'break_end_unknown',{durationSeconds:breakStarted?Math.round((Date.now()-Date.parse(breakStarted))/1000):0,state:'Available',payload:{...payload,durationKnown:!!breakStarted}});breakStarted=null;breakActive=false;rememberBreak()}else if(type==='agentloggedout'||type==='logged-out'){activity('arabicss_logout',{payload});clearSession()}else if(type==='agentloggedin')activity('arabicss_login',{payload});else if(type==='agentlinked'){const c=callData(payload,type);lastCall=c.callId;lastDuration=c.durationSeconds;send({...c,eventType:'agentlinked',eventKey:`${ext}:${c.callId}:start`,extension:ext})}else if(type==='agentunlinked'){const c=callData(payload,type),id=lastCall||c.callId;send({...c,eventType:'agentunlinked',eventKey:`${ext}:${id}:end`,callId:id,extension:ext,durationSeconds:c.durationSeconds||lastDuration});lastCall=null;lastDuration=0}else if(/abandon|hangup.*queue|queue.*leave/.test(type)){const c=callData(payload,type);send({...c,eventType:'abandoned',eventKey:`${ext}:${c.callId}:abandoned`,extension:ext})}else if(/queue.*(enter|join)|call.*queue/.test(type)){const c=callData(payload,type);send({...c,eventType:'queue_enter',eventKey:`${ext}:${c.callId}:queue`,extension:ext})}});
-  function boot(){const style=document.createElement('style');style.textContent='#kpi-session-box select,#kpi-session-box input{background:#ffffff!important;color:#111827!important;opacity:1!important;font:700 17px Arial!important}#kpi-session-box option{background:#ffffff!important;color:#111827!important}#kpi-session-box input::placeholder{color:#475569!important;opacity:1!important}#kpi-session-box button{cursor:pointer!important;opacity:1!important}#kpi-error{font-size:16px!important;color:#ffb4b4!important}';document.documentElement.appendChild(style);mount();new MutationObserver(scheduleScan).observe(document.body,{childList:true,subtree:true,characterData:true});scan()}window.addEventListener('online',flush);setInterval(flush,10000);setInterval(()=>{if(employee&&sessionToken&&extensionNumber())activity('heartbeat',{state:breakActive?'break':lastCall?'on_call':sourceStateKnown?'ready':'unknown'})},30000);window.addEventListener('pagehide',()=>{if(employee)activity('page_closed',{state:'unexpected_or_navigation'})});if(document.body)boot();else document.addEventListener('DOMContentLoaded',boot,{once:true});
+ if(location.hostname!=='41.38.207.218'||/^\/themes\/arabicssReportsInclude(?:\/|$)/i.test(location.pathname))return;
+ const API='https://marsad-kpi-live.karim87nu.chatgpt.site',TOKEN='7000865f1220458f86506b41a97cab7d',VERSION='2.3.0';
+ const SESSION='arabicss_kpi_employee_session',STATE='arabicss_kpi_state',EPOCH='arabicss_kpi_runtime_epoch';
+ let employee=null,sessionToken='',runtimeEpoch='',sourceConnection='unknown',sourceStateKnown=false,call=null,breakActive=false,breakStarted=null,scanTimer=null,refreshTimer=null,focusRefresh=null,flushing=false,initialized=false;
+ const ext=()=>((document.querySelector('#issabel-callcenter-titulo-consola')?.textContent||'').match(/(?:IAX2|SIP)\/(\d+)/i)||[])[1]||'';
+ const apiFetch=async(path,options={})=>{const r=await browser.runtime.sendMessage({type:'KPI_API',path,method:options.method||'GET',headers:options.headers||{},body:options.body});return {...r,json:()=>JSON.parse(r.body)}};
+ const seconds=v=>{if(typeof v==='number')return Math.max(0,Math.round(v));const s=String(v??'').trim();if(/^\d+$/.test(s))return Number(s);return /^\d{1,3}:[0-5]\d(?::[0-5]\d)?$/.test(s)?s.split(':').reduce((a,n)=>a*60+Number(n),0):null};
+ const canonicalId=v=>String(v||'').match(/(?:incoming-q\d+-|outgoing-)?(\d+)$/)?.[1]||String(v||'');
+ const status=text=>{const el=document.getElementById('kpi-status');if(el)el.textContent=text};
+ function saveState(){sessionStorage.setItem(STATE,JSON.stringify({token:sessionToken,extension:ext()||boundExtension(),call,breakActive,breakStarted}))}
+ function readState(){try{return JSON.parse(sessionStorage.getItem(STATE)||'null')}catch{return null}}
+ function boundExtension(){const state=readState();return state?.token===sessionToken?state.extension||'':''}
+ function restoreState(){const s=readState();if(s?.token===sessionToken&&(!ext()||s.extension===ext())){call=s.call;breakActive=!!s.breakActive;breakStarted=s.breakStarted||null}}
+ async function enqueue(event,token){return browser.runtime.sendMessage({type:'QUEUE_EVENT',event,token})}
+ async function send(event,token=sessionToken){
+  if(!token||!event.extension)return false;
+  try{
+   const r=await apiFetch('/api/events',{method:'POST',headers:{'content-type':'application/json','x-device-token':TOKEN,'x-employee-session':token},body:JSON.stringify(event)});
+   if(r.ok){status('الإضافة متصلة — أرابيكس: '+(sourceConnection==='connected'?'متصل':sourceConnection==='disconnected'?'منقطع':'غير مؤكد'));return true}
+   if([401,403,409].includes(r.status)&&token===sessionToken){await enqueue(event,token);resetLocal();return false}
+   await enqueue(event,token);status('الحدث محفوظ للمراجعة/إعادة الإرسال');return false;
+  }catch{try{await enqueue(event,token);status('الحدث محفوظ لحين عودة الاتصال')}catch{status('تعذر حفظ الحدث — لا تعتمد على اكتمال البيانات')}return false}
+ }
+ function activity(eventType,extra={},token=sessionToken,extension=ext()||boundExtension()){
+  const at=new Date().toISOString();return send({eventType,eventKey:extension+':'+eventType+':'+at+':'+crypto.randomUUID(),extension,occurredAt:at,...extra},token);
+ }
+ async function flush(){
+  if(flushing)return;flushing=true;try{const result=await browser.runtime.sendMessage({type:'FLUSH_EVENTS',deviceToken:TOKEN});if(result.rejected)status('يوجد '+result.rejected+' حدث مرفوض محفوظ للمراجعة؛ البيانات قد تكون ناقصة')}catch{}finally{flushing=false}
+ }
+ function resetLocal(){
+  employee=null;sessionToken='';call=null;breakActive=false;breakStarted=null;sourceStateKnown=false;
+  for(const key of [SESSION,SESSION+'_token',STATE,SESSION+'_version'])sessionStorage.removeItem(key);
+  document.getElementById('kpi-session-box')?.remove();if(initialized&&document.body)mount();
+ }
+ function finishSession(reason='manual'){
+  const token=sessionToken,extension=ext()||boundExtension();
+  if(!token){resetLocal();return}
+  activity(reason==='manual'?'session_logout':'arabicss_logout',{state:reason},token,extension);
+  apiFetch('/api/session/end',{method:'POST',headers:{'content-type':'application/json','x-device-token':TOKEN,'x-employee-session':token},body:'{}'}).catch(()=>{});
+  resetLocal();
+ }
+ function callData(payload={}){
+  const raw=payload.call||payload.data||payload;
+  const html=String(raw.llamada_informacion||''),doc=html?new DOMParser().parseFromString(html,'text/html'):null;
+  const text=(doc?.body.textContent||document.querySelector('#issabel-callcenter-llamada-info')?.textContent||'').replace(/\s+/g,' ');
+  const visibleId=(text.match(/Internal Call ID:\s*([^\s]+)/i)||[])[1]||'';
+  return {callId:canonicalId(raw.callid||raw.callId||visibleId),phone:String(raw.txt_contacto_telefono||raw.phone||raw.phonenumber||(text.match(/Phone number:\s*([+\d]+)/i)||[])[1]||''),
+   queue:String(raw.queue||(visibleId.match(/incoming-q(\d+)-/)||[])[1]||''),callType:raw.calltype||raw.callType||(visibleId.startsWith('incoming')?'incoming':visibleId?'outgoing':null)};
+ }
+ function startCall(payload){
+  const c=callData(payload);if(!c.callId)return;
+  if(call?.callId===c.callId)return;
+  call={...c,startedAt:Date.now(),elapsed:0,observed:false};saveState();
+  send({...c,eventType:'agentlinked',eventKey:ext()+':'+c.callId+':start',extension:ext(),occurredAt:new Date().toISOString(),durationSeconds:0,payload});
+ }
+ function endCall(payload){
+  const c=callData(payload),ended=call;
+  if(!ended||c.callId&&c.callId!==ended.callId)return;
+  if(!ended.observed){const duration=Math.max(ended.elapsed||0,Math.round((Date.now()-ended.startedAt)/1000));
+   send({...ended,eventType:'agentunlinked',eventKey:ext()+':'+ended.callId+':end',extension:ext(),occurredAt:new Date().toISOString(),durationSeconds:duration,payload:{...payload,durationKnown:true}})}
+  else activity('call_observed_end',{state:'ready',payload:{callId:ended.callId,durationKnown:false}});
+  call=null;saveState();
+ }
+ function acceptState(payload){
+  sourceConnection=payload.connection||sourceConnection;
+  if(sourceConnection!=='connected'){sourceStateKnown=false;return}
+  sourceStateKnown=true;
+  if(payload.break_id!=null){if(!breakActive){breakActive=true;breakStarted=null;activity('break_observed',{state:'break',payload:{breakId:payload.break_id,durationKnown:false}})}}
+  else if(breakActive){activity(breakStarted?'break_end':'break_end_unknown',{state:'ready',durationSeconds:breakStarted?Math.round((Date.now()-Date.parse(breakStarted))/1000):0,payload:{durationKnown:!!breakStarted}});breakActive=false;breakStarted=null}
+  const id=canonicalId(payload.callid);
+  if(id&&!call){call={...callData({callid:id,calltype:payload.calltype}),startedAt:null,elapsed:null,observed:true};activity('call_observed',{state:'on_call',payload:{callId:id,startedBeforeObservation:true}})}
+  else if(!id&&call)endCall({callid:call.callId});
+  saveState();
+ }
+ function scan(){
+  if(!employee||!sessionToken)return;
+  const current=ext(),bound=boundExtension();
+  const arabicssPassword=[...document.querySelectorAll('input[type="password"]')].some(input=>!input.closest('#kpi-session-box'));
+  if(bound&&!current&&arabicssPassword){finishSession('arabicss_login_page');return}
+  if(bound&&current&&bound!==current){finishSession('extension_changed');return}
+  if(current&&!bound){saveState();activity('session_login',{state:'bound'})}
+  if(call&&!call.observed&&sourceConnection==='connected'){const duration=seconds(document.querySelector('#issabel-callcenter-cronometro')?.textContent);if(duration!==null){call.elapsed=Math.max(call.elapsed||0,duration);saveState()}}
+ }
+ function scheduleScan(){if(scanTimer)return;scanTimer=setTimeout(()=>{scanTimer=null;scan()},250)}
+ window.addEventListener('message',e=>{
+  if(e.origin!==location.origin||e.data?.source!=='ARABICSS_KPI_SSE'||!employee||!sessionToken)return;
+  let payload;try{payload=JSON.parse(e.data.data||'{}')}catch{return}
+  const type=String(e.data.type||'').toLowerCase();
+  if(type==='source_connection'){sourceConnection=payload.state;if(sourceConnection!=='connected')sourceStateKnown=false;return}
+  if(type==='arabicss_state'){acceptState(payload);return}
+  if(type==='logged-out'||type==='agentloggedout'){finishSession('arabicss_logout');return}
+  sourceConnection='connected';sourceStateKnown=true;
+  if(type==='breakenter'){if(!breakActive){breakStarted=payload._previousBreakId!=null?null:new Date().toISOString();activity(breakStarted?'break_start':'break_observed',{state:'break',payload:{...payload,durationKnown:!!breakStarted}})}breakActive=true;saveState()}
+  else if(type==='breakexit'){if(breakActive)activity(breakStarted?'break_end':'break_end_unknown',{state:'ready',durationSeconds:breakStarted?Math.round((Date.now()-Date.parse(breakStarted))/1000):0,payload:{...payload,durationKnown:!!breakStarted}});breakActive=false;breakStarted=null;saveState()}
+  else if(type==='agentlinked')startCall(payload);
+  else if(type==='agentunlinked')endCall(payload);
+ });
+ function mount(){
+  if(refreshTimer)clearInterval(refreshTimer);if(focusRefresh)window.removeEventListener('focus',focusRefresh);
+  if(document.getElementById('kpi-session-box'))return;
+  const box=document.createElement('div');box.id='kpi-session-box';box.dir='rtl';
+  box.innerHTML='<div style="font-weight:700;margin-bottom:9px">جلسة الموظف — KPI · '+VERSION+'</div><div id="kpi-active"><div>الموظف: <b id="kpi-name"></b></div><div id="kpi-status" style="margin-top:8px">بانتظار تأكيد مصدر أرابيكس</div><button id="kpi-end">إنهاء الشيفت</button></div><div id="kpi-form"><select id="kpi-employee"></select><button id="kpi-refresh">تحديث الموظفين</button><input id="kpi-pin" type="password" inputmode="numeric" maxlength="8" placeholder="PIN الشخصي"><button id="kpi-start">بدء الشيفت</button><div id="kpi-error" role="status"></div></div>';
+  document.body.appendChild(box);
+  const render=()=>{box.querySelector('#kpi-active').hidden=!employee;box.querySelector('#kpi-form').hidden=!!employee;box.querySelector('#kpi-name').textContent=employee?.name||'';box.style.cssText='position:fixed;z-index:2147483647;color:white;padding:18px;border:1px solid #2dd4bf;font:17px Arial;'+(employee?'left:16px;bottom:16px;width:300px;border-radius:12px;background:#142033':'inset:0;display:grid;place-content:center;text-align:center;background:#101b2bee')};
+  const refresh=async()=>{if(employee)return;const select=box.querySelector('#kpi-employee'),chosen=select.value;try{const r=await apiFetch('/api/employees/list?t='+Date.now());if(!r.ok)throw Error();const d=r.json();select.replaceChildren(new Option('اختر اسم الموظف',''));for(const e of d.employees)select.add(new Option(e.name,String(e.id)));select.value=chosen;box.querySelector('#kpi-error').textContent=d.employees.length?'':'لا يوجد موظفون نشطون'}catch{box.querySelector('#kpi-error').textContent='تعذر تحميل الموظفين؛ أعد المحاولة'}};
+  box.querySelector('#kpi-refresh').onclick=refresh;focusRefresh=refresh;window.addEventListener('focus',refresh);refreshTimer=setInterval(refresh,15000);refresh();
+  box.querySelector('#kpi-start').onclick=async()=>{
+   if(!initialized)return;
+   const employeeId=Number(box.querySelector('#kpi-employee').value),pin=box.querySelector('#kpi-pin').value,button=box.querySelector('#kpi-start');
+   if(!employeeId||!/^\d{4,8}$/.test(pin)){box.querySelector('#kpi-error').textContent='اختر اسمك وأدخل PIN الصحيح';return}
+   button.disabled=true;
+   try{const r=await apiFetch('/api/session/start',{method:'POST',headers:{'content-type':'application/json','x-device-token':TOKEN},body:JSON.stringify({employeeId,pin,extension:ext()})}),d=r.json();
+    if(!r.ok){box.querySelector('#kpi-error').textContent=r.status===429?'محاولات كثيرة؛ انتظر 15 دقيقة':r.status===409?'توجد جلسة أخرى نشطة للموظف أو الاكستنشن':r.status===401?'PIN غير صحيح':'تعذر بدء الجلسة';return}
+    employee=d.employee;sessionToken=d.token;sessionStorage.setItem(SESSION,JSON.stringify(employee));sessionStorage.setItem(SESSION+'_token',sessionToken);sessionStorage.setItem(SESSION+'_version',VERSION);sessionStorage.setItem(EPOCH,runtimeEpoch);call=null;breakStarted=null;breakActive=false;saveState();box.querySelector('#kpi-pin').value='';render();if(ext())activity('session_login',{state:'verified'});scan();flush();
+   }catch{box.querySelector('#kpi-error').textContent='تعذر الاتصال؛ لم تبدأ الجلسة'}finally{button.disabled=false}
+  };
+  box.querySelector('#kpi-end').onclick=()=>{if(call){alert('أنهِ المكالمة قبل إنهاء الشيفت');return}finishSession()};render();
+ }
+ const inject=()=>{const root=document.documentElement;if(!root)return false;const script=document.createElement('script');script.src=browser.runtime.getURL('page-hook.js');script.onload=()=>script.remove();root.appendChild(script);return true};
+ if(!inject())document.addEventListener('readystatechange',inject,{once:true});
+ async function initialize(){
+  try{
+   const runtime=await browser.runtime.sendMessage({type:'EMPLOYEE_RUNTIME_EPOCH'});runtimeEpoch=runtime.epoch;
+   const savedToken=sessionStorage.getItem(SESSION+'_token'),same=sessionStorage.getItem(EPOCH)===runtimeEpoch&&sessionStorage.getItem(SESSION+'_version')===VERSION;
+   if(same&&savedToken){const body=savedToken.split('.')[0],claims=JSON.parse(atob(body.replace(/-/g,'+').replace(/_/g,'/')));if(claims.exp>Date.now()){employee=JSON.parse(sessionStorage.getItem(SESSION)||'null');sessionToken=savedToken;restoreState()}}
+   if(!employee){if(savedToken)apiFetch('/api/session/end',{method:'POST',headers:{'content-type':'application/json','x-device-token':TOKEN,'x-employee-session':savedToken},body:'{}'}).catch(()=>{});resetLocal()}
+  }catch{resetLocal()}
+  initialized=true;mount();scan();flush();
+ }
+ function boot(){
+  const style=document.createElement('style');style.textContent='#kpi-session-box select,#kpi-session-box input{box-sizing:border-box;width:100%;padding:12px;margin:7px 0;border-radius:7px;background:#fff!important;color:#111827!important;opacity:1!important;font:700 17px Arial!important}#kpi-session-box option{background:#fff;color:#111827}#kpi-session-box button{width:100%;padding:10px;margin:6px 0;border-radius:7px;border:1px solid #64748b;background:#2dd4bf;color:#06251e;font:700 17px Arial;cursor:pointer}#kpi-session-box [hidden]{display:none!important}#kpi-error{color:#ffb4b4;margin-top:8px}';document.documentElement.appendChild(style);
+  // Gate before initialization completes; never briefly expose the login form.
+  mount();new MutationObserver(scheduleScan).observe(document.body,{childList:true,subtree:true,characterData:true});initialize();
+ }
+ window.addEventListener('online',flush);setInterval(flush,10000);
+ setInterval(async()=>{
+  if(!employee||!sessionToken)return;
+  try{const runtime=await browser.runtime.sendMessage({type:'EMPLOYEE_RUNTIME_EPOCH'});if(runtime.epoch!==runtimeEpoch){finishSession('extension_restarted');return}}catch{resetLocal();return}
+  if(ext())activity('heartbeat',{state:sourceConnection!=='connected'?'unknown':breakActive?'break':call?'on_call':sourceStateKnown?'ready':'unknown',payload:{sourceConnection}});
+ },30000);
+ window.addEventListener('pagehide',()=>{if(employee){saveState();activity('page_closed',{state:'navigation_or_closed'})}});
+ if(document.body)boot();else document.addEventListener('DOMContentLoaded',boot,{once:true});
 })();
