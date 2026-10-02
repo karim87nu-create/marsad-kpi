@@ -1,6 +1,6 @@
 (function(){
  if(location.hostname!=='41.38.207.218'||/^\/themes\/arabicssReportsInclude(?:\/|$)/i.test(location.pathname))return;
- const API='https://marsad-kpi-live.karim87nu.chatgpt.site',TOKEN='7000865f1220458f86506b41a97cab7d',VERSION='2.4.0';
+ const API='https://marsad-kpi-live.karim87nu.chatgpt.site',TOKEN='7000865f1220458f86506b41a97cab7d',VERSION='2.4.2';
  const SESSION='arabicss_kpi_employee_session',STATE='arabicss_kpi_state',EPOCH='arabicss_kpi_runtime_epoch';
  let employee=null,sessionToken='',runtimeEpoch='',sourceConnection='unknown',sourceStateKnown=false,call=null,breakActive=false,breakStarted=null,scanTimer=null,refreshTimer=null,focusRefresh=null,flushing=false,initialized=false;
  const ext=()=>((document.querySelector('#issabel-callcenter-titulo-consola')?.textContent||'').match(/(?:IAX2|SIP)\/(\d+)/i)||[])[1]||'';
@@ -8,7 +8,8 @@
  const seconds=v=>{if(typeof v==='number')return Math.max(0,Math.round(v));const s=String(v??'').trim();if(/^\d+$/.test(s))return Number(s);return /^\d{1,3}:[0-5]\d(?::[0-5]\d)?$/.test(s)?s.split(':').reduce((a,n)=>a*60+Number(n),0):null};
  const canonicalId=v=>String(v||'').match(/(?:incoming-q\d+-|outgoing-)?(\d+)$/)?.[1]||String(v||'');
  const status=text=>{const el=document.getElementById('kpi-status');if(el)el.textContent=text};
- function saveState(){sessionStorage.setItem(STATE,JSON.stringify({token:sessionToken,extension:ext()||boundExtension(),call,breakActive,breakStarted}))}
+ let savedFingerprint='';
+ function saveState(){const state={token:sessionToken,extension:ext()||boundExtension(),call,breakActive,breakStarted};sessionStorage.setItem(STATE,JSON.stringify(state));const fingerprint=JSON.stringify({...state,call:call?{...call,elapsed:null}:null});if(employee&&sessionToken&&fingerprint!==savedFingerprint){savedFingerprint=fingerprint;registerSession()}}
  function readState(){try{return JSON.parse(sessionStorage.getItem(STATE)||'null')}catch{return null}}
  function boundExtension(){const state=readState();return state?.token===sessionToken?state.extension||'':''}
  function restoreState(){const s=readState();if(s?.token===sessionToken&&(!ext()||s.extension===ext())){call=s.call;breakActive=!!s.breakActive;breakStarted=s.breakStarted||null}}
@@ -25,12 +26,21 @@
  function activity(eventType,extra={},token=sessionToken,extension=ext()||boundExtension()){
   const at=new Date().toISOString();return send({eventType,eventKey:extension+':'+eventType+':'+at+':'+crypto.randomUUID(),extension,occurredAt:at,...extra},token);
  }
- async function registerSession(){if(!sessionToken)return;try{const r=await browser.runtime.sendMessage({type:'REGISTER_SESSION',token:sessionToken,deviceToken:TOKEN});if(r.duplicate)resetLocal()}catch{resetLocal()}}
+ let presenceFingerprint='';
+ function reportPresence(force=false){
+  if(!employee||!sessionToken||!ext())return;
+  const state=sourceConnection!=='connected'?'unknown':breakActive?'break':call?'on_call':sourceStateKnown?'ready':'unknown';
+  const payload={sourceConnection,breakStartedAt:breakStarted,callStartedAt:call?.startedAt||null,callId:call?.callId||'',phone:call?.phone||'',callType:call?.callType||'',queue:call?.queue||''};
+  const fingerprint=JSON.stringify({extension:ext(),state,payload});
+  if(!force&&fingerprint===presenceFingerprint)return;
+  presenceFingerprint=fingerprint;activity('heartbeat',{state,payload});
+ }
+ async function registerSession(){if(!sessionToken||!employee)return;try{const r=await browser.runtime.sendMessage({type:'REGISTER_SESSION',token:sessionToken,deviceToken:TOKEN,employee,version:VERSION,state:readState()});if(r.duplicate)resetLocal()}catch{status('تعذر تأكيد حفظ الجلسة؛ أعد تحميل الصفحة')}}
  async function flush(){
   if(flushing)return;flushing=true;try{const result=await browser.runtime.sendMessage({type:'FLUSH_EVENTS',deviceToken:TOKEN});if(result.rejected)status('يوجد '+result.rejected+' حدث مرفوض محفوظ للمراجعة؛ البيانات قد تكون ناقصة')}catch{}finally{flushing=false}
  }
  function resetLocal(){
-  employee=null;sessionToken='';call=null;breakActive=false;breakStarted=null;sourceStateKnown=false;
+  employee=null;sessionToken='';call=null;breakActive=false;breakStarted=null;sourceStateKnown=false;savedFingerprint='';presenceFingerprint='';
   for(const key of [SESSION,SESSION+'_token',STATE,SESSION+'_version'])sessionStorage.removeItem(key);
   document.getElementById('kpi-session-box')?.remove();if(initialized&&document.body)mount();
  }
@@ -66,14 +76,14 @@
  }
  function acceptState(payload){
   sourceConnection=payload.connection||sourceConnection;
-  if(sourceConnection!=='connected'){sourceStateKnown=false;return}
+  if(sourceConnection!=='connected'){sourceStateKnown=false;reportPresence();return}
   sourceStateKnown=true;
   if(payload.break_id!=null){if(!breakActive){breakActive=true;breakStarted=null;activity('break_observed',{state:'break',payload:{breakId:payload.break_id,durationKnown:false}})}}
   else if(breakActive){activity(breakStarted?'break_end':'break_end_unknown',{state:'ready',durationSeconds:breakStarted?Math.round((Date.now()-Date.parse(breakStarted))/1000):0,payload:{durationKnown:!!breakStarted}});breakActive=false;breakStarted=null}
   const id=canonicalId(payload.callid);
   if(id&&!call){call={...callData({callid:id,calltype:payload.calltype}),startedAt:null,elapsed:null,observed:true};activity('call_observed',{state:'on_call',payload:{callId:id,startedBeforeObservation:true}})}
   else if(!id&&call)endCall({callid:call.callId});
-  saveState();
+  saveState();reportPresence();
  }
  function scan(){
   if(!employee||!sessionToken)return;
@@ -89,7 +99,7 @@
   if(e.origin!==location.origin||e.data?.source!=='ARABICSS_KPI_SSE'||!employee||!sessionToken)return;
   let payload;try{payload=JSON.parse(e.data.data||'{}')}catch{return}
   const type=String(e.data.type||'').toLowerCase();
-  if(type==='source_connection'){sourceConnection=payload.state;if(sourceConnection!=='connected')sourceStateKnown=false;return}
+  if(type==='source_connection'){sourceConnection=payload.state;if(sourceConnection!=='connected')sourceStateKnown=false;reportPresence();return}
   if(type==='arabicss_state'){acceptState(payload);return}
   if(type==='logged-out'||type==='agentloggedout'){finishSession('arabicss_logout');return}
   sourceConnection='connected';sourceStateKnown=true;
@@ -97,6 +107,7 @@
   else if(type==='breakexit'){if(breakActive)activity(breakStarted?'break_end':'break_end_unknown',{state:'ready',durationSeconds:breakStarted?Math.round((Date.now()-Date.parse(breakStarted))/1000):0,payload:{...payload,durationKnown:!!breakStarted}});breakActive=false;breakStarted=null;saveState()}
   else if(type==='agentlinked')startCall(payload);
   else if(type==='agentunlinked')endCall(payload);
+  reportPresence();
  });
  function mount(){
   if(refreshTimer)clearInterval(refreshTimer);if(focusRefresh)window.removeEventListener('focus',focusRefresh);
@@ -124,11 +135,17 @@
  async function initialize(){
   try{
    const runtime=await browser.runtime.sendMessage({type:'EMPLOYEE_RUNTIME_EPOCH'});runtimeEpoch=runtime.epoch;
+   // Same-tab navigation can change HTTP/HTTPS origin and lose sessionStorage.
+   // Recover only this tab's identity, never a device-wide or another tab's session.
+   if(runtime.session?.employee&&runtime.session.version===VERSION){
+    sessionStorage.setItem(SESSION,JSON.stringify(runtime.session.employee));sessionStorage.setItem(SESSION+'_token',runtime.session.token);sessionStorage.setItem(SESSION+'_version',VERSION);sessionStorage.setItem(EPOCH,runtimeEpoch);
+    if(runtime.session.state)sessionStorage.setItem(STATE,JSON.stringify(runtime.session.state));
+   }
    const savedToken=sessionStorage.getItem(SESSION+'_token'),same=sessionStorage.getItem(EPOCH)===runtimeEpoch&&sessionStorage.getItem(SESSION+'_version')===VERSION;
    if(same&&savedToken){const body=savedToken.split('.')[0],claims=JSON.parse(atob(body.replace(/-/g,'+').replace(/_/g,'/')));if(claims.exp>Date.now()){employee=JSON.parse(sessionStorage.getItem(SESSION)||'null');sessionToken=savedToken;restoreState()}}
    if(!employee){if(savedToken)apiFetch('/api/session/end',{method:'POST',headers:{'content-type':'application/json','x-device-token':TOKEN,'x-employee-session':savedToken},body:'{}'}).catch(()=>{});resetLocal()}
   }catch{resetLocal()}
-  if(sessionToken){try{const registration=await browser.runtime.sendMessage({type:'REGISTER_SESSION',token:sessionToken,deviceToken:TOKEN});if(registration.duplicate)resetLocal()}catch{resetLocal()}}
+  if(sessionToken)await registerSession();
   initialized=true;mount();scan();flush();
  }
  function boot(){
@@ -140,8 +157,8 @@
  setInterval(async()=>{
   if(!employee||!sessionToken)return;
   try{const runtime=await browser.runtime.sendMessage({type:'EMPLOYEE_RUNTIME_EPOCH'});if(runtime.epoch!==runtimeEpoch){finishSession('extension_restarted');return}}catch{resetLocal();return}
-  browser.runtime.sendMessage({type:'REGISTER_SESSION',token:sessionToken,deviceToken:TOKEN}).then(r=>{if(r.duplicate)resetLocal()}).catch(()=>{});
-  if(ext())activity('heartbeat',{state:sourceConnection!=='connected'?'unknown':breakActive?'break':call?'on_call':sourceStateKnown?'ready':'unknown',payload:{sourceConnection,breakStartedAt:breakStarted,callStartedAt:call?.startedAt||null,callId:call?.callId||'',phone:call?.phone||'',callType:call?.callType||'',queue:call?.queue||''}});
+  registerSession();
+  reportPresence(true);
  },30000);
  window.addEventListener('pagehide',()=>{if(employee){saveState();activity('page_closed',{state:'navigation_or_closed'})}});
  if(document.body)boot();else document.addEventListener('DOMContentLoaded',boot,{once:true});
