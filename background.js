@@ -59,7 +59,7 @@ browser.runtime.onMessage.addListener(async(message,sender)=>{
    if(message.type==='REGISTER_SESSION'){
     if(!message.token||!message.deviceToken)throw Error('invalid_session');
     if(Object.entries(entries).some(([id,e])=>Number(id)!==sender.tab.id&&e.token===message.token&&!e.pendingClose))return {ok:false,duplicate:true};
-    entries[sender.tab.id]={token:message.token,deviceToken:message.deviceToken};
+    entries[sender.tab.id]={...entries[sender.tab.id],token:message.token,deviceToken:message.deviceToken,employee:message.employee||entries[sender.tab.id]?.employee,version:message.version||entries[sender.tab.id]?.version,state:message.state||entries[sender.tab.id]?.state,pendingClose:false};
    }else if(entries[sender.tab.id]?.token===message.token)delete entries[sender.tab.id];
    await browser.storage.local.set({[TAB_SESSIONS]:entries});return {ok:true};
   });
@@ -86,7 +86,9 @@ browser.runtime.onMessage.addListener(async(message,sender)=>{
  }
  if(message?.type==='EMPLOYEE_RUNTIME_EPOCH'){
   if(!sender.tab||!/^https?:\/\/41\.38\.207\.218(?::11594)?\//.test(sender.url||''))throw Error('invalid_sender');
-  return {epoch:employeeRuntimeEpoch};
+  await startupCleanup;
+  const entries=(await browser.storage.local.get(TAB_SESSIONS))[TAB_SESSIONS]||{},entry=entries[sender.tab.id];
+  return {epoch:employeeRuntimeEpoch,session:entry&&!entry.pendingClose?{token:entry.token,employee:entry.employee,version:entry.version,state:entry.state}:null};
  }
  if(String(message?.type||'').startsWith('COLLECTOR_')){
  if(sender.url!==browser.runtime.getURL('collector.html'))throw Error('invalid_sender');
