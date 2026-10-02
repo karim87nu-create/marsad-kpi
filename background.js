@@ -1,5 +1,8 @@
 const API='https://marsad-kpi-live.karim87nu.chatgpt.site',ROOT='https://41.38.207.218:11594/themes/arabicssReportsInclude/dark/';
 const employeeRuntimeEpoch=crypto.randomUUID();
+let queueLock=Promise.resolve();
+const withQueueLock=fn=>{const job=queueLock.then(fn,fn);queueLock=job.catch(()=>{});return job};
+const QUEUE='arabicss_kpi_offline_queue';
 let busy=false,liveBusy=false,status={message:'موصل الإدارة غير مفعّل'};
 const today=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Africa/Cairo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
 const config=async()=> (await browser.storage.local.get('historyCollector')).historyCollector;
@@ -32,6 +35,26 @@ async function collectLive(){
  }catch(e){status={...status,liveError:e.message||'تعذر سحب اللايف'}}finally{liveBusy=false}
 }
 browser.runtime.onMessage.addListener(async(message,sender)=>{
+ if(message?.type==='QUEUE_EVENT'||message?.type==='FLUSH_EVENTS'){
+  if(!sender.tab||new URL(sender.url||'').hostname!=='41.38.207.218')throw Error('invalid_sender');
+  return withQueueLock(async()=>{
+   const q=(await browser.storage.local.get(QUEUE))[QUEUE]||[];
+   if(message.type==='QUEUE_EVENT'){q.push({...message.event,_sessionToken:message.token,_queueId:crypto.randomUUID()});await browser.storage.local.set({[QUEUE]:q});return {ok:true,pending:q.length}}
+   const left=[],rejected=(await browser.storage.local.get('kpi_rejected_events')).kpi_rejected_events||[];
+   for(let i=0;i<q.length;i++){
+    const event=q[i];if(i>=25||!event._sessionToken){left.push(event);continue}
+    try{
+     const r=await request(API+'/api/events',{method:'POST',headers:{'content-type':'application/json','x-device-token':message.deviceToken,'x-employee-session':event._sessionToken},body:JSON.stringify(event)});
+     if(!r.ok){
+      if([400,401,403,409].includes(r.status))rejected.push({...event,_reason:await r.text(),_rejectedAt:new Date().toISOString()});
+      else {left.push(...q.slice(i));break}
+     }
+    }catch{left.push(...q.slice(i));break}
+   }
+   await browser.storage.local.set({[QUEUE]:left,kpi_rejected_events:rejected});
+   return{pending:left.length,rejected:rejected.length}
+  });
+ }
  if(message?.type==='EMPLOYEE_RUNTIME_EPOCH'){
   if(!sender.tab||!/^https?:\/\/41\.38\.207\.218(?::11594)?\//.test(sender.url||''))throw Error('invalid_sender');
   return {epoch:employeeRuntimeEpoch};
@@ -49,7 +72,7 @@ browser.runtime.onMessage.addListener(async(message,sender)=>{
  }
  if(message?.type!=='KPI_API')return;
  if(!sender.url||new URL(sender.url).hostname!=='41.38.207.218')throw Error('invalid_sender');
- const path=String(message.path||'');if(!/^\/api\/(employees\/list(?:\?.*)?|session\/start|events)$/.test(path))throw Error('invalid_path');
+ const path=String(message.path||'');if(!/^\/api\/(employees\/list(?:\?.*)?|session\/(?:start|end)|events)$/.test(path))throw Error('invalid_path');
  const r=await request(API+path,{method:message.method||'GET',headers:message.headers||{},body:message.body});return{status:r.status,ok:r.ok,body:await r.text()}
 });
 setInterval(collectHistory,300000);setInterval(collectLive,5000);collectHistory();collectLive();
