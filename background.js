@@ -1,4 +1,5 @@
 const API='https://marsad-kpi-live.karim87nu.chatgpt.site',ROOT='https://41.38.207.218:11594/themes/arabicssReportsInclude/dark/';
+const employeeRuntimeEpoch=crypto.randomUUID();
 let busy=false,liveBusy=false,status={message:'موصل الإدارة غير مفعّل'};
 const today=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Africa/Cairo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
 const config=async()=> (await browser.storage.local.get('historyCollector')).historyCollector;
@@ -31,6 +32,10 @@ async function collectLive(){
  }catch(e){status={...status,liveError:e.message||'تعذر سحب اللايف'}}finally{liveBusy=false}
 }
 browser.runtime.onMessage.addListener(async(message,sender)=>{
+ if(message?.type==='EMPLOYEE_RUNTIME_EPOCH'){
+  if(!sender.tab||!/^https?:\/\/41\.38\.207\.218(?::11594)?\//.test(sender.url||''))throw Error('invalid_sender');
+  return {epoch:employeeRuntimeEpoch};
+ }
  if(String(message?.type||'').startsWith('COLLECTOR_')){
  if(sender.url!==browser.runtime.getURL('collector.html'))throw Error('invalid_sender');
  if(message.type==='COLLECTOR_STATUS'){const c=await config();return{...status,config:c?{enabled:c.enabled,startDate:c.startDate,nextDate:c.nextDate}:null}}
