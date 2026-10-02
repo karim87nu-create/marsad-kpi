@@ -1,5 +1,5 @@
 const API='https://marsad-kpi-live.karim87nu.chatgpt.site';
-const $=id=>document.getElementById(id),today=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Africa/Cairo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+const $=id=>document.getElementById(id),today=()=>{const p=new Intl.DateTimeFormat('en-CA',{timeZone:'Africa/Cairo',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',hourCycle:'h23'}).formatToParts(new Date()),v=k=>p.find(x=>x.type===k).value,d=v('year')+'-'+v('month')+'-'+v('day');return Number(v('hour'))<9?new Date(Date.parse(d+'T12:00:00Z')-86400000).toISOString().slice(0,10):d};
 let daily=null,historical=null,staff=[],context=null,contextCall=null,offset=0,lastLiveFetch=0,refreshing=false,selectedTab='live',generation=0;
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function fmt(v){if(v==null||!Number.isFinite(Number(v)))return 'غير معروف';const s=Math.max(0,Math.floor(Number(v)));return [Math.floor(s/3600),Math.floor(s%3600/60),s%60].map(x=>String(x).padStart(2,'0')).join(':')}
@@ -29,11 +29,11 @@ async function refresh(force=false){
  try{
   const [d,h,employees]=await Promise.all([api(dashboardQuery(date)),api('/api/history?date='+date),api('/api/employees')]);
   if(seq!==generation||date!==$('day').value)return;
-  daily=d;historical=h;staff=employees.employees;offset=Date.parse(d.serverNow)-Date.now();lastLiveFetch=Date.now();
+  $('day').max=d.today;daily=d;historical=h;staff=employees.employees;offset=Date.parse(d.serverNow)-Date.now();lastLiveFetch=Date.now();
   const choice=$('employeeFilter').value;$('employeeFilter').innerHTML='<option value="">كل الموظفين</option>'+staff.map(e=>'<option value="'+e.id+'">'+esc(e.name+(e.active?'':' — محذوف'))+'</option>').join('');$('employeeFilter').value=choice;
   const queueChoice=$('queueFilter').value;$('queueFilter').innerHTML='<option value="">كل أنواع الطلبات</option>'+(h.queues||[]).map(q=>'<option value="'+esc(q.queue)+'">'+esc(q.label)+'</option>').join('');$('queueFilter').value=queueChoice;
   $('syncStatus').textContent='آخر تحديث '+new Date().toLocaleTimeString('ar-EG',{timeZone:'Africa/Cairo'});$('syncStatus').classList.remove('bad');$('message').textContent='';
-  $('periodNote').textContent='السجلات والمؤشرات: '+date+' فقط — اللايف يعرض الآن دائمًا، حتى عند اختيار يوم قديم.';
+  $('periodNote').textContent='يوم التشغيل: '+date+' من 9ص إلى 3ص اليوم التالي — اللايف يعرض الآن دائمًا، حتى عند اختيار يوم قديم.';
   renderDaily();renderHistory();renderRoster();renderLive();
  }catch(e){if(seq===generation){$('syncStatus').textContent='تعذر التحديث — البيانات المعروضة قديمة';$('syncStatus').classList.add('bad');$('message').textContent=e.message;renderLive()}}finally{if(seq===generation)refreshing=false}
 }
@@ -42,8 +42,8 @@ function renderDaily(){
  const perf=metricsFiltered(),sum=k=>perf.reduce((n,p)=>n+(p[k]||0),0);
  cards('metricCards',[['مكالمات مسجلة',sum('calls')],['وارد',sum('inbound')],['صادر',sum('outbound')],['البريك المكتمل',fmt(sum('breakSeconds'))]]);
  table('metricRows',perf.map(p=>{const e=staff.find(e=>e.id===p.employeeId);return row([e?.name||p.employee,e?.employeeCode||'—',p.calls,p.inbound,p.outbound,p.answered,p.answered?fmt(p.avgHandleTime):'غير متاح',at(p.firstLogin),at(p.lastLogout),fmt(p.breakSeconds),p.unknownBreaks])}),11);
- table('callRows',callsFiltered().map(e=>row([e.agentName,e.extension,e.callType==='incoming'?'وارد':e.callType==='outgoing'?'صادر':'غير معروف',e.phone,e.eventType==='agentunlinked'?'مكتملة':'بداية بدون نهاية — ليست دليلًا أنها جارية الآن',at(e.startedAt||e.occurredAt),e.eventType==='agentunlinked'?fmt(e.durationSeconds):'انظر اللايف'])),7);
- table('attendanceRows',eventsFiltered().map(e=>row([e.agentName,e.extension,eventLabel(e.eventType),reasonLabel(e.state),at(e.occurredAt),e.eventType==='break_end'?fmt(e.durationSeconds):e.eventType==='break_end_unknown'?'غير معروفة':'—'])),6);
+ table('callRows',callsFiltered().map(e=>row([e.agentName,e.extension,e.callType==='incoming'?'وارد':e.callType==='outgoing'?'صادر':'غير معروف',e.phone,(e.eventType==='agentunlinked'?'مكتملة':'بداية بدون نهاية — ليست دليلًا أنها جارية الآن')+(e.outsideHours?' — خارج فترة التشغيل':''),at(e.startedAt||e.occurredAt),e.eventType==='agentunlinked'?fmt(e.durationSeconds):'انظر اللايف'])),7);
+ table('attendanceRows',eventsFiltered().map(e=>row([e.agentName,e.extension,eventLabel(e.eventType),reasonLabel(e.state)+(e.outsideHours?' — خارج فترة التشغيل':''),at(e.occurredAt),e.eventType==='break_end'?fmt(e.durationSeconds):e.eventType==='break_end_unknown'?'غير معروفة':'—'])),6);
  $('callCoverage').textContent=daily?.detailsTruncated?'التفاصيل تعرض آخر 300 مكالمة؛ التصدير يسحب اليوم كاملًا قبل تطبيق الفلاتر.':'كل المكالمات المسجلة لهذا اليوم ظاهرة حسب الفلاتر.';
  $('attendanceCoverage').textContent=daily?.detailsTruncated?'التفاصيل تعرض آخر 500 حدث؛ التصدير يسحب السجل كاملًا.':'كل أحداث اليوم متاحة حسب الفلاتر.';
  renderContext();
@@ -58,11 +58,11 @@ function renderLive(){
 }
 function renderHistory(){
  const h=historical?.report;
- $('historyCoverage').textContent=h?'تاريخ السجل '+h.date+' — آخر سحب '+at(h.importedAt)+' — '+(h.verifiedTotal?'عدد الصفوف مطابق لإجمالي المصدر حتى وقت السحب':'ملف مستورد؛ اكتمال اليوم غير مثبت'):'لا يوجد سجل أرابيكس محفوظ لهذا التاريخ.';
+ $('historyCoverage').textContent=h?'يوم التشغيل '+h.date+' — آخر سحب '+at(h.importedAt)+' — '+(h.verifiedTotal?'عدد الصفوف مطابق لإجمالي المصدر حتى وقت السحب':'ملف مستورد؛ اكتمال اليوم غير مثبت'):'لا يوجد سجل أرابيكس محفوظ لهذا التاريخ.';if(h?.missingCalendarDates?.length)$('historyCoverage').textContent+=' — تنبيه: سجل أرابيكس غير متوفر للتاريخ '+h.missingCalendarDates.join('، ')+'؛ بيانات الفترة غير مكتملة حتى استكمال السحب.';
  const qs=queuesFiltered(),perc=v=>v==null?'غير متاح':Number(v).toFixed(2)+'%';
  cards('historyCards',h?[['مكالمات محتسبة',h.calls],['تم الرد',h.answered],['فائتة محتسبة',h.abandoned],['≤7ث للتوضيح',h.shortAbandoned],['متوسط انتظار الرد (ASA)',fmt(h.asa)],['الرد خلال 10 ثوانٍ (SLA)',perc(h.sla)],['نسبة المكالمات الفائتة',perc(h.abandonmentRate)],['خارج ساعات العمل',h.afterHours]]:[]);
  table('queueRows',qs.map(q=>row([q.label,q.calls,q.answered,q.abandoned,fmt(q.asa),perc(q.sla),perc(q.abandonmentRate)])),7);
- $('missedRows').innerHTML=missedFiltered().map(c=>'<tr>'+[c.queueLabel,c.end||((c.start||'غير معروف')+' — بداية السجل؛ النهاية غير مسجلة'),c.phone,fmt(c.waitSeconds),missedLabel(c.classification)].map(v=>'<td>'+esc(v)+'</td>').join('')+'<td><button data-missed="'+c.index+'" class="secondary">من لم يكن متاحًا؟</button></td></tr>').join('')||'<tr><td colspan="6">لا توجد فائتة مطابقة لهذا اليوم</td></tr>';
+ $('missedRows').innerHTML=missedFiltered().map(c=>'<tr>'+[c.queueLabel,c.date+' '+(c.end||((c.start||'غير معروف')+' — بداية السجل؛ النهاية غير مسجلة')),c.phone,fmt(c.waitSeconds),missedLabel(c.classification)].map(v=>'<td>'+esc(v)+'</td>').join('')+'<td><button data-missed="'+c.index+'" class="secondary">من لم يكن متاحًا؟</button></td></tr>').join('')||'<tr><td colspan="6">لا توجد فائتة مطابقة لهذا اليوم</td></tr>';
 }
 function renderContext(){
  if(!context)return;
@@ -73,7 +73,7 @@ function renderContext(){
 async function showContext(index){
  const reportId=historical?.report?.id;if(!reportId)return;
  $('contextPanel').hidden=false;$('contextNote').textContent='جارٍ مراجعة سجل الحالات…';context=null;table('contextRows',[],5);
- try{const d=await api('/api/history?reportId='+reportId+'&missedIndex='+index);if(historical?.report?.id!==reportId)return;context=d.context;contextCall=d.call;
+ try{const d=await api('/api/history?reportId='+reportId+'&date='+$('day').value+'&missedIndex='+index);if(historical?.report?.id!==reportId)return;context=d.context;contextCall=d.call;
  $('contextTitle').textContent=d.call.date+' — '+(d.call.end||d.call.start||'وقت غير معروف')+' — '+d.call.phone;
  $('contextNote').textContent=(d.context.timeReference==='record_start'?'الحالات عند بداية السجل؛ نهاية الانتظار غير مسجلة. ':'')+(d.context.timeWindow?.precision==='minute'?'التوقيت بالدقيقة؛ تغير الحالة داخلها يظهر غير مؤكد. ':'')+'توضيح عدم التوفر فقط؛ لا يثبت أن المكالمة رنّت على موظف أو أنه رفضها.';
  renderContext();$('contextPanel').scrollIntoView({behavior:'smooth',block:'start'});
@@ -96,7 +96,7 @@ function contextLines(call,c){return contextFiltered(c.employees).map(e=>[call.d
 async function exportData(kind,button){
  button.disabled=true;$('message').textContent='جارٍ تجهيز شيت كامل حسب التاريخ والفلاتر…';const date=$('day').value,reportId=historical?.report?.id;
  try{
- if(['calls','attendance'].includes(kind)){const d=await api(dashboardQuery(date)+'&all=1');if(date!==$('day').value)throw Error('تغير التاريخ؛ أعد التصدير');if(kind==='calls')csv('calls',['الموظف','الاكستنشن','النوع','الهاتف','الحالة','بداية المكالمة','وقت آخر حدث','المدة بالثواني'],callsFiltered(d.calls).map(e=>[e.agentName,e.extension,e.callType,e.phone,e.eventType,e.startedAt,e.occurredAt,e.durationSeconds]));else csv('attendance',['الموظف','الاكستنشن','الحدث','الحالة / السبب','الوقت','المدة بالثواني'],eventsFiltered(d.timeline).map(e=>[e.agentName,e.extension,eventLabel(e.eventType),reasonLabel(e.state),e.occurredAt,e.eventType==='break_end_unknown'?'غير معروف':e.eventType==='break_end'?e.durationSeconds:'']));}
+ if(['calls','attendance'].includes(kind)){const d=await api(dashboardQuery(date)+'&all=1');if(date!==$('day').value)throw Error('تغير التاريخ؛ أعد التصدير');if(kind==='calls')csv('calls',['الموظف','الاكستنشن','النوع','الهاتف','الحالة','بداية المكالمة','وقت آخر حدث','المدة بالثواني'],callsFiltered(d.calls).map(e=>[e.agentName,e.extension,e.callType,e.phone,e.eventType+(e.outsideHours?' — خارج فترة التشغيل':''),e.startedAt,e.occurredAt,e.durationSeconds]));else csv('attendance',['الموظف','الاكستنشن','الحدث','الحالة / السبب','الوقت','المدة بالثواني'],eventsFiltered(d.timeline).map(e=>[e.agentName,e.extension,eventLabel(e.eventType),reasonLabel(e.state)+(e.outsideHours?' — خارج فترة التشغيل':''),e.occurredAt,e.eventType==='break_end_unknown'?'غير معروف':e.eventType==='break_end'?e.durationSeconds:'']));}
  else if(kind==='employees')csv('employee-kpis',['الموظف','الكود','مكالمات','وارد','صادر','مكتملة','متوسط المدة بالثواني','أول دخول','آخر خروج','البريك المكتمل بالثواني','بريكات ناقصة'],metricsFiltered().map(p=>[staff.find(e=>e.id===p.employeeId)?.name||p.employee,staff.find(e=>e.id===p.employeeId)?.employeeCode,p.calls,p.inbound,p.outbound,p.answered,p.avgHandleTime,p.firstLogin,p.lastLogout,p.breakSeconds,p.unknownBreaks]));
  else if(kind==='roster')csv('employees',['الاسم','الكود','الحالة'],staff.filter(e=>!$('employeeFilter').value||e.id===Number($('employeeFilter').value)).map(e=>[e.name,e.employeeCode,e.active?'نشط':'محذوف']));
  else if(kind==='live')csv('live-snapshot',['وقت السحب','الموظف','الاكستنشن','الحالة','الهاتف','نوع الطلب','بداية الحالة','مدة الحالة','آخر دليل'],(daily?.presence||[]).filter(matches).map(p=>[new Date().toISOString(),staff.find(e=>e.id===p.employeeId)?.name,p.extension,Date.now()-lastLiveFetch<15000?stateLabel(p.state):'لقطة قديمة',p.phone,requestType(p.queue),p.startedAt,Date.now()-lastLiveFetch<15000&&p.state!=='unknown'&&p.startedAt?fmt((Date.now()+offset-Date.parse(p.startedAt))/1000):'غير معروف',p.evidenceAt]));
@@ -104,8 +104,8 @@ async function exportData(kind,button){
  else if(kind==='queue')csv('queue-kpis',['رقم القائمة في أرابيكس','نوع الطلب','مكالمات','تم الرد','فائتة محتسبة','متوسط انتظار الرد بالثواني (ASA)','الرد خلال 10 ثوانٍ % (SLA)','نسبة المكالمات الفائتة %'],queuesFiltered().map(q=>[q.queue,q.label,q.calls,q.answered,q.abandoned,q.asa,q.sla,q.abandonmentRate]));
  else if(kind==='missed')csv('missed',['نوع الطلب','التاريخ','التوقيت','الهاتف','الانتظار بالثواني','التصنيف'],missedFiltered().map(c=>[requestType(c.queue),c.date,c.end||c.start,c.phone,c.waitSeconds,missedLabel(c.classification)]));
  else if(kind==='context'){if(!context)throw Error('اختر المكالمة أولًا');csv('missed-staff',contextHeaders,contextLines(contextCall,context));}
- else if(kind==='contexts'){if(!reportId)throw Error('لا يوجد سجل لهذا اليوم');const d=await api('/api/history?reportId='+reportId+'&contexts=1');if(reportId!==historical?.report?.id)throw Error('تغير السجل؛ أعد التصدير');const indices=new Set(missedFiltered().map(c=>c.index));csv('all-missed-staff',contextHeaders,d.contexts.filter(x=>indices.has(x.index)).flatMap(x=>contextLines(x.call,x.context)));}
- else if(kind==='history'){if(!reportId)throw Error('لا يوجد سجل لهذا اليوم');const d=await api('/api/history?reportId='+reportId+'&all=1');if(date!==$('day').value)throw Error('تغير التاريخ');csv('arabicss-history',['نوع الطلب','حساب أرابيكس','التاريخ','البداية','النهاية','المدة','الانتظار','الهاتف','الحالة'],d.records.filter(c=>!$('queueFilter').value||c.queue===$('queueFilter').value).map(c=>[requestType(c.queue),c.accountName,c.date,c.start,c.end,c.durationSeconds,c.waitSeconds,c.phone,c.status]));}
+ else if(kind==='contexts'){if(!reportId)throw Error('لا يوجد سجل لهذا اليوم');const d=await api('/api/history?reportId='+reportId+'&date='+date+'&contexts=1');if(reportId!==historical?.report?.id)throw Error('تغير السجل؛ أعد التصدير');const indices=new Set(missedFiltered().map(c=>c.index));csv('all-missed-staff',contextHeaders,d.contexts.filter(x=>indices.has(x.index)).flatMap(x=>contextLines(x.call,x.context)));}
+ else if(kind==='history'){if(!reportId)throw Error('لا يوجد سجل لهذا اليوم');const d=await api('/api/history?reportId='+reportId+'&date='+date+'&all=1');if(date!==$('day').value)throw Error('تغير التاريخ');csv('arabicss-history',['نوع الطلب','حساب أرابيكس','التاريخ الفعلي','البداية','النهاية','المدة','الانتظار','الهاتف','الحالة'],d.records.filter(c=>!$('queueFilter').value||c.queue===$('queueFilter').value).map(c=>[requestType(c.queue),c.accountName,c.date,c.start,c.end,c.durationSeconds,c.waitSeconds,c.phone,c.status+(c.outsideHours?' — خارج فترة التشغيل':'')]));}
  $('message').textContent='تم تجهيز الشيت. CSV يفتح في Excel؛ النصوص والأرقام المفقودة لا تُستبدل بصفر.';
  }catch(e){$('message').textContent='لم يتم التصدير: '+e.message}finally{button.disabled=false}
 }
