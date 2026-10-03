@@ -8,6 +8,8 @@ async function pollAdminMessages(){
    if(entry.pendingClose||!/^\d+$/.test(String(entry.state?.extension||'')))continue;
    const headers={'content-type':'application/json','x-device-token':entry.deviceToken,'x-employee-session':entry.token};
    const r=await request(API+'/api/messages',{headers});if(!r.ok)continue;const d=await r.json();
+   const pendingReceipt=d.messages.find(m=>(entry.messageKeys||[]).includes(m.id)&&!m.delivered_at);
+   if(pendingReceipt){await request(API+'/api/messages',{method:'PATCH',headers,body:JSON.stringify({id:pendingReceipt.id,action:'delivered'})});continue}
    // One notification at a time avoids Firefox dropping rapid notification bursts.
    const m=d.messages.find(m=>!(entry.messageKeys||[]).includes(m.id));if(!m)continue;
    const displayed=await withQueueLock(async()=>{
