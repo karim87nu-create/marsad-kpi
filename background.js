@@ -86,7 +86,8 @@ browser.runtime.onMessage.addListener(async(message,sender)=>{
     if(!message.token||!message.deviceToken)throw Error('invalid_session');
     if(Object.entries(entries).some(([id,e])=>Number(id)!==sender.tab.id&&e.token===message.token&&!e.pendingClose))return {ok:false,duplicate:true};
     if(entries[sender.tab.id]?.pendingClose&&entries[sender.tab.id].token!==message.token){entries['pending-'+crypto.randomUUID()]=entries[sender.tab.id];delete entries[sender.tab.id]}
-    entries[sender.tab.id]={...entries[sender.tab.id],token:message.token,deviceToken:message.deviceToken,employee:message.employee||entries[sender.tab.id]?.employee,version:message.version||entries[sender.tab.id]?.version,state:message.state||entries[sender.tab.id]?.state,pendingClose:false};
+    const previous=entries[sender.tab.id]?.token===message.token?entries[sender.tab.id]:{};
+    entries[sender.tab.id]={...previous,token:message.token,deviceToken:message.deviceToken,employee:message.employee||previous.employee,version:message.version||previous.version,state:message.state||previous.state,pendingClose:false};
    }else if(entries[sender.tab.id]?.token===message.token)delete entries[sender.tab.id];
    await browser.storage.local.set({[TAB_SESSIONS]:entries});return {ok:true};
   });
