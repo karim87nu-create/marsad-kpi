@@ -34,7 +34,7 @@ async function refresh(force=false){
   const queueChoice=$('queueFilter').value;$('queueFilter').innerHTML='<option value="">كل أنواع الطلبات</option>'+(h.queues||[]).map(q=>'<option value="'+esc(q.queue)+'">'+esc(q.label)+'</option>').join('');$('queueFilter').value=queueChoice;
   $('syncStatus').textContent='آخر تحديث '+new Date().toLocaleTimeString('ar-EG',{timeZone:'Africa/Cairo'});$('syncStatus').classList.remove('bad');$('message').textContent='';
   $('periodNote').textContent='يوم التشغيل: '+date+' من 9ص إلى 3ص اليوم التالي — اللايف يعرض الآن دائمًا، حتى عند اختيار يوم قديم.';
-  renderDaily();renderHistory();renderRoster();renderLive();
+  renderDaily();renderHistory();renderRoster();renderLive();window.dispatchEvent(new Event('kpi-admin-refresh'));
  }catch(e){if(seq===generation){$('syncStatus').textContent='تعذر التحديث — البيانات المعروضة قديمة';$('syncStatus').classList.add('bad');$('message').textContent=e.message;renderLive()}}finally{if(seq===generation)refreshing=false}
 }
 function metricsFiltered(){const perf=daily?.performance||[];const records=$('extensionFilter').value?perf:staff.filter(e=>e.active||perf.some(p=>p.employeeId===e.id)||Number($('employeeFilter').value)===e.id).map(e=>perf.find(p=>p.employeeId===e.id)||{employeeId:e.id,employee:e.name,calls:0,inbound:0,outbound:0,answered:0,avgHandleTime:0,breakSeconds:0,unknownBreaks:0,firstLogin:null,lastLogout:null});return records.filter(p=>!$('employeeFilter').value||p.employeeId===Number($('employeeFilter').value))}
@@ -126,3 +126,5 @@ $('importButton').onclick=async()=>{const file=$('historyFile').files[0];if(!fil
 setInterval(renderLive,1000);
 setInterval(()=>{if(sessionStorage.getItem('adminPassword'))refresh()},5000);
 if(sessionStorage.getItem('adminPassword')){$('login').hidden=true;$('dashboard').hidden=false;refresh(true)}
+
+
