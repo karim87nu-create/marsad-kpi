@@ -1,10 +1,11 @@
 {
   "manifest_version": 2,
   "name": "Arabicss KPI Connector",
-  "version": "2.4.6",
+  "version": "2.4.8",
   "description": "يربط جلسات ومكالمات Arabicss بنظام KPI المستقل",
   "permissions": [
     "storage",
+    "notifications",
     "*://41.38.207.218/*",
     "https://marsad-kpi-live.karim87nu.chatgpt.site/*"
   ],
@@ -14,7 +15,8 @@
         "*://41.38.207.218/*"
       ],
       "js": [
-        "content.js"
+        "content.js",
+        "employee-messages.js"
       ],
       "run_at": "document_start",
       "all_frames": false,
@@ -34,7 +36,8 @@
   },
   "background": {
     "scripts": [
-      "background.js"
+      "background.js",
+      "message-notifications.js"
     ],
     "persistent": true
   },
@@ -43,3 +46,4 @@
     "default_popup": "collector.html"
   }
 }
+
