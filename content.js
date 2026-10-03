@@ -1,6 +1,6 @@
 (function(){
  if(location.hostname!=='41.38.207.218'||/^\/themes\/arabicssReportsInclude(?:\/|$)/i.test(location.pathname))return;
- const API='https://marsad-kpi-live.karim87nu.chatgpt.site',TOKEN='7000865f1220458f86506b41a97cab7d',VERSION='2.4.5';
+ const API='https://marsad-kpi-live.karim87nu.chatgpt.site',TOKEN='7000865f1220458f86506b41a97cab7d',VERSION='2.4.6';
  const SESSION='arabicss_kpi_employee_session',STATE='arabicss_kpi_state',EPOCH='arabicss_kpi_runtime_epoch';
  let employee=null,sessionToken='',runtimeEpoch='',sourceConnection='unknown',sourceStateKnown=false,call=null,breakActive=false,breakStarted=null,scanTimer=null,refreshTimer=null,focusRefresh=null,flushing=false,initialized=false;
  const ext=()=>((document.querySelector('#issabel-callcenter-titulo-consola')?.textContent||'').match(/(?:IAX2|SIP)\/(\d+)/i)||[])[1]||'';
@@ -8,11 +8,11 @@
  const seconds=v=>{if(typeof v==='number')return Math.max(0,Math.round(v));const s=String(v??'').trim();if(/^\d+$/.test(s))return Number(s);return /^\d{1,3}:[0-5]\d(?::[0-5]\d)?$/.test(s)?s.split(':').reduce((a,n)=>a*60+Number(n),0):null};
  const canonicalId=v=>String(v||'').match(/(?:incoming-q\d+-|outgoing-)?(\d+)$/)?.[1]||String(v||'');
  const status=text=>{const el=document.getElementById('kpi-status');if(el)el.textContent=text};
- let savedFingerprint='';
- function saveState(){const state={token:sessionToken,extension:ext()||boundExtension(),call,breakActive,breakStarted};sessionStorage.setItem(STATE,JSON.stringify(state));const fingerprint=JSON.stringify({...state,call:call?{...call,elapsed:null}:null});if(employee&&sessionToken&&fingerprint!==savedFingerprint){savedFingerprint=fingerprint;registerSession()}}
+ let savedFingerprint='',arabicssAuthenticated=false;
+ function saveState(){const state={token:sessionToken,extension:ext()||boundExtension(),arabicssAuthenticated,call,breakActive,breakStarted};sessionStorage.setItem(STATE,JSON.stringify(state));const fingerprint=JSON.stringify({...state,call:call?{...call,elapsed:null}:null});if(employee&&sessionToken&&fingerprint!==savedFingerprint){savedFingerprint=fingerprint;registerSession()}}
  function readState(){try{return JSON.parse(sessionStorage.getItem(STATE)||'null')}catch{return null}}
  function boundExtension(){const state=readState();return state?.token===sessionToken?state.extension||'':''}
- function restoreState(){const s=readState();if(s?.token===sessionToken&&(!ext()||s.extension===ext())){call=s.call;breakActive=!!s.breakActive;breakStarted=s.breakStarted||null}}
+ function restoreState(){const s=readState();if(s?.token===sessionToken&&(!ext()||s.extension===ext())){arabicssAuthenticated=!!s.arabicssAuthenticated;call=s.call;breakActive=!!s.breakActive;breakStarted=s.breakStarted||null}}
  async function enqueue(event,token){return browser.runtime.sendMessage({type:'QUEUE_EVENT',event,token})}
  async function send(event,token=sessionToken){
   if(!token||!event.extension)return false;
@@ -40,7 +40,7 @@
   if(flushing)return;flushing=true;try{const result=await browser.runtime.sendMessage({type:'FLUSH_EVENTS',deviceToken:TOKEN});if(result.rejected)status('يوجد '+result.rejected+' حدث مرفوض محفوظ للمراجعة؛ البيانات قد تكون ناقصة')}catch{}finally{flushing=false}
  }
  function resetLocal(){
-  employee=null;sessionToken='';call=null;breakActive=false;breakStarted=null;sourceStateKnown=false;savedFingerprint='';presenceFingerprint='';
+  employee=null;sessionToken='';call=null;breakActive=false;breakStarted=null;sourceStateKnown=false;savedFingerprint='';presenceFingerprint='';arabicssAuthenticated=false;
   for(const key of [SESSION,SESSION+'_token',STATE,SESSION+'_version'])sessionStorage.removeItem(key);
   document.getElementById('kpi-session-box')?.remove();if(initialized&&document.body)mount();
  }
@@ -48,8 +48,8 @@
   const token=sessionToken,extension=ext()||boundExtension();
   if(!token){resetLocal();return}
   activity(reason==='manual'?'session_logout':'arabicss_logout',{state:reason},token,extension);
-  browser.runtime.sendMessage({type:'UNREGISTER_SESSION',token}).catch(()=>{});
-  apiFetch('/api/session/end',{method:'POST',headers:{'content-type':'application/json','x-device-token':TOKEN,'x-employee-session':token},body:JSON.stringify({reason})}).catch(()=>{});
+  const fallback=()=>apiFetch('/api/session/end',{method:'POST',headers:{'content-type':'application/json','x-device-token':TOKEN,'x-employee-session':token},body:JSON.stringify({reason})}).catch(()=>{});
+  browser.runtime.sendMessage({type:'END_EMPLOYEE_SESSION',token,deviceToken:TOKEN,reason}).then(r=>{if(!r.ok&&!r.pending)return fallback()}).catch(fallback);
   resetLocal();
  }
  function callData(payload={}){
@@ -89,12 +89,15 @@
   if(!employee||!sessionToken)return;
   const current=ext(),bound=boundExtension();
   const arabicssPassword=[...document.querySelectorAll('input[type="password"]')].some(input=>!input.closest('#kpi-session-box'));
-  if(bound&&!current&&arabicssPassword){finishSession('arabicss_login_page');return}
+  const authenticatedPage=!!current||!!document.querySelector('a[href*="logout=yes"]')||!!document.querySelector('#issabel_framework_module_id');
+  if(!current&&arabicssPassword&&(bound||arabicssAuthenticated&&!authenticatedPage)){finishSession('arabicss_login_page');return}
+  if(authenticatedPage&&!arabicssAuthenticated){arabicssAuthenticated=true;saveState()}
   if(bound&&current&&bound!==current){finishSession('extension_changed');return}
   if(current&&!bound){saveState();activity('session_login',{state:'bound'})}
   if(call&&!call.observed&&sourceConnection==='connected'){const duration=seconds(document.querySelector('#issabel-callcenter-cronometro')?.textContent);if(duration!==null){call.elapsed=Math.max(call.elapsed||0,duration);saveState()}}
  }
  function scheduleScan(){if(scanTimer)return;scanTimer=setTimeout(()=>{scanTimer=null;scan()},250)}
+ document.addEventListener('click',e=>{const a=e.target?.closest?.('a[href]');if(!a||!employee)return;try{const u=new URL(a.href,location.origin);if(u.hostname===location.hostname&&u.searchParams.get('logout')==='yes')finishSession('arabicss_logout')}catch{}},true);
  window.addEventListener('message',e=>{
   if(e.origin!==location.origin||e.data?.source!=='ARABICSS_KPI_SSE'||!employee||!sessionToken)return;
   let payload;try{payload=JSON.parse(e.data.data||'{}')}catch{return}
