@@ -11,12 +11,12 @@ async function endTracked(entry,reason){
 // Persist pending closure and retry at next startup; epoch forces fresh employee login.
 const startupCleanup=withQueueLock(async()=>{
  const entries=(await browser.storage.local.get(TAB_SESSIONS))[TAB_SESSIONS]||{},left={};
- for(const [id,entry] of Object.entries(entries))if(!await endTracked(entry,'browser_restarted'))left[id]={...entry,pendingClose:true};
+ for(const [id,entry] of Object.entries(entries))if(!await endTracked(entry,entry.closeReason||'browser_restarted'))left[id]={...entry,pendingClose:true};
  await browser.storage.local.set({[TAB_SESSIONS]:left});
 });
 browser.tabs?.onRemoved?.addListener(tabId=>withQueueLock(async()=>{
  const entries=(await browser.storage.local.get(TAB_SESSIONS))[TAB_SESSIONS]||{},entry=entries[tabId];if(!entry)return;
- if(await endTracked(entry,'tab_closed'))delete entries[tabId];else entries[tabId]={...entry,pendingClose:true};
+ if(await endTracked(entry,entry.closeReason||'tab_closed'))delete entries[tabId];else entries[tabId]={...entry,pendingClose:true,closeReason:entry.closeReason||'tab_closed'};
  await browser.storage.local.set({[TAB_SESSIONS]:entries});
 }));
 let busy=false,liveBusy=false,status={message:'موصل الإدارة غير مفعّل'};
@@ -51,6 +51,17 @@ async function collectLive(){
  }catch(e){status={...status,liveError:e.message||'تعذر سحب اللايف'}}finally{liveBusy=false}
 }
 browser.runtime.onMessage.addListener(async(message,sender)=>{
+ if(message?.type==='END_EMPLOYEE_SESSION'){
+  if(!sender.tab||new URL(sender.url||'').hostname!=='41.38.207.218')throw Error('invalid_sender');
+  await startupCleanup;
+  return withQueueLock(async()=>{
+   const entries=(await browser.storage.local.get(TAB_SESSIONS))[TAB_SESSIONS]||{},entry=entries[sender.tab.id];
+   if(!entry||entry.token!==message.token)return{ok:false};
+   const closed=await endTracked(entry,message.reason);
+   if(closed)delete entries[sender.tab.id];else entries[sender.tab.id]={...entry,pendingClose:true,closeReason:message.reason};
+   await browser.storage.local.set({[TAB_SESSIONS]:entries});return{ok:closed,pending:!closed};
+  });
+ }
  if(['REGISTER_SESSION','UNREGISTER_SESSION'].includes(message?.type)){
   if(!sender.tab||new URL(sender.url||'').hostname!=='41.38.207.218')throw Error('invalid_sender');
   await startupCleanup;
@@ -59,6 +70,7 @@ browser.runtime.onMessage.addListener(async(message,sender)=>{
    if(message.type==='REGISTER_SESSION'){
     if(!message.token||!message.deviceToken)throw Error('invalid_session');
     if(Object.entries(entries).some(([id,e])=>Number(id)!==sender.tab.id&&e.token===message.token&&!e.pendingClose))return {ok:false,duplicate:true};
+    if(entries[sender.tab.id]?.pendingClose&&entries[sender.tab.id].token!==message.token){entries['pending-'+crypto.randomUUID()]=entries[sender.tab.id];delete entries[sender.tab.id]}
     entries[sender.tab.id]={...entries[sender.tab.id],token:message.token,deviceToken:message.deviceToken,employee:message.employee||entries[sender.tab.id]?.employee,version:message.version||entries[sender.tab.id]?.version,state:message.state||entries[sender.tab.id]?.state,pendingClose:false};
    }else if(entries[sender.tab.id]?.token===message.token)delete entries[sender.tab.id];
    await browser.storage.local.set({[TAB_SESSIONS]:entries});return {ok:true};
@@ -107,3 +119,4 @@ browser.runtime.onMessage.addListener(async(message,sender)=>{
  const r=await request(API+path,{method:message.method||'GET',headers:message.headers||{},body:message.body});return{status:r.status,ok:r.ok,body:await r.text()}
 });
 setInterval(collectHistory,300000);setInterval(collectLive,5000);collectHistory();collectLive();
+setInterval(()=>withQueueLock(async()=>{const entries=(await browser.storage.local.get(TAB_SESSIONS))[TAB_SESSIONS]||{};for(const [id,entry] of Object.entries(entries))if(entry.pendingClose&&await endTracked(entry,entry.closeReason||'browser_restarted'))delete entries[id];await browser.storage.local.set({[TAB_SESSIONS]:entries})}).catch(()=>{}),10000);
