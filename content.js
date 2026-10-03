@@ -1,6 +1,6 @@
 (function(){
  if(location.hostname!=='41.38.207.218'||/^\/themes\/arabicssReportsInclude(?:\/|$)/i.test(location.pathname))return;
- const API='https://marsad-kpi-live.karim87nu.chatgpt.site',TOKEN='7000865f1220458f86506b41a97cab7d',VERSION='2.4.2';
+ const API='https://marsad-kpi-live.karim87nu.chatgpt.site',TOKEN='7000865f1220458f86506b41a97cab7d',VERSION='2.4.5';
  const SESSION='arabicss_kpi_employee_session',STATE='arabicss_kpi_state',EPOCH='arabicss_kpi_runtime_epoch';
  let employee=null,sessionToken='',runtimeEpoch='',sourceConnection='unknown',sourceStateKnown=false,call=null,breakActive=false,breakStarted=null,scanTimer=null,refreshTimer=null,focusRefresh=null,flushing=false,initialized=false;
  const ext=()=>((document.querySelector('#issabel-callcenter-titulo-consola')?.textContent||'').match(/(?:IAX2|SIP)\/(\d+)/i)||[])[1]||'';
@@ -110,8 +110,9 @@
   reportPresence();
  });
  function mount(){
+  const existing=document.getElementById('kpi-session-box');
+  if(existing){existing._kpiRender?.();return}
   if(refreshTimer)clearInterval(refreshTimer);if(focusRefresh)window.removeEventListener('focus',focusRefresh);
-  if(document.getElementById('kpi-session-box'))return;
   const box=document.createElement('div');box.id='kpi-session-box';box.dir='rtl';
   box.innerHTML='<div style="font-weight:700;margin-bottom:9px">جلسة الموظف — KPI · '+VERSION+'</div><div id="kpi-active"><div>الموظف: <b id="kpi-name"></b></div><div id="kpi-status" style="margin-top:8px">بانتظار تأكيد مصدر أرابيكس</div><div style="margin-top:8px;font-size:14px">الخروج مرتبط بالخروج من أرابيكس أو إغلاق المتصفح</div></div><div id="kpi-form"><select id="kpi-employee"></select><button id="kpi-refresh">تحديث الموظفين</button><input id="kpi-pin" type="password" inputmode="numeric" maxlength="8" placeholder="PIN الشخصي"><button id="kpi-start">بدء الشيفت</button><div id="kpi-error" role="status"></div></div>';
   document.body.appendChild(box);
@@ -128,7 +129,7 @@
     employee=d.employee;sessionToken=d.token;sessionStorage.setItem(SESSION,JSON.stringify(employee));sessionStorage.setItem(SESSION+'_token',sessionToken);sessionStorage.setItem(SESSION+'_version',VERSION);sessionStorage.setItem(EPOCH,runtimeEpoch);call=null;breakStarted=null;breakActive=false;saveState();box.querySelector('#kpi-pin').value='';await registerSession();render();if(ext())activity('session_login',{state:'verified'});scan();flush();
    }catch{box.querySelector('#kpi-error').textContent='تعذر الاتصال؛ لم تبدأ الجلسة'}finally{button.disabled=false}
   };
-  render();if(employee)registerSession();
+  box._kpiRender=render;render();if(employee)registerSession();
  }
  const inject=()=>{const root=document.documentElement;if(!root)return false;const script=document.createElement('script');script.src=browser.runtime.getURL('page-hook.js');script.onload=()=>script.remove();root.appendChild(script);return true};
  if(!inject())document.addEventListener('readystatechange',inject,{once:true});
