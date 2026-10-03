@@ -1,6 +1,17 @@
 (function(){
  const post=(type,payload)=>window.postMessage({source:'ARABICSS_KPI_SSE',type,data:JSON.stringify(payload)},location.origin);
  let connection='unknown',receivedAt=null;
+ // Arabicss End session uses an AJAX agentLogout request, not a browser logout.
+ const XHR=window.XMLHttpRequest;
+ if(XHR){const open=XHR.prototype.open,send=XHR.prototype.send;
+  XHR.prototype.open=function(method,url,...rest){this._kpiUrl=String(url);return open.call(this,method,url,...rest)};
+  XHR.prototype.send=function(body){
+   try{const u=new URL(this._kpiUrl,location.origin),p=new URLSearchParams(typeof body==='string'?body:'');
+    if(u.origin===location.origin&&p.get('action')==='agentLogout')this.addEventListener('load',()=>{if(this.status<200||this.status>=300)return;try{const r=typeof this.response==='object'&&this.response?this.response:JSON.parse(this.responseText);if(r&&r.action!=='error')post('agentloggedout',{confirmed:true,source:'agentLogout'})}catch{}});
+   }catch{}
+   return send.call(this,body);
+  };
+ }
  const Native=window.EventSource;
  if(Native){
   const Wrapped=function(...args){
