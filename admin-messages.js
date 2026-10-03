@@ -1,0 +1,30 @@
+(function(){
+ const tab=document.createElement('button');tab.dataset.tab='messages';tab.textContent='رسائل وتنبيهات الإدارة';$('tabs').appendChild(tab);
+ const section=document.createElement('section');section.id='messages';section.className='panel view';section.hidden=true;
+ section.innerHTML='<h2>إرسال تنبيه</h2><div class="tools"><label>إلى<select id="messageTarget"><option value="all">كل الموظفين النشطين</option><option value="selected">موظفون تختارهم</option></select></label><label>الأهمية<select id="messagePriority"><option value="normal">عادي</option><option value="urgent">عاجل</option></select></label><label>صلاحية الرسالة<select id="messageHours"><option value="1">ساعة</option><option value="4" selected>4 ساعات</option><option value="12">12 ساعة</option><option value="24">24 ساعة</option></select></label></div><fieldset id="messagePeople" hidden><legend>اختار موظفًا أو أكثر</legend><div id="messageChecks" class="tools"></div></fieldset><label>العنوان<input id="messageTitle" maxlength="80" placeholder="مثال: تنبيه مهم للشيفت"></label><label>الرسالة<textarea id="messageBody" maxlength="1000" rows="4" style="width:100%;box-sizing:border-box;padding:12px;background:#0b1929;color:#fff;border:1px solid #64748b;border-radius:8px;font:16px Arial"></textarea></label><button id="sendMessageButton">إرسال التنبيه</button><p id="messageResult" role="status"></p><p class="muted">غير المتصل تصله الرسالة عند دخوله قبل انتهاء صلاحيتها. «ظهر عنده» لا تعني قرأه؛ «تم الاطلاع» تسجل عند ضغط الموظف. إشعارات سطح المكتب تحتاج الإضافة المحدثة والسماح بالإشعارات في الجهاز.</p><div class="section-head"><h3>سجل الرسائل — اليوم والموظف حسب الفلاتر بالأعلى</h3><button id="exportMessages" class="secondary">سحب شيت الرسائل</button></div><p id="messageLogNote" class="muted"></p><div class="tablewrap"><table><thead><tr><th>الموظف</th><th>العنوان</th><th>الرسالة</th><th>الأهمية</th><th>وقت الإرسال</th><th>الحالة</th><th>ظهر عنده</th><th>تم الاطلاع</th><th>انتهاء الصلاحية</th></tr></thead><tbody id="messageRows"></tbody></table></div>';
+ $('dashboard').appendChild(section);
+ let rows=[],busy=false,requestId=null,lastPayload='';
+ const status=r=>r.acknowledged_at?'تم الاطلاع':r.delivered_at?'ظهر عنده':Date.parse(r.expires_at)<=Date.now()?'انتهت قبل الوصول':'بانتظار الوصول';
+ const values=r=>[r.employee_name,r.title,r.message,r.priority==='urgent'?'عاجل':'عادي',at(r.created_at),status(r),at(r.delivered_at),at(r.acknowledged_at),at(r.expires_at)];
+ function roster(){const checked=new Set([...$('messageChecks').querySelectorAll('input:checked')].map(e=>e.value));$('messageChecks').replaceChildren();for(const e of staff.filter(e=>e.active)){const label=document.createElement('label'),input=document.createElement('input');input.type='checkbox';input.value=e.id;input.checked=checked.has(String(e.id));label.append(input,document.createTextNode(' '+e.name));$('messageChecks').appendChild(label)}}
+ async function refreshMessages(){
+  if(!sessionStorage.getItem('adminPassword')){rows=[];table('messageRows',[],9);return}if(busy)return;busy=true;
+  const date=$('day').value,employee=$('employeeFilter').value;
+  try{const d=await api('/api/messages?'+new URLSearchParams({date,employee}));if(!sessionStorage.getItem('adminPassword')||date!==$('day').value||employee!==$('employeeFilter').value)return;rows=d.messages;table('messageRows',rows.map(r=>row(values(r))),9);$('messageLogNote').textContent=d.truncated?'آخر 1000 مستلم فقط؛ حدد موظفًا لتقليل النتائج.':'سجل محفوظ؛ وقت الإرسال هو أساس يوم التشغيل. فلتر الاكستنشن لا يطبق هنا لأن الرسالة موجهة للشخص.';}catch(e){$('messageLogNote').textContent='تعذر تحميل سجل الرسائل: '+e.message}finally{busy=false}
+ }
+ $('messageTarget').onchange=()=>{$('messagePeople').hidden=$('messageTarget').value!=='selected'};
+ $('sendMessageButton').onclick=async()=>{
+  const recipients=$('messageTarget').value==='all'?'all':[...$('messageChecks').querySelectorAll('input:checked')].map(e=>Number(e.value)),payload={title:$('messageTitle').value.trim(),message:$('messageBody').value.trim(),priority:$('messagePriority').value,hours:Number($('messageHours').value),recipients};
+  if(!payload.title||!payload.message||Array.isArray(recipients)&&!recipients.length){$('messageResult').textContent='اكتب العنوان والرسالة واختار المستلمين';return}
+  const fingerprint=JSON.stringify(payload);if(fingerprint!==lastPayload||!requestId){requestId=crypto.randomUUID();lastPayload=fingerprint}
+  const button=$('sendMessageButton');button.disabled=true;
+  try{const d=await api('/api/messages',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...payload,id:requestId})});$('messageResult').textContent=d.duplicate?'الرسالة محفوظة بالفعل؛ لم يتكرر الإرسال':'تم إرسال التنبيه إلى '+d.recipients+' موظف';$('messageBody').value='';requestId=null;refreshMessages()}catch(e){$('messageResult').textContent='لم يتأكد الإرسال؛ أعد المحاولة بنفس الرسالة: '+e.message}finally{button.disabled=false}
+ };
+ $('exportMessages').onclick=()=>{if(!rows.length){$('messageResult').textContent='لا يوجد سجل للتصدير';return}csv('admin-messages',['الموظف','العنوان','الرسالة','الأهمية','وقت الإرسال','الحالة','ظهر عنده','تم الاطلاع','انتهاء الصلاحية'],rows.map(values))};
+ window.addEventListener('kpi-admin-refresh',()=>{roster();refreshMessages()});$('tabs').addEventListener('click',e=>{if(e.target.closest('[data-tab="messages"]'))refreshMessages()});
+ $('logoutButton').addEventListener('click',()=>{rows=[];table('messageRows',[],9);$('messageChecks').replaceChildren();$('messageTitle').value='';$('messageBody').value='';$('messageResult').textContent='';requestId=null;lastPayload=''});
+ for(const id of ['day','employeeFilter'])$(id).addEventListener('change',()=>{rows=[];table('messageRows',[],9);refreshMessages()});
+ const download=$('settings').querySelector('a.button');if(download){download.href=API+'/firefox-2.4.8.zip';download.textContent='تحميل إضافة Firefox 2.4.8 — الرسائل والتنبيهات';}for(const h of $('settings').querySelectorAll('h3'))if(h.textContent.startsWith('إضافة Firefox'))h.textContent='إضافة Firefox 2.4.8';
+ roster();refreshMessages();
+})();
+
