@@ -38,6 +38,16 @@ async function refresh(force=false){
  }catch(e){if(seq===generation){$('syncStatus').textContent='تعذر التحديث — البيانات المعروضة قديمة';$('syncStatus').classList.add('bad');$('message').textContent=e.message;renderLive()}}finally{if(seq===generation)refreshing=false}
 }
 function metricsFiltered(){const perf=daily?.performance||[];const records=$('extensionFilter').value?perf:staff.filter(e=>e.active||perf.some(p=>p.employeeId===e.id)||Number($('employeeFilter').value)===e.id).map(e=>perf.find(p=>p.employeeId===e.id)||{employeeId:e.id,employee:e.name,calls:0,inbound:0,outbound:0,answered:0,avgHandleTime:0,breakSeconds:0,unknownBreaks:0,firstLogin:null,lastLogout:null});return records.filter(p=>!$('employeeFilter').value||p.employeeId===Number($('employeeFilter').value))}
+const liveLabel=s=>({ready:'متاح — منتظر مكالمة',on_call:'شغال — في مكالمة',break:'في بريك',logged_in:'بانتظار دخول التشغيل',offline:'خروج موثق',no_session:'لم يسجل دخولًا',unknown:'الاتصال غير مؤكد'}[s]||'الاتصال غير مؤكد');
+function liveState(p){
+ const age=Date.now()+offset-Date.parse(p.evidenceAt||'');
+ if(Date.now()-lastLiveFetch>=15000)return 'unknown';
+ if(['offline','no_session'].includes(p.state))return p.state;
+ if(!Number.isFinite(age)||age < -5000||age>=90000)return 'unknown';
+ if(p.state==='ready')return /^\d+$/.test(String(p.extension||''))?'ready':'logged_in';
+ return ['on_call','break','logged_in'].includes(p.state)?p.state:'unknown';
+}
+function livePeople(){return(daily?.presence||[]).filter(matches).filter(p=>!$('liveStateFilter').value||liveState(p)===$('liveStateFilter').value)}
 function renderDaily(){
  const perf=metricsFiltered(),sum=k=>perf.reduce((n,p)=>n+(p[k]||0),0);
  cards('metricCards',[['مكالمات مسجلة',sum('calls')],['وارد',sum('inbound')],['صادر',sum('outbound')],['البريك المكتمل',fmt(sum('breakSeconds'))]]);
@@ -50,11 +60,30 @@ function renderDaily(){
 }
 function renderLive(){
  const fresh=Date.now()-lastLiveFetch<15000,people=(daily?.presence||[]).filter(matches),now=Date.now()+offset;
- cards('liveCards',[['متاح لاستقبال مكالمة',fresh?people.filter(p=>p.state==='ready'&&/^\d+$/.test(String(p.extension||''))&&now-Date.parse(p.evidenceAt||0)<90000).length:'غير مؤكد'],['في مكالمة',fresh?people.filter(p=>p.state==='on_call').length:'غير مؤكد'],['في بريك',fresh?people.filter(p=>p.state==='break').length:'غير مؤكد'],['خروج موثق',fresh?people.filter(p=>p.state==='offline').length:'غير مؤكد'],['لم يبدأ جلسة بالنظام',fresh?people.filter(p=>p.state==='no_session').length:'غير مؤكد'],['غير مؤكد',people.filter(p=>!fresh||p.state==='unknown').length]]);
- $('liveRows').innerHTML=people.map(p=>{const e=staff.find(e=>e.id===p.employeeId),confirmed=fresh&&(['offline','no_session'].includes(p.state)||now-Date.parse(p.evidenceAt||0)<90000),state=confirmed?p.state:'unknown',duration=confirmed&&['on_call','break'].includes(state)&&p.startedAt?fmt((now-Date.parse(p.startedAt))/1000):'غير معروف';return '<tr>'+[e?.name||p.employeeId,p.extension,stateLabel(state),p.phone||'—',p.queue?requestType(p.queue):'—',at(p.startedAt)].map(v=>'<td>'+esc(v)+'</td>').join('')+'<td><span class="clock">'+esc(duration)+'</span></td><td>'+esc(at(p.evidenceAt))+'</td></tr>'}).join('')||'<tr><td colspan="8">لا يوجد موظفون مطابقون للفلاتر؛ أضف موظفين من قسم الموظفون والإضافة</td></tr>';
+ const count=s=>fresh?people.filter(p=>liveState(p)===s).length:'غير مؤكد';
+ cards('liveCards',[['المتاحون لاستقبال مكالمة',count('ready')],['شغالون في مكالمات',count('on_call')],['في بريك',count('break')],['بانتظار دخول التشغيل',count('logged_in')],['خروج / لم يسجل',fresh?people.filter(p=>['offline','no_session'].includes(liveState(p))).length:'غير مؤكد'],['حالة غير مؤكدة',people.filter(p=>liveState(p)==='unknown').length]]);
+ const shown=livePeople(),duration=p=>['on_call','break'].includes(liveState(p))&&p.startedAt?fmt((now-Date.parse(p.startedAt))/1000):'غير معروف';
+ $('employeeLiveGroups').innerHTML=['ready','on_call','break','logged_in','unknown','offline','no_session'].filter(s=>!$('liveStateFilter').value||$('liveStateFilter').value===s).map(s=>{
+  const list=shown.filter(p=>liveState(p)===s);if(!list.length&&!['ready','on_call','break'].includes(s))return '';
+  return '<section class="employee-group state-'+s+'"><h4>'+esc(liveLabel(s))+' <span>'+list.length+'</span></h4><div class="employee-tiles">'+(list.map(p=>'<article class="employee-tile"><strong>'+esc(staff.find(e=>e.id===p.employeeId)?.name||'اسم الموظف غير متاح')+'</strong><span>'+esc(liveLabel(s))+'</span>'+(['on_call','break'].includes(s)?'<time class="clock">'+esc(duration(p))+'</time>':'')+'</article>').join('')||'<p class="muted">لا يوجد موظفون بهذه الحالة</p>')+'</div></section>';
+ }).join('')||'<p class="muted">لا يوجد موظفون مطابقون للفلاتر.</p>';
+ $('liveRows').innerHTML=shown.map(p=>{const e=staff.find(e=>e.id===p.employeeId);return '<tr>'+[e?.name||'اسم غير متاح',p.extension,liveLabel(liveState(p)),p.phone||'—',p.queue?requestType(p.queue):'—',at(p.startedAt)].map(v=>'<td>'+esc(v)+'</td>').join('')+'<td><span class="clock">'+esc(duration(p))+'</span></td><td>'+esc(at(p.evidenceAt))+'</td></tr>'}).join('')||'<tr><td colspan="8">لا يوجد موظفون مطابقون للفلاتر</td></tr>';
  const live=historical?.live,stale=!fresh||!live||Date.now()-Date.parse(live.observedAt)>30000;
- $('queueLiveNote').textContent=live?(stale?'لقطة قديمة — لا تعتبر لايف':'لقطة حديثة')+' — '+at(live.observedAt):'لم تصل بيانات نوع الطلب؛ فعّل موصل الإدارة في الإضافة.';
- table('queueLiveRows',(live?.records||[]).filter(r=>!$('queueFilter').value||r[0]===$('queueFilter').value).map(r=>row([requestType(r[0]),r[2],r[9],r[8],r[10]])),5);
+ const records=(live?.records||[]).filter(r=>!$('queueFilter').value||r[0]===$('queueFilter').value),waiting=records.filter(r=>/^on wait$|^waiting$/i.test(String(r[10]).trim()));
+ $('queueLiveNote').textContent=(live?(stale?'بيانات قديمة — لا تؤكد الانتظار الآن':'منتظرون الآن: '+waiting.length)+' — آخر سحب '+at(live.observedAt):'الانتظار غير متاح — راجع اتصال موصل الإدارة.')+' · هذا قسم العملاء، وليس الموظفين المتاحين؛ لا يتفلتر باسم الموظف.';
+ table('waitingRows',waiting.map(r=>row([requestType(r[0]),r[9],r[8]])),3);
+ table('queueLiveRows',records.map(r=>row([requestType(r[0]),r[2],r[9],r[8],/^live call$/i.test(String(r[10]).trim())?'مكالمة جارية':/^on wait$|^waiting$/i.test(String(r[10]).trim())?'ينتظر الرد':r[10]])),5);
+ const alerts=[];
+ if(!fresh)alerts.push('بيانات الموظفين قديمة — المتاحون الآن غير مؤكدين');
+ if(stale)alerts.push('انتظار العملاء غير مؤكد — لا توجد لقطة حديثة');
+ if(!stale&&waiting.some(r=>{const t=String(r[8]).trim();return /^\d+:[0-5]\d:[0-5]\d$/.test(t)&&t.split(':').reduce((v,n)=>v*60+Number(n),0)>7}))alerts.push('فيه عملاء انتظارهم تجاوز 7 ثوانٍ');
+ const overBreak=people.filter(p=>liveState(p)==='break'&&p.startedAt&&now-Date.parse(p.startedAt)>=900000);
+ const overCall=people.filter(p=>liveState(p)==='on_call'&&p.startedAt&&now-Date.parse(p.startedAt)>180000);
+ if(overBreak.length)alerts.push(overBreak.length+' موظف تجاوز بريك 15 دقيقة');if(overCall.length)alerts.push(overCall.length+' مكالمة تجاوزت 3 دقائق');
+ $('attentionNow').textContent=alerts.length?alerts.join(' · '):'لا توجد تنبيهات تأخير في البيانات الحالية';$('attentionNow').classList.toggle('warning',!!alerts.length);
+ const h=historical?.report;
+ cards('overviewDayCards',h?[['مكالمات يوم التشغيل',h.calls],['تم الرد',h.answered],['فائتة محتسبة',h.abandoned],['الرد خلال 10ث — SLA',h.sla==null?'غير متاح':Number(h.sla).toFixed(2)+'%']]:[['مؤشرات اليوم','لا يوجد سجل محفوظ']]);
+ $('overviewDayNote').textContent='يوم التشغيل '+($('day').value||'—')+' من 9ص إلى 3ص اليوم التالي. '+(h?'إجمالي سجل أرابيكس؛ لا يُنسب إلى الموظف المحدد بالفلتر.':'استكمل سحب السجل من قسم مؤشرات المكالمات.');
 }
 function renderHistory(){
  const h=historical?.report;
@@ -99,7 +128,7 @@ async function exportData(kind,button){
  if(['calls','attendance'].includes(kind)){const d=await api(dashboardQuery(date)+'&all=1');if(date!==$('day').value)throw Error('تغير التاريخ؛ أعد التصدير');if(kind==='calls')csv('calls',['الموظف','الاكستنشن','النوع','الهاتف','الحالة','بداية المكالمة','وقت آخر حدث','المدة بالثواني'],callsFiltered(d.calls).map(e=>[e.agentName,e.extension,e.callType,e.phone,e.eventType+(e.outsideHours?' — خارج فترة التشغيل':''),e.startedAt,e.occurredAt,e.durationSeconds]));else csv('attendance',['الموظف','الاكستنشن','الحدث','الحالة / السبب','الوقت','المدة بالثواني'],eventsFiltered(d.timeline).map(e=>[e.agentName,e.extension,eventLabel(e.eventType),reasonLabel(e.state)+(e.outsideHours?' — خارج فترة التشغيل':''),e.occurredAt,e.eventType==='break_end_unknown'?'غير معروف':e.eventType==='break_end'?e.durationSeconds:'']));}
  else if(kind==='employees')csv('employee-kpis',['الموظف','الكود','مكالمات','وارد','صادر','مكتملة','متوسط المدة بالثواني','أول دخول','آخر خروج','البريك المكتمل بالثواني','بريكات ناقصة'],metricsFiltered().map(p=>[staff.find(e=>e.id===p.employeeId)?.name||p.employee,staff.find(e=>e.id===p.employeeId)?.employeeCode,p.calls,p.inbound,p.outbound,p.answered,p.avgHandleTime,p.firstLogin,p.lastLogout,p.breakSeconds,p.unknownBreaks]));
  else if(kind==='roster')csv('employees',['الاسم','الكود','الحالة'],staff.filter(e=>!$('employeeFilter').value||e.id===Number($('employeeFilter').value)).map(e=>[e.name,e.employeeCode,e.active?'نشط':'محذوف']));
- else if(kind==='live')csv('live-snapshot',['وقت السحب','الموظف','الاكستنشن','الحالة','الهاتف','نوع الطلب','بداية الحالة','مدة الحالة','آخر دليل'],(daily?.presence||[]).filter(matches).map(p=>[new Date().toISOString(),staff.find(e=>e.id===p.employeeId)?.name,p.extension,Date.now()-lastLiveFetch<15000?stateLabel(p.state):'لقطة قديمة',p.phone,requestType(p.queue),p.startedAt,Date.now()-lastLiveFetch<15000&&p.state!=='unknown'&&p.startedAt?fmt((Date.now()+offset-Date.parse(p.startedAt))/1000):'غير معروف',p.evidenceAt]));
+ else if(kind==='live')csv('live-snapshot',['وقت السحب','الموظف','التحويلة','الحالة','الهاتف','نوع الطلب','بداية الحالة','مدة الحالة','آخر دليل'],livePeople().map(p=>[new Date().toISOString(),staff.find(e=>e.id===p.employeeId)?.name,p.extension,liveLabel(liveState(p)),p.phone,requestType(p.queue),p.startedAt,['on_call','break'].includes(liveState(p))&&p.startedAt?fmt((Date.now()+offset-Date.parse(p.startedAt))/1000):'غير معروف',p.evidenceAt]));
  else if(kind==='queueLive')csv('queue-live',['وقت اللقطة','نوع الطلب','حساب أرابيكس','الهاتف','الانتظار','الحالة'],(historical?.live?.records||[]).filter(r=>!$('queueFilter').value||r[0]===$('queueFilter').value).map(r=>[historical.live.observedAt,requestType(r[0]),r[2],r[9],r[8],r[10]]));
  else if(kind==='queue')csv('queue-kpis',['رقم القائمة في أرابيكس','نوع الطلب','مكالمات','تم الرد','فائتة محتسبة','متوسط انتظار الرد بالثواني (ASA)','الرد خلال 10 ثوانٍ % (SLA)','نسبة المكالمات الفائتة %'],queuesFiltered().map(q=>[q.queue,q.label,q.calls,q.answered,q.abandoned,q.asa,q.sla,q.abandonmentRate]));
  else if(kind==='missed')csv('missed',['نوع الطلب','التاريخ','التوقيت','الهاتف','الانتظار بالثواني','التصنيف'],missedFiltered().map(c=>[requestType(c.queue),c.date,c.end||c.start,c.phone,c.waitSeconds,missedLabel(c.classification)]));
@@ -120,11 +149,12 @@ $('refreshButton').onclick=()=>refresh(true);
 for(const id of ['callSearch','callType','callStatus','eventFilter','contextFilter'])$(id).addEventListener('input',()=>{renderDaily();renderLive()});
 let filterTimer;for(const id of ['employeeFilter','extensionFilter'])$(id).addEventListener('input',()=>{generation++;clearDay();clearTimeout(filterTimer);filterTimer=setTimeout(()=>refresh(true),350)});
 for(const id of ['queueFilter','missedFilter'])$(id).addEventListener('change',()=>{renderHistory();renderLive()});
+$('liveStateFilter').addEventListener('change',renderLive);
+document.addEventListener('click',e=>{const b=e.target.closest('[data-open-tab]');if(b)showTab(b.dataset.openTab)});
 document.addEventListener('click',e=>{const button=e.target.closest('button');if(!button)return;if(button.dataset.filterShortcut){document.querySelector('.filters').scrollIntoView({block:'start'});requestAnimationFrame(()=>{const picker=$('employeeFilter-button');if(picker){picker.focus();picker.click()}else $('employeeFilter').focus()});return}if(button.dataset.export)exportData(button.dataset.export,button);if(button.dataset.missed!==undefined)showContext(Number(button.dataset.missed));if(button.dataset.employee)changeEmployee(Number(button.dataset.employee))});
 $('addEmployeeButton').onclick=addEmployee;
 $('importButton').onclick=async()=>{const file=$('historyFile').files[0];if(!file){$('message').textContent='اختر ملف Excel أولًا';return}if(file.size>2000000){$('message').textContent='صدّر يومًا واحدًا بحجم أقل من 2MB';return}try{const d=await api('/api/history',{method:'POST',headers:{'content-type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'},body:file});$('day').value=d.date;clearDay();await refresh(true);$('message').textContent=d.duplicate?'السجل محفوظ بالفعل؛ لم يتكرر':'تم حفظ سجل هذا اليوم'}catch(e){$('message').textContent='لم يُحفظ السجل: '+e.message}};
 setInterval(renderLive,1000);
 setInterval(()=>{if(sessionStorage.getItem('adminPassword'))refresh()},5000);
 if(sessionStorage.getItem('adminPassword')){$('login').hidden=true;$('dashboard').hidden=false;refresh(true)}
-
 
