@@ -1,13 +1,26 @@
 (function(){
  if(location.hostname!=='41.38.207.218'||/^\/themes\/arabicssReportsInclude(?:\/|$)/i.test(location.pathname))return;
- const API='https://marsad-kpi-live.karim87nu.chatgpt.site',TOKEN='7000865f1220458f86506b41a97cab7d',VERSION='2.4.6';
+ const API='https://marsad-kpi-live.karim87nu.chatgpt.site',TOKEN='7000865f1220458f86506b41a97cab7d',VERSION='2.4.8';
  const SESSION='arabicss_kpi_employee_session',STATE='arabicss_kpi_state',EPOCH='arabicss_kpi_runtime_epoch';
  let employee=null,sessionToken='',runtimeEpoch='',sourceConnection='unknown',sourceStateKnown=false,call=null,breakActive=false,breakStarted=null,scanTimer=null,refreshTimer=null,focusRefresh=null,flushing=false,initialized=false;
  const ext=()=>((document.querySelector('#issabel-callcenter-titulo-consola')?.textContent||'').match(/(?:IAX2|SIP)\/(\d+)/i)||[])[1]||'';
+ globalThis.kpiMessageIdentity=()=>employee&&sessionToken&&ext()?{token:sessionToken,deviceToken:TOKEN,employeeId:employee.id}:null;
  const apiFetch=async(path,options={})=>{const r=await browser.runtime.sendMessage({type:'KPI_API',path,method:options.method||'GET',headers:options.headers||{},body:options.body});return {...r,json:()=>JSON.parse(r.body)}};
  const seconds=v=>{if(typeof v==='number')return Math.max(0,Math.round(v));const s=String(v??'').trim();if(/^\d+$/.test(s))return Number(s);return /^\d{1,3}:[0-5]\d(?::[0-5]\d)?$/.test(s)?s.split(':').reduce((a,n)=>a*60+Number(n),0):null};
  const canonicalId=v=>String(v||'').match(/(?:incoming-q\d+-|outgoing-)?(\d+)$/)?.[1]||String(v||'');
  const status=text=>{const el=document.getElementById('kpi-status');if(el)el.textContent=text};
+ const alertAttempts=new Map();
+ function checkAlerts(){
+  if(!employee||!sessionToken||!ext()||sourceConnection!=='connected'||!sourceStateKnown)return;
+  const items=[];
+  if(call&&!call.observed&&call.startedAt&&Date.now()-call.startedAt>180000)items.push(['call_long','call:'+call.callId+':'+call.startedAt,'مكالمتك تجاوزت 3 دقائق']);
+  if(breakActive&&breakStarted){const age=Date.now()-Date.parse(breakStarted);if(age>=900000)items.push(['break_limit','break:'+breakStarted+':limit','انتهت مدة البريك — ارجع لاستقبال المكالمات']);else if(age>=840000)items.push(['break_warning','break:'+breakStarted+':warning','باقي دقيقة على البريك']);}
+  const box=document.getElementById('kpi-session-box');let banner=document.getElementById('kpi-alert-banner');
+  if(box&&!banner){banner=document.createElement('div');banner.id='kpi-alert-banner';banner.setAttribute('role','alert');banner.style.cssText='margin-top:10px;padding:10px;background:#713f12;color:#fff;border-radius:8px';box.appendChild(banner)}
+  if(banner){banner.hidden=!items.length;banner.textContent=items.map(i=>i[2]).join(' — ')}
+  for(const [kind,key] of items){if((alertAttempts.get(key)||0)>Date.now()-60000)continue;alertAttempts.set(key,Date.now());browser.runtime.sendMessage({type:'EMPLOYEE_ALERT',kind,key,token:sessionToken}).catch(()=>{});}
+ }
+ setInterval(checkAlerts,1000);
  let savedFingerprint='',arabicssAuthenticated=false;
  function saveState(){const state={token:sessionToken,extension:ext()||boundExtension(),arabicssAuthenticated,call,breakActive,breakStarted};sessionStorage.setItem(STATE,JSON.stringify(state));const fingerprint=JSON.stringify({...state,call:call?{...call,elapsed:null}:null});if(employee&&sessionToken&&fingerprint!==savedFingerprint){savedFingerprint=fingerprint;registerSession()}}
  function readState(){try{return JSON.parse(sessionStorage.getItem(STATE)||'null')}catch{return null}}
@@ -167,3 +180,5 @@
  window.addEventListener('pagehide',()=>{if(employee){saveState();activity('page_closed',{state:'navigation_or_closed'})}});
  if(document.body)boot();else document.addEventListener('DOMContentLoaded',boot,{once:true});
 })();
+
+
