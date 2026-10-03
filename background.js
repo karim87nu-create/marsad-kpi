@@ -51,6 +51,21 @@ async function collectLive(){
  }catch(e){status={...status,liveError:e.message||'تعذر سحب اللايف'}}finally{liveBusy=false}
 }
 browser.runtime.onMessage.addListener(async(message,sender)=>{
+ if(message?.type==='EMPLOYEE_ALERT'){
+  if(!sender.tab||new URL(sender.url||'').hostname!=='41.38.207.218')throw Error('invalid_sender');
+  await startupCleanup;
+  return withQueueLock(async()=>{
+   const entry=((await browser.storage.local.get(TAB_SESSIONS))[TAB_SESSIONS]||{})[sender.tab.id];
+   if(!entry||entry.pendingClose||entry.token!==message.token)return {ok:false};
+   const kinds={call_long:['مكالمتك تجاوزت 3 دقائق','راجع احتياج العميل واستكمل خدمته؛ التنبيه لا ينهي المكالمة.'],break_warning:['باقي دقيقة على البريك','مدة البريك 15 دقيقة. استعد للعودة لاستقبال المكالمات.'],break_limit:['انتهت مدة البريك','مرّت 15 دقيقة. ارجع لاستقبال المكالمات.']};
+   const notice=kinds[message.kind];if(!notice)return {ok:false};
+   const key=String(message.key||'').slice(0,160),seen=entry.alertKeys||[];if(!key||seen.includes(key))return {ok:true,duplicate:true};
+   try{await browser.notifications.create('kpi-'+sender.tab.id+'-'+message.kind,{type:'basic',iconUrl:browser.runtime.getURL('notification.svg'),title:notice[0],message:notice[1]});}catch{return {ok:false}}
+   const entries=(await browser.storage.local.get(TAB_SESSIONS))[TAB_SESSIONS]||{};
+   if(entries[sender.tab.id]?.token===message.token){entries[sender.tab.id].alertKeys=[...seen,key].slice(-100);await browser.storage.local.set({[TAB_SESSIONS]:entries})}
+   return {ok:true};
+  });
+ }
  if(message?.type==='END_EMPLOYEE_SESSION'){
   if(!sender.tab||new URL(sender.url||'').hostname!=='41.38.207.218')throw Error('invalid_sender');
   await startupCleanup;
@@ -115,8 +130,10 @@ browser.runtime.onMessage.addListener(async(message,sender)=>{
  }
  if(message?.type!=='KPI_API')return;
  if(!sender.url||new URL(sender.url).hostname!=='41.38.207.218')throw Error('invalid_sender');
- const path=String(message.path||'');if(!/^\/api\/(employees\/list(?:\?.*)?|session\/(?:start|end)|events)$/.test(path))throw Error('invalid_path');
+ const path=String(message.path||'');if(!/^\/api\/(employees\/list(?:\?.*)?|session\/(?:start|end)|events|messages)$/.test(path))throw Error('invalid_path');
  const r=await request(API+path,{method:message.method||'GET',headers:message.headers||{},body:message.body});return{status:r.status,ok:r.ok,body:await r.text()}
 });
 setInterval(collectHistory,300000);setInterval(collectLive,5000);collectHistory();collectLive();
 setInterval(()=>withQueueLock(async()=>{const entries=(await browser.storage.local.get(TAB_SESSIONS))[TAB_SESSIONS]||{};for(const [id,entry] of Object.entries(entries))if(entry.pendingClose&&await endTracked(entry,entry.closeReason||'browser_restarted'))delete entries[id];await browser.storage.local.set({[TAB_SESSIONS]:entries})}).catch(()=>{}),10000);
+
+
