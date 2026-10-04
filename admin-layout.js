@@ -4,7 +4,7 @@
  const tabs=document.getElementById('tabs'),nav=document.createElement('nav');nav.className='workspace-nav';nav.setAttribute('aria-label','القائمة الرئيسية');
  for(const [id,label,views] of groups){const b=document.createElement('button');b.textContent=label;b.dataset.workspace=id;b.onclick=()=>showTab(views[0]);nav.append(b)}tabs.before(nav);
  const dashboard=document.getElementById('dashboard');dashboard.classList.add('sidebar-workspace');
- const sidebar=document.createElement('aside');sidebar.className='workspace-sidebar';sidebar.id='workspaceSidebar';dashboard.prepend(sidebar);sidebar.append(nav,tabs);
+ const sidebar=document.createElement('aside');sidebar.className='workspace-sidebar';sidebar.id='workspaceSidebar';dashboard.prepend(sidebar);sidebar.append(document.querySelector('#dashboard > .filters'),nav,tabs);
  const menu=document.createElement('button');menu.className='secondary sidebar-toggle';menu.textContent='القائمة';menu.setAttribute('aria-controls',sidebar.id);menu.setAttribute('aria-expanded','false');nav.before(document.createElement('span'));dashboard.before(menu);
  const closeMenu=()=>{dashboard.classList.remove('sidebar-open');menu.setAttribute('aria-expanded','false')};menu.onclick=()=>{const open=dashboard.classList.toggle('sidebar-open');menu.setAttribute('aria-expanded',String(open))};document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeMenu();menu.focus()}});
  new MutationObserver(()=>{menu.hidden=dashboard.hidden;if(dashboard.hidden)closeMenu()}).observe(dashboard,{attributes:true,attributeFilter:['hidden']});menu.hidden=dashboard.hidden;
