@@ -3,6 +3,9 @@
  let opened=null;
  const close=()=>{if(!opened)return;opened.menu.hidden=true;opened.button.setAttribute("aria-expanded","false");opened=null};
  for(const select of document.querySelectorAll("select")){
+  // A body-level popup cannot appear above a native dialog's top layer.
+  // Keep its small, accessible status picker native inside the dialog.
+  if(select.closest("dialog"))continue;
   const button=document.createElement("button"),menu=document.createElement("div"),search=document.createElement("input"),list=document.createElement("div");
   const label=Array.from(select.closest("label")?.childNodes||[]).filter(n=>n.nodeType===3).map(n=>n.textContent).join(" ").trim()||"اختر";
   button.type="button";button.className="select-button";button.id=select.id+"-button";
