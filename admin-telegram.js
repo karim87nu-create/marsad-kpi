@@ -20,7 +20,7 @@
   try{const result=await api('/api/telegram',action?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action,revision:state?.revision,...extra})}:{});
    if(seq!==sequence||!auth||auth!==sessionStorage.getItem('adminPassword'))return;
    state=result;render();text('tgMessage',action==='discover'&&!result.candidateName&&!result.paired?'لم يصل كود الربط بعد. ابعته للبوت ثم حاول مرة أخرى.':'تم تحديث حالة الربط.');
-  }catch(e){text('tgMessage',errors[e.message==='telegram_bot_blocked'?'telegram_chat_blocked':e.message]||'تعذر إتمام الربط. تأكد من الدخول للإدارة واتصال الإنترنت.');}
+  }catch(e){text('tgMessage',e.message==='telegram_connection_failed'?'تعذر الاتصال بتليجرام لإتمام التحقق أو الربط. لم تُرسل رسالة اختبار. حاول لاحقًا.':e.message==='telegram_redirect_rejected'?'رفضنا تحويل الاتصال إلى عنوان آخر لحماية التوكن. لم يكتمل الطلب.':errors[e.message==='telegram_bot_blocked'?'telegram_chat_blocked':e.message]||'تعذر إتمام الربط. تأكد من الدخول للإدارة واتصال الإنترنت.');}
   finally{node('tgToken').value='';busy=false;node('telegram').querySelectorAll('button').forEach(b=>b.disabled=false)}
  }
  const tab=document.createElement('button');tab.dataset.tab='telegram';tab.textContent='تنبيهات الموبايل';node('tabs').appendChild(tab);
