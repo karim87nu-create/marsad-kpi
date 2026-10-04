@@ -25,7 +25,9 @@
  sidebar.appendChild(brand);
  const label=document.createElement('div');label.className='sidebar-section-label';label.textContent='القائمة الرئيسية';sidebar.appendChild(label);
  const nav=document.createElement('nav');nav.className='workspace-nav';nav.setAttribute('aria-label','القائمة الرئيسية');sidebar.appendChild(nav);
- for(const g of groups){const b=document.createElement('button');b.type='button';b.dataset.workspace=g.id;b.innerHTML='<span class="nav-icon" aria-hidden="true">'+g.icon+'</span><span>'+g.label+'</span>';b.addEventListener('click',()=>{showTab(g.views[0]);closeSidebar()});nav.appendChild(b)}
+ for(const g of groups){
+  const b=document.createElement('button');b.type='button';b.dataset.workspace=g.id;b.innerHTML='<span class="nav-icon" aria-hidden="true">'+g.icon+'</span><span>'+g.label+'</span>';b.addEventListener('click',()=>{showTab(g.views[0]);closeSidebar()});nav.appendChild(b);
+ }
  const subLabel=document.createElement('div');subLabel.className='sidebar-section-label';subLabel.textContent='داخل القسم';sidebar.appendChild(subLabel);sidebar.appendChild(tabs);
  const footer=document.createElement('div');footer.className='sidebar-footer';sidebar.appendChild(footer);
  const logout=$('logoutButton');if(logout)footer.appendChild(logout);
@@ -90,9 +92,11 @@
   const group=groups.find(g=>g.views.includes(view))||groups[0];
   for(const b of nav.querySelectorAll('[data-workspace]')){const selected=b.dataset.workspace===group.id;b.classList.toggle('selected',selected);b.setAttribute('aria-current',selected?'page':'false')}
   for(const b of tabs.querySelectorAll('[data-tab]'))b.hidden=!group.views.includes(b.dataset.tab);
-  tabs.hidden=group.views.length===1;subLabel.hidden=group.views.length===1;
+  tabs.hidden=group.views.length===1;
+  subLabel.hidden=group.views.length===1;
   $('workspaceTitle').textContent=group.title;$('workspaceDescription').textContent=group.desc;
-  previousShowTab(view);closeSidebar();
+  previousShowTab(view);
+  closeSidebar();
  };
 
  const expandedEmployeeGroups=new Set();
@@ -161,7 +165,10 @@
   const render=(bodyId,cardsId,list,full=true)=>{const body=$(bodyId),cardBox=$(cardsId);if(!body||!cardBox)return;const total=list.reduce((n,r)=>n+r.seconds,0),exts=new Set(list.map(r=>r.extension)).size;cardBox.innerHTML=[['إجمالي الجلسات على التحويلات',typeof fmt==='function'?fmt(total):total+' ث'],['عدد التحويلات المستخدمة',exts]].map(([k,v])=>'<div class="card"><span class="card-label">'+String(k)+'</span><span>'+String(v)+'</span></div>').join('');body.innerHTML=list.map(r=>'<tr><td>'+r.name+'</td><td>'+r.extension+'</td><td>'+(typeof fmt==='function'?fmt(r.seconds):r.seconds)+'</td><td>'+r.count+'</td>'+(full?'<td>'+(typeof at==='function'?at(r.first):r.first||'—')+'</td><td>'+(typeof at==='function'?at(r.last):r.last||'—')+'</td>':'')+'</tr>').join('')||'<tr><td colspan="'+(full?6:4)+'">لا توجد جلسات مطابقة للفلاتر الحالية.</td></tr>'};
   render('extensionUsageRows','extensionUsageCards',profileRows,true);render('extensionUsageAllRows','extensionUsageAllCards',rows,false);
  }
- function renderDerivedAdminMetrics(){try{renderUnavailability();renderExtensionUsage()}catch(e){console.warn('Derived admin metrics skipped',e)}}
+ function currentUnavailabilityTotal(){return ((typeof daily!=='undefined'&&daily?.attendance?.states)||[]).filter(s=>s.state==='unknown'&&inCurrentScope(s)).reduce((n,s)=>n+safeSeconds(s.durationSeconds),0)}
+ function syncLiveUnavailabilityCard(){const box=$('liveCards');if(!box)return;if(box.querySelector('[data-derived-unavailability]'))return;const c=document.createElement('div');c.className='card';c.dataset.derivedUnavailability='1';c.innerHTML='عدم الإتاحة المرصود<span>'+((typeof fmt==='function')?fmt(currentUnavailabilityTotal()):currentUnavailabilityTotal()+' ث')+'</span>';box.appendChild(c)}
+ const liveCardsBox=$('liveCards');if(liveCardsBox)new MutationObserver(syncLiveUnavailabilityCard).observe(liveCardsBox,{childList:true});
+ function renderDerivedAdminMetrics(){try{renderUnavailability();renderExtensionUsage();syncLiveUnavailabilityCard()}catch(e){console.warn('Derived admin metrics skipped',e)}}
  ensureDerivedPanels();window.addEventListener('kpi-admin-refresh',renderDerivedAdminMetrics);for(const id of ['employeeFilter','extensionFilter','day'])$(id)?.addEventListener('change',renderDerivedAdminMetrics);renderDerivedAdminMetrics();
 
  const updateDashboardState=()=>document.body.classList.toggle('dashboard-active',!dashboard.hidden);
