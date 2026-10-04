@@ -4,6 +4,7 @@ let daily=null,historical=null,staff=[],context=null,contextCall=null,offset=0,l
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function fmt(v){if(v==null||!Number.isFinite(Number(v)))return 'غير معروف';const s=Math.max(0,Math.floor(Number(v)));return [Math.floor(s/3600),Math.floor(s%3600/60),s%60].map(x=>String(x).padStart(2,'0')).join(':')}
 const at=v=>v?new Date(v).toLocaleString('ar-EG',{timeZone:'Africa/Cairo'}):'—';
+const averageSeconds=v=>v==null||!Number.isFinite(Number(v))?'غير متاح':Number(v).toFixed(2)+' ث';
 const stateLabel=v=>({shift_ended:'خلص الشيفت — مستبعد',no_session:'لم يبدأ جلسة في نظامنا',unknown:'غير معروف / لا توجد نبضة مؤكدة',offline:'خروج موثق',break:'بريك',on_call:'في مكالمة',ready:'أونلاين — بدون مكالمة حسب الرصد',post_call:'أنهى مكالمة؛ الاستقبال غير مثبت',logged_in:'دخول مسجل',uncertain:'حالة غير مؤكدة خلال التوقيت'}[v]||v||'غير معروف');
 const eventLabel=v=>({shift_include:'ضم للمسؤولية من الإدارة',shift_exclude:'تأكيد نهاية الشيفت من الإدارة',session_login:'دخول / ربط الموظف',session_logout:'خروج الموظف',arabicss_logout:'خروج أرابيكس',arabicss_login:'دخول أرابيكس',break_start:'بداية بريك',break_end:'نهاية بريك',break_observed:'بريك قائم؛ البداية غير معروفة',break_end_unknown:'نهاية بريك؛ المدة ناقصة',call_observed:'مكالمة قائمة قبل الرصد',call_observed_end:'نهاية المكالمة المرصودة',page_closed:'انتقال / إغلاق الصفحة؛ ليس خروجًا مؤكدًا'}[v]||v);
 const reasonLabel=v=>({admin_responsibility_included:'الإدارة ضمته للمسؤولية',admin_shift_excluded:'الإدارة أكدت نهاية الشيفت',explicit_logout:'خروج مؤكد',arabicss_logout:'خروج من أرابيكس',arabicss_login_page:'عودة إلى دخول أرابيكس',extension_changed:'تغير الاكستنشن',extension_restarted:'أعيد تشغيل الإضافة',tab_closed:'إغلاق صفحة الموظف',browser_restarted:'اكتُشف عند إعادة فتح المتصفح؛ وقت الإغلاق غير معروف',verified:'هوية موثقة',identity_verified:'تسجيل الهوية',bound:'ربط الاكستنشن',ready:'متصل',break:'بريك',recent_identity_event:'حدث حديث موثق',no_identity_events:'لا يوجد سجل هوية وقتها',missing_recent_presence:'لا توجد نبضة حديثة؛ لا يثبت الخروج',page_closed_or_unknown:'الصفحة أُغلقت أو الحالة غير مؤكدة',employee_created_later:'أُضيف الموظف بعد هذه المكالمة',changed_within_time_window:'تغيرت الحالة داخل توقيت المصدر',missing_call_time:'وقت الفائتة غير متاح',stale_logout:'دليل الخروج قديم'}[v]||v||'—');
@@ -17,6 +18,13 @@ function matches(e){return(!$('employeeFilter').value||Number(e.employeeId)===Nu
 function callsFiltered(list=daily?.calls||[]){const q=$('callSearch').value.trim().toLowerCase();return list.filter(e=>matches(e)&&(!q||(String(e.agentName)+' '+String(e.phone)).toLowerCase().includes(q))&&(!$('callType').value||e.callType===$('callType').value)&&(!$('callStatus').value||e.eventType===$('callStatus').value))}
 function eventsFiltered(list=daily?.timeline||[]){const f=$('eventFilter').value;return list.filter(e=>matches(e)&&(!f||f==='break'&&e.eventType.startsWith('break_')||f==='login'&&e.eventType.endsWith('_login')||f==='logout'&&e.eventType.endsWith('_logout')||f==='unknown'&&['page_closed','break_observed','break_end_unknown','call_observed','call_observed_end'].includes(e.eventType)))}
 function queuesFiltered(){return(historical?.queues||[]).filter(q=>!$('queueFilter').value||q.queue===$('queueFilter').value)}
+function historyScope(){
+ const h=historical?.report;if(!h||!$('queueFilter').value)return h;
+ const qs=queuesFiltered(),sum=k=>qs.reduce((n,q)=>n+(Number(q[k])||0),0),calls=sum('calls'),answered=sum('answered');
+ const metricKnown=k=>qs.every(q=>!q.calls||q[k]!=null);
+ return{...h,calls,answered,abandoned:sum('abandoned'),shortAbandoned:sum('shortAbandoned'),afterHours:sum('afterHours'),totalRecords:sum('totalRecords'),answeredWithinThreshold:sum('answeredWithinThreshold'),missingWaits:sum('missingWaits'),unknownStatuses:sum('unknownStatuses'),unclassifiedAbandoned:sum('unclassifiedAbandoned'),asa:answered&&qs.every(q=>!q.answered||q.asa!=null)?qs.reduce((n,q)=>n+(q.asa||0)*q.answered,0)/answered:null,sla:calls&&metricKnown('sla')?sum('answeredWithinThreshold')/calls*100:null,abandonmentRate:calls&&metricKnown('abandonmentRate')?sum('abandoned')/calls*100:null};
+}
+function filterSummary(){const employee=staff.find(e=>String(e.id)===$('employeeFilter').value)?.name,queue=$('queueFilter').value?requestType($('queueFilter').value):'كل أنواع الطلبات';if($('filterSummary'))$('filterSummary').textContent=[$('day').value,employee||'كل الموظفين',queue,$('extensionFilter').value?'تحويلة '+$('extensionFilter').value:''].filter(Boolean).join(' · ');}
 function missedFiltered(){return(historical?.missed||[]).filter(c=>(!$('queueFilter').value||c.queue===$('queueFilter').value)&&(!$('missedFilter').value||c.classification===$('missedFilter').value))}
 function contextFiltered(list=context?.employees||[]){const f=$('contextFilter').value;return list.filter(e=>matches(e)&&(!f||f==='unavailable'&&unavailable(e)||f==='ready'&&e.state==='ready'||f==='excluded'&&e.state==='shift_ended'||f==='unknown'&&['unknown','uncertain'].includes(e.state)))}
 function dashboardQuery(date=$('day').value){return '/api/dashboard?'+new URLSearchParams({date,employee:$('employeeFilter').value,extension:$('extensionFilter').value.trim(),attendance:selectedTab==='attendance'?'1':'0'})}
@@ -30,11 +38,11 @@ async function refresh(force=false){
   const [d,h,employees]=await Promise.all([api(dashboardQuery(date)),api('/api/history?date='+date),api('/api/employees')]);
   if(seq!==generation||date!==$('day').value)return;
   $('day').max=d.today;daily=d;historical=h;staff=[...employees.employees,...(employees.archivedEmployees||[])];offset=Date.parse(d.serverNow)-Date.now();lastLiveFetch=Date.now();
-  const choice=$('employeeFilter').value;$('employeeFilter').innerHTML='<option value="">كل الموظفين</option>'+staff.map(e=>'<option value="'+e.id+'">'+esc(e.name+(e.active?'':' — محذوف'))+'</option>').join('');$('employeeFilter').value=choice;
-  const queueChoice=$('queueFilter').value;$('queueFilter').innerHTML='<option value="">كل أنواع الطلبات</option>'+(h.queues||[]).map(q=>'<option value="'+esc(q.queue)+'">'+esc(q.label)+'</option>').join('');$('queueFilter').value=queueChoice;
+  const choice=$('employeeFilter').value,employeeOptions='<option value="">كل الموظفين</option>'+staff.map(e=>'<option value="'+e.id+'">'+esc(e.name+(e.active?'':' — محذوف'))+'</option>').join('');if($('employeeFilter').innerHTML!==employeeOptions)$('employeeFilter').innerHTML=employeeOptions;$('employeeFilter').value=choice;
+  const queueChoice=$('queueFilter').value,queueOptions='<option value="">كل أنواع الطلبات</option>'+(h.queues||[]).map(q=>'<option value="'+esc(q.queue)+'">'+esc(q.label)+'</option>').join('');if($('queueFilter').innerHTML!==queueOptions)$('queueFilter').innerHTML=queueOptions;$('queueFilter').value=queueChoice;
   $('syncStatus').textContent='آخر تحديث '+new Date().toLocaleTimeString('ar-EG',{timeZone:'Africa/Cairo'});$('syncStatus').classList.remove('bad');$('message').textContent='';
   $('periodNote').textContent='يوم البيانات: '+date+' من 9ص حتى قبل 9ص اليوم التالي. التشغيل 9ص–3ص؛ الفترة 3ص–8:59ص خارج ساعات العمل ومحفوظة ضمن نفس اليوم. اللايف يعرض الآن.';
-  renderDaily();renderHistory();renderRoster();renderLive();window.dispatchEvent(new Event('kpi-admin-refresh'));
+  renderDaily();renderHistory();renderRoster();renderLive();filterSummary();window.dispatchEvent(new Event('kpi-admin-refresh'));
  }catch(e){if(seq===generation){$('syncStatus').textContent='تعذر التحديث — البيانات المعروضة قديمة';$('syncStatus').classList.add('bad');$('message').textContent=e.message;renderLive()}}finally{if(seq===generation)refreshing=false}
 }
 function metricsFiltered(){const perf=daily?.performance||[];const records=$('extensionFilter').value?perf:staff.filter(e=>e.active||perf.some(p=>p.employeeId===e.id)||Number($('employeeFilter').value)===e.id).map(e=>perf.find(p=>p.employeeId===e.id)||{employeeId:e.id,employee:e.name,calls:0,inbound:0,outbound:0,answered:0,avgHandleTime:0,breakSeconds:0,unknownBreaks:0,firstLogin:null,lastLogout:null});return records.filter(p=>!$('employeeFilter').value||p.employeeId===Number($('employeeFilter').value))}
@@ -89,16 +97,17 @@ function renderLive(){
  const overCall=people.filter(p=>liveState(p)==='on_call'&&p.startedAt&&now-Date.parse(p.startedAt)>180000);
  if(overBreak.length)alerts.push(overBreak.length+' موظف تجاوز بريك 15 دقيقة');if(overCall.length)alerts.push(overCall.length+' مكالمة تجاوزت 3 دقائق');
  $('attentionNow').textContent=alerts.length?alerts.join(' · '):'لا توجد تنبيهات تأخير في البيانات الحالية';$('attentionNow').classList.toggle('warning',!!alerts.length);
- const h=historical?.report;
+ const h=historyScope();
  cards('overviewDayCards',h?[['مكالمات يوم التشغيل',h.calls],['تم الرد',h.answered],['فائتة محتسبة',h.abandoned],['الرد خلال 10ث — SLA',h.sla==null?'غير متاح':Number(h.sla).toFixed(2)+'%']]:[['مؤشرات اليوم','لا يوجد سجل محفوظ']]);
- $('overviewDayNote').textContent='يوم التشغيل '+($('day').value||'—')+' من 9ص إلى 3ص اليوم التالي. '+(h?'إجمالي سجل أرابيكس؛ لا يُنسب إلى الموظف المحدد بالفلتر.':'استكمل سحب السجل من قسم مؤشرات المكالمات.');
+ $('overviewDayNote').textContent='يوم التشغيل '+($('day').value||'—')+' من 9ص إلى 3ص اليوم التالي. '+(h?'سجل '+($('queueFilter').value?requestType($('queueFilter').value):'كل أنواع الطلبات')+'؛ ليس إجمالي الموظف المحدد.':'استكمل سحب السجل من قسم مؤشرات المكالمات.');
 }
 function renderHistory(){
- const h=historical?.report;
+ const h=historyScope();
  $('historyCoverage').textContent=h?'يوم التشغيل '+h.date+' — آخر سحب '+at(h.importedAt)+' — '+(h.verifiedTotal?'عدد الصفوف مطابق لإجمالي المصدر حتى وقت السحب':'ملف مستورد؛ اكتمال اليوم غير مثبت'):'لا يوجد سجل أرابيكس محفوظ لهذا التاريخ.';if(h?.missingCalendarDates?.length)$('historyCoverage').textContent+=' — تنبيه: سجل أرابيكس غير متوفر للتاريخ '+h.missingCalendarDates.join('، ')+'؛ بيانات الفترة غير مكتملة حتى استكمال السحب.';
  const qs=queuesFiltered(),perc=v=>v==null?'غير متاح':Number(v).toFixed(2)+'%';
- cards('historyCards',h?[['مكالمات محتسبة',h.calls],['تم الرد',h.answered],['فائتة محتسبة',h.abandoned],['≤7ث للتوضيح',h.shortAbandoned],['متوسط انتظار الرد (ASA)',fmt(h.asa)],['الرد خلال 10 ثوانٍ (SLA)',perc(h.sla)],['نسبة المكالمات الفائتة',perc(h.abandonmentRate)],['خارج ساعات العمل',h.afterHours]]:[]);
- table('queueRows',qs.map(q=>row([q.label,q.calls,q.answered,q.abandoned,fmt(q.asa),perc(q.sla),perc(q.abandonmentRate)])),7);
+ cards('historyCards',h?[['مكالمات محتسبة',h.calls],['تم الرد',h.answered],['فائتة محتسبة',h.abandoned],['≤7ث للتوضيح',h.shortAbandoned],['متوسط انتظار الرد (ASA)',averageSeconds(h.asa)],['الرد خلال 10 ثوانٍ (SLA)',perc(h.sla)],['نسبة المكالمات الفائتة',perc(h.abandonmentRate)],['خارج ساعات العمل',h.afterHours]]:[]);
+ table('queueRows',qs.map(q=>row([q.label,q.calls,q.answered,q.abandoned,averageSeconds(q.asa),perc(q.sla),perc(q.abandonmentRate)])),7);
+ if($('calculationNote'))$('calculationNote').textContent=h?'النطاق: '+($('queueFilter').value?requestType($('queueFilter').value):'كل أنواع الطلبات')+' · '+h.totalRecords+' صف في السجل · '+h.calls+' مكالمة محتسبة = '+h.answered+' تم الرد + '+h.abandoned+' فائتة محتسبة'+(h.unknownStatuses||h.unclassifiedAbandoned?' + حالات غير مصنفة':'')+' · SLA: '+h.answeredWithinThreshold+' ÷ '+h.calls+' · ASA: مجموع انتظار المكالمات المردود عليها ÷ '+h.answered+'. فلتر الموظف لا يغيّر إجمالي خدمة أرابيكس.':'لا توجد بيانات لحساب النسب.';
  $('missedRows').innerHTML=missedFiltered().map(c=>'<tr>'+[c.queueLabel,c.date+' '+(c.end||((c.start||'غير معروف')+' — بداية السجل؛ النهاية غير مسجلة')),c.phone,fmt(c.waitSeconds),missedLabel(c.classification)].map(v=>'<td>'+esc(v)+'</td>').join('')+'<td><button data-missed="'+c.index+'" class="secondary">من لم يكن متاحًا؟</button></td></tr>').join('')||'<tr><td colspan="6">لا توجد فائتة مطابقة لهذا اليوم</td></tr>';
 }
 function renderContext(){
@@ -168,6 +177,11 @@ $('refreshButton').onclick=()=>refresh(true);
 for(const id of ['callSearch','callType','callStatus','eventFilter','contextFilter'])$(id).addEventListener('input',()=>{renderDaily();renderLive()});
 let filterTimer;for(const id of ['employeeFilter','extensionFilter'])$(id).addEventListener('input',()=>{generation++;clearDay();clearTimeout(filterTimer);filterTimer=setTimeout(()=>refresh(true),350)});
 for(const id of ['queueFilter','missedFilter'])$(id).addEventListener('change',()=>{renderHistory();renderLive()});
+if($('queueFilter'))$('queueFilter').addEventListener('change',filterSummary);
+function moveDay(delta){const d=new Date($('day').value+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+delta);const value=d.toISOString().slice(0,10);if(value>today())return;$('day').value=value;generation++;clearDay();refresh(true)}
+if($('previousDayButton'))$('previousDayButton').onclick=()=>moveDay(-1);
+if($('nextDayButton'))$('nextDayButton').onclick=()=>moveDay(1);
+if($('resetFiltersButton'))$('resetFiltersButton').onclick=()=>{for(const id of ['employeeFilter','extensionFilter','queueFilter','callSearch','callType','callStatus','eventFilter','contextFilter','missedFilter','liveStateFilter'])$(id).value='';generation++;clearDay();refresh(true);for(const id of ['employeeFilter','queueFilter','callType','callStatus','eventFilter','contextFilter','missedFilter','liveStateFilter'])$(id).dispatchEvent(new Event('change',{bubbles:true}));};
 $('liveStateFilter').addEventListener('change',renderLive);
 document.addEventListener('click',e=>{const b=e.target.closest('[data-open-tab]');if(b)showTab(b.dataset.openTab)});
 document.addEventListener('click',e=>{const button=e.target.closest('button');if(!button)return;if(button.dataset.filterShortcut){document.querySelector('.filters').scrollIntoView({block:'start'});requestAnimationFrame(()=>{const picker=$('employeeFilter-button');if(picker){picker.focus();picker.click()}else $('employeeFilter').focus()});return}if(button.dataset.export)exportData(button.dataset.export,button);if(button.dataset.missed!==undefined)showContext(Number(button.dataset.missed));if(button.dataset.employee)changeEmployee(Number(button.dataset.employee));if(button.dataset.pin)editPin(Number(button.dataset.pin));if(button.dataset.delete)deleteEmployee(Number(button.dataset.delete));if(button.dataset.shift)changeShift(button.dataset.shift,button.dataset.shiftAction)});
@@ -177,4 +191,3 @@ $('importButton').onclick=async()=>{const file=$('historyFile').files[0];if(!fil
 setInterval(()=>{renderLive();if(selectedTab==='attendance')renderAttendanceDurations()},1000);
 setInterval(()=>{if(sessionStorage.getItem('adminPassword'))refresh()},5000);
 if(sessionStorage.getItem('adminPassword')){$('login').hidden=true;$('dashboard').hidden=false;refresh(true)}
-

@@ -7,7 +7,7 @@
  const percent=v=>v==null?'غير متاح':Number(v).toFixed(2)+'%',phone=v=>nodes('maskPhones').checked?mask(v):v||'—';
  function mask(v){const s=String(v||'');return /\d/.test(s)?'••••'+(s.replace(/\D/g,'').length>4?s.slice(-4):''):s}
  const profiles=()=>valid()?(operations.profiles||[]).filter(p=>!$('employeeFilter').value||p.id===Number($('employeeFilter').value)):[];
- const valid=()=>operations&&operations.date===$('day').value&&operations.profileExtension===($('extensionFilter').value||'')&&!!sessionStorage.getItem('adminPassword');
+ const valid=()=>operations&&operations.date===$('day').value&&operations.profileExtension===($('extensionFilter').value||'')&&(operations.queueFilter||'')===($('queueFilter').value||'')&&!!sessionStorage.getItem('adminPassword');
  const filteredCalls=()=>valid()?callsFiltered(operations.calls||[]):[];
  const historyRows=()=>valid()?(operations.historyRecords||[]).filter(c=>!$('queueFilter').value||c.queue===$('queueFilter').value):[];
  const overlapRows=()=>valid()?operations.breakOverlaps.filter(b=>(!$('employeeFilter').value||b.employeeIds.includes(Number($('employeeFilter').value)))&&(!$('extensionFilter').value||operations.states.some(s=>s.state==='break'&&s.extension===$('extensionFilter').value&&b.employeeIds.includes(s.employeeId)&&Date.parse(s.startedAt)<Date.parse(b.endedAt)&&Date.parse(s.endedAt)>Date.parse(b.startedAt)))):[];
@@ -23,11 +23,11 @@
  };
  function maskExistingTables(){if(!nodes('maskPhones').checked)return;for(const tableNode of document.querySelectorAll('table')){const headers=[...tableNode.querySelectorAll('thead th')],indices=headers.map((h,i)=>/الهاتف|رقم العميل/.test(h.textContent)?i:-1).filter(i=>i>=0);for(const tr of tableNode.querySelectorAll('tbody tr'))for(const i of indices){const td=tr.children[i];if(td&&!td.textContent.includes('••••'))td.textContent=mask(td.textContent)}}}
  async function load(force=false,compare=false){
-  if(!sessionStorage.getItem('adminPassword')){operations=null;return}const date=$('day').value,extension=$('extensionFilter').value||'';
-  if(loading&&!force||!force&&attemptKey===date+'|'+extension&&Date.now()-lastAttempt<30000)return;
-  attemptKey=date+'|'+extension;lastAttempt=Date.now();
+  if(!sessionStorage.getItem('adminPassword')){operations=null;return}const date=$('day').value,extension=$('extensionFilter').value||'',queue=$('queueFilter').value||'';
+  if(loading&&!force||!force&&attemptKey===date+'|'+extension+'|'+queue&&Date.now()-lastAttempt<30000)return;
+  attemptKey=date+'|'+extension+'|'+queue;lastAttempt=Date.now();
   const seq=++sequence;loading=true;nodes('operationsLoad').textContent='جارٍ تحديث التحليل والمدد والمتابعة…';
-  try{const d=await api('/api/operations?'+new URLSearchParams({date,extension,...compare?{compare:'1'}:{}}));if(seq!==sequence||date!==$('day').value||extension!==($('extensionFilter').value||'')||!sessionStorage.getItem('adminPassword'))return;const previous=operations;operations=d;loadedAt=Date.now();if(compare)comparison=d.comparison;else if(previous?.date!==date)comparison=null;
+  try{const d=await api('/api/operations?'+new URLSearchParams({date,extension,queue,...compare?{compare:'1'}:{}}));if(seq!==sequence||date!==$('day').value||extension!==($('extensionFilter').value||'')||queue!==($('queueFilter').value||'')||!sessionStorage.getItem('adminPassword'))return;const previous=operations;operations=d;loadedAt=Date.now();if(compare)comparison=d.comparison;else if(previous?.date!==date)comparison=null;
    nodes('operationsLoad').textContent='التحليل حسب يوم '+date+' — آخر حساب '+at(d.generatedAt)+' · اللايف يتحدث مستقلًا. لا يتغير حساب المكالمات الأصلية.';
    if(previous?.date===date&&previous.historyReport?.importedAt!==d.historyReport?.importedAt)nodes('operationsLoad').textContent+=' وصل سحب سجل أحدث؛ قد تتغير المؤشرات بعد استكمال البيانات.';
    render();
@@ -77,7 +77,7 @@
   maskExistingTables();
  }
  function renderAnalysis(){const o=operations;
-  cards('analysisCards',[['إجمالي انتظار العملاء المحتسب',fmt(o.wait.totalSeconds)],['مكالمات انتظارها ناقص',o.wait.unknownCalls],['فترات بريك متداخلة',o.breakOverlaps.length],['وقت حالات غير مؤكدة',fmt(o.coverage.unknownSeconds)]]);
+  nodes('operationsLoad').textContent='تحليل يوم '+o.date+' · مكالمات '+($('queueFilter').value?requestType($('queueFilter').value):'كل أنواع الطلبات')+' · مدد الموظفين حسب الرصد، ولا تُنسب لنوع طلب. آخر حساب '+at(o.generatedAt);cards('analysisCards',[['إجمالي انتظار العملاء المحتسب',fmt(o.wait.totalSeconds)],['مكالمات انتظارها ناقص',o.wait.unknownCalls],['فترات بريك متداخلة',o.breakOverlaps.length],['وقت حالات غير مؤكدة',fmt(o.coverage.unknownSeconds)]]);
   const max=Math.max(1,...o.buckets.map(b=>b.received||0));
   nodes('pressureGrid').innerHTML=o.buckets.map(b=>'<div class="pressure-cell '+(b.future?'future':(b.abandoned||0)>0?'high':'')+'"><span>'+esc(new Date(b.start).toLocaleTimeString('ar-EG',{timeZone:'Africa/Cairo',hour:'2-digit',minute:'2-digit'}))+'</span><strong>'+esc(b.received==null?'غير متاح':b.received)+' مكالمة</strong><span>'+esc(b.future?'الفترة لم تبدأ':'فائتة: '+(b.abandoned??'غير متاح'))+'</span><div class="ops-progress"><span style="width:'+Math.round((b.received||0)/max*100)+'%"></span></div></div>').join('');
   table('pressureRows',o.buckets.map(b=>row([at(b.start),b.received??'غير متاح',b.answered??'غير متاح',b.abandoned??'غير متاح',fmt(b.asa),percent(b.sla),b.averageReadyEmployees??'غير متاح',b.readyAgentMinutes])),8);
@@ -91,7 +91,7 @@
  function renderProfile(){const selected=Number($('employeeFilter').value),p=profiles().find(e=>e.id===selected);
   nodes('profileTitle').textContent=p?'ملف '+p.name+' — '+operations.date:'ملف الموظف — اختار الاسم من الفلتر';
   nodes('profileNote').textContent=p?'مدة الجلسة داخل يوم البيانات، ومدد الجاهزية والمكالمات والبريك داخل التشغيل 9ص–3ص. '+(p.smallSample?'عينة صغيرة: أقل من 10 مكالمات أو ساعة رصد تشغيل؛ لا تكفي للحكم على الموظف.':'الأرقام للمقارنة وليست تقييمًا نهائيًا.')+' اكتمال الرصد النسبي لا يثبت حضور الشيفت كله.':'اختار موظفًا أو اضغط اسمه في اللايف لعرض التفاصيل.';
-  cards('profileCards',p?[['مدة الجلسات',fmt(p.sessionSeconds)],['جاهزية مؤكدة',fmt(p.readySeconds)],['وقت مكالمات مرصود',fmt(p.callSeconds)],['بريك مرصود',fmt(p.breakSeconds)],['باقي من 30د',fmt(p.breakRemainingSeconds)],['تجاوز ميزانية البريك',fmt(p.breakExcessSeconds)],['المكالمات المسجلة',p.calls],['متوسط المكالمة',fmt(p.averageCallSeconds)],['الإشغال حسب الرصد',percent(p.occupancy)],['مكالمات لكل ساعة جاهزية',p.callsPerReadyHour??'غير متاح'],['مكالمات أطول من 3د',p.longCalls],['وقت تجاوز 3د',fmt(p.callExcessSeconds)],['حالات غير مؤكدة',fmt(p.unknownSeconds)],['رصد معروف ضمن الجلسات',percent(p.observedPercent)]]:[]);
+  cards('profileCards',p?[['مدة الجلسات',fmt(p.sessionSeconds)],['جاهزية مؤكدة',fmt(p.readySeconds)],['وقت مكالمات مرصود',fmt(p.callSeconds)],['بريك مرصود — يشمل الجاري',fmt(p.breakSeconds)],['باقي من 30د',fmt(p.breakRemainingSeconds)],['تجاوز ميزانية البريك',fmt(p.breakExcessSeconds)],['المكالمات المسجلة',p.calls],['متوسط المكالمة',fmt(p.averageCallSeconds)],['الإشغال حسب الرصد',percent(p.occupancy)],['مكالمات لكل ساعة جاهزية',p.callsPerReadyHour??'غير متاح'],['مكالمات أطول من 3د',p.longCalls],['وقت تجاوز 3د',fmt(p.callExcessSeconds)],['حالات غير مؤكدة',fmt(p.unknownSeconds)],['رصد معروف ضمن الجلسات',percent(p.observedPercent)]]:[]);
   table('profileSessionRows',(p?.transitions||[]).map(s=>row([at(s.loginAt),at(s.boundAt),at(s.readyAt),fmt(s.delaySeconds),at(s.logoutAt)])),5);
   table('profileCallRows',p?filteredCalls().filter(c=>c.employeeId===p.id).slice(0,200).map(c=>row([at(c.startedAt),c.callType==='incoming'?'وارد':c.callType==='outgoing'?'صادر':'غير معروف',phone(c.phone),c.eventType==='agentunlinked'?fmt(c.durationSeconds):'النهاية غير مسجلة',c.attributionSource==='history_session'?'سجل + جلسة الموظف وقتها':'الإضافة'])):[],5);
   table('profileStateRows',p?operations.states.filter(s=>s.employeeId===p.id&&matches(s)).map(s=>row([stateLabel(s.state),at(s.startedAt),at(s.endedAt),fmt(s.durationSeconds)])):[],4);
@@ -143,6 +143,7 @@
   if(b.dataset.opsReview){const item=operations?.reviews.find(r=>r.id===b.dataset.opsReview);if(item)openReview(item)}
   if(b.dataset.opsSaved)showSaved(b.dataset.opsSaved);if(b.dataset.opsExport)exportOps(b.dataset.opsExport);if(b.dataset.opsDrill){drill=b.dataset.opsDrill;renderRules()}
  });
+ $('queueFilter').addEventListener('change',()=>{render();load(true)});
  nodes('compareDayButton').onclick=()=>load(true,true);nodes('reviewStatusFilter').onchange=()=>{if(valid())renderReviews()};nodes('customerSearch').oninput=()=>{if(valid())renderHealth()};
  const preferenceKey='marsad-admin-views-v1';let views=[];try{views=JSON.parse(localStorage.getItem(preferenceKey)||'[]');if(!Array.isArray(views))views=[]}catch{}
  function renderViews(){nodes('savedView').innerHTML='<option value="">اختار عرضًا</option>'+views.map((v,i)=>'<option value="'+i+'">'+esc(v.name)+'</option>').join('')}
