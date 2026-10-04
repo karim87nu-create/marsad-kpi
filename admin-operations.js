@@ -105,12 +105,12 @@
   table('profileStateRows',spans.map(s=>row(profileStateCells(s))),4);
  }
  const reviewRows=()=>valid()?operations.reviews.filter(r=>(!nodes('reviewStatusFilter').value||r.status===nodes('reviewStatusFilter').value)&&(!r.employeeId||!$('employeeFilter').value||r.employeeId===Number($('employeeFilter').value))):[];
- const auditLabel=s=>({employee_created:'إضافة موظف',employee_changed:'تغيير حساب / باسورد',employee_deleted:'حذف حساب نهائي',review_updated:'تحديث متابعة',report_saved:'حفظ تقرير'}[s]||s);
+ const auditLabel=s=>({employee_created:'إضافة موظف',employee_changed:'تغيير حساب / باسورد',employee_deleted:'حذف حساب نهائي',review_updated:'تحديث متابعة',report_saved:'حفظ تقرير',admin_account_created:'إنشاء مستخدم إدارة',admin_account_changed:'تعديل مستخدم إدارة',admin_account_deleted:'حذف مستخدم إدارة',message_sent:'إرسال رسالة',shift_changed:'تعديل مسؤولية الشيفت'}[s]||s);
  function renderReviews(){nodes('reviewRows').innerHTML=reviewRows().map(r=>'<tr>'+[r.title,r.employeeId?name(r.employeeId):'الخدمة',statusLabel(r.status),r.owner||'لم يُحدد',r.note||'—',at(r.updatedAt)].map(v=>'<td class="ops-audit-detail">'+esc(v)+'</td>').join('')+'<td><button class="secondary" data-ops-review="'+esc(r.id)+'">تعديل المتابعة</button></td></tr>').join('')||'<tr><td colspan="7">لا توجد متابعات محفوظة مطابقة للفلاتر.</td></tr>';
   nodes('savedReportRows').innerHTML=operations.reports.map(r=>{let f={};try{f=JSON.parse(r.filters)}catch{};return '<tr><td>'+esc(at(r.createdAt))+'</td><td>'+esc(f.employeeId?name(f.employeeId):'كل الموظفين')+' — '+esc(f.queue?requestType(f.queue):'كل أنواع الطلبات')+'</td><td><button class="secondary" data-ops-saved="'+esc(r.id)+'">عرض النسخة المحفوظة</button></td></tr>'}).join('')||'<tr><td colspan="3">لم يُحفظ تقرير لهذا اليوم.</td></tr>';
   table('auditRows',operations.audit.filter(a=>!$('employeeFilter').value||a.employeeId===Number($('employeeFilter').value)).map(a=>row([at(a.occurredAt),auditLabel(a.action),a.employeeId?name(a.employeeId):'الإدارة',auditDetail(a.details)])),4);
  }
- function auditDetail(raw){try{const d=JSON.parse(raw);return [d.name,d.employeeCode,d.passwordChanged?'تغيير باسورد بدون حفظه بالسجل':'',d.active===false?'تعطيل':d.active===true?'تفعيل':'',d.status?statusLabel(d.status):'',d.owner,d.note].filter(Boolean).join(' · ')||'تفاصيل مرجعية محفوظة'}catch{return 'تفاصيل غير متاحة'}}
+ function auditDetail(raw){try{const d=JSON.parse(raw);return [d.actor?'بواسطة: '+d.actor:'',d.role?'الدور: '+d.role:'',d.accountId?'مستخدم الإدارة: '+d.accountId:'',d.name,d.employeeCode,d.passwordChanged?'تغيير باسورد بدون حفظه بالسجل':'',d.active===false?'تعطيل':d.active===true?'تفعيل':'',d.status?statusLabel(d.status):'',d.owner,d.note].filter(Boolean).join(' · ')||'تفاصيل مرجعية محفوظة'}catch{return 'تفاصيل غير متاحة'}}
  function renderHealth(){const o=operations,a=o.attribution?.summary;
   cards('healthCards',[['سجل المصدر',o.coverage.hasHistory?(o.coverage.historyVerified?'عدد الصفوف مطابق للمصدر':'مستورد؛ اكتماله غير مثبت'):'غير متاح'],['مكالمات استُكملت من السجل',a?.recovered??'غير متاح'],['مكالمات مُنع تكرارها',a?.alreadyObserved??'غير متاح'],['مردود عليها غير منسوبة',a?.unattributedAnswered??'غير متاح'],['وقت انقطاع رصد',fmt(o.coverage.unknownSeconds)]]);
   nodes('healthNote').textContent='آخر النبضات تخص اليوم المختار، وليست قائمة كاملة بكل أجهزة الشركة. النسخة المنشورة 2.5.2، لكن إصدار الجهاز نفسه غير مرصود حاليًا. '+(o.coverage.missingDates.length?'تواريخ مصدر غير متاحة: '+o.coverage.missingDates.join('، '):'عدد صفوف المصدر لا يثبت اكتمال حضور الموظفين.');
@@ -164,4 +164,3 @@
  setInterval(()=>{if(sessionStorage.getItem('adminPassword')&&['analysis','profile','followup','health','guide'].includes(selectedTab))load()},1000);
  if(sessionStorage.getItem('adminPassword'))load();
 })();
-
