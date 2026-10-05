@@ -34,16 +34,22 @@ function missedFiltered(){return(historical?.missed||[]).filter(c=>(!$('queueFil
 function contextDuration(e){if(e.elapsedSeconds==null)return '—';const min=fmt(e.elapsedSeconds),max=e.elapsedMaxSeconds==null?min:fmt(e.elapsedMaxSeconds);return(e.durationBasis==='observed_since'?'على الأقل ':'')+min+(context?.timeWindow?.precision==='minute'&&max!==min?' إلى '+max:'');}
 function contextFiltered(list=context?.employees||[]){const f=$('contextFilter').value;return tableScope('contextRows',list.filter(e=>matches(e)&&(!f||f==='unavailable'&&unavailable(e)||f==='ready'&&e.state==='ready'||f==='excluded'&&e.state==='shift_ended'||f==='unknown'&&['unknown','uncertain'].includes(e.state))),e=>[e.name+' — '+e.code,stateLabel(e.state),e.extension||'—',contextDuration(e),shiftReason(e.reason),at(e.evidenceAt)])}
 function dashboardQuery(date=$('day').value){return '/api/dashboard?'+new URLSearchParams({date,employee:$('employeeFilter').value,extension:$('extensionFilter').value.trim(),attendance:['attendance','metrics','profile'].includes(selectedTab)?'1':'0',...['calls','attendance'].includes(selectedTab)?{all:'1'}:{}})}
-async function api(path,options={}){const r=await fetch(API+path,{...options,headers:{'x-admin-password':sessionStorage.getItem('adminPassword')||'',...(options.headers||{})},cache:'no-store'});const d=await r.json();if(!r.ok)throw Error(r.status===401?'كلمة المرور غير صحيحة أو انتهى الدخول':d.error||'تعذر الاتصال');return d}
+const adminApiFlights=new Map();
+async function api(path,options={}){
+ const token=sessionStorage.getItem('adminPassword')||'',key=token+'|'+path,read=(options.method||'GET').toUpperCase()==='GET';
+ if(read&&adminApiFlights.has(key))return adminApiFlights.get(key);
+ const request=(async()=>{const r=await fetch(API+path,{...options,headers:{'x-admin-password':token,...(options.headers||{})},cache:'no-store'});const d=await r.json();if(!r.ok)throw Error(r.status===401?'كلمة المرور غير صحيحة أو انتهى الدخول':d.error||'تعذر الاتصال');return d;})();
+ if(read)adminApiFlights.set(key,request);try{return await request}finally{if(read&&adminApiFlights.get(key)===request)adminApiFlights.delete(key)}
+}
 function showTab(id){selectedTab=id;$('filterNote').textContent=['queue','missed'].includes(id)?'فلتر الموظف يخص حالات الموظفين فقط. سجل أرابيكس بحساب مشترك لا يدعم نسبة المكالمة لشخص؛ استخدم نوع الطلب للسجل.':'فلتر الاسم ورقم التحويلة يطبق على بيانات الموظفين في القسم المفتوح.';document.querySelectorAll('.view').forEach(v=>v.hidden=v.id!==id);document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('selected',b.dataset.tab===id));if(['attendance','metrics','profile'].includes(id))refresh(true)}
 function clearDay(){daily=null;historical=null;context=null;contextCall=null;$('contextPanel').hidden=true;renderDaily();renderHistory()}
 async function refresh(force=false){
  if(!sessionStorage.getItem('adminPassword')||refreshing&&!force)return;
- refreshing=true;const date=$('day').value,seq=++generation;
+ refreshing=true;const date=$('day').value,dataScope=[date,$('employeeFilter').value,$('extensionFilter').value.trim()].join('|'),seq=++generation;
  try{
   const [d,h,employees]=await Promise.all([api(dashboardQuery(date)),api('/api/history?date='+date),api('/api/employees')]);
   if(seq!==generation||date!==$('day').value)return;
-  $('day').max=d.today;daily=d;historical=h;staff=[...employees.employees,...(employees.archivedEmployees||[])];offset=Date.parse(d.serverNow)-Date.now();lastLiveFetch=Date.now();
+  $('day').max=d.today;d.adminClientScope=dataScope;daily=d;historical=h;staff=[...employees.employees,...(employees.archivedEmployees||[])];offset=Date.parse(d.serverNow)-Date.now();lastLiveFetch=Date.now();
   const choice=$('employeeFilter').value,employeeOptions='<option value="">كل الموظفين</option>'+staff.map(e=>'<option value="'+e.id+'">'+esc(e.name+(e.active?'':' — محذوف'))+'</option>').join('');if($('employeeFilter').innerHTML!==employeeOptions)$('employeeFilter').innerHTML=employeeOptions;$('employeeFilter').value=choice;
   const queueChoice=$('queueFilter').value,queueOptions='<option value="">كل أنواع الطلبات</option>'+(h.queues||[]).map(q=>'<option value="'+esc(q.queue)+'">'+esc(q.label)+'</option>').join('');if($('queueFilter').innerHTML!==queueOptions)$('queueFilter').innerHTML=queueOptions;$('queueFilter').value=queueChoice;
   $('syncStatus').textContent='آخر تحديث '+new Date().toLocaleTimeString('ar-EG',{timeZone:'Africa/Cairo'});$('syncStatus').classList.remove('bad');$('message').textContent='';
@@ -209,5 +215,4 @@ $('importButton').onclick=async()=>{const file=$('historyFile').files[0];if(!fil
 setInterval(()=>{renderLive();if(selectedTab==='attendance')renderAttendanceDurations()},1000);
 setInterval(()=>{if(sessionStorage.getItem('adminPassword'))refresh()},5000);
 if(sessionStorage.getItem('adminPassword')){$('login').hidden=true;$('dashboard').hidden=false;refresh(true)}
-
 

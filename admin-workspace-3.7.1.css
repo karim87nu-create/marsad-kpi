@@ -1,5 +1,6 @@
 /* 3.7.1: eight task workspaces, primary tables visible, secondary details only. */
 [hidden]{display:none!important}
+.page-disclosure{margin:12px 0;border:1px solid #31516a;border-radius:10px;padding:0 12px;background:#0b1d2c}.page-disclosure>summary{padding:12px 0;font-weight:700;cursor:pointer}.page-disclosure[open]>summary{border-bottom:1px solid #31516a;margin-bottom:10px}
 body.dashboard-active .head{display:none}
 @media(max-width:820px){.dashboard-sidebar,.sidebar-backdrop{transition:none!important}.dashboard-sidebar{z-index:1001!important}.sidebar-backdrop{z-index:990!important}}
 .single-page-leaf,.ui-export-source,.legacy-filter-note,.secondary-live-information{display:none!important}
