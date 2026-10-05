@@ -1,0 +1,69 @@
+/* Marsad admin shell 3.6.8 */
+(()=>{
+'use strict';
+const $=id=>document.getElementById(id),dashboard=$('dashboard'),tabs=$('tabs');
+if(!dashboard||!tabs||dashboard.dataset.shellReady==='368')return;
+dashboard.dataset.shellReady='368';
+const groups=[
+{id:'now',label:'الشغل الآن',icon:'●',views:['live','followup','messages'],title:'الشغل الآن',desc:'الحالة الحالية، المشكلات ورسائل الموظفين'},
+{id:'people',label:'الموظفون',icon:'◎',views:['metrics','profile','attendance','shifts','settings'],title:'الموظفون',desc:'الأداء، المكالمات والبريكات، الحضور، التحويلات وإدارة الحسابات'},
+{id:'day',label:'المكالمات',icon:'☎',views:['queue','calls','missed','analysis','guide'],title:'المكالمات',desc:'ملخص اليوم، السجل، الفائتة، اتصالات العملاء وطريقة الحساب'},
+{id:'manage',label:'إعدادات الإدارة',icon:'⚙',views:['health','telegram'],title:'إعدادات الإدارة',desc:'مستخدمو الإدارة وصلاحياتهم، حالة النظام وتنبيهات تليجرام'}];
+dashboard.classList.add('dashboard-shell');
+const sidebar=document.createElement('aside');sidebar.className='dashboard-sidebar';sidebar.id='workspaceSidebar';
+const content=document.createElement('div');content.className='dashboard-content';
+const backdrop=document.createElement('button');backdrop.type='button';backdrop.className='sidebar-backdrop';backdrop.setAttribute('aria-label','إغلاق القائمة');dashboard.before(backdrop);
+const brand=document.createElement('div');brand.className='sidebar-brand';brand.innerHTML='<div class="brand-mark">م</div><div class="brand-copy"><strong>مرصد الأداء</strong><span>إدارة المكالمات والموظفين</span></div>';sidebar.appendChild(brand);
+const label=document.createElement('div');label.className='sidebar-section-label';label.textContent='القائمة الرئيسية';sidebar.appendChild(label);
+const nav=document.createElement('nav');nav.className='workspace-nav';nav.setAttribute('aria-label','القائمة الرئيسية');sidebar.appendChild(nav);
+const leaves=[...tabs.querySelectorAll('[data-tab]')];tabs.replaceChildren();nav.appendChild(tabs);
+function expandGroup(id){for(const g of groups){const b=nav.querySelector('[data-workspace="'+g.id+'"]'),sub=$('submenu-'+g.id);const open=g.id===id;b.setAttribute('aria-expanded',String(open));sub.hidden=!open;}}
+for(const g of groups){const wrap=document.createElement('div');wrap.className='workspace-group';const b=document.createElement('button');b.type='button';b.dataset.workspace=g.id;b.innerHTML='<span class="nav-icon">'+g.icon+'</span><span>'+g.label+'</span><span class="nav-chevron" aria-hidden="true">⌄</span>';b.setAttribute('aria-expanded','false');b.setAttribute('aria-controls','submenu-'+g.id);const sub=document.createElement('div');sub.id='submenu-'+g.id;sub.className='workspace-submenu';sub.hidden=true;for(const view of g.views){const leaf=leaves.find(n=>n.dataset.tab===view);if(leaf)sub.appendChild(leaf);}b.onclick=()=>expandGroup(b.getAttribute('aria-expanded')==='true'?'':g.id);wrap.append(b,sub);tabs.appendChild(wrap)}
+const subLabel=document.createElement('div');subLabel.className='sidebar-section-label';subLabel.textContent='داخل القسم';subLabel.hidden=true;sidebar.append(subLabel);
+const footer=document.createElement('div');footer.className='sidebar-footer';sidebar.appendChild(footer);if($('logoutButton'))footer.appendChild($('logoutButton'));
+const top=document.createElement('div');top.className='dashboard-topline';
+const heading=document.createElement('div');heading.className='workspace-heading';heading.innerHTML='<h2 id="workspaceTitle">الآن</h2><p id="workspaceDescription">الحالة الحالية والتنبيهات التي تحتاج تدخل</p>';
+const topActions=document.createElement('div');topActions.className='topline-actions';
+const menu=document.createElement('button');menu.type='button';menu.className='secondary mobile-sidebar-toggle';menu.textContent='القائمة';menu.onclick=()=>document.body.classList.contains('sidebar-open')?closeSidebar():openSidebar();topActions.appendChild(menu);if($('syncStatus'))topActions.appendChild($('syncStatus'));top.append(heading,topActions);content.appendChild(top);
+const filters=dashboard.querySelector('.filters');if(filters){filters.classList.add('admin-topbar');const fields=document.createElement('div');fields.className='filter-fields';for(const id of ['day','employeeFilter','queueFilter']){const n=$(id),o=n?.closest('label');if(o)fields.appendChild(o)}const adv=filters.querySelector('.filter-advanced');if(adv)fields.appendChild(adv);const actions=document.createElement('div');actions.className='filter-actions';const da=filters.querySelector('.date-actions');if(da)actions.appendChild(da);for(const id of ['resetFiltersButton','refreshButton'])if($(id))actions.appendChild($(id));const sr=document.createElement('div');sr.className='filter-summary-row';if($('filterSummary'))sr.appendChild($('filterSummary'));if($('periodNote')){$('periodNote').classList.add('period-note-compact');sr.appendChild($('periodNote'))}filters.prepend(fields);filters.append(actions,sr);content.appendChild(filters)}
+if($('message'))content.appendChild($('message'));if($('operationsLoad')){$('operationsLoad').classList.add('operations-strip');content.appendChild($('operationsLoad'))}
+const toolbar=dashboard.querySelector('.ops-toolbar');if(toolbar){const d=document.createElement('details');d.className='display-preferences';const s=document.createElement('summary');s.textContent='خيارات العرض وحفظ الفلاتر';d.append(s,toolbar);content.appendChild(d)}
+for(const section of [...dashboard.querySelectorAll(':scope > .view')])content.appendChild(section);dashboard.append(sidebar,content);
+function syncSidebar(){sidebar.inert=innerWidth<=820&&!document.body.classList.contains('sidebar-open');menu.setAttribute('aria-expanded',String(document.body.classList.contains('sidebar-open')))}function openSidebar(){document.body.classList.add('sidebar-open');syncSidebar()}function closeSidebar(){document.body.classList.remove('sidebar-open');syncSidebar()}backdrop.onclick=closeSidebar;window.addEventListener('resize',()=>{if(innerWidth>820)closeSidebar();else syncSidebar()});syncSidebar();
+
+function foldTopicBlocks(sectionId,headings){
+ const section=$(sectionId);if(!section)return;
+ for(const text of headings){const head=[...section.children].find(n=>n.tagName==='H3'&&n.textContent===text);if(!head)continue;
+ const block=document.createElement('details');block.className='detail-panel topic-detail';
+ const summary=document.createElement('summary');summary.textContent='عرض التفاصيل — '+text;head.before(block);block.appendChild(summary);
+ let n=head;while(n&&n.tagName!=='SECTION'){const next=n.nextElementSibling;block.appendChild(n);if(!next||next.tagName==='H3')break;n=next;}
+ }
+}
+foldTopicBlocks('calls',['مكالمات لم يُحدد موظفها','اتصالات العملاء خلال اليوم']);
+foldTopicBlocks('attendance',['تداخل البريكات والتغطية وقتها','اتصال الموظفين بأرابيكس']);
+foldTopicBlocks('shifts',['تبديل الموظف على نفس التحويلة']);
+foldTopicBlocks('followup',['تقرير محفوظ كما كان وقت استخراجه']);
+foldTopicBlocks('health',['سجل تغييرات الإدارة']);
+foldTopicBlocks('analysis',['مقارنة بنفس وقت التشغيل','عينات انتظار العملاء']);
+
+for(const section of document.querySelectorAll('.view')){
+ const notes=[...section.children].filter(e=>e.tagName==='P'&&(e.classList.contains('muted')||e.classList.contains('source-note'))&&e.getAttribute('role')!=='status');
+ if(!notes.length)continue;const d=document.createElement('details');d.className='help-detail';const summary=document.createElement('summary');summary.textContent='فهم الأرقام المعروضة';notes[0].before(d);d.appendChild(summary);for(const p of notes)d.appendChild(p);
+}
+const liveDetails=$('attentionDetails');if(liveDetails&&!liveDetails.closest('details')){const d=document.createElement('details');d.className='detail-panel';const s=document.createElement('summary');s.textContent='تفاصيل التنبيهات والإجراءات';liveDetails.before(d);d.append(s,liveDetails)}
+for(const cards of document.querySelectorAll('.cards')){if(cards.dataset.compactReady)continue;cards.dataset.compactReady='1';cards.classList.add('summary-cards');const b=document.createElement('button');b.type='button';b.className='secondary indicators-toggle';b.textContent='باقي المؤشرات';cards.after(b);const sync=()=>b.hidden=cards.children.length<=6;new MutationObserver(sync).observe(cards,{childList:true});sync();b.onclick=()=>{const x=cards.classList.toggle('expanded');b.textContent=x?'اختصار المؤشرات':'باقي المؤشرات'}}
+const collapsible={metricRows:'تفاصيل أداء الموظفين',callRows:'سجل المكالمات بالتفصيل',attendanceRows:'تفاصيل الحضور والبريك',shiftRows:'تفاصيل نهاية الشيفت والرجوع للشغل',queueRows:'تفاصيل مؤشرات أنواع الطلبات',missedRows:'قائمة المكالمات الفائتة',rosterRows:'قائمة الموظفين',reviewRows:'قائمة المتابعات',connectionRows:'تفاصيل الربط بالأجهزة',unattributedRows:'مكالمات لم يُحدد موظفها',customerRows:'تكرار اتصالات العملاء'};
+for(const [id,title] of Object.entries(collapsible)){const body=$(id),wrap=body?.closest('.tablewrap');if(!wrap||wrap.closest('details'))continue;const d=document.createElement('details');d.className='auto-detail';const s=document.createElement('summary');s.textContent=title;wrap.before(d);d.append(s,wrap)}
+const welcome=document.createElement('section');welcome.className='panel workspace-welcome';welcome.innerHTML='<h2>أهلًا بك في مرصد الأداء</h2><p>افتح قسمًا من القائمة، ثم اختر الصفحة التي تريد عرضها.</p>';content.appendChild(welcome);
+const baseShowTab=showTab;showTab=function(view){const group=groups.find(g=>g.views.includes(view));if(!group)return;baseShowTab(view);welcome.hidden=true;expandGroup(group.id);for(const b of nav.querySelectorAll('[data-workspace]'))b.classList.toggle('selected',b.dataset.workspace===group.id);for(const b of tabs.querySelectorAll('[data-tab]')){b.setAttribute('aria-current',b.dataset.tab===view?'page':'false');}tabs.hidden=false;subLabel.hidden=true;$('workspaceTitle').textContent=group.title;$('workspaceDescription').textContent=tabs.querySelector('[data-tab="'+view+'"]')?.textContent||group.desc;closeSidebar()};
+function showHome(){for(const section of document.querySelectorAll('.view'))section.hidden=true;welcome.hidden=false;expandGroup('');$('workspaceTitle').textContent='مرصد الأداء';$('workspaceDescription').textContent='اختر القسم ثم الصفحة';for(const b of tabs.querySelectorAll('button'))b.classList.remove('selected');}
+const tableTitles={liveRows:'حالة كل موظف الآن',waitingRows:'العملاء المنتظرون الآن',queueLiveRows:'المكالمات المنتظرة والجارية',pressureRows:'المكالمات والمتاحون كل نصف ساعة',breakOverlapRows:'البريكات المتزامنة والمتاحون وقتها',queueSampleRows:'الانتظار في الأوقات المسجلة',reviewRows:'المشكلات ومتابعتها',savedReportRows:'تقارير اليوم المحفوظة',auditRows:'من غيّر بيانات الإدارة',connectionRows:'اتصال الموظفين بأرابيكس',unattributedRows:'مكالمات لم يُحدد موظفها',handoverRows:'تبديل الموظف على التحويلة',customerRows:'كل اتصالات العملاء، وليس المتكرر فقط',formulaRows:'المكالمات الداخلة في الحساب',tgAlertRows:'التنبيهات ونتائج إرسالها',accessRows:'مستخدمو الإدارة وصلاحياتهم',unavailabilityRows:'فترات عدم الإتاحة'};
+function foldTables(){for(const wrap of content.querySelectorAll('.view .tablewrap')){const heads=[...wrap.querySelectorAll('thead th')].map(th=>[...th.childNodes].filter(n=>n.nodeType===3).map(n=>n.textContent).join('').trim()||th.textContent.replace('فلتر','').trim());for(const tr of wrap.querySelectorAll('tbody tr'))for(const [i,td] of [...tr.children].entries()){const label=heads[i]||'';if(td.getAttribute('data-label')!==label)td.setAttribute('data-label',label);}if(wrap.closest('details')||wrap.closest('#contextPanel'))continue;const d=document.createElement('details');d.className='auto-detail';const summary=document.createElement('summary');const titles={profileSessionRows:'جلسات الموظف ودخوله وخروجه',profileCallRows:'مكالمات الموظف',profileStateRows:'بريكات الموظف ومدد الحالات',extensionSessionRows:'كل جلسة على كل تحويلة',extensionUsageAllRows:'ملخص مدة العمل على التحويلات'};summary.textContent='عرض التفاصيل — '+(titles[wrap.querySelector('tbody')?.id]||tableTitles[wrap.querySelector('tbody')?.id]||wrap.closest('section')?.querySelector('h2')?.textContent||'البيانات');wrap.before(d);d.append(summary,wrap);}}
+foldTables();new MutationObserver(foldTables).observe(content,{childList:true,subtree:true});
+for(const d of document.querySelectorAll('details')){d.open=false;const summary=d.querySelector(':scope > summary');if(summary&&!summary.textContent.startsWith('عرض التفاصيل')&&!d.classList.contains('filter-advanced'))summary.textContent='عرض التفاصيل — '+summary.textContent;}
+const expanded=new Set();function compactGroups(){const root=$('employeeLiveGroups');if(!root)return;for(const group of root.querySelectorAll('.employee-group')){if(group.dataset.compactApplied)continue;group.dataset.compactApplied='1';const items=[...group.querySelectorAll('.employee-tile')],state=[...group.classList].find(c=>c.startsWith('state-'))?.slice(6)||'';group.classList.add('employee-group-collapsible');const h=group.querySelector('h4'),b=document.createElement('button');if(!h)continue;b.type='button';b.className='secondary employee-group-toggle';const sync=()=>{const open=expanded.has(state);group.classList.toggle('employee-group-open',open);b.textContent=open?'إخفاء القائمة':'عرض القائمة'};b.onclick=()=>{expanded.has(state)?expanded.delete(state):expanded.add(state);sync()};h.appendChild(b);sync()}}
+if($('employeeLiveGroups')){new MutationObserver(compactGroups).observe($('employeeLiveGroups'),{childList:true,subtree:true});compactGroups()}
+const update=()=>document.body.classList.toggle('dashboard-active',!dashboard.hidden);new MutationObserver(update).observe(dashboard,{attributes:true,attributeFilter:['hidden']});update();
+window.MarsadAdminUI={$,dashboard,tabs,groups,nav,topActions,subLabel,showHome,showBase:view=>showTab(view)};
+showHome();
+})();
