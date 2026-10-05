@@ -1,0 +1,8 @@
+{
+  "name": "marsad-kpi-admin",
+  "private": true,
+  "version": "3.7.2",
+  "scripts": {
+    "start": "node static-server.js"
+  }
+}
