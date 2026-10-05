@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>مرصد الأداء | الإدارة</title></head>
+<body>
+<p style="font-family:system-ui;text-align:center;margin-top:48px">جارٍ فتح أحدث نسخة من صفحة الإدارة…</p>
+<script>
+(async()=>{
+  const stamp='3.7.3';
+  try{
+    const res=await fetch('admin.html?build='+stamp+'&t='+Date.now(),{cache:'no-store'});
+    if(!res.ok) throw new Error('admin_load_failed');
+    let html=await res.text();
+    html=html.replace(/\?v=3\.7\.1/g,'?v='+stamp).replace(/\?v=3\.7\.2/g,'?v='+stamp);
+    html=html.replace('</body>','<script>document.documentElement.dataset.marsadLiveLoader="'+stamp+'";<\/script></body>');
+    document.open();document.write(html);document.close();
+  }catch(e){
+    document.body.innerHTML='<p style="font-family:system-ui;text-align:center;margin-top:48px">تعذر تحميل صفحة الإدارة. أعد فتح الصفحة.</p>';
+  }
+})();
+</script>
+</body></html>
