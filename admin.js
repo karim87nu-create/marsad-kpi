@@ -109,8 +109,8 @@ function renderLive(){
  if(stale)alerts.push('انتظار العملاء غير مؤكد — لا توجد لقطة حديثة');
  if(!stale&&waiting.some(r=>{const t=String(r[8]).trim();return /^\d+:[0-5]\d:[0-5]\d$/.test(t)&&t.split(':').reduce((v,n)=>v*60+Number(n),0)>7}))alerts.push('فيه عملاء انتظارهم تجاوز 7 ثوانٍ');
  const overBreak=people.filter(p=>liveState(p)==='break'&&p.startedAt&&now-Date.parse(p.startedAt)>=900000);
- const overCall=people.filter(p=>liveState(p)==='on_call'&&p.startedAt&&now-Date.parse(p.startedAt)>180000);
- if(overBreak.length)alerts.push(overBreak.length+' موظف تجاوز بريك 15 دقيقة');if(overCall.length)alerts.push(overCall.length+' مكالمة تجاوزت 3 دقائق');
+ const overCall=people.filter(p=>liveState(p)==='on_call'&&p.startedAt&&now-Date.parse(p.startedAt)>240000);
+ if(overBreak.length)alerts.push(overBreak.length+' موظف تجاوز بريك 15 دقيقة');if(overCall.length)alerts.push(overCall.length+' مكالمة تجاوزت 4 دقائق');
  $('attentionNow').textContent=alerts.length?alerts.join(' · '):'لا توجد تنبيهات تأخير في البيانات الحالية';$('attentionNow').classList.toggle('warning',!!alerts.length);
  const h=historyScope();
  cards('overviewDayCards',h?[['مكالمات يوم التشغيل',h.calls],['تم الرد',h.answered],['فائتة محتسبة',h.abandoned],['الرد خلال 10ث',h.sla==null?'غير متاح':Number(h.sla).toFixed(2)+'%']]:[['مؤشرات اليوم','لا يوجد سجل محفوظ']]);
