@@ -1,0 +1,49 @@
+/* 3.7.1: eight task workspaces, primary tables visible, secondary details only. */
+[hidden]{display:none!important}
+body.dashboard-active .head{display:none}
+@media(max-width:820px){.dashboard-sidebar,.sidebar-backdrop{transition:none!important}.dashboard-sidebar{z-index:1001!important}.sidebar-backdrop{z-index:990!important}}
+.single-page-leaf,.ui-export-source,.legacy-filter-note,.secondary-live-information{display:none!important}
+.filters.admin-topbar{display:block}
+.filter-fields{grid-template-columns:repeat(auto-fit,minmax(155px,1fr))}
+.filter-fields>[hidden]{display:none!important}
+.filter-actions .date-actions[hidden]{display:none!important}
+.no-operation-filters{padding:8px 12px!important;position:static!important}
+#adminScopeBanner{margin:10px 0 0;padding:10px 12px;border-radius:9px;border:1px solid #2f5167;font-size:14px}
+#adminScopeBanner.scope-live{background:#0a3730;color:#a5f5d9;border-color:#267d65}
+#adminScopeBanner.scope-day{background:#102f48;color:#b8dfff}
+#adminBreadcrumb{font-size:13px;color:#94bace;margin-bottom:4px;overflow-wrap:anywhere}
+.employee-global-search{display:flex;gap:10px;align-items:center;flex-wrap:wrap;position:relative;margin-bottom:12px;padding:12px;border:1px solid #294b63;border-radius:12px;background:#0b1c2d}
+.employee-global-search label{font-size:13px}
+.employee-global-search input{flex:1;min-width:180px;min-height:42px;margin:0}
+#adminEmployeeChoice{font-size:13px;color:#9ce2d1}
+#adminEmployeeResults{position:absolute;top:calc(100% - 8px);left:12px;right:12px;background:#10273a;z-index:125;border:1px solid #426781;border-radius:10px;padding:8px;max-height:320px;overflow:auto;box-shadow:0 12px 28px #0008}
+#adminEmployeeResults button{display:block;text-align:right;width:100%;background:transparent;color:#e6f4ff;margin:4px 0}
+.page-export{position:relative;border:1px solid #40627a;border-radius:10px;background:#163449;padding:7px 13px}
+.page-export>summary{list-style:none;cursor:pointer;font-weight:bold}
+#pageExportOptions{position:absolute;top:100%;left:0;width:260px;max-height:65vh;overflow:auto;z-index:145;background:#0c2131;border:1px solid #3f6880;border-radius:12px;padding:8px;box-shadow:0 15px 28px #0008}
+#pageExportOptions button{display:block;width:100%;text-align:right;margin:5px 0;white-space:normal}
+.summary-facts{display:flex;flex-wrap:wrap;gap:10px;background:transparent;margin:14px 0}
+.summary-facts>.card{background:transparent;border:0;border-inline-start:2px solid #2c5970;border-radius:0;box-shadow:none;padding:6px 12px;font-size:13px;flex:1 1 155px}
+.summary-facts>.card::before{display:none}
+.summary-facts>.card>span{font-size:19px}
+#liveCards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.primary-content{margin:14px 0}
+.primary-content>h3{margin:18px 0 10px}
+.dashboard-content .tablewrap{max-height:65vh}
+.danger-action{background:#3a202a!important;color:#ffcad1!important;border-color:#935263!important}
+.danger-action:hover{background:#5b2936!important}
+.intervention-list{display:grid;gap:10px}
+.intervention-item{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:start;gap:12px;padding:15px;background:#11283a;border:1px solid #335970;border-radius:12px}
+.intervention-item h3{font-size:16px;margin:0 0 5px}.intervention-item p{font-size:14px;margin:0}
+.intervention-item.priority-0,.intervention-item.priority-1{border-color:#a46a43;background:#35291e}
+.priority-badge{padding:4px 9px;border-radius:6px;background:#344b5d;font-size:12px}
+.priority-0 .priority-badge,.priority-1 .priority-badge{background:#704c28;color:#ffe0b7}
+.existing-incident-actions{margin-top:22px}
+.work-timeline{list-style:none;margin:16px 0;padding:0;border-inline-start:2px solid #3b8d82}
+.work-timeline li{position:relative;padding:0 20px 18px;display:grid;grid-template-columns:minmax(140px,1fr) minmax(160px,1.5fr);gap:4px 12px}
+.work-timeline li::before{content:'';position:absolute;right:-6px;top:8px;width:10px;height:10px;background:#43d6b6;border-radius:50%}
+.work-timeline time,.work-timeline span{font-size:13px;color:#b5ccd8}
+.work-timeline span{grid-column:2}
+.empty-state{padding:20px;background:#0c2232;border:1px dashed #356079;border-radius:10px}
+#attentionNow{cursor:pointer}
+@media(max-width:820px){#liveCards{grid-template-columns:repeat(2,minmax(0,1fr))}.employee-global-search{padding:10px}.employee-global-search input{flex-basis:100%}.intervention-item{grid-template-columns:auto minmax(0,1fr)}.intervention-item button{grid-column:2}.work-timeline li{grid-template-columns:1fr}.work-timeline span{grid-column:auto}.page-export{padding:6px 10px}.dashboard-content .tablewrap{max-height:none}.filter-fields{grid-template-columns:repeat(2,minmax(0,1fr))}.workspace-nav button{min-height:44px}}

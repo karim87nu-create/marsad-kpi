@@ -35,8 +35,8 @@
   }catch(e){if(seq===sequence){operations=null;render();nodes('operationsLoad').textContent='تعذر تحميل التحليل والمتابعة؛ لا تعتمد على الأرقام القديمة. '+e.message;loadedAt=0}}finally{if(seq===sequence)loading=false}
  }
  function render(){
-  if(!valid()){for(const id of ['analysisCards','profileCards','healthCards','comparisonCards','queueSampleCards'])cards(id,[]);for(const id of ['pressureRows','breakOverlapRows','queueSampleRows','profileSessionRows','profileCallRows','profileStateRows','reviewRows','savedReportRows','auditRows','connectionRows','unattributedRows','handoverRows','customerRows','formulaRows'])nodes(id).innerHTML='<tr><td colspan="14">انتظر تحميل بيانات اليوم والفلاتر المختارة.</td></tr>';nodes('pressureGrid').innerHTML='';return}
-  renderLiveExtras();renderAnalysis();renderProfile();renderReviews();renderHealth();renderRules();maskExistingTables();
+  if(!valid()){for(const id of ['analysisCards','profileCards','healthCards','comparisonCards','queueSampleCards'])cards(id,[]);for(const id of ['pressureRows','breakOverlapRows','queueSampleRows','profileSessionRows','profileCallRows','profileStateRows','reviewRows','savedReportRows','auditRows','connectionRows','unattributedRows','handoverRows','customerRows','formulaRows'])nodes(id).innerHTML='<tr><td colspan="14">انتظر تحميل بيانات اليوم والفلاتر المختارة.</td></tr>';nodes('pressureGrid').innerHTML='';if(typeof CustomEvent==='function'&&window.dispatchEvent)window.dispatchEvent(new CustomEvent('marsad-operations-data',{detail:null}));return}
+  renderLiveExtras();renderAnalysis();renderProfile();renderReviews();renderHealth();renderRules();maskExistingTables();if(typeof CustomEvent==='function'&&window.dispatchEvent)window.dispatchEvent(new CustomEvent('marsad-operations-data',{detail:operations}));
  }
  function liveDuration(p){const s=liveState(p);if(['unknown','offline','no_session','shift_ended'].includes(s))return null;const now=Date.now()+offset;
   if(['on_call','break'].includes(s))return p.startedAt?Math.max(0,(now-Date.parse(p.startedAt))/1000):null;
@@ -144,7 +144,7 @@
  }
  const oldLive=renderLive;renderLive=function(){oldLive();renderLiveExtras()};
  document.addEventListener('marsad-table-filter',()=>{if(valid())render()});
- const oldTab=showTab;showTab=function(id){oldTab(id);render();if(['analysis','profile','followup','health','guide','calls','attendance','shifts','metrics'].includes(id))load()};
+ const oldTab=showTab;showTab=function(id){oldTab(id);render();if(['live','intervention','analysis','profile','followup','health','guide','calls','attendance','shifts','metrics','unattributed','customers','reports','audit','adminUsers','alertLog','queue'].includes(id))load()};
  window.addEventListener('kpi-admin-refresh',()=>{render();load()});
  document.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
   if(b.dataset.opsProfile){$('employeeFilter').value=b.dataset.opsProfile;syncPicker('employeeFilter');showTab('profile');renderProfile();refresh(true)}
@@ -161,6 +161,6 @@
  nodes('removeViewButton').onclick=()=>{if(nodes('savedView').value==='')return;views.splice(Number(nodes('savedView').value),1);localStorage.setItem(preferenceKey,JSON.stringify(views));renderViews()};renderViews();
  nodes('maskPhones').onchange=()=>{renderDaily();renderHistory();renderLive();render();};
  const oldClear=clearDay;clearDay=function(){sequence++;loading=false;operations=null;comparison=null;loadedAt=0;lastAttempt=0;nodes('savedReportView').hidden=true;if(nodes('reviewDialog').open)nodes('reviewDialog').close();oldClear();render()};
- setInterval(()=>{if(sessionStorage.getItem('adminPassword')&&['analysis','profile','followup','health','guide','calls','attendance','shifts','metrics'].includes(selectedTab))load()},1000);
+ setInterval(()=>{if(sessionStorage.getItem('adminPassword')&&['live','intervention','analysis','profile','followup','health','guide','calls','attendance','shifts','metrics','unattributed','customers','reports','audit','adminUsers','alertLog','queue'].includes(selectedTab))load()},1000);
  if(sessionStorage.getItem('adminPassword'))load();
 })();
