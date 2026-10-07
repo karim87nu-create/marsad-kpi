@@ -1,6 +1,6 @@
 (function(){
  if(location.hostname!=='41.38.207.218'||/^\/themes\/arabicssReportsInclude(?:\/|$)/i.test(location.pathname))return;
- const API='https://marsad-kpi-live.karim87nu.chatgpt.site',TOKEN='7000865f1220458f86506b41a97cab7d',VERSION='2.5.9';
+ const API='https://marsad-kpi-live.karim87nu.chatgpt.site',TOKEN='7000865f1220458f86506b41a97cab7d',VERSION='2.5.10';
  const SESSION='arabicss_kpi_employee_session',STATE='arabicss_kpi_state',EPOCH='arabicss_kpi_runtime_epoch';
  let employee=null,sessionToken='',runtimeEpoch='',sourceConnection='unknown',sourceStateKnown=false,call=null,breakActive=false,breakStarted=null,breakAllowedSeconds=900,breakGraceSeconds=0,scanTimer=null,refreshTimer=null,focusRefresh=null,flushing=false,initialized=false;
  const availability=globalThis.createKpiAvailability();
@@ -95,7 +95,7 @@ function captureSourceEvidence(type,payload={}){
   lastArabicssSnapshotFingerprint=fingerprint;
   captureSourceEvidence('arabicss_state',{...payload,_snapshotChanged:true,_presenceStateBefore:evidenceState()});
  }
- async function registerSession(){if(!sessionToken||!employee)return;try{const r=await browser.runtime.sendMessage({type:'REGISTER_SESSION',token:sessionToken,deviceToken:TOKEN,employee,version:VERSION,state:readState()});if(r.duplicate)resetLocal()}catch{status('تعذر تأكيد حفظ الجلسة؛ أعد تحميل الصفحة')}}
+ async function registerSession(){if(!sessionToken||!employee)return;try{const r=await browser.runtime.sendMessage({type:'REGISTER_SESSION',token:sessionToken,deviceToken:TOKEN,employee,version:VERSION,state:readState()});if(r.duplicate){status('الجلسة مستخدمة في نافذة أخرى — نحافظ على الجلسة الحالية ونحاول المزامنة مجددًا');setTimeout(()=>{if(sessionToken)registerSession()},5000)}}catch{status('تعذر المزامنة مؤقتًا — ستتم إعادة المحاولة تلقائيًا')}}
  async function flush(){
   if(flushing)return;flushing=true;try{const result=await browser.runtime.sendMessage({type:'FLUSH_EVENTS',deviceToken:TOKEN});if(result.rejected)status('يوجد '+result.rejected+' حدث مرفوض محفوظ للمراجعة؛ البيانات قد تكون ناقصة')}catch{}finally{flushing=false}
  }
@@ -148,15 +148,16 @@ function captureSourceEvidence(type,payload={}){
  function scan(){
   if(!employee||!sessionToken)return;
   const current=ext(),bound=boundExtension();
-  const arabicssPassword=[...document.querySelectorAll('input[type="password"]')].some(input=>!input.closest('#kpi-session-box'));
   const authenticatedPage=!!current||!!document.querySelector('a[href*="logout=yes"]')||!!document.querySelector('#issabel_framework_module_id');
-  if(!current&&arabicssPassword&&(bound||arabicssAuthenticated&&!authenticatedPage)){finishSession('arabicss_login_page');return}
+  // A password field can appear in transient Arabicss dialogs. Treat only an
+  // explicit login page as a session end; a missing header is not enough.
+  if(!current&&arabicssAuthenticated&&!authenticatedPage&&/\/login\.php$/i.test(location.pathname)){finishSession('arabicss_login_page');return}
   if(authenticatedPage&&!arabicssAuthenticated){arabicssAuthenticated=true;saveState()}
   if(bound&&current&&bound!==current){finishSession('extension_changed');return}
   if(current&&!bound){saveState();activity('session_login',{state:'bound'})}
   if(call&&!call.observed&&sourceConnection==='connected'){const duration=seconds(document.querySelector('#issabel-callcenter-cronometro')?.textContent);if(duration!==null){call.elapsed=Math.max(call.elapsed||0,duration);saveState()}}
  }
- function scheduleScan(){if(scanTimer)return;scanTimer=setTimeout(()=>{scanTimer=null;scan()},250)}
+ function scheduleScan(){if(scanTimer)return;scanTimer=setTimeout(()=>{scanTimer=null;scan()},500)}
  document.addEventListener('click',e=>{const a=e.target?.closest?.('a[href]');if(!a||!employee)return;try{const u=new URL(a.href,location.origin);if(u.hostname===location.hostname&&u.searchParams.get('logout')==='yes')finishSession('arabicss_logout')}catch{}},true);
  window.addEventListener('message',e=>{
   if(e.origin!==location.origin||e.data?.source!=='ARABICSS_KPI_SSE')return;
@@ -213,26 +214,34 @@ function captureSourceEvidence(type,payload={}){
    const runtime=await browser.runtime.sendMessage({type:'EMPLOYEE_RUNTIME_EPOCH'});runtimeEpoch=runtime.epoch;
    // Same-tab navigation can change HTTP/HTTPS origin and lose sessionStorage.
    // Recover only this tab's identity, never a device-wide or another tab's session.
-   if(runtime.session?.employee&&runtime.session.version===VERSION){
+   if(runtime.session?.employee&&runtime.session.token){
     sessionStorage.setItem(SESSION,JSON.stringify(runtime.session.employee));sessionStorage.setItem(SESSION+'_token',runtime.session.token);sessionStorage.setItem(SESSION+'_version',VERSION);sessionStorage.setItem(EPOCH,runtimeEpoch);
     if(runtime.session.state)sessionStorage.setItem(STATE,JSON.stringify(runtime.session.state));
    }
-   const savedToken=sessionStorage.getItem(SESSION+'_token'),same=sessionStorage.getItem(EPOCH)===runtimeEpoch&&sessionStorage.getItem(SESSION+'_version')===VERSION;
-   if(same&&savedToken){const body=savedToken.split('.')[0],claims=JSON.parse(atob(body.replace(/-/g,'+').replace(/_/g,'/')));if(claims.exp>Date.now()){employee=JSON.parse(sessionStorage.getItem(SESSION)||'null');sessionToken=savedToken;restoreState()}}
+   const savedToken=sessionStorage.getItem(SESSION+'_token');
+   if(savedToken){const body=savedToken.split('.')[0],claims=JSON.parse(atob(body.replace(/-/g,'+').replace(/_/g,'/')));if(claims.exp>Date.now()){employee=JSON.parse(sessionStorage.getItem(SESSION)||'null');if(employee){sessionToken=savedToken;sessionStorage.setItem(SESSION+'_version',VERSION);sessionStorage.setItem(EPOCH,runtimeEpoch);restoreState()}}}
    if(!employee){if(savedToken)apiFetch('/api/session/end',{method:'POST',headers:{'content-type':'application/json','x-device-token':TOKEN,'x-employee-session':savedToken},body:'{}'}).catch(()=>{});resetLocal()}
-  }catch{resetLocal()}
+  }catch{
+   // If the extension background is briefly unavailable after navigation or a
+   // break transition, retain this tab's still-valid signed session token.
+   // The API remains the authority and will reject an expired/revoked token.
+   const savedToken=sessionStorage.getItem(SESSION+'_token');let claims=null;
+   try{claims=JSON.parse(atob(savedToken.split('.')[0].replace(/-/g,'+').replace(/_/g,'/')))}catch{}
+   if(savedToken&&claims?.exp>Date.now()){try{employee=JSON.parse(sessionStorage.getItem(SESSION)||'null')}catch{employee=null}if(employee){sessionToken=savedToken;runtimeEpoch=sessionStorage.getItem(EPOCH)||'';sessionStorage.setItem(SESSION+'_version',VERSION);restoreState()}else resetLocal()}
+   else resetLocal();
+  }
   if(sessionToken)await registerSession();
   initialized=true;mount();scan();flush();
  }
  function boot(){
   const style=document.createElement('style');style.textContent='#kpi-session-box select,#kpi-session-box input{box-sizing:border-box;width:100%;padding:12px;margin:7px 0;border-radius:7px;background:#fff!important;color:#111827!important;opacity:1!important;font:700 17px Arial!important}#kpi-session-box option{background:#fff;color:#111827}#kpi-session-box button{width:100%;padding:10px;margin:6px 0;border-radius:7px;border:1px solid #64748b;background:#2dd4bf;color:#06251e;font:700 17px Arial;cursor:pointer}#kpi-session-box [hidden]{display:none!important}#kpi-error{color:#ffb4b4;margin-top:8px}';document.documentElement.appendChild(style);
   // Gate before initialization completes; never briefly expose the login form.
-  mount();new MutationObserver(scheduleScan).observe(document.body,{childList:true,subtree:true,characterData:true});initialize();
+  mount();new MutationObserver(scheduleScan).observe(document.body,{childList:true,subtree:true});initialize();
  }
  window.addEventListener('online',flush);setInterval(flush,10000);
  setInterval(async()=>{
   if(!employee||!sessionToken)return;
-  try{const runtime=await browser.runtime.sendMessage({type:'EMPLOYEE_RUNTIME_EPOCH'});if(runtime.epoch!==runtimeEpoch){finishSession('extension_restarted');return}}catch{resetLocal();return}
+  try{const runtime=await browser.runtime.sendMessage({type:'EMPLOYEE_RUNTIME_EPOCH'});if(runtime.epoch!==runtimeEpoch){runtimeEpoch=runtime.epoch;sessionStorage.setItem(EPOCH,runtimeEpoch);if(runtime.session?.token===sessionToken&&runtime.session.employee)employee=runtime.session.employee;await registerSession();status('تمت استعادة الاتصال بالإضافة دون إنهاء جلسة الموظف')}}catch{status('تعذر الاتصال المؤقت بخلفية الإضافة — ستستمر المحاولة دون طلب كلمة السر');return}
   registerSession();
   reportPresence(true);
  },30000);
