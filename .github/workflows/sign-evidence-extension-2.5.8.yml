@@ -1,0 +1,106 @@
+name: Sign and publish evidence connector 2.5.8
+
+on:
+  push:
+    paths:
+      - '.github/workflows/sign-evidence-extension-2.5.8.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-sign:
+    runs-on: ubuntu-latest
+    env:
+      AMO_KEY: ${{ secrets.AMO_JWT_ISSUER || secrets.WEB_EXT_API_KEY || secrets.AMO_API_KEY || secrets.MOZILLA_API_KEY }}
+      AMO_SECRET: ${{ secrets.AMO_JWT_SECRET || secrets.WEB_EXT_API_SECRET || secrets.AMO_API_SECRET || secrets.MOZILLA_API_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate 2.5.8 source
+        run: |
+          node --check extension-current/content.js
+          node --check extension-current/page-hook.js
+          python -m json.tool extension-current/manifest.json >/dev/null
+          test "$(python -c "import json;print(json.load(open('extension-current/manifest.json'))['version'])")" = "2.5.8"
+      - name: Build unsigned audit package
+        run: |
+          rm -f arabicss-kpi-2.5.8-unsigned.xpi
+          cd extension-current
+          zip -qr ../arabicss-kpi-2.5.8-unsigned.xpi . -x 'EVIDENCE-CAPTURE.md' 'SOURCE.txt'
+          cd ..
+          unzip -t arabicss-kpi-2.5.8-unsigned.xpi >/dev/null
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arabicss-kpi-2.5.8-unsigned-audit
+          path: arabicss-kpi-2.5.8-unsigned.xpi
+          retention-days: 14
+      - name: Check signing credentials
+        id: creds
+        shell: bash
+        run: |
+          if [ -n "$AMO_KEY" ] && [ -n "$AMO_SECRET" ]; then
+            echo 'available=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'available=false' >> "$GITHUB_OUTPUT"
+            echo 'No AMO signing credentials are configured in the repository; leaving auto-update untouched.'
+          fi
+      - name: Install Mozilla web-ext signer
+        if: steps.creds.outputs.available == 'true'
+        run: npm install --global web-ext
+      - name: Sign unlisted 2.5.8 package with Mozilla
+        if: steps.creds.outputs.available == 'true'
+        run: |
+          rm -rf signed-artifacts
+          mkdir signed-artifacts
+          web-ext sign \
+            --source-dir extension-current \
+            --artifacts-dir signed-artifacts \
+            --api-key "$AMO_KEY" \
+            --api-secret "$AMO_SECRET" \
+            --channel unlisted \
+            --ignore-files EVIDENCE-CAPTURE.md SOURCE.txt
+          python - <<'PY'
+          from pathlib import Path
+          files=list(Path('signed-artifacts').glob('*.xpi'))
+          if len(files)!=1:
+              raise SystemExit(f'expected one signed xpi, found {len(files)}')
+          Path('signed-artifacts/selected.txt').write_text(str(files[0]))
+          PY
+          SIGNED=$(cat signed-artifacts/selected.txt)
+          unzip -l "$SIGNED" | grep -q 'META-INF'
+      - uses: actions/upload-artifact@v4
+        if: steps.creds.outputs.available == 'true'
+        with:
+          name: arabicss-kpi-2.5.8-signed
+          path: signed-artifacts/*.xpi
+          retention-days: 30
+      - name: Publish signed package and update feed
+        if: steps.creds.outputs.available == 'true'
+        shell: bash
+        run: |
+          SIGNED=$(cat signed-artifacts/selected.txt)
+          cp "$SIGNED" releases/arabicss-kpi-2.5.8.xpi
+          SHA=$(sha256sum releases/arabicss-kpi-2.5.8.xpi | awk '{print $1}')
+          python - "$SHA" <<'PY'
+          import json,sys
+          from pathlib import Path
+          sha=sys.argv[1]
+          p=Path('firefox-updates.json')
+          data=json.loads(p.read_text())
+          addon=data['addons']['arabicss-kpi@eldahan.local']
+          updates=[u for u in addon.get('updates',[]) if u.get('version')!='2.5.8']
+          updates.insert(0,{
+              'version':'2.5.8',
+              'update_link':'https://karim87nu-create.github.io/marsad-kpi/releases/arabicss-kpi-2.5.8.xpi',
+              'update_hash':'sha256:'+sha,
+              'applications':{'gecko':{'strict_min_version':'142.0'}}
+          })
+          addon['updates']=updates
+          p.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add releases/arabicss-kpi-2.5.8.xpi firefox-updates.json
+          git commit -m 'Publish signed Firefox evidence connector 2.5.8'
+          git push
