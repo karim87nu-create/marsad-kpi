@@ -1,6 +1,6 @@
 (function(){
  if(location.hostname!=='41.38.207.218'||/^\/themes\/arabicssReportsInclude(?:\/|$)/i.test(location.pathname))return;
- const API='https://marsad-kpi-live.karim87nu.chatgpt.site',TOKEN='7000865f1220458f86506b41a97cab7d',VERSION='2.5.7';
+ const API='https://marsad-kpi-live.karim87nu.chatgpt.site',TOKEN='7000865f1220458f86506b41a97cab7d',VERSION='2.5.8';
  const SESSION='arabicss_kpi_employee_session',STATE='arabicss_kpi_state',EPOCH='arabicss_kpi_runtime_epoch';
  let employee=null,sessionToken='',runtimeEpoch='',sourceConnection='unknown',sourceStateKnown=false,call=null,breakActive=false,breakStarted=null,breakAllowedSeconds=900,breakGraceSeconds=0,scanTimer=null,refreshTimer=null,focusRefresh=null,flushing=false,initialized=false;
  const availability=globalThis.createKpiAvailability();
@@ -27,6 +27,23 @@
  const apiFetch=async(path,options={})=>{const r=await browser.runtime.sendMessage({type:'KPI_API',path,method:options.method||'GET',headers:options.headers||{},body:options.body});return {...r,json:()=>JSON.parse(r.body)}};
  const seconds=v=>{if(typeof v==='number')return Math.max(0,Math.round(v));const s=String(v??'').trim();if(/^\d+$/.test(s))return Number(s);return /^\d{1,3}:[0-5]\d(?::[0-5]\d)?$/.test(s)?s.split(':').reduce((a,n)=>a*60+Number(n),0):null};
  const canonicalId=v=>String(v||'').match(/(?:incoming-q\d+-|outgoing-)?(\d+)$/)?.[1]||String(v||'');
+
+const evidenceState=()=>sourceConnection!=='connected'?'unknown':breakActive?'break':call?'on_call':sourceStateKnown?'ready':'unknown';
+const evidenceReceivedAt=payload=>{const raw=String(payload?._receivedAt||'');return Number.isFinite(Date.parse(raw))?new Date(Date.parse(raw)).toISOString():new Date().toISOString()};
+const channelExtension=value=>(String(value||'').match(/(?:SIP|IAX2|PJSIP|Local)\/(\d+)/i)||[])[1]||'';
+function captureSourceEvidence(type,payload={}){
+ const extension=ext()||boundExtension();if(!employee||!sessionToken||!extension)return;
+ const receivedAt=evidenceReceivedAt(payload),queues=Array.isArray(payload.queues)?payload.queues.map(String):[],agentChannel=String(payload.agentchannel||payload.agent_channel||payload.agent||''),agentExtension=channelExtension(agentChannel),newStatus=String(payload.new_status||payload.status||'');
+ const sourceOccurredAt=String(payload.datetime_entry||payload.pause_start||payload.pause_end||'')||null;
+ const sourceDuration=seconds(payload.pause_duration??payload.duration);
+ const sourceParts=[payload.id,payload.datetime_entry,payload.call_id,payload.callid,newStatus,payload.pause_start,payload.pause_end,queues.join(','),agentChannel].filter(v=>v!==undefined&&v!==null&&String(v)!=='').map(String);
+ const sourceId=(sourceParts.join('|')||receivedAt).slice(0,180);
+ const matchedAgent=!!agentExtension&&agentExtension===extension;
+ const statusLower=newStatus.toLowerCase();
+ const ringProof=matchedAgent&&(statusLower==='ringing'||statusLower==='noanswer'||statusLower==='no answer')?(statusLower==='ringing'?'ringing_on_this_extension':'ring_no_answer_on_this_extension'):null;
+ const evidence={evidenceType:type,evidenceSource:'issabel_eccp_sse',sourceEvent:String(payload._sourceEvent||type),sourceReceivedAt:receivedAt,sourceOccurredAt,sourceDurationSeconds:sourceDuration,queues,agentChannel,agentExtension,matchedAgentExtension:matchedAgent,newStatus:newStatus||null,ringProof,callId:String(payload.call_id||payload.callid||''),uniqueid:String(payload.uniqueid||''),queue:String(payload.queue||''),phone:String(payload.phone||''),raw:payload};
+ send({eventType:'heartbeat',eventKey:extension+':source-evidence:'+type+':'+sourceId,extension,occurredAt:receivedAt,durationSeconds:0,clientVersion:VERSION,state:evidenceState(),payload:{sourceConnection,connectorVersion:VERSION,evidence}}).catch(()=>{});
+}
  const status=text=>{const el=document.getElementById('kpi-status');if(el)el.textContent=text};
  const alertAttempts=new Map();
  function checkAlerts(){
@@ -146,6 +163,7 @@
   if(type==='arabicss_state'){acceptState(payload);return}
   if(type==='logged-out'||type==='agentloggedout'){finishSession('arabicss_logout');return}
   sourceConnection='connected';sourceStateKnown=true;
+  if(['pausestart','pauseend','queuemembership','callprogress'].includes(type))captureSourceEvidence(type,payload);
   if(type==='breakenter'){if(!breakActive){const permit=globalThis.kpiBreakPermit,valid=!!permit&&permit.until>Date.now()&&permit.extension===ext();breakStarted=valid&&payload._previousBreakId==null?new Date().toISOString():null;breakAllowedSeconds=valid?permit.allowedSeconds:900;breakGraceSeconds=valid?permit.graceSeconds:0;activity(breakStarted?'break_start':'break_observed',{state:'break',payload:{...payload,durationKnown:!!breakStarted,breakPolicyEstimated:!breakStarted}});if(valid)globalThis.kpiBreakPermit=null}breakActive=true;saveState()}
   else if(type==='breakexit'){if(breakActive)activity(breakStarted?'break_end':'break_end_unknown',{state:'ready',durationSeconds:breakStarted?Math.round((Date.now()-Date.parse(breakStarted))/1000):0,payload:{...payload,durationKnown:!!breakStarted}});breakActive=false;breakStarted=null;saveState()}
   else if(type==='agentlinked')startCall(payload);

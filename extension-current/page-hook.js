@@ -23,7 +23,7 @@
     if(!records||typeof records!=='object')return;
     connection='connected';receivedAt=new Date().toISOString();
     const list=typeof records.event==='string'?[records]:Object.values(records);
-    for(const record of list)if(record&&typeof record.event==='string')post(record.event,{...record,_previousBreakId:window.estadoCliente?.break_id??null,_previousCallId:window.estadoCliente?.callid??null});
+    for(const record of list)if(record&&typeof record.event==='string')post(record.event,{...record,_previousBreakId:window.estadoCliente?.break_id??null,_previousCallId:window.estadoCliente?.callid??null,_receivedAt:receivedAt,_sourceEvent:String(record.event),_sourceConnection:connection});
    });
    return es;
   };
