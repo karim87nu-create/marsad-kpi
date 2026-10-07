@@ -1,0 +1,1 @@
+Extracted from releases/arabicss-kpi-2.5.7.xpi for auditable source updates.

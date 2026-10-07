@@ -1,0 +1,3 @@
+const message=document.getElementById('message');
+async function refresh(){try{const s=await browser.runtime.sendMessage({type:'COLLECTOR_STATUS'});message.textContent=s.message+(s.lastHistory?'\nآخر تاريخ سجل: '+s.lastHistory.slice(0,10):'')+(s.lastLive?'\nآخر وصول لايف: '+new Date(s.lastLive).toLocaleTimeString('ar-EG'):'')+(s.liveError?'\n'+s.liveError:'')}catch{message.textContent='تعذر التواصل مع الموصل'}}
+document.getElementById('sync').onclick=async()=>{await browser.runtime.sendMessage({type:'COLLECTOR_SYNC'});refresh()};document.getElementById('stop').onclick=async()=>{await browser.runtime.sendMessage({type:'COLLECTOR_STOP'});refresh()};refresh();setInterval(refresh,3000);
