@@ -1,0 +1,51 @@
+name: Expand source evidence capture
+
+on:
+  push:
+    paths:
+      - '.github/workflows/expand-source-evidence-capture.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Capture every remaining raw Issabel SSE event
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p=Path('extension-current/content.js')
+          s=p.read_text()
+          old="  if(['pausestart','pauseend','queuemembership','callprogress'].includes(type))captureSourceEvidence(type,payload);"
+          new="  if(!['breakenter','breakexit','agentlinked','agentunlinked'].includes(type))captureSourceEvidence(type,payload);"
+          if new not in s:
+              if old not in s:
+                  raise SystemExit('evidence marker not found')
+              s=s.replace(old,new,1)
+              p.write_text(s)
+
+          note=Path('extension-current/EVIDENCE-CAPTURE.md')
+          t=note.read_text() if note.exists() else '# Source evidence capture — 2.5.8\n'
+          add='''\n## Raw SSE catch-all\n\nIn addition to the explicitly handled call/break events, every other SSE event emitted by the Issabel/Arabicss source is now persisted as raw evidence. Known operational events that are already persisted separately (`breakenter`, `breakexit`, `agentlinked`, `agentunlinked`) are excluded from the catch-all to avoid duplication. No unknown event is converted into an employee fault or KPI conclusion by this capture layer.\n'''
+          if '## Raw SSE catch-all' not in t:
+              note.write_text(t+add)
+          PY
+      - name: Validate patched connector source
+        run: |
+          node --check extension-current/content.js
+          node --check extension-current/page-hook.js
+          python -m json.tool extension-current/manifest.json >/dev/null
+          grep -Fq "if(!['breakenter','breakexit','agentlinked','agentunlinked'].includes(type))captureSourceEvidence(type,payload);" extension-current/content.js
+      - name: Commit expanded evidence capture
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add extension-current/content.js extension-current/EVIDENCE-CAPTURE.md
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Capture all available Issabel SSE evidence in connector 2.5.8'
+          git push
