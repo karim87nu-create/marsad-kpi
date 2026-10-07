@@ -1,0 +1,33 @@
+name: Restore stable admin shell
+on:
+  push:
+    paths:
+      - '.github/workflows/restore-admin-stable.yml'
+permissions:
+  contents: write
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore stable admin HTML hooks
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('admin.html')
+          s=p.read_text(encoding='utf-8')
+          s=s.replace('<body class="marsad-redesign">','<body>')
+          s=s.replace('admin-layout.js?v=4.3.0','admin-layout.js?v=3.7.5')
+          s=s.replace('admin-layout.js?v=4.2.0','admin-layout.js?v=3.7.5')
+          s=s.replace('admin-layout.js?v=4.1.0','admin-layout.js?v=3.7.5')
+          s=s.replace('admin-layout.js?v=4.0.0','admin-layout.js?v=3.7.5')
+          p.write_text(s,encoding='utf-8')
+          PY
+      - name: Commit stable shell
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add admin.html
+          git diff --cached --quiet && exit 0
+          git commit -m "Restore stable admin HTML and remove redesign flash"
+          git push
