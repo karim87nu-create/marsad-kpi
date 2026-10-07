@@ -50,4 +50,3 @@ node('tgGroupRemove').onclick=()=>{if(confirm('إيقاف الجروب فقط م
  node('tgLoadAlerts').onclick=loadAlerts;node('tgExportAlerts').onclick=()=>{if(alertScope!==node('day').value+'|'+node('employeeFilter').value){text('tgAlertsNote','حدث السجل أولًا للفلاتر الحالية.');return}csv('تنبيهات-'+node('day').value+'.csv',['وقت الحدث','وقت الرصد','التنبيه والحالات وقتها','نتيجة الإرسال'],alerts.map(a=>[a.occurredAt,a.createdAt,a.message,deliveryLabel(a.status)]))};
  for(const id of ['day','employeeFilter'])node(id).addEventListener('change',()=>{alerts=[];alertScope='';node('tgAlertRows').replaceChildren();if(selectedTab==='telegram')loadAlerts()});
 })();
-

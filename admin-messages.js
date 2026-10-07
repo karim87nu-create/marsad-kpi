@@ -21,8 +21,8 @@
   try{const d=await api('/api/messages',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...payload,id:requestId})});$('messageResult').textContent=d.duplicate?'الرسالة محفوظة بالفعل؛ لم يتكرر الإرسال':'تم إرسال التنبيه إلى '+d.recipients+' موظف';$('messageBody').value='';requestId=null;refreshMessages()}catch(e){$('messageResult').textContent='لم يتأكد الإرسال؛ أعد المحاولة بنفس الرسالة: '+e.message}finally{button.disabled=false}
  };
  $('exportMessages').onclick=()=>{if(!rows.length){$('messageResult').textContent='لا يوجد سجل للتصدير';return}csv('admin-messages',['الموظف','العنوان','الرسالة','الأهمية','وقت الإرسال','الحالة','ظهر عنده','تم الاطلاع','انتهاء الصلاحية'],rows.map(values))};
- window.addEventListener('kpi-admin-refresh',()=>{roster();refreshMessages()});$('tabs').addEventListener('click',e=>{if(e.target.closest('[data-tab="messages"]'))refreshMessages()});
+ window.addEventListener('kpi-admin-refresh',()=>{if(selectedTab!=='messages')return;roster();refreshMessages()});$('tabs').addEventListener('click',e=>{if(e.target.closest('[data-tab="messages"]'))refreshMessages()});
  $('logoutButton').addEventListener('click',()=>{rows=[];table('messageRows',[],9);$('messageChecks').replaceChildren();$('messageTitle').value='';$('messageBody').value='';$('messageResult').textContent='';requestId=null;lastPayload='';rosterKey=''});
- for(const id of ['day','employeeFilter'])$(id).addEventListener('change',()=>{rows=[];table('messageRows',[],9);refreshMessages()});
- roster();refreshMessages();
+ for(const id of ['day','employeeFilter'])$(id).addEventListener('change',()=>{rows=[];table('messageRows',[],9);if(selectedTab==='messages')refreshMessages()});
+ roster();if(selectedTab==='messages')refreshMessages();
 })();

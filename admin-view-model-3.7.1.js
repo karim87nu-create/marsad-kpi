@@ -31,7 +31,7 @@ function interventions({presence=[],records=[],staff=[],operations=null,now=Date
  if(fresh&&['logged_in','ready'].includes(state)&&!/^\d+$/.test(String(p.extension||'')))add(3,'no-extension:'+p.employeeId,who+' دخل بدون تحويلة','لم يبدأ استقبال المكالمات على تحويلة مسجلة.',p.employeeId);
  if(fresh&&state==='on_call'&&duration>240)add(3,'call:'+p.employeeId,'مكالمة '+who+' تجاوزت 4 دقائق','المدة: '+Math.floor(duration/60)+' دقيقة',p.employeeId);
  }
- if(operations){const unresolved=(operations.attribution?.rows||[]).filter(r=>!r.included&&!['already_observed','not_answered'].includes(r.reason));if(unresolved.length)add(4,'unattributed','مكالمات لم يُحدد موظفها وتحتاج مراجعة','عدد الصفوف المتاحة للمراجعة: '+unresolved.length,null,'unattributed');
+ if(operations){const unresolved=(operations.attribution?.rows||[]).filter(r=>r.employeeId==null&&!['not_answered'].includes(r.reason));if(unresolved.length)add(4,'unattributed','مكالمات لم يُحدد موظفها وتحتاج مراجعة','عدد الصفوف المتاحة للمراجعة: '+unresolved.length,null,'unattributed');
  for(const r of operations.reviews||[])if(['new','working'].includes(r.status))add(4,'review:'+r.id,r.title,r.owner?'مسؤول المتابعة: '+r.owner:'لم يُحدد مسؤول متابعة',r.employeeId,'followup');
  }
  return out.sort((a,b)=>a.priority-b.priority||a.key.localeCompare(b.key));

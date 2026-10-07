@@ -16,14 +16,13 @@
  csv=function(filename,headers,rows){
   rows=globalThis.MarsadTables?.exportFilter(filename,headers,rows)||rows;
   const scope=dataScope();if(!confirm('معاينة التصدير: '+rows.length+' صف — يوم '+scope.day+' — '+scope.employee+' — '+scope.queue+'. الأرقام العامة تخص الخدمة. تحميل؟'))return;
-  const meta=['وقت استخراج التقرير','يوم التشغيل','فلتر الموظف','فلتر التحويلة','فلتر نوع الطلب','إخفاء الأرقام','دقة البيانات','فلاتر الأعمدة'];
-  const health=valid()?(operations.coverage.hasHistory?'السجل متاح؛ حالات الموظفين حسب الرصد فقط':'سجل المكالمات غير متاح'):'لم يكتمل تحميل تحليل البيانات';
   const phoneIndices=headers.map((h,i)=>/الهاتف|رقم العميل/.test(String(h))?i:-1).filter(i=>i>=0);
-  const safeRows=rows.map(r=>{const line=[...r];if(nodes('maskPhones').checked)for(const i of phoneIndices)line[i]=mask(line[i]);return [...line,scope.exportedAt,scope.day,scope.employee,scope.extension,scope.queue,nodes('maskPhones').checked?'نعم':'لا',health,JSON.stringify(globalThis.MarsadTables?.describe()||[])]});
-  downloadCsv(filename,[...headers,...meta],safeRows);
+  const safeRows=rows.map(r=>{const line=[...r];if(nodes('maskPhones').checked)for(const i of phoneIndices)line[i]=mask(line[i]);return line});
+  downloadCsv(filename,headers,safeRows);
  };
  function maskExistingTables(){if(!nodes('maskPhones').checked)return;for(const tableNode of document.querySelectorAll('table')){const headers=[...tableNode.querySelectorAll('thead th')],indices=headers.map((h,i)=>/الهاتف|رقم العميل/.test(h.textContent)?i:-1).filter(i=>i>=0);for(const tr of tableNode.querySelectorAll('tbody tr'))for(const i of indices){const td=tr.children[i];if(td&&!td.textContent.includes('••••'))td.textContent=mask(td.textContent)}}}
  async function load(force=false,compare=false){
+  if(selectedTab==='live')return; // Daily analysis must not compete with current-state reads.
   if(!sessionStorage.getItem('adminPassword')){operations=null;return}const date=$('day').value,extension=$('extensionFilter').value||'',queue=$('queueFilter').value||'';
   if(loading&&!force||!force&&attemptKey===date+'|'+extension+'|'+queue&&Date.now()-lastAttempt<30000)return;
   attemptKey=date+'|'+extension+'|'+queue;lastAttempt=Date.now();
@@ -86,7 +85,7 @@
   nodes('comparisonNote').textContent=comparison?'مقارنة '+o.date+' مع '+comparison.date+' حتى نفس توقيت القاهرة. '+(comparison.available?'لا نعد البيانات الناقصة صفرًا.':'سجل أحد اليومين غير متاح.')+(comparison.missingDates?.length?' توجد تواريخ مصدر ناقصة.':''):'اضغط المقارنة لتحميل اليوم السابق؛ لا نسحبه مع كل تحديث للايف.';
   cards('comparisonCards',comparison?.available?[['تم الرد — المختار',comparison.current.answered],['تم الرد — السابق',comparison.previous.answered],['فائتة — المختار',comparison.current.abandoned],['فائتة — السابق',comparison.previous.abandoned],['نسبة الرد خلال 10 ثوانٍ — المختار',percent(comparison.current.sla)],['نسبة الرد خلال 10 ثوانٍ — السابق',percent(comparison.previous.sla)]]:[]);
  }
- const profileCallCells=c=>[at(c.startedAt),c.callType==='incoming'?'وارد':c.callType==='outgoing'?'صادر':'غير معروف',phone(c.phone),c.eventType==='agentunlinked'?fmt(c.durationSeconds):'النهاية غير مسجلة',c.attributionSource==='history_session'?'سجل + جلسة الموظف وقتها':'الإضافة'];
+ const profileCallCells=c=>[at(c.startedAt),c.callType==='incoming'?'وارد':c.callType==='outgoing'?'صادر':'غير معروف',phone(c.phone),c.eventType==='agentunlinked'?fmt(c.durationSeconds):'النهاية غير مسجلة',c.attributionSource==='history_session'?'سجل + هوية الموظف وقتها':'الإضافة'];
  const profileStateCells=s=>[s.state==='break_unconfirmed'?'رصد بريك بلا طرفي المدة':stateLabel(s.state),at(s.startedAt),at(s.endedAt),fmt(s.durationSeconds)];
  const profileSessionCells=s=>[at(s.loginAt),at(s.boundAt),at(s.readyAt),fmt(s.delaySeconds),at(s.logoutAt)];
  function renderProfile(){const selected=Number($('employeeFilter').value);let p=profiles().find(e=>e.id===selected);
@@ -115,7 +114,7 @@
   cards('healthCards',[['سجل المصدر',o.coverage.hasHistory?(o.coverage.historyVerified?'عدد الصفوف مطابق للمصدر':'مستورد؛ اكتماله غير مثبت'):'غير متاح'],['مكالمات استُكملت من السجل',a?.recovered??'غير متاح'],['مكالمات مُنع تكرارها',a?.alreadyObserved??'غير متاح'],['مردود عليها غير منسوبة',a?.unattributedAnswered??'غير متاح'],['مدة توقف تحديث الحالات',fmt(o.coverage.unknownSeconds)]]);
   nodes('healthNote').textContent='آخر النبضات تخص اليوم المختار، وليست قائمة كاملة بكل أجهزة الشركة. النسخة المنشورة 2.5.2، لكن إصدار الجهاز نفسه غير مرصود حاليًا. '+(o.coverage.missingDates.length?'تواريخ مصدر غير متاحة: '+o.coverage.missingDates.join('، '):'عدد صفوف المصدر لا يثبت اكتمال حضور الموظفين.');
   table('connectionRows',o.connections.filter(matches).map(c=>row([name(c.employeeId),c.extension,at(c.occurredAt),c.sourceConnection==='connected'?'متصل وقت التحديث':c.sourceConnection==='disconnected'?'انقطاع مرصود':'غير معروف',c.version||'غير مرسل من الإضافة'])),5);
-  table('unattributedRows',(o.attribution?.rows||[]).filter(r=>!r.included&&!['already_observed','not_answered'].includes(r.reason)).slice(0,200).map(r=>row([r.date+' '+r.start,phone(r.phone),r.accountId,attributionReason(r.reason)])),4);
+  table('unattributedRows',(o.attribution?.rows||[]).filter(r=>r.employeeId==null&&!['not_answered'].includes(r.reason)).slice(0,200).map(r=>row([r.date+' '+r.start,phone(r.phone),r.accountId,attributionReason(r.reason)])),4);
   table('handoverRows',o.handovers.filter(h=>(!$('employeeFilter').value||[h.previousEmployeeId,h.nextEmployeeId].includes(Number($('employeeFilter').value)))&&(!$('extensionFilter').value||h.extension===$('extensionFilter').value)).map(h=>row([h.extension,name(h.previousEmployeeId),at(h.previousLogoutAt),name(h.nextEmployeeId),at(h.nextLoginAt),h.gapSeconds==null?'نهاية السابقة غير مؤكدة':h.gapSeconds<0?'تداخل '+fmt(-h.gapSeconds):fmt(h.gapSeconds)])),6);
   table('customerRows',customerRows().slice(0,200).map(c=>row([phone(c.phone),c.calls,c.answered,c.abandoned,c.employeeIds.map(name).join('، ')||'غير منسوبة',at(c.firstAt),at(c.lastAt)])),7);
  }
@@ -142,7 +141,7 @@
   else if(kind==='health')csv('connection-health',['الموظف','التحويلة','آخر تحديث للحالة','الحالة وقت التحديث','إصدار الجهاز'],o.connections.filter(matches).map(c=>[name(c.employeeId),c.extension,c.occurredAt,c.sourceConnection,c.version||'غير مرسل']));
   else if(kind==='customers')csv('customer-calls',['الهاتف','اتصالات العميل المسجلة','تم الرد','فائتة','الموظفون المرتبطون بالمكالمات','أول اتصال','آخر اتصال'],customerRows().map(c=>[c.phone,c.calls,c.answered,c.abandoned,c.employeeIds.map(name).join('، '),c.firstAt,c.lastAt]));
  }
- const oldLive=renderLive;renderLive=function(){oldLive();renderLiveExtras()};
+ const oldLive=renderLive;renderLive=function(...args){oldLive(...args);renderLiveExtras()};
  document.addEventListener('marsad-table-filter',()=>{if(valid())render()});
  const oldTab=showTab;showTab=function(id){oldTab(id);render();if(['live','intervention','analysis','profile','followup','health','guide','calls','attendance','shifts','metrics','unattributed','customers','reports','audit','adminUsers','alertLog','queue'].includes(id))load()};
  window.addEventListener('kpi-admin-refresh',()=>{render();load()});
@@ -161,6 +160,7 @@
  nodes('removeViewButton').onclick=()=>{if(nodes('savedView').value==='')return;views.splice(Number(nodes('savedView').value),1);localStorage.setItem(preferenceKey,JSON.stringify(views));renderViews()};renderViews();
  nodes('maskPhones').onchange=()=>{renderDaily();renderHistory();renderLive();render();};
  const oldClear=clearDay;clearDay=function(){sequence++;loading=false;operations=null;comparison=null;loadedAt=0;lastAttempt=0;nodes('savedReportView').hidden=true;if(nodes('reviewDialog').open)nodes('reviewDialog').close();oldClear();render()};
- setInterval(()=>{if(sessionStorage.getItem('adminPassword')&&['live','intervention','analysis','profile','followup','health','guide','calls','attendance','shifts','metrics','unattributed','customers','reports','audit','adminUsers','alertLog','queue'].includes(selectedTab))load()},1000);
+ // Operations data is refreshed when its section opens or the user refreshes
+ // the dashboard; a one-second timer repeatedly woke up an expensive report path.
  if(sessionStorage.getItem('adminPassword'))load();
 })();
