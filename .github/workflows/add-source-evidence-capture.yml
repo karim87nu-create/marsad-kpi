@@ -4,7 +4,7 @@ on:
   push:
     paths:
       - '.github/workflows/add-source-evidence-capture.yml'
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -15,10 +15,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Patch exact extracted 2.5.7 source
+        shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
           import json
+          import textwrap
 
           root = Path('extension-current')
           content_path = root / 'content.js'
@@ -32,29 +34,29 @@ jobs:
           if manifest.get('version') not in ('2.5.7', '2.5.8'):
               raise SystemExit('unexpected extension version: ' + str(manifest.get('version')))
 
-          # Idempotent version bump.
           manifest['version'] = '2.5.8'
           manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n')
           content = content.replace("VERSION='2.5.7'", "VERSION='2.5.8'")
 
           helper_marker = " const canonicalId=v=>String(v||'').match(/(?:incoming-q\\d+-|outgoing-)?(\\d+)$/)?.[1]||String(v||'');\n"
-          helper_code = r''' const evidenceState=()=>sourceConnection!=='connected'?'unknown':breakActive?'break':call?'on_call':sourceStateKnown?'ready':'unknown';
- const evidenceReceivedAt=payload=>{const raw=String(payload?._receivedAt||'');return Number.isFinite(Date.parse(raw))?new Date(Date.parse(raw)).toISOString():new Date().toISOString()};
- const channelExtension=value=>(String(value||'').match(/(?:SIP|IAX2|PJSIP|Local)\/(\d+)/i)||[])[1]||'';
- function captureSourceEvidence(type,payload={}){
-  const extension=ext()||boundExtension();if(!employee||!sessionToken||!extension)return;
-  const receivedAt=evidenceReceivedAt(payload),queues=Array.isArray(payload.queues)?payload.queues.map(String):[],agentChannel=String(payload.agentchannel||payload.agent_channel||payload.agent||''),agentExtension=channelExtension(agentChannel),newStatus=String(payload.new_status||payload.status||'');
-  const sourceOccurredAt=String(payload.datetime_entry||payload.pause_start||payload.pause_end||'')||null;
-  const sourceDuration=seconds(payload.pause_duration??payload.duration);
-  const sourceParts=[payload.id,payload.datetime_entry,payload.call_id,payload.callid,newStatus,payload.pause_start,payload.pause_end,queues.join(','),agentChannel].filter(v=>v!==undefined&&v!==null&&String(v)!=='').map(String);
-  const sourceId=(sourceParts.join('|')||receivedAt).slice(0,180);
-  const matchedAgent=!!agentExtension&&agentExtension===extension;
-  const statusLower=newStatus.toLowerCase();
-  const ringProof=matchedAgent&&(statusLower==='ringing'||statusLower==='noanswer'||statusLower==='no answer')?(statusLower==='ringing'?'ringing_on_this_extension':'ring_no_answer_on_this_extension'):null;
-  const evidence={evidenceType:type,evidenceSource:'issabel_eccp_sse',sourceEvent:String(payload._sourceEvent||type),sourceReceivedAt:receivedAt,sourceOccurredAt,sourceDurationSeconds:sourceDuration,queues,agentChannel,agentExtension,matchedAgentExtension:matchedAgent,newStatus:ringProof?newStatus:(newStatus||null),ringProof,callId:String(payload.call_id||payload.callid||''),uniqueid:String(payload.uniqueid||''),queue:String(payload.queue||''),phone:String(payload.phone||''),raw:payload};
-  send({eventType:'heartbeat',eventKey:extension+':source-evidence:'+type+':'+sourceId,extension,occurredAt:receivedAt,durationSeconds:0,clientVersion:VERSION,state:evidenceState(),payload:{sourceConnection,connectorVersion:VERSION,evidence}}).catch(()=>{});
- }
-'''
+          helper_code = textwrap.dedent(r'''
+           const evidenceState=()=>sourceConnection!=='connected'?'unknown':breakActive?'break':call?'on_call':sourceStateKnown?'ready':'unknown';
+           const evidenceReceivedAt=payload=>{const raw=String(payload?._receivedAt||'');return Number.isFinite(Date.parse(raw))?new Date(Date.parse(raw)).toISOString():new Date().toISOString()};
+           const channelExtension=value=>(String(value||'').match(/(?:SIP|IAX2|PJSIP|Local)\/(\d+)/i)||[])[1]||'';
+           function captureSourceEvidence(type,payload={}){
+            const extension=ext()||boundExtension();if(!employee||!sessionToken||!extension)return;
+            const receivedAt=evidenceReceivedAt(payload),queues=Array.isArray(payload.queues)?payload.queues.map(String):[],agentChannel=String(payload.agentchannel||payload.agent_channel||payload.agent||''),agentExtension=channelExtension(agentChannel),newStatus=String(payload.new_status||payload.status||'');
+            const sourceOccurredAt=String(payload.datetime_entry||payload.pause_start||payload.pause_end||'')||null;
+            const sourceDuration=seconds(payload.pause_duration??payload.duration);
+            const sourceParts=[payload.id,payload.datetime_entry,payload.call_id,payload.callid,newStatus,payload.pause_start,payload.pause_end,queues.join(','),agentChannel].filter(v=>v!==undefined&&v!==null&&String(v)!=='').map(String);
+            const sourceId=(sourceParts.join('|')||receivedAt).slice(0,180);
+            const matchedAgent=!!agentExtension&&agentExtension===extension;
+            const statusLower=newStatus.toLowerCase();
+            const ringProof=matchedAgent&&(statusLower==='ringing'||statusLower==='noanswer'||statusLower==='no answer')?(statusLower==='ringing'?'ringing_on_this_extension':'ring_no_answer_on_this_extension'):null;
+            const evidence={evidenceType:type,evidenceSource:'issabel_eccp_sse',sourceEvent:String(payload._sourceEvent||type),sourceReceivedAt:receivedAt,sourceOccurredAt,sourceDurationSeconds:sourceDuration,queues,agentChannel,agentExtension,matchedAgentExtension:matchedAgent,newStatus:newStatus||null,ringProof,callId:String(payload.call_id||payload.callid||''),uniqueid:String(payload.uniqueid||''),queue:String(payload.queue||''),phone:String(payload.phone||''),raw:payload};
+            send({eventType:'heartbeat',eventKey:extension+':source-evidence:'+type+':'+sourceId,extension,occurredAt:receivedAt,durationSeconds:0,clientVersion:VERSION,state:evidenceState(),payload:{sourceConnection,connectorVersion:VERSION,evidence}}).catch(()=>{});
+           }
+          ''')
           if 'function captureSourceEvidence(' not in content:
               if helper_marker not in content:
                   raise SystemExit('content helper marker not found')
@@ -67,7 +69,6 @@ jobs:
                   raise SystemExit('content event marker not found')
               content = content.replace(event_marker, event_replacement, 1)
 
-          # Source metadata is attached before crossing the page/content-script boundary.
           old_forward = "for(const record of list)if(record&&typeof record.event==='string')post(record.event,{...record,_previousBreakId:window.estadoCliente?.break_id??null,_previousCallId:window.estadoCliente?.callid??null});"
           new_forward = "for(const record of list)if(record&&typeof record.event==='string')post(record.event,{...record,_previousBreakId:window.estadoCliente?.break_id??null,_previousCallId:window.estadoCliente?.callid??null,_receivedAt:receivedAt,_sourceEvent:String(record.event),_sourceConnection:connection});"
           if '_sourceEvent:String(record.event)' not in hook:
@@ -78,10 +79,18 @@ jobs:
           content_path.write_text(content)
           hook_path.write_text(hook)
 
-          note = root / 'EVIDENCE-CAPTURE.md'
-          note.write_text('''# Source evidence capture — 2.5.8\n\nThis source upgrade preserves current KPI behavior and adds raw source evidence without inventing conclusions.\n\nCaptured from Issabel/Arabicss SSE when emitted:\n- `pausestart` / `pauseend`\n- `queuemembership`\n- `callprogress`\n\nEvidence is sent through the already-accepted `heartbeat` event type so existing live KPI/state calculations are not changed. The heartbeat keeps the real current state and stores the raw source event under `payload.evidence`, including source/receipt timestamps, queue membership, call IDs, unique ID, agent channel, and a ring proof only when the source agent channel matches the current extension.\n\nNo `Ringing`/`NoAnswer` claim is made for an employee unless the source event itself identifies that employee extension.\n\nThis directory is source extracted from the signed 2.5.7 package. Version 2.5.8 is not an auto-update release until it is signed and the update manifest is intentionally changed.\n''')
+          (root / 'EVIDENCE-CAPTURE.md').write_text(
+              '# Source evidence capture — 2.5.8\n\n'
+              'This upgrade preserves current KPI behavior and adds raw source evidence without inventing conclusions.\n\n'
+              'Captured when Issabel/Arabicss emits it: `pausestart`, `pauseend`, `queuemembership`, and `callprogress`.\n\n'
+              'Evidence uses the already-accepted `heartbeat` event type so existing state/KPI calculations are not changed. '
+              'The real state stays on the heartbeat and the source record is stored under `payload.evidence`, including source/receipt timestamps, queue membership, call IDs, unique ID, agent channel, and raw fields.\n\n'
+              'A ring proof is set only when the source event itself names an agent channel whose extension matches the current employee extension.\n\n'
+              'This is source extracted from signed 2.5.7. Version 2.5.8 must not be placed in the auto-update manifest until a signed XPI is available.\n'
+          )
           PY
       - name: Validate source
+        shell: bash
         run: |
           node --check extension-current/content.js
           node --check extension-current/page-hook.js
@@ -91,6 +100,7 @@ jobs:
           grep -q "captureSourceEvidence" extension-current/content.js
           grep -q "_sourceEvent" extension-current/page-hook.js
       - name: Commit evidence source upgrade
+        shell: bash
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
