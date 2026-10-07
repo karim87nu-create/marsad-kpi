@@ -218,7 +218,10 @@ document.addEventListener('click',e=>{const button=e.target.closest('button');if
 $('addEmployeeButton').onclick=addEmployee;
 $('savePinButton').onclick=savePin;$('cancelPinButton').onclick=()=>{$('newPin').value=$('newPinConfirm').value='';$('pinEditor').hidden=true;pinEmployee=null};
 $('importButton').onclick=async()=>{const file=$('historyFile').files[0];if(!file){$('message').textContent='اختر ملف Excel أولًا';return}if(file.size>2000000){$('message').textContent='صدّر يومًا واحدًا بحجم أقل من 2MB';return}try{const d=await api('/api/history',{method:'POST',headers:{'content-type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'},body:file});$('day').value=d.date;clearDay();await refresh(true);$('message').textContent=d.duplicate?'السجل محفوظ بالفعل؛ لم يتكرر':'تم حفظ سجل هذا اليوم'}catch(e){$('message').textContent='لم يُحفظ السجل: '+e.message}};
-setInterval(()=>{renderLive();if(selectedTab==='attendance')renderAttendanceDurations()},1000);
+// Do not rebuild the hidden live tables every second while another workspace
+// is open. This keeps desktop and mobile pages responsive without changing
+// the live snapshot cadence or any KPI calculations.
+setInterval(()=>{if(selectedTab==='live')renderLive();if(selectedTab==='attendance')renderAttendanceDurations()},1000);
 // Keep the 5-second polling only on the live view. Historical sections trigger
 // costly attribution/report aggregation, so they refresh on demand instead.
 setInterval(()=>{if(sessionStorage.getItem('adminPassword')&&selectedTab==='live')refresh()},5000);
