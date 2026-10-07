@@ -19,7 +19,16 @@ jobs:
       - name: Rebuild and verify signed 2.5.9
         shell: bash
         run: |
-          cat .github/tmp/arabicss-kpi-2.5.9.part*.b64 | tr -d '\n\r ' | base64 -d > /tmp/arabicss-kpi-2.5.9.xpi
+          python - <<'PY'
+          from pathlib import Path
+          import base64
+          parts=sorted(Path('.github/tmp').glob('arabicss-kpi-2.5.9.part*.b64'))
+          s=''.join(p.read_text() for p in parts)
+          s=''.join(s.split())
+          print('parts=',len(parts),'chars=',len(s))
+          raw=base64.b64decode(s,validate=False)
+          Path('/tmp/arabicss-kpi-2.5.9.xpi').write_bytes(raw)
+          PY
           echo '358c86f68f0ad5b36e95ae99545a0f4a8cb8d105f78d37c7e5c41a9fe32ed4cc  /tmp/arabicss-kpi-2.5.9.xpi' | sha256sum -c -
           unzip -t /tmp/arabicss-kpi-2.5.9.xpi >/dev/null
           unzip -l /tmp/arabicss-kpi-2.5.9.xpi | grep -q 'META-INF/mozilla.rsa'
