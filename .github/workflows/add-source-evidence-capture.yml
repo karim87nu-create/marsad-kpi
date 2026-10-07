@@ -1,0 +1,100 @@
+name: Add source evidence capture to Firefox connector
+
+on:
+  push:
+    paths:
+      - '.github/workflows/add-source-evidence-capture.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch exact extracted 2.5.7 source
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+
+          root = Path('extension-current')
+          content_path = root / 'content.js'
+          hook_path = root / 'page-hook.js'
+          manifest_path = root / 'manifest.json'
+
+          content = content_path.read_text()
+          hook = hook_path.read_text()
+          manifest = json.loads(manifest_path.read_text())
+
+          if manifest.get('version') not in ('2.5.7', '2.5.8'):
+              raise SystemExit('unexpected extension version: ' + str(manifest.get('version')))
+
+          # Idempotent version bump.
+          manifest['version'] = '2.5.8'
+          manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n')
+          content = content.replace("VERSION='2.5.7'", "VERSION='2.5.8'")
+
+          helper_marker = " const canonicalId=v=>String(v||'').match(/(?:incoming-q\\d+-|outgoing-)?(\\d+)$/)?.[1]||String(v||'');\n"
+          helper_code = r''' const evidenceState=()=>sourceConnection!=='connected'?'unknown':breakActive?'break':call?'on_call':sourceStateKnown?'ready':'unknown';
+ const evidenceReceivedAt=payload=>{const raw=String(payload?._receivedAt||'');return Number.isFinite(Date.parse(raw))?new Date(Date.parse(raw)).toISOString():new Date().toISOString()};
+ const channelExtension=value=>(String(value||'').match(/(?:SIP|IAX2|PJSIP|Local)\/(\d+)/i)||[])[1]||'';
+ function captureSourceEvidence(type,payload={}){
+  const extension=ext()||boundExtension();if(!employee||!sessionToken||!extension)return;
+  const receivedAt=evidenceReceivedAt(payload),queues=Array.isArray(payload.queues)?payload.queues.map(String):[],agentChannel=String(payload.agentchannel||payload.agent_channel||payload.agent||''),agentExtension=channelExtension(agentChannel),newStatus=String(payload.new_status||payload.status||'');
+  const sourceOccurredAt=String(payload.datetime_entry||payload.pause_start||payload.pause_end||'')||null;
+  const sourceDuration=seconds(payload.pause_duration??payload.duration);
+  const sourceParts=[payload.id,payload.datetime_entry,payload.call_id,payload.callid,newStatus,payload.pause_start,payload.pause_end,queues.join(','),agentChannel].filter(v=>v!==undefined&&v!==null&&String(v)!=='').map(String);
+  const sourceId=(sourceParts.join('|')||receivedAt).slice(0,180);
+  const matchedAgent=!!agentExtension&&agentExtension===extension;
+  const statusLower=newStatus.toLowerCase();
+  const ringProof=matchedAgent&&(statusLower==='ringing'||statusLower==='noanswer'||statusLower==='no answer')?(statusLower==='ringing'?'ringing_on_this_extension':'ring_no_answer_on_this_extension'):null;
+  const evidence={evidenceType:type,evidenceSource:'issabel_eccp_sse',sourceEvent:String(payload._sourceEvent||type),sourceReceivedAt:receivedAt,sourceOccurredAt,sourceDurationSeconds:sourceDuration,queues,agentChannel,agentExtension,matchedAgentExtension:matchedAgent,newStatus:ringProof?newStatus:(newStatus||null),ringProof,callId:String(payload.call_id||payload.callid||''),uniqueid:String(payload.uniqueid||''),queue:String(payload.queue||''),phone:String(payload.phone||''),raw:payload};
+  send({eventType:'heartbeat',eventKey:extension+':source-evidence:'+type+':'+sourceId,extension,occurredAt:receivedAt,durationSeconds:0,clientVersion:VERSION,state:evidenceState(),payload:{sourceConnection,connectorVersion:VERSION,evidence}}).catch(()=>{});
+ }
+'''
+          if 'function captureSourceEvidence(' not in content:
+              if helper_marker not in content:
+                  raise SystemExit('content helper marker not found')
+              content = content.replace(helper_marker, helper_marker + helper_code, 1)
+
+          event_marker = "  sourceConnection='connected';sourceStateKnown=true;\n  if(type==='breakenter')"
+          event_replacement = "  sourceConnection='connected';sourceStateKnown=true;\n  if(['pausestart','pauseend','queuemembership','callprogress'].includes(type))captureSourceEvidence(type,payload);\n  if(type==='breakenter')"
+          if "['pausestart','pauseend','queuemembership','callprogress'].includes(type)" not in content:
+              if event_marker not in content:
+                  raise SystemExit('content event marker not found')
+              content = content.replace(event_marker, event_replacement, 1)
+
+          # Source metadata is attached before crossing the page/content-script boundary.
+          old_forward = "for(const record of list)if(record&&typeof record.event==='string')post(record.event,{...record,_previousBreakId:window.estadoCliente?.break_id??null,_previousCallId:window.estadoCliente?.callid??null});"
+          new_forward = "for(const record of list)if(record&&typeof record.event==='string')post(record.event,{...record,_previousBreakId:window.estadoCliente?.break_id??null,_previousCallId:window.estadoCliente?.callid??null,_receivedAt:receivedAt,_sourceEvent:String(record.event),_sourceConnection:connection});"
+          if '_sourceEvent:String(record.event)' not in hook:
+              if old_forward not in hook:
+                  raise SystemExit('page-hook forward marker not found')
+              hook = hook.replace(old_forward, new_forward, 1)
+
+          content_path.write_text(content)
+          hook_path.write_text(hook)
+
+          note = root / 'EVIDENCE-CAPTURE.md'
+          note.write_text('''# Source evidence capture — 2.5.8\n\nThis source upgrade preserves current KPI behavior and adds raw source evidence without inventing conclusions.\n\nCaptured from Issabel/Arabicss SSE when emitted:\n- `pausestart` / `pauseend`\n- `queuemembership`\n- `callprogress`\n\nEvidence is sent through the already-accepted `heartbeat` event type so existing live KPI/state calculations are not changed. The heartbeat keeps the real current state and stores the raw source event under `payload.evidence`, including source/receipt timestamps, queue membership, call IDs, unique ID, agent channel, and a ring proof only when the source agent channel matches the current extension.\n\nNo `Ringing`/`NoAnswer` claim is made for an employee unless the source event itself identifies that employee extension.\n\nThis directory is source extracted from the signed 2.5.7 package. Version 2.5.8 is not an auto-update release until it is signed and the update manifest is intentionally changed.\n''')
+          PY
+      - name: Validate source
+        run: |
+          node --check extension-current/content.js
+          node --check extension-current/page-hook.js
+          python -m json.tool extension-current/manifest.json >/dev/null
+          grep -q "VERSION='2.5.8'" extension-current/content.js
+          grep -q '"version": "2.5.8"' extension-current/manifest.json
+          grep -q "captureSourceEvidence" extension-current/content.js
+          grep -q "_sourceEvent" extension-current/page-hook.js
+      - name: Commit evidence source upgrade
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add extension-current
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Capture Issabel source evidence in connector 2.5.8'
+          git push
