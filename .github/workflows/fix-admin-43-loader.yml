@@ -1,0 +1,30 @@
+name: Fix admin 4.3 loader
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-admin-43-loader.yml'
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Force 4.3 loader and body class
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('admin.html')
+          s=p.read_text(encoding='utf-8')
+          s=s.replace('<body>', '<body class="marsad-redesign">', 1)
+          import re
+          s=re.sub(r'admin-layout\.js\?v=[^"\']+', 'admin-layout.js?v=4.3.0', s)
+          p.write_text(s, encoding='utf-8')
+          PY
+      - name: Commit
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add admin.html
+          git diff --cached --quiet || git commit -m "Force admin 4.3 loader and light mode"
+          git push
