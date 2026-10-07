@@ -22,10 +22,12 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import base64
-          parts=sorted(Path('.github/tmp').glob('arabicss-kpi-2.5.9.part*.b64'))
-          s=''.join(p.read_text() for p in parts)
-          s=''.join(s.split())
+          root=Path('.github/tmp')
+          parts=[root/f'arabicss-kpi-2.5.9.part{i:02d}.b64' for i in range(6)]
+          parts += [root/f'arabicss-kpi-2.5.9.part06.{i:02d}.b64' for i in range(9)]
+          s=''.join(p.read_text().strip() for p in parts)
           print('parts=',len(parts),'chars=',len(s))
+          assert len(s)==46148, len(s)
           raw=base64.b64decode(s,validate=True)
           Path('/tmp/arabicss-kpi-2.5.9.xpi').write_bytes(raw)
           PY
