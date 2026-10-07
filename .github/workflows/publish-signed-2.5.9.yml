@@ -16,10 +16,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Download and verify signed 2.5.9
+      - name: Rebuild and verify signed 2.5.9
         shell: bash
         run: |
-          curl --fail --location --retry 3 --output /tmp/arabicss-kpi-2.5.9.xpi 'https://sdmntprdenmarkeast.oaiusercontent.com/files/00000000-cfd4-8210-b146-2ded5624e497/raw?se=2026-10-07T03%3A18%3A56Z&sp=r&sv=2026-02-06&sr=b&scid=3e2f5659-47dc-5f96-b19b-2f22d8d8cf4a&skoid=a0b9f82a-c86e-4064-a822-2aa38890bb37&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-07T03%3A06%3A28Z&ske=2026-10-08T03%3A06%3A28Z&sks=b&skv=2026-02-06&sig=jNE99yhSi8JaHInrE26Li51gapiw7X4yCN4blTifr4E%3D'
+          cat .github/tmp/arabicss-kpi-2.5.9.part*.b64 | tr -d '\n\r ' | base64 -d > /tmp/arabicss-kpi-2.5.9.xpi
           echo '358c86f68f0ad5b36e95ae99545a0f4a8cb8d105f78d37c7e5c41a9fe32ed4cc  /tmp/arabicss-kpi-2.5.9.xpi' | sha256sum -c -
           unzip -t /tmp/arabicss-kpi-2.5.9.xpi >/dev/null
           unzip -l /tmp/arabicss-kpi-2.5.9.xpi | grep -q 'META-INF/mozilla.rsa'
@@ -55,5 +55,9 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add releases/arabicss-kpi-2.5.9.xpi firefox-updates.json
+          if git diff --cached --quiet; then
+            echo '2.5.9 is already published with the expected feed entry.'
+            exit 0
+          fi
           git commit -m 'Publish signed Firefox connector 2.5.9'
           git push
