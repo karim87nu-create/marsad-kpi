@@ -1,0 +1,31 @@
+name: Extract current Firefox extension source
+
+on:
+  push:
+    paths:
+      - '.github/workflows/extract-current-extension.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract 2.5.7 signed package
+        run: |
+          rm -rf extension-current
+          mkdir -p extension-current
+          unzip -q releases/arabicss-kpi-2.5.7.xpi -d extension-current
+          rm -rf extension-current/META-INF
+          printf '%s\n' 'Extracted from releases/arabicss-kpi-2.5.7.xpi for auditable source updates.' > extension-current/SOURCE.txt
+      - name: Commit extracted source
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add extension-current
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Extract Firefox 2.5.7 source for evidence work'
+          git push
