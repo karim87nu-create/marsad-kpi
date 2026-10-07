@@ -1,0 +1,143 @@
+/* Marsad Admin Redesign 4.0 — presentation only. No employee data or API logic is changed. */
+:root{
+  --mr-bg:#f4f7fb;--mr-surface:#fff;--mr-surface-soft:#f8fafc;--mr-text:#152033;--mr-muted:#697386;
+  --mr-line:#e5eaf1;--mr-brand:#146c94;--mr-brand-strong:#0f5577;--mr-sidebar:#0d1b2a;--mr-sidebar-2:#13263a;
+  --mr-success:#18794e;--mr-warn:#a15c00;--mr-danger:#b42318;--mr-info:#175cd3;
+  --mr-radius:16px;--mr-radius-sm:11px;--mr-shadow:0 8px 28px rgba(15,35,55,.07);--mr-sidebar-w:272px;
+}
+*{box-sizing:border-box}
+html{background:var(--mr-bg)}
+body.marsad-redesign{margin:0;background:var(--mr-bg);color:var(--mr-text);font-family:"Segoe UI",Tahoma,Arial,sans-serif;min-height:100vh}
+body.marsad-redesign .wrap{max-width:none!important;width:100%!important;margin:0!important;padding:0!important}
+body.marsad-redesign .head{max-width:620px;margin:64px auto 0;padding:0 24px;display:flex;align-items:center;justify-content:space-between;background:transparent;border:0;box-shadow:none}
+body.marsad-redesign.marsad-authenticated .head{display:none!important}
+body.marsad-redesign .head h1{margin:0;font-size:28px;letter-spacing:-.5px}
+body.marsad-redesign .muted{color:var(--mr-muted)!important}
+
+/* Login */
+body.marsad-redesign #login{width:min(440px,calc(100% - 32px));margin:24px auto 64px!important;padding:32px!important;border:1px solid var(--mr-line)!important;border-radius:22px!important;background:var(--mr-surface)!important;box-shadow:var(--mr-shadow)!important}
+body.marsad-redesign #login h2{margin:0 0 22px;font-size:22px}
+body.marsad-redesign #login label{display:block;font-weight:700;margin-bottom:8px}
+body.marsad-redesign #login input{width:100%;min-height:46px;border:1px solid #ccd5e1;border-radius:12px;padding:10px 12px;background:#fff;outline:none}
+body.marsad-redesign #login input:focus{border-color:var(--mr-brand);box-shadow:0 0 0 3px rgba(20,108,148,.12)}
+body.marsad-redesign #login button{width:100%;margin-top:14px;min-height:46px}
+
+/* Sidebar */
+.mr-sidebar{position:fixed;z-index:1200;right:0;top:0;bottom:0;width:var(--mr-sidebar-w);background:linear-gradient(180deg,var(--mr-sidebar),#0a1724 72%);color:#fff;padding:20px 14px 18px;display:none;flex-direction:column;overflow:auto;box-shadow:-10px 0 35px rgba(10,25,40,.12)}
+.marsad-authenticated .mr-sidebar{display:flex}
+.mr-brand{display:flex;align-items:center;gap:12px;padding:8px 8px 18px;border-bottom:1px solid rgba(255,255,255,.08);margin-bottom:15px}
+.mr-brand-mark{width:40px;height:40px;border-radius:13px;background:linear-gradient(135deg,#28a4c8,#146c94);display:grid;place-items:center;font-weight:900;font-size:18px;box-shadow:0 8px 18px rgba(20,108,148,.28)}
+.mr-brand strong{display:block;font-size:16px}.mr-brand small{color:#9fb2c5;font-size:12px}
+.mr-nav{display:flex;flex-direction:column;gap:14px}.mr-nav-group{display:grid;gap:4px}
+.mr-nav-label{padding:0 10px 6px;color:#7890a6;font-size:11px;font-weight:800;letter-spacing:.2px}
+.mr-nav button{appearance:none;border:0!important;background:transparent!important;color:#c8d5e2!important;min-height:40px!important;width:100%;padding:9px 11px!important;border-radius:10px!important;text-align:right!important;font-size:13px!important;font-weight:650!important;box-shadow:none!important;display:flex!important;align-items:center;gap:9px;cursor:pointer}
+.mr-nav button:hover{background:rgba(255,255,255,.06)!important;color:#fff!important}
+.mr-nav button.is-active{background:linear-gradient(90deg,rgba(39,162,200,.19),rgba(20,108,148,.30))!important;color:#fff!important;box-shadow:inset -3px 0 0 #43b7d7!important}
+.mr-nav-dot{width:7px;height:7px;border-radius:999px;background:#607b91;flex:0 0 auto}.mr-nav button.is-active .mr-nav-dot{background:#55c6e4;box-shadow:0 0 0 4px rgba(85,198,228,.10)}
+.mr-sidebar-footer{margin-top:auto;border-top:1px solid rgba(255,255,255,.08);padding:14px 8px 0;color:#8198ad;font-size:11px;line-height:1.6}
+.mr-sidebar-close{display:none!important}
+
+/* Dashboard shell */
+body.marsad-redesign #dashboard{max-width:none!important;margin:0 var(--mr-sidebar-w) 0 0!important;padding:26px 30px 56px!important;min-height:100vh}
+body.marsad-redesign #tabs{display:none!important}
+.mr-pagebar{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:16px;padding:2px 2px 0}
+.mr-page-title-wrap{min-width:0}.mr-eyebrow{margin:0 0 5px;color:var(--mr-brand);font-size:12px;font-weight:800}.mr-page-title{margin:0;font-size:25px;line-height:1.25;letter-spacing:-.35px}.mr-page-desc{margin:6px 0 0;color:var(--mr-muted);font-size:13px;max-width:760px;line-height:1.65}
+.mr-page-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}.mr-mobile-menu{display:none!important}
+.mr-sync-slot{display:flex;align-items:center;min-height:38px}
+body.marsad-redesign #syncStatus{margin:0!important;white-space:nowrap}
+
+.mr-context-strip{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:8px;margin:0 0 16px}
+.mr-context-item{background:var(--mr-surface);border:1px solid var(--mr-line);border-radius:12px;padding:10px 12px;min-width:0}
+.mr-context-item small{display:block;color:var(--mr-muted);font-size:11px;margin-bottom:3px}.mr-context-item strong{display:block;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* Filters */
+body.marsad-redesign .filters.panel{display:grid!important;grid-template-columns:minmax(170px,1.1fr) minmax(170px,1fr) minmax(170px,1fr) minmax(170px,1fr);gap:10px 12px;align-items:end;padding:14px!important;margin:0 0 12px!important;background:var(--mr-surface)!important;border:1px solid var(--mr-line)!important;border-radius:var(--mr-radius)!important;box-shadow:none!important}
+body.marsad-redesign .filters.panel.mr-filters-collapsed{display:none!important}
+body.marsad-redesign .filters label,body.marsad-redesign .ops-toolbar label{font-size:11px;font-weight:800;color:#5c6678;display:grid;gap:5px;margin:0}
+body.marsad-redesign input,body.marsad-redesign select,body.marsad-redesign textarea{border:1px solid #ccd5e1!important;border-radius:10px!important;background:#fff!important;color:var(--mr-text)!important;min-height:38px;padding:8px 10px!important;outline:none;box-shadow:none!important}
+body.marsad-redesign input:focus,body.marsad-redesign select:focus,body.marsad-redesign textarea:focus{border-color:var(--mr-brand)!important;box-shadow:0 0 0 3px rgba(20,108,148,.10)!important}
+body.marsad-redesign .filter-advanced{margin:0!important;border:0!important;background:transparent!important;padding:0!important}.filter-advanced summary{font-size:11px;font-weight:800;color:#5c6678;cursor:pointer;margin-bottom:5px}
+body.marsad-redesign .date-actions{display:flex;gap:6px;flex-wrap:wrap;grid-column:1/-1}
+body.marsad-redesign #filterSummary,body.marsad-redesign #periodNote,body.marsad-redesign #filterNote{grid-column:1/-1;margin:0!important;font-size:11px!important}
+body.marsad-redesign #resetFiltersButton,body.marsad-redesign #refreshButton,body.marsad-redesign #logoutButton{align-self:end}
+
+/* Buttons */
+body.marsad-redesign button{border:1px solid transparent;border-radius:10px;min-height:38px;padding:8px 13px;font-weight:750;font-family:inherit;cursor:pointer;background:var(--mr-brand);color:#fff;transition:transform .12s ease,box-shadow .12s ease,background .12s ease}
+body.marsad-redesign button:hover{background:var(--mr-brand-strong);box-shadow:0 5px 14px rgba(20,108,148,.13)}
+body.marsad-redesign button:active{transform:translateY(1px)}
+body.marsad-redesign button.secondary{background:#fff!important;color:#344054!important;border-color:#d7dee8!important;box-shadow:none!important}
+body.marsad-redesign button.secondary:hover{background:#f6f8fb!important;border-color:#bfc9d6!important}
+body.marsad-redesign button.danger,body.marsad-redesign .danger button{background:#fff5f4!important;color:var(--mr-danger)!important;border-color:#f5c7c3!important}
+
+/* General panels and sections */
+body.marsad-redesign .panel{border:1px solid var(--mr-line)!important;border-radius:var(--mr-radius)!important;background:var(--mr-surface)!important;box-shadow:none!important}
+body.marsad-redesign section.view{padding:20px!important;margin-top:12px!important;overflow:hidden}
+body.marsad-redesign section.view>h2,body.marsad-redesign .section-head h2{font-size:18px;margin:0;color:#172337}
+body.marsad-redesign .section-head{display:flex!important;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding-bottom:12px;margin-bottom:10px;border-bottom:1px solid #eef1f5}
+body.marsad-redesign h3{font-size:14px;margin:22px 0 10px;color:#28384e}
+body.marsad-redesign p{line-height:1.65}
+body.marsad-redesign #message,body.marsad-redesign #operationsLoad{margin:7px 2px!important;font-size:12px}
+
+/* Saved views toolbar */
+body.marsad-redesign .ops-toolbar.panel{display:flex!important;align-items:end;gap:10px;flex-wrap:wrap;padding:11px 13px!important;margin:0 0 12px!important;background:#fbfcfe!important;border-radius:13px!important}
+body.marsad-redesign .ops-toolbar .inline-check{display:flex!important;align-items:center;gap:7px;min-height:38px;font-weight:650;color:#475467}
+body.marsad-redesign .ops-toolbar input[type=checkbox]{min-height:0!important;width:16px;height:16px;padding:0!important}
+
+/* Cards */
+body.marsad-redesign .cards{display:grid!important;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px!important;margin:10px 0 14px!important}
+body.marsad-redesign .cards>*{border:1px solid var(--mr-line)!important;background:linear-gradient(180deg,#fff,#fbfcfe)!important;border-radius:13px!important;padding:13px!important;min-width:0;box-shadow:none!important}
+body.marsad-redesign .cards strong,body.marsad-redesign .card strong{font-size:17px;color:#1a2b40}
+
+/* Tables */
+body.marsad-redesign .tablewrap{border:1px solid var(--mr-line)!important;border-radius:13px!important;overflow:auto!important;background:#fff;margin:9px 0 13px!important;box-shadow:none!important}
+body.marsad-redesign table{width:100%;border-collapse:separate!important;border-spacing:0!important;font-size:12px!important}
+body.marsad-redesign th{position:sticky;top:0;z-index:2;background:#f7f9fc!important;color:#475467!important;text-align:right!important;font-size:11px!important;font-weight:800!important;padding:10px 11px!important;border-bottom:1px solid var(--mr-line)!important;white-space:nowrap}
+body.marsad-redesign td{padding:10px 11px!important;border-bottom:1px solid #eef1f5!important;color:#25364b;vertical-align:middle}
+body.marsad-redesign tbody tr:last-child td{border-bottom:0!important}body.marsad-redesign tbody tr:hover td{background:#fbfdff}
+
+/* Details / disclosure */
+body.marsad-redesign details.detail-panel{border:1px solid var(--mr-line)!important;border-radius:12px!important;background:#fbfcfe!important;padding:0!important;margin:12px 0!important}
+body.marsad-redesign details.detail-panel>summary{padding:12px 14px!important;font-weight:800!important;cursor:pointer;color:#344054}
+body.marsad-redesign details.detail-panel[open]>summary{border-bottom:1px solid var(--mr-line)}
+body.marsad-redesign details.detail-panel>*:not(summary){margin-left:14px;margin-right:14px}
+
+/* Status semantics */
+body.marsad-redesign .badge{border-radius:999px!important;padding:6px 10px!important;font-size:11px!important;font-weight:800!important;border:1px solid #d8e1ea;background:#f7f9fc;color:#344054}
+body.marsad-redesign .ok,body.marsad-redesign .success{color:var(--mr-success)!important}body.marsad-redesign .warn,body.marsad-redesign .warning{color:var(--mr-warn)!important}body.marsad-redesign .bad,body.marsad-redesign .error{color:var(--mr-danger)!important}
+
+/* Empty states */
+body.marsad-redesign tbody:empty::after{content:"لا توجد بيانات مطابقة للفلاتر الحالية";display:block;padding:22px;color:#98a2b3;text-align:center;white-space:nowrap}
+
+/* Focus */
+body.marsad-redesign :focus-visible{outline:3px solid rgba(20,108,148,.23)!important;outline-offset:2px!important}
+
+/* Backdrop and mobile */
+.mr-sidebar-backdrop{display:none;position:fixed;z-index:1190;inset:0;background:rgba(11,23,36,.45);backdrop-filter:blur(2px)}
+@media(max-width:1120px){
+  :root{--mr-sidebar-w:238px}
+  body.marsad-redesign #dashboard{padding:22px 20px 50px!important}
+  .mr-context-strip{grid-template-columns:repeat(2,minmax(150px,1fr))}
+  body.marsad-redesign .filters.panel{grid-template-columns:repeat(2,minmax(170px,1fr))}
+}
+@media(max-width:820px){
+  body.marsad-redesign #dashboard{margin:0!important;padding:16px 12px 45px!important}
+  .mr-sidebar{transform:translateX(102%);display:flex!important;width:min(290px,86vw);transition:transform .2s ease}.marsad-authenticated.mr-sidebar-open .mr-sidebar{transform:translateX(0)}
+  .marsad-authenticated.mr-sidebar-open .mr-sidebar-backdrop{display:block}
+  .mr-sidebar-close{display:inline-flex!important;position:absolute;left:12px;top:13px;width:34px!important;min-height:34px!important;padding:0!important;align-items:center;justify-content:center;background:rgba(255,255,255,.08)!important;color:#fff!important;border:0!important}
+  .mr-mobile-menu{display:inline-flex!important;align-items:center;justify-content:center;min-width:40px!important;padding:0 11px!important}
+  .mr-pagebar{align-items:flex-start}.mr-page-title{font-size:21px}.mr-page-desc{font-size:12px}
+  .mr-page-actions{gap:6px}.mr-sync-slot{width:100%;order:5;justify-content:flex-end}
+  body.marsad-redesign .filters.panel{grid-template-columns:1fr!important;padding:12px!important}.mr-context-strip{grid-template-columns:1fr 1fr}.mr-context-item{padding:9px 10px}
+  body.marsad-redesign .ops-toolbar.panel{align-items:stretch;flex-direction:column}.ops-toolbar button{width:100%}
+  body.marsad-redesign section.view{padding:15px!important}.section-head button{flex:1 1 auto}
+}
+@media(max-width:520px){
+  .mr-context-strip{grid-template-columns:1fr}.mr-pagebar{display:block}.mr-page-actions{margin-top:12px;justify-content:flex-start}
+  .mr-page-actions button{flex:1}.mr-mobile-menu{flex:0 0 42px!important}
+  body.marsad-redesign .cards{grid-template-columns:1fr 1fr!important}.mr-page-title{font-size:20px}
+  body.marsad-redesign .date-actions button{flex:1 1 30%}
+}
+@media(max-width:390px){body.marsad-redesign .cards{grid-template-columns:1fr!important}}
+
+/* Print */
+@media print{.mr-sidebar,.mr-page-actions,.mr-sidebar-backdrop,.filters,.ops-toolbar{display:none!important}body.marsad-redesign #dashboard{margin:0!important;padding:0!important}body.marsad-redesign{background:#fff}.panel{break-inside:avoid}}
