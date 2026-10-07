@@ -163,7 +163,7 @@ function captureSourceEvidence(type,payload={}){
   if(type==='arabicss_state'){acceptState(payload);return}
   if(type==='logged-out'||type==='agentloggedout'){finishSession('arabicss_logout');return}
   sourceConnection='connected';sourceStateKnown=true;
-  if(['pausestart','pauseend','queuemembership','callprogress'].includes(type))captureSourceEvidence(type,payload);
+  if(!['breakenter','breakexit','agentlinked','agentunlinked'].includes(type))captureSourceEvidence(type,payload);
   if(type==='breakenter'){if(!breakActive){const permit=globalThis.kpiBreakPermit,valid=!!permit&&permit.until>Date.now()&&permit.extension===ext();breakStarted=valid&&payload._previousBreakId==null?new Date().toISOString():null;breakAllowedSeconds=valid?permit.allowedSeconds:900;breakGraceSeconds=valid?permit.graceSeconds:0;activity(breakStarted?'break_start':'break_observed',{state:'break',payload:{...payload,durationKnown:!!breakStarted,breakPolicyEstimated:!breakStarted}});if(valid)globalThis.kpiBreakPermit=null}breakActive=true;saveState()}
   else if(type==='breakexit'){if(breakActive)activity(breakStarted?'break_end':'break_end_unknown',{state:'ready',durationSeconds:breakStarted?Math.round((Date.now()-Date.parse(breakStarted))/1000):0,payload:{...payload,durationKnown:!!breakStarted}});breakActive=false;breakStarted=null;saveState()}
   else if(type==='agentlinked')startCall(payload);
