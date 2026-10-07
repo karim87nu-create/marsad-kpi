@@ -14,94 +14,38 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Add exact employee presence timeline and bump to 2.5.9
+      - name: Patch connector source
+        run: python scripts/prepare_connector_259.py
+      - name: Validate source
         shell: bash
         run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-
-          manifest_path=Path('extension-current/manifest.json')
-          content_path=Path('extension-current/content.js')
-
-          manifest=json.loads(manifest_path.read_text())
-          if manifest.get('version') != '2.5.8':
-              raise SystemExit(f"expected manifest 2.5.8, got {manifest.get('version')}")
-          manifest['version']='2.5.9'
-          manifest_path.write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')
-
-          s=content_path.read_text()
-          old="const API='https://marsad-kpi-live.karim87nu.chatgpt.site',TOKEN='7000865f1220458f86506b41a97cab7d',VERSION='2.5.8';"
-          new="const API='https://marsad-kpi-live.karim87nu.chatgpt.site',TOKEN='7000865f1220458f86506b41a97cab7d',VERSION='2.5.9';"
-          if old not in s:
-              raise SystemExit('2.5.8 VERSION marker not found')
-          s=s.replace(old,new,1)
-
-          marker="let presenceFingerprint='';\n function reportPresence(force=false){\n  if(!employee||!sessionToken||!ext())return;\n  const state=sourceConnection!=='connected'?'unknown':breakActive?'break':call?'on_call':sourceStateKnown?'ready':'unknown';\n  const payload={sourceConnection,breakStartedAt:breakStarted,callStartedAt:call?.startedAt||null,callId:call?.callId||'',phone:call?.phone||'',callType:call?.callType||'',queue:call?.queue||''};\n  const fingerprint=JSON.stringify({extension:ext(),state,payload});\n  if(!force&&fingerprint===presenceFingerprint)return;\n  presenceFingerprint=fingerprint;activity('heartbeat',{state,payload});\n }"
-          replacement="""let presenceFingerprint='',presenceState='unknown',presenceStateSince='',presenceSequence=0,lastArabicssSnapshotFingerprint='';
- function reportPresence(force=false){
-  if(!employee||!sessionToken||!ext())return;
-  const state=sourceConnection!=='connected'?'unknown':breakActive?'break':call?'on_call':sourceStateKnown?'ready':'unknown';
-  const now=new Date().toISOString(),previousState=presenceState||'unknown',changed=state!==presenceState;
-  if(changed||!presenceStateSince){presenceState=state;presenceStateSince=now;presenceSequence+=1}
-  const payload={sourceConnection,breakStartedAt:breakStarted,callStartedAt:call?.startedAt||null,callId:call?.callId||'',phone:call?.phone||'',callType:call?.callType||'',queue:call?.queue||'',presenceStateSince,presenceSequence,stateTransition:changed?{from:previousState,to:state,at:now}:null,availabilityAtThisMoment:state==='ready'};
-  const fingerprint=JSON.stringify({extension:ext(),state,payload:{...payload,stateTransition:null}});
-  if(!force&&!changed&&fingerprint===presenceFingerprint)return;
-  presenceFingerprint=fingerprint;activity('heartbeat',{state,payload});
- }
- function captureArabicssStateEvidence(payload={}){
-  const snapshot={connection:payload.connection||sourceConnection,callid:String(payload.callid||''),waitingcall:payload.waitingcall??null,onhold:payload.onhold??null,break_id:payload.break_id??null,calltype:payload.calltype??null};
-  const fingerprint=JSON.stringify(snapshot);
-  if(fingerprint===lastArabicssSnapshotFingerprint)return;
-  lastArabicssSnapshotFingerprint=fingerprint;
-  captureSourceEvidence('arabicss_state',{...payload,_snapshotChanged:true,_presenceStateBefore:evidenceState()});
- }"""
-          if marker not in s:
-              raise SystemExit('reportPresence block not found')
-          s=s.replace(marker,replacement,1)
-
-          old_reset="employee=null;sessionToken='';call=null;breakActive=false;breakStarted=null;breakAllowedSeconds=900;breakGraceSeconds=0;sourceStateKnown=false;savedFingerprint='';presenceFingerprint='';arabicssAuthenticated=false;globalThis.kpiBreakPermit=null;"
-          new_reset="employee=null;sessionToken='';call=null;breakActive=false;breakStarted=null;breakAllowedSeconds=900;breakGraceSeconds=0;sourceStateKnown=false;savedFingerprint='';presenceFingerprint='';presenceState='unknown';presenceStateSince='';presenceSequence=0;lastArabicssSnapshotFingerprint='';arabicssAuthenticated=false;globalThis.kpiBreakPermit=null;"
-          if old_reset not in s:
-              raise SystemExit('resetLocal state block not found')
-          s=s.replace(old_reset,new_reset,1)
-
-          old_handler="if(type==='arabicss_state'){acceptState(payload);return}"
-          new_handler="if(type==='arabicss_state'){captureArabicssStateEvidence(payload);acceptState(payload);return}"
-          if old_handler not in s:
-              raise SystemExit('arabicss_state handler not found')
-          s=s.replace(old_handler,new_handler,1)
-
-          content_path.write_text(s)
-          PY
-
           node --check extension-current/content.js
           node --check extension-current/page-hook.js
           python -m json.tool extension-current/manifest.json >/dev/null
-          test "$(python -c "import json;print(json.load(open('extension-current/manifest.json'))['version'])")" = "2.5.9"
           grep -q "VERSION='2.5.9'" extension-current/content.js
-          grep -q "presenceStateSince" extension-current/content.js
-          grep -q "stateTransition" extension-current/content.js
-          grep -q "captureArabicssStateEvidence" extension-current/content.js
-
-      - name: Build unsigned 2.5.9 package
+          grep -q '"version": "2.5.9"' extension-current/manifest.json
+          grep -q 'presenceStateSince' extension-current/content.js
+          grep -q 'stateTransition' extension-current/content.js
+          grep -q 'captureArabicssStateEvidence' extension-current/content.js
+      - name: Build unsigned package
+        shell: bash
         run: |
           rm -f arabicss-kpi-2.5.9-unsigned.xpi
           cd extension-current
-          zip -qr ../arabicss-kpi-2.5.9-unsigned.xpi . -x 'EVIDENCE-CAPTURE.md' 'SOURCE.txt'
+          zip -qr ../arabicss-kpi-2.5.9-unsigned.xpi . -x 'EVIDENCE-CAPTURE.md' 'SOURCE.txt' 'PRESENCE-TIMELINE-2.5.9.md'
           cd ..
           unzip -t arabicss-kpi-2.5.9-unsigned.xpi >/dev/null
-
       - uses: actions/upload-artifact@v4
         with:
           name: arabicss-kpi-2.5.9-unsigned-audit
           path: arabicss-kpi-2.5.9-unsigned.xpi
           retention-days: 14
-
-      - name: Commit source 2.5.9
+      - name: Commit source
+        shell: bash
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add extension-current/manifest.json extension-current/content.js
-          git commit -m 'Track employee state timeline from queue-entry window in 2.5.9'
+          git add extension-current
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Track queue-entry availability timeline in connector 2.5.9'
           git push
