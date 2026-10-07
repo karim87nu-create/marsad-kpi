@@ -1,6 +1,6 @@
 (function(){
  if(location.hostname!=='41.38.207.218'||/^\/themes\/arabicssReportsInclude(?:\/|$)/i.test(location.pathname))return;
- const API='https://marsad-kpi-live.karim87nu.chatgpt.site',TOKEN='7000865f1220458f86506b41a97cab7d',VERSION='2.5.8';
+ const API='https://marsad-kpi-live.karim87nu.chatgpt.site',TOKEN='7000865f1220458f86506b41a97cab7d',VERSION='2.5.9';
  const SESSION='arabicss_kpi_employee_session',STATE='arabicss_kpi_state',EPOCH='arabicss_kpi_runtime_epoch';
  let employee=null,sessionToken='',runtimeEpoch='',sourceConnection='unknown',sourceStateKnown=false,call=null,breakActive=false,breakStarted=null,breakAllowedSeconds=900,breakGraceSeconds=0,scanTimer=null,refreshTimer=null,focusRefresh=null,flushing=false,initialized=false;
  const availability=globalThis.createKpiAvailability();
@@ -77,21 +77,30 @@ function captureSourceEvidence(type,payload={}){
  function activity(eventType,extra={},token=sessionToken,extension=ext()||boundExtension()){
   const at=new Date().toISOString(),permit=eventType==='break_start'?globalThis.kpiBreakPermit:null;return send({eventType,eventKey:extension+':'+eventType+':'+at+':'+crypto.randomUUID(),extension,occurredAt:at,clientVersion:VERSION,...extra,...(permit?{permissionId:permit.id,breakReasonId:permit.reasonId,allowedSeconds:permit.allowedSeconds}:{})},token);
  }
- let presenceFingerprint='';
+ let presenceFingerprint='',presenceState='unknown',presenceStateSince='',presenceSequence=0,lastArabicssSnapshotFingerprint='';
  function reportPresence(force=false){
   if(!employee||!sessionToken||!ext())return;
   const state=sourceConnection!=='connected'?'unknown':breakActive?'break':call?'on_call':sourceStateKnown?'ready':'unknown';
-  const payload={sourceConnection,breakStartedAt:breakStarted,callStartedAt:call?.startedAt||null,callId:call?.callId||'',phone:call?.phone||'',callType:call?.callType||'',queue:call?.queue||''};
-  const fingerprint=JSON.stringify({extension:ext(),state,payload});
-  if(!force&&fingerprint===presenceFingerprint)return;
+  const now=new Date().toISOString(),previousState=presenceState||'unknown',changed=state!==presenceState;
+  if(changed||!presenceStateSince){presenceState=state;presenceStateSince=now;presenceSequence+=1}
+  const payload={sourceConnection,breakStartedAt:breakStarted,callStartedAt:call?.startedAt||null,callId:call?.callId||'',phone:call?.phone||'',callType:call?.callType||'',queue:call?.queue||'',presenceStateSince,presenceSequence,stateTransition:changed?{from:previousState,to:state,at:now}:null,availabilityAtThisMoment:state==='ready'};
+  const fingerprint=JSON.stringify({extension:ext(),state,payload:{...payload,stateTransition:null}});
+  if(!force&&!changed&&fingerprint===presenceFingerprint)return;
   presenceFingerprint=fingerprint;activity('heartbeat',{state,payload});
+ }
+ function captureArabicssStateEvidence(payload={}){
+  const snapshot={connection:payload.connection||sourceConnection,callid:String(payload.callid||''),waitingcall:payload.waitingcall??null,onhold:payload.onhold??null,break_id:payload.break_id??null,calltype:payload.calltype??null};
+  const fingerprint=JSON.stringify(snapshot);
+  if(fingerprint===lastArabicssSnapshotFingerprint)return;
+  lastArabicssSnapshotFingerprint=fingerprint;
+  captureSourceEvidence('arabicss_state',{...payload,_snapshotChanged:true,_presenceStateBefore:evidenceState()});
  }
  async function registerSession(){if(!sessionToken||!employee)return;try{const r=await browser.runtime.sendMessage({type:'REGISTER_SESSION',token:sessionToken,deviceToken:TOKEN,employee,version:VERSION,state:readState()});if(r.duplicate)resetLocal()}catch{status('تعذر تأكيد حفظ الجلسة؛ أعد تحميل الصفحة')}}
  async function flush(){
   if(flushing)return;flushing=true;try{const result=await browser.runtime.sendMessage({type:'FLUSH_EVENTS',deviceToken:TOKEN});if(result.rejected)status('يوجد '+result.rejected+' حدث مرفوض محفوظ للمراجعة؛ البيانات قد تكون ناقصة')}catch{}finally{flushing=false}
  }
  function resetLocal(){
-  employee=null;sessionToken='';call=null;breakActive=false;breakStarted=null;breakAllowedSeconds=900;breakGraceSeconds=0;sourceStateKnown=false;savedFingerprint='';presenceFingerprint='';arabicssAuthenticated=false;globalThis.kpiBreakPermit=null;
+  employee=null;sessionToken='';call=null;breakActive=false;breakStarted=null;breakAllowedSeconds=900;breakGraceSeconds=0;sourceStateKnown=false;savedFingerprint='';presenceFingerprint='';presenceState='unknown';presenceStateSince='';presenceSequence=0;lastArabicssSnapshotFingerprint='';arabicssAuthenticated=false;globalThis.kpiBreakPermit=null;
   for(const key of [SESSION,SESSION+'_token',STATE,SESSION+'_version'])sessionStorage.removeItem(key);
   document.getElementById('kpi-session-box')?.remove();if(initialized&&document.body)mount();
  }
@@ -160,7 +169,7 @@ function captureSourceEvidence(type,payload={}){
   renderAvailability();
   if(!employee||!sessionToken)return;
   if(type==='source_connection'){sourceConnection=payload.state;if(sourceConnection!=='connected')sourceStateKnown=false;reportPresence();return}
-  if(type==='arabicss_state'){acceptState(payload);return}
+  if(type==='arabicss_state'){captureArabicssStateEvidence(payload);acceptState(payload);return}
   if(type==='logged-out'||type==='agentloggedout'){finishSession('arabicss_logout');return}
   sourceConnection='connected';sourceStateKnown=true;
   if(!['breakenter','breakexit','agentlinked','agentunlinked'].includes(type))captureSourceEvidence(type,payload);

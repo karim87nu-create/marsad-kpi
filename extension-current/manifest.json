@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Arabicss KPI Connector",
-  "version": "2.5.8",
+  "version": "2.5.9",
   "description": "يربط جلسات ومكالمات Arabicss بنظام KPI المستقل",
   "permissions": [
     "storage",
