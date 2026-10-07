@@ -1,0 +1,59 @@
+name: Publish signed Firefox connector 2.5.9
+
+on:
+  push:
+    paths:
+      - '.github/workflows/publish-signed-2.5.9.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Download and verify signed 2.5.9
+        shell: bash
+        run: |
+          curl --fail --location --retry 3 --output /tmp/arabicss-kpi-2.5.9.xpi 'https://sdmntprdenmarkeast.oaiusercontent.com/files/00000000-cfd4-8210-b146-2ded5624e497/raw?se=2026-10-07T03%3A18%3A56Z&sp=r&sv=2026-02-06&sr=b&scid=3e2f5659-47dc-5f96-b19b-2f22d8d8cf4a&skoid=a0b9f82a-c86e-4064-a822-2aa38890bb37&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-07T03%3A06%3A28Z&ske=2026-10-08T03%3A06%3A28Z&sks=b&skv=2026-02-06&sig=jNE99yhSi8JaHInrE26Li51gapiw7X4yCN4blTifr4E%3D'
+          echo '358c86f68f0ad5b36e95ae99545a0f4a8cb8d105f78d37c7e5c41a9fe32ed4cc  /tmp/arabicss-kpi-2.5.9.xpi' | sha256sum -c -
+          unzip -t /tmp/arabicss-kpi-2.5.9.xpi >/dev/null
+          unzip -l /tmp/arabicss-kpi-2.5.9.xpi | grep -q 'META-INF/mozilla.rsa'
+          unzip -p /tmp/arabicss-kpi-2.5.9.xpi manifest.json > /tmp/manifest.json
+          python - <<'PY'
+          import json
+          m=json.load(open('/tmp/manifest.json'))
+          assert m['version']=='2.5.9', m.get('version')
+          assert m['browser_specific_settings']['gecko']['id']=='arabicss-kpi@eldahan.local'
+          PY
+      - name: Publish package and update feed
+        shell: bash
+        run: |
+          mkdir -p releases
+          cp /tmp/arabicss-kpi-2.5.9.xpi releases/arabicss-kpi-2.5.9.xpi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          sha='358c86f68f0ad5b36e95ae99545a0f4a8cb8d105f78d37c7e5c41a9fe32ed4cc'
+          p=Path('firefox-updates.json')
+          data=json.loads(p.read_text())
+          addon=data['addons']['arabicss-kpi@eldahan.local']
+          updates=[u for u in addon.get('updates',[]) if u.get('version')!='2.5.9']
+          updates.insert(0,{
+            'version':'2.5.9',
+            'update_link':'https://karim87nu-create.github.io/marsad-kpi/releases/arabicss-kpi-2.5.9.xpi',
+            'update_hash':'sha256:'+sha,
+            'applications':{'gecko':{'strict_min_version':'142.0'}}
+          })
+          addon['updates']=updates
+          p.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add releases/arabicss-kpi-2.5.9.xpi firefox-updates.json
+          git commit -m 'Publish signed Firefox connector 2.5.9'
+          git push
