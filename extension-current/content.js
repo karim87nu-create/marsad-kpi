@@ -2,7 +2,7 @@
  if(location.hostname!=='41.38.207.218'||/^\/themes\/arabicssReportsInclude(?:\/|$)/i.test(location.pathname))return;
  const API='https://marsad-kpi-live.karim87nu.chatgpt.site',TOKEN='7000865f1220458f86506b41a97cab7d',VERSION='2.5.10';
  const SESSION='arabicss_kpi_employee_session',STATE='arabicss_kpi_state',EPOCH='arabicss_kpi_runtime_epoch';
- let employee=null,sessionToken='',runtimeEpoch='',sourceConnection='unknown',sourceStateKnown=false,call=null,breakActive=false,breakStarted=null,breakAllowedSeconds=900,breakGraceSeconds=0,scanTimer=null,refreshTimer=null,focusRefresh=null,flushing=false,initialized=false;
+ let employee=null,sessionToken='',runtimeEpoch='',sourceConnection='unknown',sourceStateKnown=false,call=null,breakActive=false,breakStarted=null,breakAllowedSeconds=900,breakGraceSeconds=0,scanTimer=null,refreshTimer=null,focusRefresh=null,flushing=false,initialized=false,sessionRegistrationBlocked=false,sessionRegistering=false,sessionRegistrationRetryAt=0;
  const availability=globalThis.createKpiAvailability();
  let outageIdleConfirmed=false,availabilityProbeBusy=false;
  function renderAvailability(){
@@ -22,8 +22,8 @@
   finally{availabilityProbeBusy=false;renderAvailability()}
  }
  const ext=()=>((document.querySelector('#issabel-callcenter-titulo-consola')?.textContent||'').match(/(?:IAX2|SIP)\/(\d+)/i)||[])[1]||'';
- globalThis.kpiMessageIdentity=()=>employee&&sessionToken&&ext()?{token:sessionToken,deviceToken:TOKEN,employeeId:employee.id}:null;
- globalThis.kpiBreakIdentity=()=>employee&&sessionToken&&ext()?{token:sessionToken,deviceToken:TOKEN,employeeId:employee.id,extension:ext(),ready:sourceConnection==='connected'&&sourceStateKnown&&outageIdleConfirmed&&!call&&!breakActive,breakActive,breakAllowedSeconds,breakGraceSeconds}:null;
+ globalThis.kpiMessageIdentity=()=>employee&&sessionToken&&!sessionRegistrationBlocked&&ext()?{token:sessionToken,deviceToken:TOKEN,employeeId:employee.id}:null;
+ globalThis.kpiBreakIdentity=()=>employee&&sessionToken&&!sessionRegistrationBlocked&&ext()?{token:sessionToken,deviceToken:TOKEN,employeeId:employee.id,extension:ext(),ready:sourceConnection==='connected'&&sourceStateKnown&&outageIdleConfirmed&&!call&&!breakActive,breakActive,breakAllowedSeconds,breakGraceSeconds}:null;
  const apiFetch=async(path,options={})=>{const r=await browser.runtime.sendMessage({type:'KPI_API',path,method:options.method||'GET',headers:options.headers||{},body:options.body});return {...r,json:()=>JSON.parse(r.body)}};
  const seconds=v=>{if(typeof v==='number')return Math.max(0,Math.round(v));const s=String(v??'').trim();if(/^\d+$/.test(s))return Number(s);return /^\d{1,3}:[0-5]\d(?::[0-5]\d)?$/.test(s)?s.split(':').reduce((a,n)=>a*60+Number(n),0):null};
  const canonicalId=v=>String(v||'').match(/(?:incoming-q\d+-|outgoing-)?(\d+)$/)?.[1]||String(v||'');
@@ -47,7 +47,7 @@ function captureSourceEvidence(type,payload={}){
  const status=text=>{const el=document.getElementById('kpi-status');if(el)el.textContent=text};
  const alertAttempts=new Map();
  function checkAlerts(){
-  if(!employee||!sessionToken||!ext()||sourceConnection!=='connected'||!sourceStateKnown)return;
+  if(!employee||!sessionToken||sessionRegistrationBlocked||!ext()||sourceConnection!=='connected'||!sourceStateKnown)return;
   const items=[];
   if(call&&!call.observed&&call.startedAt&&Date.now()-call.startedAt>240000)items.push(['call_long','call:'+call.callId+':'+call.startedAt,'مكالمتك تجاوزت 4 دقائق']);
   if(breakActive&&breakStarted){const age=Math.max(0,Date.now()-Date.parse(breakStarted)),limit=Math.max(60,breakAllowedSeconds)*1000,warning=Math.max(0,limit-60000),graceAt=Math.max(0,breakAllowedSeconds-breakGraceSeconds)*1000;if(breakGraceSeconds&&age>=graceAt&&age<limit)items.push(['break_grace','break:'+breakStarted+':grace','انتهت 15 دقيقة الأساسية؛ بدأ السماح الإضافي ويُخصم من البريك الثاني']);if(age>=limit)items.push(['break_limit','break:'+breakStarted+':limit','انتهت المدة الموافق عليها للبريك — ارجع لاستقبال المكالمات']);else if(age>=warning)items.push(['break_warning','break:'+breakStarted+':warning','باقي دقيقة على نهاية المدة المسموح بها للبريك']);}
@@ -64,13 +64,13 @@ function captureSourceEvidence(type,payload={}){
  function restoreState(){const s=readState();if(s?.token===sessionToken&&(!ext()||s.extension===ext())){arabicssAuthenticated=!!s.arabicssAuthenticated;call=s.call;breakActive=!!s.breakActive;breakStarted=s.breakStarted||null;breakAllowedSeconds=Number(s.breakAllowedSeconds)||900;breakGraceSeconds=Number(s.breakGraceSeconds)||0}}
  async function enqueue(event,token){return browser.runtime.sendMessage({type:'QUEUE_EVENT',event,token})}
  async function send(event,token=sessionToken){
-  if(!token||!event.extension)return false;
+  if(!token||!event.extension||sessionRegistrationBlocked)return false;
   try{
    const r=await apiFetch('/api/events',{method:'POST',headers:{'content-type':'application/json','x-device-token':TOKEN,'x-employee-session':token},body:JSON.stringify(event)});
    if(r.ok){status('الإضافة متصلة — أرابيكس: '+(sourceConnection==='connected'?'متصل':sourceConnection==='disconnected'?'منقطع':'غير مؤكد'));return true}
    if(r.status===409&&event.eventType==='break_start'&&token===sessionToken){const {permissionId,breakReasonId,allowedSeconds,...rest}=event;void permissionId;void breakReasonId;void allowedSeconds;await enqueue({...rest,eventType:'break_observed',eventKey:event.eventKey+':observed',payload:{...event.payload,breakPolicyEstimated:true,breakAuthorizationFailed:true}},token);status('تم رصد بريك بدأ بدون سماح صالح — حُسب ربع ساعة من الرصيد');return false}
    if(r.status===409&&event.eventType==='break_end'&&token===sessionToken){await enqueue({...event,eventType:'break_end_unknown',eventKey:event.eventKey+':unknown',durationSeconds:0,payload:{...event.payload,durationKnown:false,breakEndUnverified:true}},token);status('تسجيل نهاية البريك غير مكتمل؛ أُرسل كمدة غير مؤكدة');return false}
-   if([401,403,409].includes(r.status)&&token===sessionToken){await enqueue(event,token);resetLocal();return false}
+   if([401,403].includes(r.status)&&token===sessionToken){await enqueue(event,token);resetLocal();return false}
    await enqueue(event,token);status('الحدث محفوظ للمراجعة/إعادة الإرسال');return false;
   }catch{try{await enqueue(event,token);status('الحدث محفوظ لحين عودة الاتصال')}catch{status('تعذر حفظ الحدث — لا تعتمد على اكتمال البيانات')}return false}
  }
@@ -79,7 +79,7 @@ function captureSourceEvidence(type,payload={}){
  }
  let presenceFingerprint='',presenceState='unknown',presenceStateSince='',presenceSequence=0,lastArabicssSnapshotFingerprint='';
  function reportPresence(force=false){
-  if(!employee||!sessionToken||!ext())return;
+  if(!employee||!sessionToken||sessionRegistrationBlocked||!ext())return;
   const state=sourceConnection!=='connected'?'unknown':breakActive?'break':call?'on_call':sourceStateKnown?'ready':'unknown';
   const now=new Date().toISOString(),previousState=presenceState||'unknown',changed=state!==presenceState;
   if(changed||!presenceStateSince){presenceState=state;presenceStateSince=now;presenceSequence+=1}
@@ -95,16 +95,28 @@ function captureSourceEvidence(type,payload={}){
   lastArabicssSnapshotFingerprint=fingerprint;
   captureSourceEvidence('arabicss_state',{...payload,_snapshotChanged:true,_presenceStateBefore:evidenceState()});
  }
- async function registerSession(){if(!sessionToken||!employee)return;try{const r=await browser.runtime.sendMessage({type:'REGISTER_SESSION',token:sessionToken,deviceToken:TOKEN,employee,version:VERSION,state:readState()});if(r.duplicate){status('الجلسة مستخدمة في نافذة أخرى — نحافظ على الجلسة الحالية ونحاول المزامنة مجددًا');setTimeout(()=>{if(sessionToken)registerSession()},5000)}}catch{status('تعذر المزامنة مؤقتًا — ستتم إعادة المحاولة تلقائيًا')}}
+ async function registerSession(){
+  if(!sessionToken||!employee||sessionRegistering||Date.now()<sessionRegistrationRetryAt)return false;
+  sessionRegistering=true;
+  try{
+   const r=await browser.runtime.sendMessage({type:'REGISTER_SESSION',token:sessionToken,deviceToken:TOKEN,employee,version:VERSION,state:readState()});
+   if(r?.duplicate){sessionRegistrationBlocked=true;sessionRegistrationRetryAt=Date.now()+30000;status('جلسة الموظف مفتوحة في تبويب آخر — أوقفنا الرصد هنا لمنع التكرار');return false}
+   const wasBlocked=sessionRegistrationBlocked;sessionRegistrationBlocked=false;sessionRegistrationRetryAt=0;
+   if(wasBlocked)status('تم استعادة المزامنة في هذا التبويب');
+   return !!r?.ok;
+  }catch{status('تعذر الاتصال المؤقت بالخلفية — ستُحفظ الجلسة وتُستعاد تلقائيًا');return false}
+  finally{sessionRegistering=false}
+ }
  async function flush(){
   if(flushing)return;flushing=true;try{const result=await browser.runtime.sendMessage({type:'FLUSH_EVENTS',deviceToken:TOKEN});if(result.rejected)status('يوجد '+result.rejected+' حدث مرفوض محفوظ للمراجعة؛ البيانات قد تكون ناقصة')}catch{}finally{flushing=false}
  }
  function resetLocal(){
-  employee=null;sessionToken='';call=null;breakActive=false;breakStarted=null;breakAllowedSeconds=900;breakGraceSeconds=0;sourceStateKnown=false;savedFingerprint='';presenceFingerprint='';presenceState='unknown';presenceStateSince='';presenceSequence=0;lastArabicssSnapshotFingerprint='';arabicssAuthenticated=false;globalThis.kpiBreakPermit=null;
+  employee=null;sessionToken='';call=null;breakActive=false;breakStarted=null;breakAllowedSeconds=900;breakGraceSeconds=0;sourceStateKnown=false;savedFingerprint='';presenceFingerprint='';presenceState='unknown';presenceStateSince='';presenceSequence=0;lastArabicssSnapshotFingerprint='';arabicssAuthenticated=false;sessionRegistrationBlocked=false;sessionRegistrationRetryAt=0;globalThis.kpiBreakPermit=null;
   for(const key of [SESSION,SESSION+'_token',STATE,SESSION+'_version'])sessionStorage.removeItem(key);
   document.getElementById('kpi-session-box')?.remove();if(initialized&&document.body)mount();
  }
  function finishSession(reason='manual'){
+  if(sessionRegistrationBlocked){resetLocal();return}
   const token=sessionToken,extension=ext()||boundExtension();
   if(!token){resetLocal();return}
   activity(reason==='manual'?'session_logout':'arabicss_logout',{state:reason},token,extension);
