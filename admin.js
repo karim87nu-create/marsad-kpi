@@ -222,8 +222,8 @@ $('importButton').onclick=async()=>{const file=$('historyFile').files[0];if(!fil
 // is open. This keeps desktop and mobile pages responsive without changing
 // the live snapshot cadence or any KPI calculations.
 setInterval(()=>{if(selectedTab==='live')renderLive();if(selectedTab==='attendance')renderAttendanceDurations()},1000);
-// Keep the 5-second polling only on the live view. Historical sections trigger
+// Keep the 1-second polling only on the live view. Historical sections trigger
 // costly attribution/report aggregation, so they refresh on demand instead.
-setInterval(()=>{if(sessionStorage.getItem('adminPassword')&&selectedTab==='live')refresh()},5000);
+setInterval(()=>{if(sessionStorage.getItem('adminPassword')&&selectedTab==='live'&&!document.hidden)refresh()},1000);
 if(sessionStorage.getItem('adminPassword')){$('login').hidden=true;$('dashboard').hidden=false;refresh(true)}
 
