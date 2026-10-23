@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const CORE = ['admin', 'app', 'arabicss', 'attendance-rules', 'breaks', 'core', 'dashboard', 'db', 'employees', 'engine', 'history', 'import-convert', 'import-rows', 'legacy', 'messages', 'modules',
+const CORE = ['admin', 'app', 'arabicss', 'attendance-rules', 'breaks', 'core', 'dashboard', 'db', 'employees', 'engine', 'history', 'import-convert', 'import-rows', 'legacy', 'messages', 'modules', 'ops',
   'security', 'sessions', 'shifts', 'telegram', 'time', 'xlsx-read'];
 const lib = path.join(root, 'sites', 'lib', 'marsad');
 fs.rmSync(lib, { recursive: true, force: true });
@@ -20,7 +20,7 @@ for (const f of ['import-convert', 'arabicss', 'time', 'db']) fs.copyFileSync(pa
 const admin = path.join(root, 'sites', 'public', 'admin');
 fs.rmSync(admin, { recursive: true, force: true });
 fs.mkdirSync(admin, { recursive: true });
-for (const f of ['index.html', 'style.css', 'xlsx.js', 'app.js', 'import-old.js']) fs.copyFileSync(path.join(root, 'v2', f), path.join(admin, f));
+for (const f of ['index.html', 'style.css', 'xlsx.js', 'charts.js', 'app.js', 'import-old.js']) fs.copyFileSync(path.join(root, 'v2', f), path.join(admin, f));
 for (const d of ['lib', 'vendor']) fs.cpSync(path.join(root, 'v2', d), path.join(admin, d), { recursive: true });
 // Served by the same site, so the API is the same origin.
 fs.writeFileSync(path.join(admin, 'config.js'), "window.MARSAD_API = '';\n");

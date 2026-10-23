@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>مرصد الأداء — الإدارة</title>
-<link rel="stylesheet" href="style.css?v=1">
+<link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
 <section id="login" hidden>
@@ -21,12 +21,22 @@
   <aside id="nav">
     <div class="brand"><span class="mark">م</span><div><strong>مرصد الأداء</strong><small id="who"></small></div></div>
     <nav>
-      <button data-view="now" class="active">الآن</button>
-      <button data-view="day">ملخص اليوم</button>
-      <button data-view="team">الموظفون</button>
-      <button data-view="calls">المكالمات</button>
-      <button data-view="missed">المكالمات الفائتة</button>
-      <button data-view="manage">الإدارة</button>
+      <div class="navgroup">مباشر</div>
+      <button data-view="now" class="active"><i>●</i>الآن<span class="badge" id="reqBadge" hidden></span></button>
+      <div class="navgroup">اليوم</div>
+      <button data-view="day"><i>▦</i>ملخص اليوم</button>
+      <button data-view="hours"><i>▁▃</i>على مدار اليوم</button>
+      <button data-view="team"><i>☰</i>أداء الموظفين</button>
+      <button data-view="profile"><i>◉</i>ملف الموظف</button>
+      <button data-view="attendance"><i>◷</i>الحضور والبريك</button>
+      <button data-view="shifts"><i>⇄</i>نهاية الشيفت</button>
+      <button data-view="calls"><i>☎</i>المكالمات</button>
+      <button data-view="missed"><i>✕</i>المكالمات الفائتة</button>
+      <div class="navgroup">المتابعة والنظام</div>
+      <button data-view="followup"><i>✎</i>المتابعة والتقارير</button>
+      <button data-view="system"><i>⚙</i>حالة النظام</button>
+      <button data-view="manage"><i>⚑</i>الإدارة</button>
+      <button data-view="guide"><i>?</i>طريقة الحساب</button>
     </nav>
     <button id="logout" class="ghost">خروج</button>
   </aside>
@@ -35,14 +45,14 @@
     <header id="top">
       <h1 id="title">الآن</h1>
       <div class="tools">
-        <label id="dayPicker" hidden>اليوم <input id="day" type="date"></label>
+        <span id="dayPicker" class="daynav" hidden><button class="ghost small" id="dayPrev" title="اليوم اللي قبله">→</button><input id="day" type="date"><button class="ghost small" id="dayNext" title="اليوم اللي بعده">←</button><button class="ghost small" id="dayToday">النهارده</button></span>
         <span id="sync" class="sync"></span>
       </div>
     </header>
     <p id="error" class="banner error" hidden></p>
 
     <section id="view-now" class="view">
-      <div id="nowCards" class="cards"></div>
+      <div id="nowCards" class="cards big"></div>
       <div id="breakRequests"></div>
       <div class="split">
         <article class="panel"><h2>الموظفون الآن</h2><div id="staffNow"></div></article>
@@ -51,14 +61,48 @@
     </section>
 
     <section id="view-day" class="view" hidden>
-      <p id="dayNote" class="muted"></p>
-      <div id="dayCards" class="cards"></div>
-      <article class="panel"><h2>حسب نوع الطلب <button class="ghost small" data-export="queues">تصدير Excel</button></h2><div id="queueTable"></div></article>
+      <p id="dayNote" class="note"></p>
+      <div id="dayCards" class="cards four"></div>
+      <div id="teamCards" class="cards"></div>
+      <article class="panel"><h2>المكالمات والمتاحين كل نص ساعة</h2><div id="dayChart"></div></article>
+      <div class="two">
+        <article class="panel"><h2>حسب نوع الطلب <button class="ghost small" data-export="queues">تصدير Excel</button></h2><div id="queueBars"></div><div id="queueTable"></div></article>
+        <article class="panel"><h2>أبرز اليوم</h2><div id="dayRanks"></div></article>
+      </div>
+    </section>
+
+    <section id="view-hours" class="view" hidden>
+      <p class="note">كل صف نص ساعة. المكالمات والانتظار من سجل أرابيكس حسب وقت بداية المكالمة؛ المتاحين والبريك متوسط عدد الموظفين في الحالة دي خلال النص ساعة؛ أقصى منتظرين من لقطات الانتظار المباشر.</p>
+      <article class="panel"><h2>الضغط على مدار اليوم <span class="actions"><label class="inline"><input type="checkbox" id="hoursAll"> عرض بعد 3 الفجر</label><button class="ghost small" data-export="hours">تصدير Excel</button></span></h2><div id="hoursChart"></div><div id="hoursTable"></div></article>
     </section>
 
     <section id="view-team" class="view" hidden>
-      <article class="panel"><h2>أداء الموظفين في اليوم <button class="ghost small" data-export="team">تصدير Excel</button></h2><div id="teamTable"></div></article>
-      <article class="panel" id="employeePanel" hidden><h2 id="employeeTitle"></h2><div id="employeeDetail"></div></article>
+      <article class="panel"><h2>أداء الموظفين في اليوم <button class="ghost small" data-export="team">تصدير Excel</button></h2>
+        <div class="legend"><span><i class="s-ready"></i>متاح</span><span><i class="s-on_call"></i>في مكالمة</span><span><i class="s-break"></i>بريك</span><span><i class="s-unknown"></i>انقطاع رصد</span></div>
+        <div id="teamTable"></div></article>
+    </section>
+
+    <section id="view-profile" class="view" hidden>
+      <div class="filters"><select id="profileEmployee"></select><button class="ghost small" data-export="profile">تصدير Excel</button></div>
+      <div id="profileBody"></div>
+    </section>
+
+    <section id="view-attendance" class="view" hidden>
+      <article class="panel"><h2>خط اليوم لكل موظف</h2>
+        <div class="legend"><span><i class="s-ready"></i>متاح</span><span><i class="s-on_call"></i>في مكالمة</span><span><i class="s-break"></i>بريك</span><span><i class="s-unknown"></i>انقطاع رصد</span><span><i class="s-logged_in"></i>سجّل ولسه مدخلش الكونسول</span></div>
+        <div id="dayTimeline"></div></article>
+      <div class="two">
+        <article class="panel"><h2>البريك لكل موظف <button class="ghost small" data-export="breakTotals">تصدير Excel</button></h2><div id="breakTotals"></div></article>
+        <article class="panel"><h2>بريكات في نفس الوقت <button class="ghost small" data-export="overlaps">تصدير Excel</button></h2><p class="note">الفترات اللي كان فيها أكتر من موظف في بريك مع بعض، وعدد المتاحين وقتها.</p><div id="breakOverlaps"></div></article>
+      </div>
+      <article class="panel"><h2>كل البريكات <button class="ghost small" data-export="breaks">تصدير Excel</button></h2><div id="breakList"></div></article>
+      <article class="panel"><h2>الدخول والخروج <button class="ghost small" data-export="sessions">تصدير Excel</button></h2><div id="sessionList"></div></article>
+    </section>
+
+    <section id="view-shifts" class="view" hidden>
+      <p class="note">الخروج المسجل بينهي الشيفت. الجلسة اللي خلصت من غير خروج مسجل (انقطاع أو قفل المتصفح) بتفضل مفتوحة الحكم: تقدر تأكد إن الشيفت خلص، أو تحسبه عليه لو خرج قبل ميعاده. القرار بيظهر في «مين كان متاح؟» للمكالمات الفائتة بعد خروجه.</p>
+      <article class="panel"><h2>نهاية كل جلسة <button class="ghost small" data-export="shifts">تصدير Excel</button></h2><div id="shiftTable"></div></article>
+      <article class="panel"><h2>تبديل الموظفين على نفس التحويلة</h2><div id="handoverTable"></div></article>
     </section>
 
     <section id="view-calls" class="view" hidden>
@@ -80,6 +124,47 @@
       </div>
       <div id="missedTable"></div>
       <dialog id="contextDialog"><h2 id="contextTitle"></h2><p id="contextNote" class="muted"></p><div id="contextTable"></div><button class="ghost" data-close>إغلاق</button></dialog>
+    </section>
+
+    <section id="view-followup" class="view" hidden>
+      <article class="panel"><h2>إضافة متابعة</h2>
+        <form id="reviewForm" class="inline">
+          <input name="title" placeholder="الموضوع" maxlength="200" required style="flex:2">
+          <select name="employeeId"><option value="">من غير موظف</option></select>
+          <input name="owner" placeholder="مسؤول المتابعة" maxlength="100">
+          <select name="status"><option value="new">جديدة</option><option value="in_progress">جاري المتابعة</option><option value="resolved">اتحلت</option><option value="reviewed">تمت المراجعة</option></select>
+          <input name="note" placeholder="ملاحظة" maxlength="2000" style="flex:2">
+          <button type="submit">إضافة</button>
+        </form>
+        <p id="reviewNote" class="muted" role="status"></p></article>
+      <article class="panel"><h2>متابعات اليوم <button class="ghost small" data-export="reviews">تصدير Excel</button></h2><div id="reviewTable"></div></article>
+      <article class="panel"><h2>متابعات مفتوحة من أيام تانية</h2><div id="openReviews"></div></article>
+      <article class="panel"><h2>تقارير اليوم المحفوظة <button id="saveReport" class="small">حفظ تقرير اليوم دلوقتي</button></h2><p class="note">بيحفظ ملخص اليوم وأداء الموظفين ونص الساعات زي ما هما وقت الحفظ.</p><div id="savedReports"></div></article>
+    </section>
+
+    <section id="view-system" class="view" hidden>
+      <div id="systemCards" class="cards"></div>
+      <article class="panel"><h2>الأجهزة اللي اشتغلت آخر 24 ساعة</h2><div id="deviceTable"></div></article>
+      <article class="panel"><h2>سجل التغييرات <button class="ghost small" data-export="audit">تصدير Excel</button></h2><div id="auditTable"></div></article>
+    </section>
+
+    <section id="view-guide" class="view guide" hidden>
+      <article class="panel">
+        <h3>يوم التشغيل</h3><p>اليوم بيبدأ 9 الصبح ويخلص 9 الصبح اللي بعده. ساعات التشغيل من 9 الصبح لحد 3 الفجر؛ اللي بعد 3 الفجر بيظهر بس مش داخل في الإجماليات.</p>
+        <h3>المكالمات من سجل أرابيكس</h3>
+        <ul><li><b>المكالمات المحتسبة</b>: مكالمات ساعات التشغيل في طوابير طلب أوردر ومتابعة أوردر والشكاوى، من غير الفائتة القصيرة.</li>
+        <li><b>الفائتة القصيرة</b>: العميل قفل في 7 ثواني أو أقل. بتظهر للتوضيح ومش داخلة في أي نسبة.</li>
+        <li><b>الرد خلال 10 ث</b>: المكالمات اللي اترد عليها في 10 ثواني أو أقل ÷ المكالمات المحتسبة.</li>
+        <li><b>متوسط انتظار الرد</b>: متوسط انتظار المكالمات اللي اترد عليها.</li>
+        <li><b>نسبة الفائتة</b>: الفائتة المحتسبة (أكتر من 7 ثواني) ÷ المكالمات المحتسبة.</li></ul>
+        <h3>مكالمات الموظف</h3><p>من الإضافة: بداية المكالمة ونهايتها على تحويلة الموظف. المكالمة اللي اترد عليها في سجل أرابيكس والإضافة مشافتهاش، بتتحسب للموظف اللي كان شغال لوحده على التحويلة دي وقتها. لو مفيش حد مسجل على التحويلة بتظهر في «مكالمات من غير موظف مسجل».</p>
+        <h3>الحالات والحضور</h3>
+        <ul><li>الحالة (متاح، في مكالمة، بريك) من اللي أرابيكس عارضه للموظف، وبتفضل لحد الإشارة اللي بعدها، بحد أقصى 90 ثانية بعد آخر إشارة.</li>
+        <li>الشيفت بيخلص عند الخروج المسجل. لو مفيش خروج مسجل، بيخلص عند آخر حالة حقيقية + 90 ثانية، والجهاز اللي فضل مفتوح بعد كده مش بيتحسب.</li>
+        <li><b>انقطاع الرصد</b>: وقت جوه الشيفت مفيش فيه إشارة، أو انقطاع ورجوع خلال ساعتين.</li></ul>
+        <h3>البريك</h3><p>بريكين عاديين بإجمالي 30 دقيقة: الأول لحد 15 دقيقة + 5 دقايق سماح، والتاني بياخد الباقي من الـ 30. البريك اللي اترصد من غير إذن بيتحسب 15 دقيقة على الأقل. البريك الإضافي الموافق عليه مش داخل في الـ 30. مفيش بريك عادي بعد 3 الفجر.</p>
+        <h3>المكالمات الفائتة</h3><p>لكل مكالمة فائتة بنشوف كل موظف كان في شيفته: حالته لما العميل دخل الطابور، ولما قفل، وهل بقى متاح وهو مستني. لو توقيت السجل بالدقيقة، الحالة اللي اتغيرت جوه نفس الدقيقة بتتعلّم «غير محسومة».</p>
+      </article>
     </section>
 
     <section id="view-manage" class="view" hidden>
@@ -137,7 +222,8 @@
   </main>
 </div>
 <script src="config.js?v=1"></script>
-<script src="xlsx.js?v=1"></script>
-<script src="app.js?v=3"></script>
+<script src="xlsx.js?v=2"></script>
+<script src="charts.js?v=1"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>

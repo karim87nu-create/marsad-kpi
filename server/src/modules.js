@@ -10,6 +10,7 @@ import * as history from './history.js';
 import * as engine from './engine.js';
 import * as telegram from './telegram.js';
 import * as importRows from './import-rows.js';
+import * as ops from './ops.js';
 
-const MODULES = [admin, employees, sessions, dashboard, breaks, messages, shifts, history, engine, telegram, importRows];
+const MODULES = [admin, employees, sessions, dashboard, breaks, messages, shifts, history, engine, telegram, importRows, ops];
 export { MODULES };

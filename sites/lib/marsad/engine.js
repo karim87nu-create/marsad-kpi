@@ -76,6 +76,28 @@ function callsOf(session, events) {
   return order.map(k => calls.get(k)).filter(c => c.startedAt != null);
 }
 
+// Half-hour slots of the data day: the Arabicss history's numbers for calls that started in the slot,
+// how many employees were (on average) available / on a call / on break, and the queue samples.
+const SLOT_MS = 30 * 60000;
+function slotsOf(w, records, states, samples) {
+  const out = [];
+  for (let t = w.start; t < w.end; t += SLOT_MS) {
+    const end = t + SLOT_MS;
+    const mine = records.filter(r => { const at = r.startMs ?? r.endMs; return at != null && at >= t && at < end; });
+    const m = A.summarize(mine).report;
+    const share = state => states.reduce((n, s) => {
+      if (s.state !== state) return n;
+      const a = Math.max(t, Date.parse(s.startedAt)), b = Math.min(end, Date.parse(s.endedAt));
+      return b > a ? n + (b - a) : n;
+    }, 0) / SLOT_MS;
+    const q = samples.filter(x => x.observed_at >= t && x.observed_at < end);
+    out.push({ start: iso(t), operating: t < w.operatingEnd, calls: m.calls, answered: m.answered, abandoned: m.abandoned, shortAbandoned: m.shortAbandoned, sla: m.sla, asa: m.asa,
+      ready: Math.round(share('ready') * 10) / 10, onCall: Math.round(share('on_call') * 10) / 10, onBreak: Math.round(share('break') * 10) / 10,
+      waitingMax: q.length ? Math.max(...q.map(x => x.waiting)) : null, longestWait: q.length ? Math.max(...q.map(x => x.longest_wait ?? 0)) : null, samples: q.length });
+  }
+  return out;
+}
+
 function setup(app) {
   const { db } = app;
   const cache = new Map();
@@ -88,12 +110,15 @@ function setup(app) {
   // Everything for one data day.
   async function day(date, now = app.now()) {
     const w = dayWindow(date), from = w.start - 12 * 3600000;
-    const [ev, ses, h] = await Promise.all([db.prepare('SELECT MAX(id) m FROM events').get(), db.prepare('SELECT MAX(COALESCE(revoked_at, 0)) m, COUNT(*) n FROM employee_sessions').get(), app.dayHistory(date, now)]);
-    const key = [date, ev.m, ses.m, ses.n, h.key, now >= w.end + 12 * 3600000 ? 'settled' : Math.floor(now / 5000)].join('|');
+    const [ev, ses, h, dec] = await Promise.all([db.prepare('SELECT MAX(id) m FROM events').get(), db.prepare('SELECT MAX(COALESCE(revoked_at, 0)) m, COUNT(*) n FROM employee_sessions').get(), app.dayHistory(date, now),
+      db.prepare('SELECT MAX(id) m FROM shift_decisions').get()]);
+    const key = [date, ev.m, ses.m, ses.n, h.key, dec.m, now >= w.end + 12 * 3600000 ? 'settled' : Math.floor(now / 5000)].join('|');
     if (cache.has(key)) return cache.get(key);
-    const [people, rows, allEvents] = await Promise.all([names(),
+    const [people, rows, allEvents, decisions, samples] = await Promise.all([names(),
       db.prepare('SELECT * FROM employee_sessions WHERE issued_at < ? AND COALESCE(revoked_at, expires_at) > ? ORDER BY issued_at').all(w.end, from),
-      db.prepare(`SELECT * FROM events WHERE session_id IN (SELECT id FROM employee_sessions WHERE issued_at < ? AND COALESCE(revoked_at, expires_at) > ?) ORDER BY occurred_at, id`).all(w.end, from)]);
+      db.prepare(`SELECT * FROM events WHERE session_id IN (SELECT id FROM employee_sessions WHERE issued_at < ? AND COALESCE(revoked_at, expires_at) > ?) ORDER BY occurred_at, id`).all(w.end, from),
+      db.prepare(`SELECT d.* FROM shift_decisions d JOIN employee_sessions s ON s.id = d.session_id WHERE s.issued_at < ? AND COALESCE(s.revoked_at, s.expires_at) > ? ORDER BY d.decided_at`).all(w.end, from),
+      db.prepare('SELECT observed_at, waiting, longest_wait FROM live_snapshots WHERE observed_at >= ? AND observed_at < ? ORDER BY observed_at').all(w.start, w.end)]);
     const grouped = bySession(allEvents);
     const sessions = [], spans = [], calls = [], breakEvents = [], logins = [];
     for (const s of rows) {
@@ -118,7 +143,8 @@ function setup(app) {
       startedAt: iso(c.startedAt), endedAt: iso(c.endedAt) })).sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
 
     // ---- per employee ----
-    const daySessions = at.sessions.filter(s => (s.workStartedAt ?? s.issuedAt) < w.end && Date.parse(s.observedThrough) > w.start);
+    const decided = new Map(decisions.map(d => [String(d.session_id), { action: d.action, note: d.note, decidedAt: iso(d.decided_at), decidedBy: d.decided_by }]));
+    const daySessions = at.sessions.filter(s => (s.workStartedAt ?? s.issuedAt) < w.end && Date.parse(s.observedThrough) > w.start).map(s => ({ ...s, decision: decided.get(s.id) || null }));
     const ids = new Set([...daySessions.filter(s => s.workStartedAt != null && s.daySeconds > 0).map(s => s.employeeId), ...allCalls.map(c => c.employeeId).filter(Boolean)]);
     const employees = [...ids].map(id => {
       const mine = allCalls.filter(c => c.employeeId === id && !c.outsideHours), done = mine.filter(c => c.complete);
@@ -135,7 +161,7 @@ function setup(app) {
     }).sort((a, b) => a.name.localeCompare(b.name, 'ar'));
 
     const out = { date, window: { start: iso(w.start), operatingEnd: iso(w.operatingEnd), end: iso(w.end) }, sessions: daySessions, states, calls: allCalls, employees,
-      history: { report: h.report, queues: h.queues, missed: h.missed, attribution: matched.summary, unattributed: matched.unattributed }, serverNow: iso(now) };
+      history: { report: h.report, queues: h.queues, missed: h.missed, attribution: matched.summary, unattributed: matched.unattributed }, slots: slotsOf(w, h.records, states, samples), serverNow: iso(now) };
     Object.defineProperty(out, 'raw', { value: { sessions, states, records: h.records } });
     if (cache.size > 12) cache.delete(cache.keys().next().value);
     cache.set(key, out);
@@ -180,7 +206,8 @@ function setup(app) {
     const inShift = sessions.find(x => x.employeeId === employeeId && x.workStartedAt != null && x.workStartedAt <= t && t <= Date.parse(x.observedThrough) + GAP_MS);
     if (inShift) return { state: 'unknown', since: null, extension: inShift.extension };
     const left = sessions.filter(x => x.employeeId === employeeId && x.workStartedAt != null && Date.parse(x.observedThrough) < t).sort((a, b) => Date.parse(b.observedThrough) - Date.parse(a.observedThrough))[0];
-    if (left) return { state: left.closureKnown ? 'logged_out' : 'disconnected', since: left.observedThrough, extension: left.extension };
+    // A supervisor's decision on the end of that shift: still responsible (left early), or the shift really ended.
+    if (left) return { state: left.decision?.action === 'include' ? 'left_responsible' : left.decision?.action === 'exclude' ? 'shift_ended' : left.closureKnown ? 'logged_out' : 'disconnected', since: left.observedThrough, extension: left.extension };
     return { state: 'not_started', since: null, extension: '' };
   }
 

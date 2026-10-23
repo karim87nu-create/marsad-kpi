@@ -51,10 +51,19 @@
     if (!list.length) body.append(h('tr', {}, h('td', { colSpan: columns.length, textContent: empty, className: 'muted' })));
     box.replaceChildren(h('div', { className: 'tablewrap' }, h('table', {}, h('thead', {}, head), body)), list.length > limit ? h('p', { className: 'muted', textContent: 'معروض أول ' + limit + ' من ' + list.length + '؛ التصدير فيه الكل.' }) : '');
   }
+  function exportSheets(file, sheets) {
+    window.MarsadXlsx.download(file + '-' + state.day, sheets.map(([sheet, columns, rows]) => ({ name: sheet, columns: columns.map(c => ({ title: c.title, type: c.type })), rows: rows.map(r => columns.map(c => { const v = c.get(r); return v instanceof Node ? v.textContent : v; })) })));
+  }
   function exportRows(name, columns, rows) {
     window.MarsadXlsx.download(name + '-' + state.day, columns.map(c => ({ title: c.title, type: c.type })), rows.map(r => columns.map(c => { const v = c.get(r); return v instanceof Node ? v.textContent : v; })));
   }
   const pill = (text, kind = '') => h('span', { className: 'pill ' + kind, textContent: text });
+  const C = window.MarsadCharts;
+  // A number card. tone: good | warn | bad | info | a state name.
+  const kpi = (label, value, tone = '', sub = '') => h('div', { className: 'kpi ' + tone }, h('span', { textContent: label }), h('b', { textContent: value ?? '—' }), sub ? h('small', { textContent: sub }) : null);
+  const toneHigh = (v, good, warn) => v == null ? '' : v >= good ? 'good' : v >= warn ? 'warn' : 'bad';   // higher is better
+  const toneLow = (v, good, warn) => v == null ? '' : v <= good ? 'good' : v <= warn ? 'warn' : 'bad';    // lower is better
+  const ms = v => v == null ? null : Date.parse(v);
 
   // ---------- state ----------
   const state = { view: 'now', day: cairoToday(), employees: [], names: new Map(), live: null, queue: null, day_: {}, requests: null };
@@ -65,6 +74,7 @@
     state.names = new Map([...d.employees, ...(d.archivedEmployees || [])].map(e => [e.id, e.name]));
     const opts = [h('option', { value: '', textContent: 'كل الموظفين' }), ...d.employees.map(e => h('option', { value: e.id, textContent: e.name }))];
     $('callEmployee').replaceChildren(...opts.map(o => o.cloneNode(true)));
+    $('reviewForm').elements.employeeId.replaceChildren(h('option', { value: '', textContent: 'من غير موظف' }), ...d.employees.map(e => h('option', { value: e.id, textContent: e.name })));
     $('messageForm').elements.to.replaceChildren(h('option', { value: 'all', textContent: 'كل الموظفين النشطين' }), ...d.employees.filter(e => e.active).map(e => h('option', { value: e.id, textContent: e.name })));
   }
   const cache = new Map();
@@ -96,11 +106,15 @@
     const count = s => people.filter(p => p.s === s).length;
     const q = state.queue, qAge = q ? (now - Date.parse(q.observedAt)) / 1000 : null, qFresh = q && qAge < 30;
     const waiting = qFresh ? q.waiting : [];
-    $('nowCards').replaceChildren(...[['ready', 'متاحين', count('ready')], ['on_call', 'في مكالمة', count('on_call')], ['break', 'في بريك', count('break')], ['unknown', 'انقطاع رصد', count('unknown')], ['', 'سجّلوا ولسه في الكونسول', count('logged_in')], ['', 'عملاء منتظرين', qFresh ? waiting.length : 'غير متاح']]
-      .map(([cls, label, n]) => h('div', { className: 'card ' + cls }, h('span', { textContent: label }), h('b', { textContent: n }))));
+    const longestWait = waiting.reduce((m, r) => Math.max(m, waitNow(r.wait, qAge) || 0), 0);
+    $('nowCards').replaceChildren(kpi('متاحين', count('ready'), count('ready') ? 'ready' : 'bad'), kpi('في مكالمة', count('on_call'), 'on_call'), kpi('في بريك', count('break'), 'break'),
+      kpi('انقطاع رصد', count('unknown') + count('disconnected'), count('unknown') + count('disconnected') ? 'unknown' : ''), kpi('سجّلوا ولسه مدخلوش الكونسول', count('logged_in')),
+      kpi('عملاء منتظرين', qFresh ? waiting.length : 'غير متاح', !qFresh ? '' : waiting.length && !count('ready') ? 'bad' : waiting.length ? 'warn' : 'good', qFresh && waiting.length ? 'أطول انتظار ' + dur(longestWait) : ''));
     const order = ['on_call', 'break', 'ready', 'unknown', 'logged_in', 'disconnected', 'logged_out', 'no_session'];
     const groups = order.map(s => [s, people.filter(p => p.s === s).sort((a, b) => (b.elapsed || 0) - (a.elapsed || 0))]).filter(([, list]) => list.length);
-    $('staffNow').replaceChildren(...groups.map(([s, list]) => h('div', { className: 'group' }, h('h3', { textContent: (STATE[s] || s) + ' — ' + list.length }),
+    // People who are not working right now only take one line each group.
+    $('staffNow').replaceChildren(...groups.map(([s, list]) => ['no_session', 'logged_out'].includes(s) ? h('div', { className: 'group' }, h('h3', { textContent: (STATE[s] || s) + ' — ' + list.length }),
+      h('div', { className: 'inline' }, ...list.map(p => pill(p.name + (s === 'logged_out' && p.since ? ' · ' + clock(p.since).slice(0, 5) : ''))))) : h('div', { className: 'group' }, h('h3', { textContent: (STATE[s] || s) + ' — ' + list.length }),
       h('div', { className: 'tiles' }, ...list.map(p => {
         const over = (s === 'break' && p.elapsed > 900) || (s === 'on_call' && p.elapsed > 240);
         return h('div', { className: 'tile ' + s + (over ? ' over' : ''), title: 'آخر إشارة ' + stamp(p.lastEvidence) },
@@ -124,8 +138,7 @@
     try { state.requests = await api('/api/break-requests'); } catch { return; }
     const pending = state.requests.requests.filter(r => r.status === 'pending');
     document.title = (pending.length ? '(' + pending.length + ') ' : '') + 'مرصد الأداء — الإدارة';
-    const navBtn = document.querySelector('[data-view="now"]');
-    navBtn.textContent = 'الآن' + (pending.length ? ' — ' + pending.length + ' طلب بريك' : '');
+    $('reqBadge').hidden = !pending.length; $('reqBadge').textContent = pending.length;
     $('breakRequests').replaceChildren(...(pending.length ? [h('div', { className: 'requests' }, h('h2', { textContent: 'طلبات بريك مستنية موافقة — ' + pending.length }),
       ...pending.map(r => h('div', { className: 'row' }, h('span', { textContent: r.employee + ' · تحويلة ' + (r.extension || '—') + ' · ' + r.requestedMinutes + ' دقيقة · من ' + clock(r.createdAt) }),
         state.requests.canDecide ? h('span', { className: 'inline' }, ...[['approve', 'موافقة', ''], ['reject', 'رفض', 'danger']].map(([action, label, cls]) => { const b = h('button', { textContent: label, className: cls }); b.onclick = async () => { b.disabled = true; try { await api('/api/break-requests', { method: 'POST', body: { action, id: r.id } }); } catch (e) { alert(e.message); } refreshRequests(); }; return b; })) : pill('للعرض فقط')))) ] : []));
@@ -133,12 +146,42 @@
 
   // ---------- ملخص اليوم ----------
   async function renderDay() {
-    const hd = await dayHistory(), r = hd.report;
-    $('dayNote').textContent = r ? 'يوم التشغيل ' + state.day + ' من 9 ص لحد 9 ص اليوم اللي بعده (التشغيل لحد 3 الفجر) · آخر سحب للسجل ' + stamp(r.importedAt) + (r.verifiedTotal ? '' : ' · السجل غير مكتمل التحقق') + (r.missingCalendarDates?.length ? ' · ناقص سجل يوم ' + r.missingCalendarDates.join('، ') : '') : 'مفيش سجل أرابيكس محفوظ لليوم ده.';
-    $('dayCards').replaceChildren(...(r ? [['مكالمات محتسبة', r.calls], ['تم الرد', r.answered], ['فائتة محتسبة', r.abandoned], ['الرد خلال 10 ث', pct(r.sla)], ['متوسط انتظار الرد', secs(r.asa)], ['نسبة الفائتة', pct(r.abandonmentRate)], ['متوسط مدة المكالمة', dur(r.meanCallSeconds)], ['فائتة قصيرة ≤7ث', r.shortAbandoned], ['خارج ساعات العمل', r.afterHours]] : [])
-      .map(([k, v]) => h('div', { className: 'card' }, h('span', { textContent: k }), h('b', { textContent: v }))));
+    const d = await dayData(), hd = d.history, r = hd.report;
+    $('dayNote').textContent = (r ? 'يوم التشغيل ' + state.day + ' من 9 ص لحد 9 ص اليوم اللي بعده (التشغيل لحد 3 الفجر) · آخر سحب للسجل ' + stamp(r.importedAt) + (r.verifiedTotal ? '' : ' · السجل غير مكتمل التحقق') + (r.missingCalendarDates?.length ? ' · ناقص سجل يوم ' + r.missingCalendarDates.join('، ') : '') : 'مفيش سجل أرابيكس محفوظ لليوم ده؛ أرقام المكالمات والانتظار هتظهر لما الموصل يسحب السجل.');
+    $('dayCards').replaceChildren(...(r ? [kpi('مكالمات محتسبة', r.calls, 'info', r.shortAbandoned + ' فائتة قصيرة ≤7ث مش محسوبة'), kpi('تم الرد', r.answered, 'good'), kpi('فائتة محتسبة', r.abandoned, r.abandoned ? toneLow(r.abandonmentRate, 5, 10) : 'good'),
+      kpi('الرد خلال 10 ث', pct(r.sla), toneHigh(r.sla, 80, 60)), kpi('متوسط انتظار الرد', secs(r.asa), toneLow(r.asa, 10, 20)), kpi('نسبة الفائتة', pct(r.abandonmentRate), toneLow(r.abandonmentRate, 5, 10)),
+      kpi('متوسط مدة المكالمة', dur(r.meanCallSeconds)), kpi('خارج ساعات العمل', r.afterHours)] : []));
+    const e = d.employees, sum = k => e.reduce((n, x) => n + (x[k] || 0), 0);
+    const overBreak = e.filter(x => x.breakSeconds > 1800).length;
+    $('teamCards').replaceChildren(kpi('موظفين اشتغلوا', e.length, 'info'), kpi('إجمالي ساعات العمل', dur(sum('workSeconds'))), kpi('وقت المكالمات', dur(sum('callSeconds')), 'on_call'), kpi('وقت المتاح', dur(sum('readySeconds')), 'ready'),
+      kpi('إجمالي البريك', dur(sum('breakSeconds')), 'break', overBreak ? overBreak + ' موظف عدّى 30 دقيقة' : ''), kpi('انقطاع الرصد', dur(sum('gapSeconds')), sum('gapSeconds') > 1800 ? 'warn' : ''),
+      kpi('مكالمات من غير موظف مسجل', (hd.unattributed || []).length, (hd.unattributed || []).length ? 'bad' : 'good'));
+    C.slots($('dayChart'), d.slots.filter(x => x.operating));
+    const qs = (hd.queues || []).filter(q => q.calls), maxQ = Math.max(1, ...qs.map(q => q.calls));
+    $('queueBars').replaceChildren(h('div', { className: 'ranks' }, ...qs.sort((a, b) => b.calls - a.calls).map(q => h('div', { className: 'r' }, h('span', { textContent: q.label + ' · ' + q.calls + ' مكالمة' }), h('small', { className: 'muted', textContent: 'رد خلال 10ث ' + pct(q.sla) + ' · فائتة ' + q.abandoned }), C.meter(q.calls, maxQ)))));
     table('queueTable', queueColumns, hd.queues || []);
+    const rank = (title, list, value, show, color) => { const max = Math.max(1, ...list.map(value)); return [h('h3', { textContent: title }), h('div', { className: 'ranks' }, ...list.map(x => h('div', { className: 'r' }, h('span', { textContent: x.name }), h('b', { textContent: show(x) }), C.meter(value(x), max, color))))]; };
+    const top = (k, n = 5) => [...e].filter(x => x[k] > 0).sort((a, b) => b[k] - a[k]).slice(0, n);
+    $('dayRanks').replaceChildren(...rank('أكتر مكالمات', top('calls'), x => x.calls, x => x.calls, 'var(--call)'), ...rank('أطول بريك', top('breakSeconds'), x => x.breakSeconds, x => dur(x.breakSeconds), 'var(--break)'),
+      ...rank('أكتر انقطاع رصد', top('gapSeconds'), x => x.gapSeconds, x => dur(x.gapSeconds), 'var(--unknown)'));
   }
+
+  // ---------- على مدار اليوم ----------
+  const slotColumns = [
+    { title: 'من', get: x => x.start, show: x => clock(x.start).slice(0, 5), type: 'datetime' }, { title: 'مكالمات محتسبة', get: x => x.calls, type: 'number' }, { title: 'تم الرد', get: x => x.answered, type: 'number' },
+    { title: 'فائتة محتسبة', get: x => x.abandoned, type: 'number', cls: x => x.abandoned ? 'bad' : '' }, { title: 'فائتة قصيرة', get: x => x.shortAbandoned, type: 'number' },
+    { title: 'الرد خلال 10 ث', get: x => x.sla, show: x => pct(x.sla), type: 'percent', cls: x => x.sla != null && x.sla < 60 ? 'bad' : x.sla != null && x.sla < 80 ? 'warn' : '' },
+    { title: 'متوسط الانتظار (ث)', get: x => x.asa == null ? null : Math.round(x.asa * 10) / 10, type: 'number' },
+    { title: 'متوسط المتاحين', get: x => x.ready, type: 'number', cls: x => x.calls && x.ready < 1 ? 'bad' : '' }, { title: 'متوسط في مكالمة', get: x => x.onCall, type: 'number' }, { title: 'متوسط في بريك', get: x => x.onBreak, type: 'number' },
+    { title: 'أقصى منتظرين', get: x => x.waitingMax, type: 'number' }];
+  const hourRows = d => d.slots.filter(x => $('hoursAll').checked || x.operating);
+  async function renderHours() {
+    const d = await dayData(), list = hourRows(d);
+    C.slots($('hoursChart'), list);
+    table('hoursTable', slotColumns, list);
+  }
+  $('hoursAll').onchange = () => renderHours().catch(showError);
+
   const queueColumns = [
     { title: 'نوع الطلب', get: q => q.label }, { title: 'رقم القائمة', get: q => q.queue },
     { title: 'محتسبة', get: q => q.calls, type: 'number' }, { title: 'تم الرد', get: q => q.answered, type: 'number' }, { title: 'فائتة', get: q => q.abandoned, type: 'number' },
@@ -149,7 +192,9 @@
   const teamRows = d => d.employees.map(e => ({ id: e.employeeId, name: e.name, calls: e.calls, answered: e.answered, aht: e.averageCallSeconds, work: e.workSeconds, ready: e.readySeconds,
     onCall: e.callSeconds, unknown: e.gapSeconds, breakSeconds: e.breakSeconds, breakCount: e.breakCount, fromHistory: e.fromHistory, firstLogin: e.firstLogin, lastLogout: e.lastLogout }));
   const teamColumns = [
-    { title: 'الموظف', get: r => r.name }, { title: 'مكالمات', get: r => r.calls, type: 'number' }, { title: 'تم الرد', get: r => r.answered, type: 'number' }, { title: 'منها من سجل أرابيكس', get: r => r.fromHistory, type: 'number' },
+    { title: 'الموظف', get: r => r.name }, { title: 'توزيع الوقت', get: r => r.onCall + r.ready ? Math.round(r.onCall / (r.onCall + r.ready) * 100) : null, show: r => C.usage([{ state: 'ready', value: r.ready, label: 'متاح ' + dur(r.ready) }, { state: 'on_call', value: r.onCall, label: 'في مكالمة ' + dur(r.onCall) }, { state: 'break', value: r.breakSeconds, label: 'بريك ' + dur(r.breakSeconds) }, { state: 'unknown', value: r.unknown, label: 'انقطاع ' + dur(r.unknown) }]) },
+    { title: 'نسبة الانشغال', get: r => r.onCall + r.ready ? Math.round(r.onCall / (r.onCall + r.ready) * 100) : null, show: r => r.onCall + r.ready ? Math.round(r.onCall / (r.onCall + r.ready) * 100) + '%' : '—', type: 'percent' },
+    { title: 'مكالمات', get: r => r.calls, type: 'number' }, { title: 'تم الرد', get: r => r.answered, type: 'number' }, { title: 'منها من سجل أرابيكس', get: r => r.fromHistory, type: 'number' },
     { title: 'متوسط مدة المكالمة', get: r => r.aht, show: r => dur(r.aht), type: 'duration' }, { title: 'مدة العمل', get: r => r.work, show: r => dur(r.work), type: 'duration' },
     { title: 'متاح', get: r => r.ready, show: r => dur(r.ready), type: 'duration' }, { title: 'في مكالمة', get: r => r.onCall, show: r => dur(r.onCall), type: 'duration' },
     { title: 'انقطاع رصد', get: r => r.unknown, show: r => dur(r.unknown), type: 'duration' },
@@ -157,21 +202,112 @@
     { title: 'أول دخول', get: r => r.firstLogin, show: r => clock(r.firstLogin), type: 'datetime' }, { title: 'آخر خروج', get: r => r.lastLogout, show: r => clock(r.lastLogout), type: 'datetime' }];
   async function renderTeam() {
     const d = await dayData();
-    table('teamTable', teamColumns, teamRows(d), { onRow: r => showEmployee(d, r.id) });
+    table('teamTable', teamColumns, teamRows(d), { onRow: r => { state.profile = r.id; show('profile'); } });
   }
-  function showEmployee(d, id) {
-    $('employeePanel').hidden = false; $('employeeTitle').textContent = name(id) + ' — يوم ' + state.day;
-    const parts = [h('h3', { textContent: 'الجلسات' }), h('div'), h('h3', { textContent: 'الحالات خلال اليوم' }), h('div'), h('h3', { textContent: 'البريكات' }), h('div'), h('h3', { textContent: 'المكالمات' }), h('div')];
-    $('employeeDetail').replaceChildren(...parts);
-    table(parts[1], [{ title: 'التحويلة', get: s => s.extension }, { title: 'البداية', get: s => s.startedAt, show: s => stamp(s.startedAt), type: 'datetime' }, { title: 'النهاية', get: s => s.endedAt, show: s => s.running ? 'شغالة' : stamp(s.endedAt || s.observedThrough), type: 'datetime' },
-      { title: 'المدة في اليوم', get: s => s.daySeconds, show: s => dur(s.daySeconds), type: 'duration' }, { title: 'انتهت إزاي', get: s => s.running ? 'شغالة' : s.closureKnown ? REASON[s.reason] || s.reason : 'من غير خروج مسجل — محسوبة لحد آخر حالة' }],
-      d.sessions.filter(s => s.employeeId === id && s.workStartedAt != null));
-    table(parts[3], [{ title: 'الحالة', get: s => STATE[s.state] || s.state }, { title: 'من', get: s => s.startedAt, show: s => clock(s.startedAt), type: 'datetime' }, { title: 'إلى', get: s => s.endedAt, show: s => clock(s.endedAt), type: 'datetime' }, { title: 'المدة', get: s => s.durationSeconds, show: s => dur(s.durationSeconds), type: 'duration' }],
-      d.states.filter(s => s.employeeId === id && s.state !== 'offline').map(s => s.outsideHours ? { ...s, state: s.state + '_night' } : s).sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt)));
-    table(parts[5], [{ title: 'من', get: b => b.startedAt, show: b => clock(b.startedAt), type: 'datetime' }, { title: 'إلى', get: b => b.endedAt, show: b => clock(b.endedAt), type: 'datetime' }, { title: 'المدة', get: b => b.durationSeconds, show: b => dur(b.durationSeconds), type: 'duration' }],
-      d.states.filter(b => b.employeeId === id && b.state === 'break').sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt)));
-    table(parts[7], callColumns.slice(1), d.calls.filter(c => c.employeeId === id));
-    $('employeePanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  // ---------- ملف الموظف ----------
+  const segmentsOf = (d, id) => d.states.filter(s => s.employeeId === id && s.state !== 'offline').map(s => ({ from: ms(s.startedAt), to: ms(s.endedAt), state: s.state, label: STATE[s.state] || s.state }));
+  const profileTables = {};
+  async function renderProfile() {
+    const d = await dayData();
+    const list = [...d.employees].sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+    if (!list.some(e => e.employeeId === state.profile)) state.profile = list[0]?.employeeId ?? null;
+    $('profileEmployee').replaceChildren(...list.map(e => h('option', { value: e.employeeId, textContent: e.name, selected: e.employeeId === state.profile })));
+    const body = $('profileBody');
+    const e = list.find(x => x.employeeId === state.profile);
+    if (!e) { body.replaceChildren(h('p', { className: 'muted', textContent: 'مفيش موظفين اشتغلوا في اليوم ده.' })); return; }
+    const busy = e.callSeconds + e.readySeconds ? Math.round(e.callSeconds / (e.callSeconds + e.readySeconds) * 100) : null;
+    const ses = d.sessions.filter(s => s.employeeId === e.employeeId && s.workStartedAt != null);
+    const states = d.states.filter(s => s.employeeId === e.employeeId && s.state !== 'offline' && s.durationSeconds >= 1).map(s => s.outsideHours ? { ...s, state: s.state + '_night' } : s).sort((a, b) => ms(a.startedAt) - ms(b.startedAt));
+    const breaks = d.states.filter(b => b.employeeId === e.employeeId && b.state === 'break').sort((a, b) => ms(a.startedAt) - ms(b.startedAt));
+    const calls = d.calls.filter(c => c.employeeId === e.employeeId);
+    const parts = { cards: h('div', { className: 'cards' }), line: h('div'), sessions: h('div'), breaks: h('div'), states: h('div'), calls: h('div') };
+    parts.cards.append(kpi('مكالمات', e.calls, 'info', e.fromHistory ? e.fromHistory + ' منها من سجل أرابيكس' : ''), kpi('متوسط مدة المكالمة', dur(e.averageCallSeconds), '', e.longCalls ? e.longCalls + ' مكالمة أطول من 4 دقايق' : ''), kpi('مدة العمل', dur(e.workSeconds)),
+      kpi('متاح', dur(e.readySeconds), 'ready'), kpi('في مكالمة', dur(e.callSeconds), 'on_call'), kpi('نسبة الانشغال', busy == null ? '—' : busy + '%', '', 'وقت المكالمات ÷ (المكالمات + المتاح)'),
+      kpi('البريك', dur(e.breakSeconds), e.breakSeconds > 1800 ? 'bad' : 'break', e.breakCount + ' بريك'), kpi('انقطاع رصد', dur(e.gapSeconds), e.gapSeconds > 900 ? 'warn' : ''), kpi('أول دخول', clock(e.firstLogin)), kpi('آخر خروج', clock(e.lastLogout)));
+    const w = d.window;
+    // Zoomed to this employee's own hours, on the half hour.
+    const segs = segmentsOf(d, e.employeeId), H = 1800000;
+    const from = segs.length ? Math.max(ms(w.start), Math.floor((Math.min(...segs.map(x => x.from)) - H) / H) * H) : ms(w.start);
+    const to = segs.length ? Math.min(ms(w.end), Math.ceil((Math.max(...segs.map(x => x.to)) + H) / H) * H) : ms(w.operatingEnd);
+    C.timeline(parts.line, [{ name: e.name, segments: segs }], from, to);
+    body.replaceChildren(parts.cards, h('article', { className: 'panel' }, h('h2', { textContent: 'خط اليوم' }), parts.line), h('div', { className: 'two' },
+      h('article', { className: 'panel' }, h('h2', { textContent: 'الجلسات' }), parts.sessions), h('article', { className: 'panel' }, h('h2', { textContent: 'البريكات' }), parts.breaks)),
+      h('article', { className: 'panel' }, h('h2', { textContent: 'المكالمات' }), parts.calls), h('article', { className: 'panel' }, h('h2', { textContent: 'كل الحالات خلال اليوم' }), parts.states));
+    profileTables.sessions = [sessionColumns, ses]; profileTables.breaks = [breakColumns.slice(1), breaks]; profileTables.calls = [callColumns.slice(1), calls]; profileTables.states = [stateColumns, states];
+    table(parts.sessions, sessionColumns.slice(1), ses);
+    table(parts.breaks, breakColumns.slice(1), breaks, { empty: 'مفيش بريك' });
+    table(parts.calls, callColumns.slice(1), calls, { empty: 'مفيش مكالمات' });
+    table(parts.states, stateColumns, states);
+  }
+  $('profileEmployee').onchange = () => { state.profile = Number($('profileEmployee').value); renderProfile().catch(showError); };
+  const stateColumns = [{ title: 'الحالة', get: s => STATE[s.state] || s.state }, { title: 'من', get: s => s.startedAt, show: s => clock(s.startedAt), type: 'datetime' }, { title: 'إلى', get: s => s.endedAt, show: s => clock(s.endedAt), type: 'datetime' }, { title: 'المدة', get: s => s.durationSeconds, show: s => dur(s.durationSeconds), type: 'duration' }];
+  const sessionColumns = [{ title: 'الموظف', get: s => name(s.employeeId) }, { title: 'التحويلة', get: s => s.extension }, { title: 'البداية', get: s => s.workStartedAt ?? s.startedAt, show: s => stamp(s.workStartedAt ?? s.startedAt), type: 'datetime' },
+    { title: 'النهاية', get: s => s.endedAt || s.observedThrough, show: s => s.running ? 'شغالة' : stamp(s.endedAt || s.observedThrough), type: 'datetime' },
+    { title: 'المدة في اليوم', get: s => s.daySeconds, show: s => dur(s.daySeconds), type: 'duration' }, { title: 'انتهت إزاي', get: s => s.running ? 'شغالة' : s.closureKnown ? REASON[s.reason] || s.reason : 'من غير خروج مسجل — محسوبة لحد آخر حالة' }];
+  const breakColumns = [{ title: 'الموظف', get: b => name(b.employeeId) }, { title: 'من', get: b => b.startedAt, show: b => clock(b.startedAt), type: 'datetime' }, { title: 'إلى', get: b => b.endedAt, show: b => b.running ? 'لسه في بريك' : clock(b.endedAt), type: 'datetime' },
+    { title: 'المدة', get: b => b.durationSeconds, show: b => b.durationSeconds > 1200 ? pill(dur(b.durationSeconds), 'warn') : dur(b.durationSeconds), type: 'duration' }, { title: 'ملاحظة', get: b => b.outsideHours ? 'بعد 3 الفجر' : '' }];
+
+  // ---------- الحضور والبريك ----------
+  const att = {};
+  async function renderAttendance() {
+    const d = await dayData(), w = d.window;
+    const people = [...new Set([...d.employees.map(e => e.employeeId), ...d.sessions.filter(s => s.workStartedAt != null).map(s => s.employeeId)])];
+    const rows = people.map(id => ({ id, name: name(id), segments: segmentsOf(d, id) })).filter(r => r.segments.length).sort((a, b) => Math.min(...a.segments.map(x => x.from)) - Math.min(...b.segments.map(x => x.from)));
+    C.timeline($('dayTimeline'), rows, ms(w.start), Math.max(ms(w.operatingEnd), ...rows.flatMap(r => r.segments.map(x => Math.min(x.to, ms(w.end))))), { onName: r => { state.profile = r.id; show('profile'); } });
+    const breaks = d.states.filter(s => s.state === 'break').sort((a, b) => ms(a.startedAt) - ms(b.startedAt));
+    att.totals = d.employees.filter(e => e.breakSeconds || e.breakCount).map(e => { const mine = breaks.filter(b => b.employeeId === e.employeeId); return { name: e.name, count: e.breakCount, total: e.breakSeconds, longest: Math.max(0, ...mine.map(b => b.durationSeconds)), running: e.ongoingBreakSeconds }; }).sort((a, b) => b.total - a.total);
+    table('breakTotals', att.totalColumns = [{ title: 'الموظف', get: x => x.name }, { title: 'عدد البريكات', get: x => x.count, type: 'number' }, { title: 'الإجمالي', get: x => x.total, show: x => x.total > 1800 ? pill(dur(x.total), 'bad') : dur(x.total), type: 'duration' },
+      { title: 'أطول بريك', get: x => x.longest, show: x => x.longest > 1200 ? pill(dur(x.longest), 'warn') : dur(x.longest), type: 'duration' }, { title: 'من الـ 30 دقيقة', get: x => Math.round(x.total / 18) , show: x => C.meter(x.total, 1800, x.total > 1800 ? 'var(--bad)' : 'var(--break)') }], att.totals, { empty: 'مفيش بريك' });
+    // Moments with two or more on break at once, and how many were available then.
+    const marks = breaks.filter(b => !b.outsideHours).flatMap(b => [[ms(b.startedAt), 1, b.employeeId], [ms(b.endedAt), -1, b.employeeId]]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const on = new Map(), overlaps = [];
+    let open = null;
+    for (const [t, k, id] of marks) {
+      if (open && on.size < 2) open = null;
+      on.set(id, (on.get(id) || 0) + k); if (on.get(id) <= 0) on.delete(id);
+      if (on.size >= 2 && !open) { open = { from: t, people: new Set(on.keys()), max: on.size }; overlaps.push(open); }
+      else if (open) { for (const x of on.keys()) open.people.add(x); open.max = Math.max(open.max, on.size); if (on.size < 2) { open.to = t; open = null; } }
+    }
+    att.overlaps = overlaps.filter(o => o.to && o.to - o.from >= 60000).map(o => {
+      const mid = (o.from + o.to) / 2, ready = new Set(d.states.filter(s => s.state === 'ready' && ms(s.startedAt) <= mid && mid < ms(s.endedAt)).map(s => s.employeeId)).size;
+      return { from: new Date(o.from).toISOString(), to: new Date(o.to).toISOString(), seconds: (o.to - o.from) / 1000, max: o.max, names: [...o.people].map(name).join('، '), ready };
+    });
+    table('breakOverlaps', att.overlapColumns = [{ title: 'من', get: o => o.from, show: o => clock(o.from), type: 'datetime' }, { title: 'إلى', get: o => o.to, show: o => clock(o.to), type: 'datetime' }, { title: 'المدة', get: o => o.seconds, show: o => dur(o.seconds), type: 'duration' },
+      { title: 'في بريك مع بعض', get: o => o.max, type: 'number', cls: o => o.max >= 3 ? 'bad' : 'warn' }, { title: 'متاحين وقتها', get: o => o.ready, type: 'number', cls: o => o.ready < 2 ? 'bad' : '' }, { title: 'مين', get: o => o.names, cls: () => 'wrap' }], att.overlaps, { empty: 'مفيش بريكات اتقابلت' });
+    att.breaks = breaks;
+    table('breakList', breakColumns, breaks, { empty: 'مفيش بريك' });
+    att.sessions = d.sessions.filter(s => s.workStartedAt != null).sort((a, b) => (a.workStartedAt ?? 0) - (b.workStartedAt ?? 0));
+    table('sessionList', sessionColumns, att.sessions);
+  }
+
+  // ---------- نهاية الشيفت ----------
+  const DECISION = { include: 'محسوب عليه (خرج قبل ميعاده)', exclude: 'الشيفت خلص فعلًا' };
+  const shiftColumns = [...sessionColumns, { title: 'قرار المشرف', get: s => s.decision ? DECISION[s.decision.action] + ' — ' + s.decision.note : '', show: s => s.decision ? h('span', {}, pill(DECISION[s.decision.action], s.decision.action === 'include' ? 'warn' : 'ok'), ' ' + s.decision.note + ' · ' + (s.decision.decidedBy || '')) : s.running || s.closureKnown ? '—' : pill('مستني قرار', 'info') }];
+  let shiftRows = [];
+  async function renderShifts() {
+    const d = await dayData();
+    shiftRows = d.sessions.filter(s => s.workStartedAt != null).sort((a, b) => (a.workStartedAt ?? 0) - (b.workStartedAt ?? 0));
+    const cols = canWrite() ? [...shiftColumns, { title: '', get: () => '', show: s => s.running ? '' : h('span', { className: 'inline' }, btn('محسوب عليه', () => decide(s, 'include')), btn('الشيفت خلص', () => decide(s, 'exclude'))) }] : shiftColumns;
+    table('shiftTable', cols, shiftRows);
+    // Same extension, one employee after another.
+    const byExt = new Map();
+    for (const s of shiftRows) if (s.extension) { if (!byExt.has(s.extension)) byExt.set(s.extension, []); byExt.get(s.extension).push(s); }
+    const hand = [];
+    for (const [ext, list] of byExt) for (let i = 1; i < list.length; i++) {
+      const a = list[i - 1], b = list[i];
+      if (a.employeeId === b.employeeId) continue;
+      const end = ms(a.endedAt || a.observedThrough), start = b.workStartedAt;
+      hand.push({ ext, prev: name(a.employeeId), end, next: name(b.employeeId), start, gap: (start - end) / 1000, open: a.running });
+    }
+    table('handoverTable', [{ title: 'التحويلة', get: x => x.ext }, { title: 'الموظف السابق', get: x => x.prev }, { title: 'خرج', get: x => x.end, show: x => x.open ? 'لسه شغال' : clock(new Date(x.end).toISOString()), type: 'datetime' },
+      { title: 'الموظف التالي', get: x => x.next }, { title: 'دخل', get: x => x.start, show: x => clock(new Date(x.start).toISOString()), type: 'datetime' },
+      { title: 'الفرق', get: x => x.gap, show: x => x.open || x.gap < 0 ? pill('اتنين على نفس التحويلة في نفس الوقت', 'bad') : dur(x.gap), type: 'duration' }], hand, { empty: 'مفيش تبديل على نفس التحويلة' });
+  }
+  async function decide(s, action) {
+    const note = prompt((action === 'include' ? 'الجلسة دي هتتحسب عليه (خرج قبل ميعاده).' : 'تأكيد إن الشيفت خلص.') + ' اكتب السبب:');
+    if (!note || !note.trim()) return;
+    try { await api('/api/shifts', { method: 'POST', body: { action, note: note.trim(), sessionId: Number(s.id), employeeId: s.employeeId, requestId: crypto.randomUUID() } }); await dayData(true); renderShifts(); } catch (e) { alert(e.message); }
   }
 
   // ---------- المكالمات ----------
@@ -221,6 +357,57 @@
     } catch (e) { $('contextNote').textContent = 'تعذر التحديد: ' + e.message; }
   }
   $('contextDialog').querySelector('[data-close]').onclick = () => $('contextDialog').close();
+
+  // ---------- المتابعة والتقارير ----------
+  const REVIEW = { new: ['جديدة', 'info'], in_progress: ['جاري المتابعة', 'warn'], resolved: ['اتحلت', 'ok'], reviewed: ['تمت المراجعة', ''] };
+  let reviewRows = [];
+  const reviewColumns = () => [{ title: 'التاريخ', get: r => r.date }, { title: 'الموضوع', get: r => r.title, cls: () => 'wrap' }, { title: 'الموظف', get: r => r.employeeId ? name(r.employeeId) : '—' },
+    { title: 'الحالة', get: r => REVIEW[r.status]?.[0], show: r => !canWrite() ? pill(...REVIEW[r.status]) : (() => { const sel = h('select', {}, ...Object.entries(REVIEW).map(([k, [t]]) => h('option', { value: k, textContent: t, selected: k === r.status }))); sel.onclick = e => e.stopPropagation(); sel.onchange = async () => { try { await api('/api/reviews', { method: 'POST', body: { id: r.id, status: sel.value } }); renderFollowup(); } catch (e) { alert(e.message); } }; return sel; })() },
+    { title: 'المسؤول', get: r => r.owner || '—' }, { title: 'الملاحظة', get: r => r.note || '', cls: () => 'wrap' }, { title: 'آخر تعديل', get: r => r.updatedAt, show: r => stamp(r.updatedAt) + (r.updatedBy ? ' · ' + r.updatedBy : ''), type: 'datetime' }];
+  async function renderFollowup() {
+    $('reviewForm').hidden = !canWrite(); $('saveReport').hidden = !canWrite();
+    const [day, open, saved] = await Promise.all([api('/api/reviews?date=' + state.day), api('/api/reviews?open=1'), api('/api/saved-reports?date=' + state.day)]);
+    reviewRows = day.reviews;
+    table('reviewTable', reviewColumns(), day.reviews, { empty: 'مفيش متابعات لليوم ده' });
+    table('openReviews', reviewColumns(), open.reviews.filter(r => r.date !== state.day), { empty: 'مفيش متابعات مفتوحة' });
+    table('savedReports', [{ title: 'وقت الحفظ', get: r => r.createdAt, show: r => stamp(r.createdAt), type: 'datetime' }, { title: 'حفظه', get: r => r.filters?.by || '—' },
+      { title: '', get: () => '', show: r => btn('تنزيل Excel', () => downloadSaved(r.id)) }], saved.reports, { empty: 'مفيش تقارير محفوظة لليوم ده' });
+  }
+  $('reviewForm').onsubmit = async e => {
+    e.preventDefault(); const f = e.target.elements;
+    try { await api('/api/reviews', { method: 'POST', body: { date: state.day, title: f.title.value.trim(), employeeId: f.employeeId.value || null, owner: f.owner.value.trim(), status: f.status.value, note: f.note.value.trim() } }); e.target.reset(); say('reviewNote', 'اتضافت'); renderFollowup(); } catch (x) { say('reviewNote', x.message); }
+  };
+  $('saveReport').onclick = async () => { try { await api('/api/saved-reports', { method: 'POST', body: { date: state.day } }); renderFollowup(); } catch (e) { alert(e.message); } };
+  async function downloadSaved(id) {
+    const r = await api('/api/saved-reports?id=' + id), p = r.payload, rep = p.report || {};
+    const summary = [['مكالمات محتسبة', rep.calls], ['تم الرد', rep.answered], ['فائتة محتسبة', rep.abandoned], ['الرد خلال 10 ث %', rep.sla == null ? null : Math.round(rep.sla * 10) / 10], ['متوسط انتظار الرد (ث)', rep.asa == null ? null : Math.round(rep.asa * 10) / 10], ['نسبة الفائتة %', rep.abandonmentRate == null ? null : Math.round(rep.abandonmentRate * 10) / 10]];
+    window.MarsadXlsx.download('تقرير-محفوظ-' + r.date + '-' + stamp(r.createdAt).replace(/[^\d]+/g, '-'), [
+      { name: 'ملخص اليوم', columns: [{ title: 'المؤشر' }, { title: 'القيمة', type: 'number' }], rows: summary },
+      { name: 'أداء الموظفين', columns: teamColumns.map(c => ({ title: c.title, type: c.type })), rows: teamRows(p).map(x => teamColumns.map(c => { const v = c.get(x); return v instanceof Node ? v.textContent : v; })) },
+      { name: 'على مدار اليوم', columns: slotColumns.map(c => ({ title: c.title, type: c.type })), rows: (p.slots || []).map(x => slotColumns.map(c => c.get(x))) }]);
+  }
+
+  // ---------- حالة النظام ----------
+  const AUDIT = { old_data_imported: 'نقل بيانات من النظام القديم', master_password_set: 'اختيار الباسورد الرئيسي', report_saved: 'حفظ تقرير اليوم', review_added: 'متابعة جديدة', review_updated: 'تعديل متابعة', shift_changed: 'قرار نهاية شيفت',
+    employee_added: 'إضافة موظف', employee_updated: 'تعديل موظف', employee_deleted: 'حذف موظف', employee_pin_changed: 'تغيير باسورد موظف', admin_added: 'إضافة مستخدم إدارة', admin_updated: 'تعديل مستخدم إدارة', admin_deleted: 'حذف مستخدم إدارة',
+    break_approved: 'موافقة على بريك', break_rejected: 'رفض بريك', message_sent: 'رسالة للموظفين', telegram_settings: 'إعدادات تليجرام', telegram_linked: 'ربط تليجرام', collector_linked: 'ربط الموصل' };
+  let auditRows = [];
+  const auditColumns = [{ title: 'الوقت', get: a => a.at, show: a => stamp(a.at), type: 'datetime' }, { title: 'التغيير', get: a => AUDIT[a.action] || a.action }, { title: 'بواسطة', get: a => a.actor || '—' }, { title: 'الموظف', get: a => a.employee || '—' },
+    { title: 'التفاصيل', get: a => Object.entries(a.details || {}).filter(([k]) => !['actor', 'legacyId'].includes(k)).map(([k, v]) => k + ': ' + (typeof v === 'object' ? JSON.stringify(v) : v)).join(' · ').slice(0, 300), cls: () => 'wrap' }];
+  async function renderSystem() {
+    const d = await api('/api/system'), now = Date.parse(d.serverNow), ago = v => v ? Math.round((now - Date.parse(v)) / 1000) : null;
+    const c = d.collector, hAge = ago(c.lastHistory?.at), lAge = ago(c.lastLive);
+    const since = s => s == null ? 'أبدًا' : s < 90 ? 'من ' + s + ' ث' : s < 5400 ? 'من ' + Math.round(s / 60) + ' دقيقة' : 'من ' + Math.round(s / 3600) + ' ساعة';
+    $('systemCards').replaceChildren(kpi('الموصل', c.linked ? 'مربوط' : 'مش مربوط', c.linked ? 'good' : 'bad', c.linkedAt ? 'اتربط ' + stamp(c.linkedAt) : 'اربطه من «الإدارة» على جهاز المشرف'),
+      kpi('آخر سحب لسجل أرابيكس', since(hAge), hAge != null && hAge < 900 ? 'good' : 'warn', c.lastHistory ? 'سجل يوم ' + c.lastHistory.date : ''),
+      kpi('آخر لقطة انتظار مباشر', since(lAge), lAge != null && lAge < 30 ? 'good' : 'warn'),
+      kpi('أجهزة شغالة دلوقتي', d.devices.filter(x => x.open && ago(x.lastSeen) < 120).length, 'info', d.devices.length + ' جهاز آخر 24 ساعة'));
+    table('deviceTable', [{ title: 'الموظف', get: x => x.name }, { title: 'التحويلة', get: x => x.extension || '—' }, { title: 'نسخة الإضافة', get: x => x.version || '—' },
+      { title: 'آخر إشارة', get: x => x.lastSeen, show: x => { const a = ago(x.lastSeen); return pill(since(a), x.open && a < 120 ? 'ok' : x.open ? 'warn' : ''); }, type: 'datetime' },
+      { title: 'الجلسة', get: x => x.open ? 'مفتوحة' : 'مقفولة' }, { title: 'بدأت', get: x => x.startedAt, show: x => stamp(x.startedAt), type: 'datetime' }], d.devices, { empty: 'مفيش أجهزة اشتغلت على السيستم الجديد آخر 24 ساعة' });
+    auditRows = d.audit;
+    table('auditTable', auditColumns, d.audit, { limit: 300 });
+  }
 
   // ---------- الإدارة ----------
   function askPasswords(title, { minLength = 1, digits = true } = {}) {
@@ -344,25 +531,38 @@
       if (kind === 'queues') exportRows('انواع-الطلبات', queueColumns, (await dayHistory()).queues || []);
       if (kind === 'team') exportRows('اداء-الموظفين', teamColumns, teamRows(await dayData()));
       if (kind === 'calls') exportRows('المكالمات', callColumns, filteredCalls(await dayData()));
+      if (kind === 'hours') exportRows('على-مدار-اليوم', slotColumns, hourRows(await dayData()));
+      if (kind === 'profile') { await dayData(); const t = profileTables; exportSheets('ملف-' + name(state.profile), [['الجلسات', ...t.sessions], ['البريكات', ...t.breaks], ['المكالمات', ...t.calls], ['الحالات', ...t.states]]); }
+      if (kind === 'breakTotals') exportRows('البريك-لكل-موظف', att.totalColumns.slice(0, 4), att.totals);
+      if (kind === 'overlaps') exportRows('بريكات-مع-بعض', att.overlapColumns, att.overlaps);
+      if (kind === 'breaks') exportRows('البريكات', breakColumns, att.breaks);
+      if (kind === 'sessions') exportRows('الدخول-والخروج', sessionColumns, att.sessions);
+      if (kind === 'shifts') exportRows('نهاية-الشيفت', shiftColumns, shiftRows);
+      if (kind === 'reviews') exportRows('المتابعة', reviewColumns().map(c => c.title === 'الحالة' ? { ...c, show: undefined } : c), reviewRows);
+      if (kind === 'audit') exportRows('سجل-التغييرات', auditColumns, auditRows);
       if (kind === 'missed') exportRows('الفائتة', missedColumns.slice(0, -1), ((await dayHistory()).missed || []).filter(m => !$('missedClass').value || m.classification === $('missedClass').value));
     } catch (x) { showError(x); }
   });
 
   // ---------- navigation ----------
-  const VIEWS = { now: ['الآن', null], day: ['ملخص اليوم', renderDay], team: ['الموظفون', renderTeam], calls: ['المكالمات', renderCalls], missed: ['المكالمات الفائتة', renderMissed], manage: ['الإدارة', renderManage] };
+  const VIEWS = { now: ['الآن', null], day: ['ملخص اليوم', renderDay], hours: ['على مدار اليوم', renderHours], team: ['أداء الموظفين', renderTeam], profile: ['ملف الموظف', renderProfile], attendance: ['الحضور والبريك', renderAttendance],
+    shifts: ['نهاية الشيفت والرجوع للشغل', renderShifts], calls: ['المكالمات', renderCalls], missed: ['المكالمات الفائتة', renderMissed], followup: ['المتابعة والتقارير', renderFollowup], system: ['حالة النظام', renderSystem], manage: ['الإدارة', renderManage], guide: ['طريقة حساب الأرقام', async () => {}] };
+  const DAY_VIEWS = ['day', 'hours', 'team', 'profile', 'attendance', 'shifts', 'calls', 'missed', 'followup'];
   async function show(view, force = false) {
     state.view = view;
     for (const b of document.querySelectorAll('#nav [data-view]')) b.classList.toggle('active', b.dataset.view === view);
     for (const s of document.querySelectorAll('.view')) s.hidden = s.id !== 'view-' + view;
     $('title').textContent = VIEWS[view][0];
-    $('dayPicker').hidden = !['day', 'team', 'calls', 'missed'].includes(view);
-    if (view !== 'team') $('employeePanel').hidden = true;
+    $('dayPicker').hidden = !DAY_VIEWS.includes(view);
     showError(null);
     if (view === 'now') return tick();
-    try { syncStatus(true, 'جارٍ التحميل…'); if (force) { cache.delete('dash:' + state.day); cache.delete('hist:' + state.day); } await VIEWS[view][1](); syncStatus(true); } catch (e) { syncStatus(false); showError(e); }
+    try { syncStatus(true, 'جارٍ التحميل…'); if (force) cache.delete('day:' + state.day); await VIEWS[view][1](); syncStatus(true); } catch (e) { syncStatus(false); showError(e); }
   }
   document.querySelector('#nav nav').onclick = e => { const v = e.target.closest('[data-view]')?.dataset.view; if (v) show(v); };
-  $('day').onchange = () => { state.day = $('day').value || cairoToday(); show(state.view); };
+  const setDay = d => { const today = cairoToday(); state.day = !d || d > today ? today : d; $('day').value = state.day; $('dayNext').disabled = state.day >= today; show(state.view); };
+  const shiftDay = n => new Date(Date.parse(state.day + 'T12:00:00Z') + n * 864e5).toISOString().slice(0, 10);
+  $('day').onchange = () => setDay($('day').value);
+  $('dayPrev').onclick = () => setDay(shiftDay(-1)); $('dayNext').onclick = () => setDay(shiftDay(1)); $('dayToday').onclick = () => setDay(cairoToday());
   for (const id of ['callSearch', 'callEmployee', 'callStatus']) $(id).addEventListener('input', () => renderCalls().catch(showError));
   $('missedClass').onchange = () => renderMissed().catch(showError);
 
@@ -376,7 +576,7 @@
   setInterval(() => { if (state.view === 'now') renderNow(); }, 1000);
   setInterval(() => { if (token) refreshRequests(); }, 5000);
   // Today's numbers on the open page refresh every minute.
-  setInterval(() => { if (token && state.view !== 'now' && state.view !== 'manage' && state.day === cairoToday() && !document.hidden) show(state.view, true); }, 60000);
+  setInterval(() => { if (token && DAY_VIEWS.includes(state.view) && state.view !== 'followup' && state.day === cairoToday() && !document.hidden) show(state.view, true); }, 60000);
 
   // ---------- sign in ----------
   async function enter() {
@@ -384,7 +584,7 @@
     who = d.identity;
     $('who').textContent = who.name + ' · ' + ROLE[who.role];
     $('login').hidden = true; $('app').hidden = false;
-    $('day').value = state.day; $('day').max = cairoToday();
+    $('day').value = state.day; $('day').max = cairoToday(); $('dayNext').disabled = true;
     await loadEmployees();
     refreshRequests();
     show('now');
