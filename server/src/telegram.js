@@ -15,6 +15,7 @@ const RULE_LIST = {
   gap: 'انقطاع رصد أكتر من 3 دقايق أثناء الشيفت',
   queueNobody: 'عملاء منتظرين ومفيش حد متاح',
 };
+const RECOVERY_LABELS = { breakStart: 'انتهى البريك', breakOver: 'انتهى تجاوز البريك', longCall: 'انتهت المكالمة الطويلة', gap: 'تغيرت حالة انقطاع الرصد', breakRequest: 'تم الرد على طلب البريك', queueNobody: 'تغيرت حالة الانتظار', logout: 'رجع الموظف للعمل' };
 const DEFAULT_RULES = Object.fromEntries(Object.keys(RULE_LIST).map(k => [k, true]));
 const fmt = s => { s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ' د' + (s % 60 ? ' ' + (s % 60) + ' ث' : ''); };
 const clock = ms => new Date(ms).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit' });
@@ -55,7 +56,7 @@ function setup(app) {
     if (ctx.query.log === '1') {
       const w = dayWindow(ctx.query.date || businessDay(ctx.now));
       return { log: (await db.prepare('SELECT * FROM telegram_log WHERE created_at >= ? AND created_at < ? ORDER BY created_at DESC LIMIT 500').all(w.start, w.end))
-        .map(r => ({ kind: r.kind, label: RULE_LIST[r.kind] || r.kind, text: r.text, createdAt: iso(r.created_at), sentAt: iso(r.sent_at), error: r.sent_at ? null : r.error })) };
+        .map(r => ({ kind: r.kind, label: RULE_LIST[r.kind] || RECOVERY_LABELS[r.kind.replace(':resolved', '')] || r.kind, text: r.text, createdAt: iso(r.created_at), sentAt: iso(r.sent_at), error: r.sent_at ? null : r.error })) };
     }
     return { configured: !!c.token, botName: c.bot_name || null, chat: c.chat_id ? { id: c.chat_id, title: c.chat_title } : null, enabled: !!c.enabled,
       rules: Object.entries(RULE_LIST).map(([key, label]) => ({ key, label, on: !!c.rules[key] })) };
@@ -108,6 +109,40 @@ function setup(app) {
     const all = new Map((await db.prepare('SELECT id, name FROM employees').all()).map(e => [e.id, e.name]));
     const name = id => people.get(id)?.name || all.get(id) || 'موظف';
     const since = p => p.since ? (now - Date.parse(p.since)) / 1000 : 0;
+    // Resolve only notifications actually sent, using durable log keys across Worker restarts.
+    // Unknown/stale observations never prove that a break/call/queue problem ended.
+    const unresolved = await db.prepare(`SELECT l.* FROM telegram_log l WHERE l.sent_at IS NOT NULL AND l.kind IN ('breakStart','breakOver','longCall','gap','breakRequest','queueNobody','logout')
+      AND NOT EXISTS (SELECT 1 FROM telegram_log r WHERE r.key = 'resolved:' || l.key) ORDER BY l.id LIMIT 500`).all();
+    const statusLabel = { ready: 'متاح', on_call: 'في مكالمة', break: 'بريك', logged_in: 'سجّل دخول', logged_out: 'خرج', offline: 'خرج' };
+    for (const old of unresolved) {
+      let text = null;
+      const person = people.get(old.employee_id), current = person?.state;
+      if (old.kind === 'breakStart' || old.kind === 'breakOver') {
+        const ended = await db.prepare("SELECT * FROM events WHERE employee_id = ? AND event_type = 'break_end' AND occurred_at >= ? ORDER BY occurred_at LIMIT 1").get(old.employee_id, old.created_at);
+        if (ended) text = 'أنهى البريك' + (ended.duration_seconds ? ' — مدته ' + fmt(ended.duration_seconds) : '') + ' — ' + clock(ended.occurred_at);
+        else if (['ready','on_call'].includes(current) && person.since && Date.parse(person.since) > old.created_at) text = 'تغيّرت حالته بعد البريك إلى ' + statusLabel[current];
+      } else if (old.kind === 'longCall') {
+        const ended = await db.prepare("SELECT * FROM events WHERE employee_id = ? AND event_type = 'agentunlinked' AND occurred_at >= ? ORDER BY occurred_at LIMIT 1").get(old.employee_id, old.created_at);
+        if (ended) text = 'أنهى المكالمة الطويلة — مدتها ' + fmt(ended.duration_seconds || 0) + ' — ' + clock(ended.occurred_at);
+        else if (['ready','break'].includes(current) && person.since && Date.parse(person.since) > old.created_at) text = 'تغيّرت حالته بعد المكالمة إلى ' + statusLabel[current];
+      } else if (old.kind === 'gap') {
+        if (['ready','on_call','break'].includes(current)) text = 'رجع الرصد — الحالة الحالية: ' + statusLabel[current];
+      } else if (old.kind === 'breakRequest') {
+        const req = await db.prepare('SELECT * FROM break_requests WHERE id = ?').get(old.key.slice(4));
+        if (req && req.status !== 'pending') text = 'طلب البريك: ' + ({ approved: 'تمت الموافقة', rejected: 'تم الرفض', expired: 'انتهت صلاحيته', cancelled: 'اتلغى' }[req.status] || req.status);
+      } else if (old.kind === 'queueNobody') {
+        const snap = await app.latestLive();
+        if (snap && now - snap.observed_at < 30000) {
+          const waiting = JSON.parse(snap.rows).filter(r => /^(on wait|waiting)$/i.test(String(r[10]).trim())).length;
+          const available = live.filter(p => p.state === 'ready').length;
+          if (!waiting || available) text = !waiting ? 'انتهى انتظار العملاء في الطابور' : 'بقى فيه ' + available + ' موظف متاح — المنتظرين ' + waiting;
+        }
+      } else if (old.kind === 'logout') {
+        const returned = await db.prepare('SELECT * FROM employee_sessions WHERE employee_id = ? AND work_started_at >= ? AND id != ? ORDER BY work_started_at LIMIT 1').get(old.employee_id, old.created_at, old.key.slice(4));
+        if (returned) text = 'رجع للعمل — تحويلة ' + returned.extension + ' — ' + clock(returned.work_started_at);
+      }
+      if (text) add('resolved:' + old.key, old.kind + ':resolved', old.employee_id, '✅ ' + (old.employee_id == null ? '' : name(old.employee_id) + ': ') + text + '\nمتابعة للتنبيه: ' + old.text.split('\n')[0]);
+    }
     // Breaks that started in the last 10 minutes.
     if (on('breakStart')) for (const e of await db.prepare("SELECT * FROM events WHERE event_type IN ('break_start','break_observed') AND occurred_at > ? ORDER BY occurred_at").all(now - 600000)) {
       if (await db.prepare('SELECT 1 FROM telegram_log WHERE key = ?').get('break:' + e.id)) continue;

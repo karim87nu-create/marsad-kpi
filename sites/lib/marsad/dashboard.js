@@ -21,7 +21,7 @@ function setup(app) {
   // One data day: KPIs, employees, calls, missed calls, states.
   app.route('GET', '/api/day', async ctx => {
     await app.requireAdmin(ctx);
-    return app.heavy('day', date(ctx), ctx.now);
+    return ctx.query.to || ctx.query.from ? app.heavy('range', ctx.query.from || date(ctx), ctx.query.to || date(ctx), ctx.now) : app.heavy('day', date(ctx), ctx.now);
   });
 
   // Who could have answered one missed call.

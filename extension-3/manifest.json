@@ -3,20 +3,69 @@
   "name": "Arabicss KPI Connector",
   "version": "3.0.0",
   "description": "يربط جلسات ومكالمات وبريكات أرابيكس بمرصد الأداء",
-  "permissions": ["storage", "notifications", "*://41.38.207.218/*", "https://41.38.207.218:11594/*", "https://marsad-v2.karim87nu.chatgpt.site/*"],
-  "content_scripts": [
-    { "matches": ["*://41.38.207.218/*"], "exclude_matches": ["*://41.38.207.218/themes/arabicssReportsInclude/*"], "js": ["config.js", "agent.js"], "css": ["panel.css"], "run_at": "document_start" },
-    { "matches": ["https://karim87nu-create.github.io/marsad-kpi/*"], "js": ["config.js", "admin-link.js"], "run_at": "document_idle" }
+  "permissions": [
+    "storage",
+    "notifications",
+    "*://41.38.207.218/*",
+    "https://41.38.207.218:11594/*",
+    "https://marsad-v2.karim87nu.chatgpt.site/*"
   ],
-  "web_accessible_resources": ["hook.js"],
-  "background": { "scripts": ["config.js", "background.js"], "persistent": true },
-  "browser_action": { "default_title": "موصل مرصد الأداء" },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://41.38.207.218/*"
+      ],
+      "exclude_matches": [
+        "*://41.38.207.218/themes/arabicssReportsInclude/*"
+      ],
+      "js": [
+        "config.js",
+        "agent.js"
+      ],
+      "css": [
+        "panel.css"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://karim87nu-create.github.io/marsad-kpi/*",
+        "https://marsad-v2.karim87nu.chatgpt.site/admin/*"
+      ],
+      "js": [
+        "config.js",
+        "admin-link.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    "hook.js"
+  ],
+  "background": {
+    "scripts": [
+      "config.js",
+      "background.js"
+    ],
+    "persistent": true
+  },
+  "browser_action": {
+    "default_title": "موصل مرصد الأداء"
+  },
   "browser_specific_settings": {
     "gecko": {
       "id": "arabicss-kpi@eldahan.local",
       "strict_min_version": "142.0",
       "update_url": "https://karim87nu-create.github.io/marsad-kpi/firefox-updates.json",
-      "data_collection_permissions": { "required": ["personallyIdentifyingInfo", "authenticationInfo", "personalCommunications", "websiteContent", "websiteActivity"] }
+      "data_collection_permissions": {
+        "required": [
+          "personallyIdentifyingInfo",
+          "authenticationInfo",
+          "personalCommunications",
+          "websiteContent",
+          "websiteActivity"
+        ]
+      }
     }
   }
 }

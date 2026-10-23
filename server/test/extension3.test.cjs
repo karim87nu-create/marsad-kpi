@@ -154,9 +154,11 @@ test('extension 3 collector: linked from the admin page, sends the day history a
   const t = await start({ at: Date.now() });
   Object.defineProperty(t.clock, 'now', { get: () => Date.now(), set() {} });
   const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Cairo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-  const reports = http.createServer((req, res) => {
+  const reports = http.createServer(async (req, res) => {
     if (req.url.includes('get_inbound_calls_real_time')) return res.end('<tr>' + ['2001', '', 'Agent', '', '', '', '', '', '0:00:09', '0100', 'On Wait'].map(v => '<td>' + v + '</td>').join('') + '</tr>');
-    const rows = [['2001', 'SIP/101', date, '10:00:00', '10:02:00', '00:02:00', '00:00:04', '0111', 'Success', 'T']];
+    const requested = new URLSearchParams(await new Promise(resolve => { let b = ''; req.on('data', c => b += c); req.on('end', () => resolve(b)); })).get('start_date');
+    const parts = requested?.split('/'); const reportDate = parts ? parts[2] + '-' + parts[0] + '-' + parts[1] : date;
+    const rows = [['2001', 'SIP/101', reportDate, '10:00:00', '10:02:00', '00:02:00', '00:00:04', '0111', 'Success', 'T']];
     res.end('<h6>1</h6><h5>All Inbound Calls</h5><table id="example23"><thead><tr>' + ['Queue', 'Agent', 'Call Date', 'Start Time', 'End Time', 'Duration', 'Wait Time', 'Caller ID', 'Status', 'Trunk'].map(v => '<th>' + v + '</th>').join('') + '</tr></thead><tbody>'
       + rows.map(r => '<tr>' + r.map(v => '<td>' + v + '</td>').join('') + '</tr>').join('') + '</tbody></table>');
   });
@@ -176,7 +178,7 @@ test('extension 3 collector: linked from the admin page, sends the day history a
     const tok = (await admin('POST', '/api/history', { action: 'token' })).body;
     const send = async (m, url) => { for (const f of listeners) { const r = await f(m, { url }); if (r !== undefined) return r; } };
     assert.equal((await send({ type: 'COLLECTOR_LINK', ...tok }, 'https://karim87nu-create.github.io/marsad-kpi/v2/')).ok, true);
-    await settle(4000);
+    for (let i = 0; i < 100; i++) { const status = await send({ type: 'COLLECTOR_STATUS' }, 'moz-extension://x/collector.html'); if (status.lastHistory && status.lastLive) break; await settle(100); }
     const h = (await admin('GET', '/api/history?date=' + require('../src/time.js').businessDay(Date.now()))).body;
     assert.equal(h.live.records.length, 1);
     assert.equal(h.live.stale, false);

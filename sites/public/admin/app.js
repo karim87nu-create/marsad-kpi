@@ -9,7 +9,7 @@
 
   // ---------- formatting ----------
   const dur = s => { if (s == null || !Number.isFinite(Number(s))) return '—'; s = Math.max(0, Math.floor(s)); return [Math.floor(s / 3600), Math.floor(s % 3600 / 60), s % 60].map(n => String(n).padStart(2, '0')).join(':'); };
-  const clock = v => v ? new Date(v).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
+  const clock = v => v ? new Date(v).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', ...(state.day !== state.to ? { day: '2-digit', month: '2-digit' } : {}), hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
   const stamp = v => v ? new Date(v).toLocaleString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
   const pct = v => v == null ? 'غير متاح' : Number(v).toFixed(1) + '%';
   const secs = v => v == null ? 'غير متاح' : Number(v).toFixed(1) + ' ث';
@@ -52,10 +52,10 @@
     box.replaceChildren(h('div', { className: 'tablewrap' }, h('table', {}, h('thead', {}, head), body)), list.length > limit ? h('p', { className: 'muted', textContent: 'معروض أول ' + limit + ' من ' + list.length + '؛ التصدير فيه الكل.' }) : '');
   }
   function exportSheets(file, sheets) {
-    window.MarsadXlsx.download(file + '-' + state.day, sheets.map(([sheet, columns, rows]) => ({ name: sheet, columns: columns.map(c => ({ title: c.title, type: c.type })), rows: rows.map(r => columns.map(c => { const v = c.get(r); return v instanceof Node ? v.textContent : v; })) })));
+    window.MarsadXlsx.download(file + '-' + periodLabel(), sheets.map(([sheet, columns, rows]) => ({ name: sheet, columns: columns.map(c => ({ title: c.title, type: c.type })), rows: rows.map(r => columns.map(c => { const v = c.get(r); return v instanceof Node ? v.textContent : v; })) })));
   }
   function exportRows(name, columns, rows) {
-    window.MarsadXlsx.download(name + '-' + state.day, columns.map(c => ({ title: c.title, type: c.type })), rows.map(r => columns.map(c => { const v = c.get(r); return v instanceof Node ? v.textContent : v; })));
+    window.MarsadXlsx.download(name + '-' + periodLabel(), columns.map(c => ({ title: c.title, type: c.type })), rows.map(r => columns.map(c => { const v = c.get(r); return v instanceof Node ? v.textContent : v; })));
   }
   const pill = (text, kind = '') => h('span', { className: 'pill ' + kind, textContent: text });
   const C = window.MarsadCharts;
@@ -66,7 +66,7 @@
   const ms = v => v == null ? null : Date.parse(v);
 
   // ---------- state ----------
-  const state = { view: 'now', day: cairoToday(), employees: [], names: new Map(), live: null, queue: null, day_: {}, requests: null };
+  const state = { view: 'now', day: cairoToday(), to: cairoToday(), employees: [], names: new Map(), live: null, queue: null, day_: {}, requests: null };
   const name = id => state.names.get(Number(id)) || 'موظف #' + id;
   async function loadEmployees() {
     const d = await api('/api/employees');
@@ -86,7 +86,10 @@
     if (cache.size > 20) cache.delete(cache.keys().next().value);
     return value;
   }
-  const dayData = (force = false) => { if (force) cache.delete('day:' + state.day); return cached('day:' + state.day, state.day === cairoToday() ? 20000 : 600000, () => api('/api/day?date=' + state.day)); };
+  const rangeKey = () => 'day:' + state.day + ':' + state.to;
+  const periodQuery = () => 'from=' + state.day + '&to=' + state.to;
+  const periodLabel = () => state.day === state.to ? state.day : state.day + ' إلى ' + state.to;
+  const dayData = (force = false) => { if (force) cache.delete(rangeKey()); return cached(rangeKey(), state.to === cairoToday() ? 20000 : 600000, () => api('/api/day?' + periodQuery())); };
   const dayHistory = async (force = false) => (await dayData(force)).history;
 
   function syncStatus(ok, text) { const s = $('sync'); s.textContent = text || (ok ? 'آخر تحديث ' + clock(Date.now()) : 'تعذر التحديث'); s.classList.toggle('bad', !ok); }
@@ -147,14 +150,14 @@
   // ---------- ملخص اليوم ----------
   async function renderDay() {
     const d = await dayData(), hd = d.history, r = hd.report;
-    $('dayNote').textContent = (r ? 'يوم التشغيل ' + state.day + ' من 9 ص لحد 9 ص اليوم اللي بعده (التشغيل لحد 3 الفجر) · آخر سحب للسجل ' + stamp(r.importedAt) + (r.verifiedTotal ? '' : ' · السجل غير مكتمل التحقق') + (r.missingCalendarDates?.length ? ' · ناقص سجل يوم ' + r.missingCalendarDates.join('، ') : '') : 'مفيش سجل أرابيكس محفوظ لليوم ده؛ أرقام المكالمات والانتظار هتظهر لما الموصل يسحب السجل.');
+    $('dayNote').textContent = (r ? 'فترة التشغيل ' + periodLabel() + ' من 9 ص لحد 9 ص اليوم اللي بعده (التشغيل لحد 3 الفجر) · آخر سحب للسجل ' + stamp(r.importedAt) + (r.verifiedTotal ? '' : ' · السجل غير مكتمل التحقق') + (r.missingCalendarDates?.length ? ' · ناقص سجل يوم ' + r.missingCalendarDates.join('، ') : '') : 'مفيش سجل أرابيكس محفوظ لليوم ده؛ أرقام المكالمات والانتظار هتظهر لما الموصل يسحب السجل.');
     $('dayCards').replaceChildren(...(r ? [kpi('مكالمات محتسبة', r.calls, 'info', r.shortAbandoned + ' فائتة قصيرة ≤7ث مش محسوبة'), kpi('تم الرد', r.answered, 'good'), kpi('فائتة محتسبة', r.abandoned, r.abandoned ? toneLow(r.abandonmentRate, 5, 10) : 'good'),
       kpi('الرد خلال 10 ث', pct(r.sla), toneHigh(r.sla, 80, 60)), kpi('متوسط انتظار الرد', secs(r.asa), toneLow(r.asa, 10, 20)), kpi('نسبة الفائتة', pct(r.abandonmentRate), toneLow(r.abandonmentRate, 5, 10)),
       kpi('متوسط مدة المكالمة', dur(r.meanCallSeconds)), kpi('خارج ساعات العمل', r.afterHours)] : []));
     const e = d.employees, sum = k => e.reduce((n, x) => n + (x[k] || 0), 0);
-    const overBreak = e.filter(x => x.breakSeconds > 1800).length;
+    const overBreak = e.filter(x => (x.overBreakDays ?? (x.breakSeconds > 1800 ? 1 : 0)) > 0).length;
     $('teamCards').replaceChildren(kpi('موظفين اشتغلوا', e.length, 'info'), kpi('إجمالي ساعات العمل', dur(sum('workSeconds'))), kpi('وقت المكالمات', dur(sum('callSeconds')), 'on_call'), kpi('وقت المتاح', dur(sum('readySeconds')), 'ready'),
-      kpi('إجمالي البريك', dur(sum('breakSeconds')), 'break', overBreak ? overBreak + ' موظف عدّى 30 دقيقة' : ''), kpi('انقطاع الرصد', dur(sum('gapSeconds')), sum('gapSeconds') > 1800 ? 'warn' : ''),
+      kpi('إجمالي البريك', dur(sum('breakSeconds')), 'break', overBreak ? overBreak + ' موظف عدّى 30 دقيقة في يوم واحد على الأقل' : ''), kpi('انقطاع الرصد', dur(sum('gapSeconds')), sum('gapSeconds') > 1800 ? 'warn' : ''),
       kpi('مكالمات من غير موظف مسجل', (hd.unattributed || []).length, (hd.unattributed || []).length ? 'bad' : 'good'));
     C.slots($('dayChart'), d.slots.filter(x => x.operating));
     const qs = (hd.queues || []).filter(q => q.calls), maxQ = Math.max(1, ...qs.map(q => q.calls));
@@ -190,7 +193,7 @@
 
   // ---------- الموظفون ----------
   const teamRows = d => d.employees.map(e => ({ id: e.employeeId, name: e.name, calls: e.calls, answered: e.answered, aht: e.averageCallSeconds, work: e.workSeconds, ready: e.readySeconds,
-    onCall: e.callSeconds, unknown: e.gapSeconds, breakSeconds: e.breakSeconds, breakCount: e.breakCount, fromHistory: e.fromHistory, firstLogin: e.firstLogin, lastLogout: e.lastLogout }));
+    onCall: e.callSeconds, unknown: e.gapSeconds, breakSeconds: e.breakSeconds, breakCount: e.breakCount, overBreakDays: e.overBreakDays, fromHistory: e.fromHistory, firstLogin: e.firstLogin, lastLogout: e.lastLogout }));
   const teamColumns = [
     { title: 'الموظف', get: r => r.name }, { title: 'توزيع الوقت', get: r => r.onCall + r.ready ? Math.round(r.onCall / (r.onCall + r.ready) * 100) : null, show: r => C.usage([{ state: 'ready', value: r.ready, label: 'متاح ' + dur(r.ready) }, { state: 'on_call', value: r.onCall, label: 'في مكالمة ' + dur(r.onCall) }, { state: 'break', value: r.breakSeconds, label: 'بريك ' + dur(r.breakSeconds) }, { state: 'unknown', value: r.unknown, label: 'انقطاع ' + dur(r.unknown) }]) },
     { title: 'نسبة الانشغال', get: r => r.onCall + r.ready ? Math.round(r.onCall / (r.onCall + r.ready) * 100) : null, show: r => r.onCall + r.ready ? Math.round(r.onCall / (r.onCall + r.ready) * 100) + '%' : '—', type: 'percent' },
@@ -198,7 +201,7 @@
     { title: 'متوسط مدة المكالمة', get: r => r.aht, show: r => dur(r.aht), type: 'duration' }, { title: 'مدة العمل', get: r => r.work, show: r => dur(r.work), type: 'duration' },
     { title: 'متاح', get: r => r.ready, show: r => dur(r.ready), type: 'duration' }, { title: 'في مكالمة', get: r => r.onCall, show: r => dur(r.onCall), type: 'duration' },
     { title: 'انقطاع رصد', get: r => r.unknown, show: r => dur(r.unknown), type: 'duration' },
-    { title: 'البريك', get: r => r.breakSeconds, show: r => r.breakSeconds > 1800 ? pill(dur(r.breakSeconds), 'warn') : dur(r.breakSeconds), type: 'duration' }, { title: 'عدد البريكات', get: r => r.breakCount, type: 'number' },
+    { title: 'البريك', get: r => r.breakSeconds, show: r => (r.overBreakDays ?? (r.breakSeconds > 1800 ? 1 : 0)) > 0 ? pill(dur(r.breakSeconds), 'warn') : dur(r.breakSeconds), type: 'duration' }, { title: 'عدد البريكات', get: r => r.breakCount, type: 'number' },
     { title: 'أول دخول', get: r => r.firstLogin, show: r => clock(r.firstLogin), type: 'datetime' }, { title: 'آخر خروج', get: r => r.lastLogout, show: r => clock(r.lastLogout), type: 'datetime' }];
   async function renderTeam() {
     const d = await dayData();
@@ -224,7 +227,7 @@
     const parts = { cards: h('div', { className: 'cards' }), line: h('div'), sessions: h('div'), breaks: h('div'), states: h('div'), calls: h('div') };
     parts.cards.append(kpi('مكالمات', e.calls, 'info', e.fromHistory ? e.fromHistory + ' منها من سجل أرابيكس' : ''), kpi('متوسط مدة المكالمة', dur(e.averageCallSeconds), '', e.longCalls ? e.longCalls + ' مكالمة أطول من 4 دقايق' : ''), kpi('مدة العمل', dur(e.workSeconds)),
       kpi('متاح', dur(e.readySeconds), 'ready'), kpi('في مكالمة', dur(e.callSeconds), 'on_call'), kpi('نسبة الانشغال', busy == null ? '—' : busy + '%', '', 'وقت المكالمات ÷ (المكالمات + المتاح)'),
-      kpi('البريك', dur(e.breakSeconds), e.breakSeconds > 1800 ? 'bad' : 'break', e.breakCount + ' بريك'), kpi('انقطاع رصد', dur(e.gapSeconds), e.gapSeconds > 900 ? 'warn' : ''), kpi('أول دخول', clock(e.firstLogin)), kpi('آخر خروج', clock(e.lastLogout)));
+      kpi('البريك', dur(e.breakSeconds), (e.overBreakDays ?? (e.breakSeconds > 1800 ? 1 : 0)) > 0 ? 'bad' : 'break', e.breakCount + ' بريك'), kpi('انقطاع رصد', dur(e.gapSeconds), e.gapSeconds > 900 ? 'warn' : ''), kpi('أول دخول', clock(e.firstLogin)), kpi('آخر خروج', clock(e.lastLogout)));
     const w = d.window;
     // Zoomed to this employee's own hours, on the half hour.
     const segs = segmentsOf(d, e.employeeId), H = 1800000;
@@ -256,9 +259,9 @@
     const rows = people.map(id => ({ id, name: name(id), segments: segmentsOf(d, id) })).filter(r => r.segments.length).sort((a, b) => Math.min(...a.segments.map(x => x.from)) - Math.min(...b.segments.map(x => x.from)));
     C.timeline($('dayTimeline'), rows, ms(w.start), Math.max(ms(w.operatingEnd), ...rows.flatMap(r => r.segments.map(x => Math.min(x.to, ms(w.end))))), { onName: r => { state.profile = r.id; show('profile'); } });
     const breaks = d.states.filter(s => s.state === 'break').sort((a, b) => ms(a.startedAt) - ms(b.startedAt));
-    att.totals = d.employees.filter(e => e.breakSeconds || e.breakCount).map(e => { const mine = breaks.filter(b => b.employeeId === e.employeeId); return { name: e.name, count: e.breakCount, total: e.breakSeconds, longest: Math.max(0, ...mine.map(b => b.durationSeconds)), running: e.ongoingBreakSeconds }; }).sort((a, b) => b.total - a.total);
-    table('breakTotals', att.totalColumns = [{ title: 'الموظف', get: x => x.name }, { title: 'عدد البريكات', get: x => x.count, type: 'number' }, { title: 'الإجمالي', get: x => x.total, show: x => x.total > 1800 ? pill(dur(x.total), 'bad') : dur(x.total), type: 'duration' },
-      { title: 'أطول بريك', get: x => x.longest, show: x => x.longest > 1200 ? pill(dur(x.longest), 'warn') : dur(x.longest), type: 'duration' }, { title: 'من الـ 30 دقيقة', get: x => Math.round(x.total / 18) , show: x => C.meter(x.total, 1800, x.total > 1800 ? 'var(--bad)' : 'var(--break)') }], att.totals, { empty: 'مفيش بريك' });
+    att.totals = d.employees.filter(e => e.breakSeconds || e.breakCount).map(e => { const mine = breaks.filter(b => b.employeeId === e.employeeId); return { name: e.name, count: e.breakCount, total: e.breakSeconds, over: e.overBreakDays ?? (e.breakSeconds > 1800 ? 1 : 0), allowance: 1800 * (e.daysWorked || 1), longest: Math.max(0, ...mine.map(b => b.durationSeconds)), running: e.ongoingBreakSeconds }; }).sort((a, b) => b.total - a.total);
+    table('breakTotals', att.totalColumns = [{ title: 'الموظف', get: x => x.name }, { title: 'عدد البريكات', get: x => x.count, type: 'number' }, { title: 'الإجمالي', get: x => x.total, show: x => x.over > 0 ? pill(dur(x.total), 'bad') : dur(x.total), type: 'duration' },
+      { title: 'أطول بريك', get: x => x.longest, show: x => x.longest > 1200 ? pill(dur(x.longest), 'warn') : dur(x.longest), type: 'duration' }, { title: 'من المسموح في الفترة', get: x => Math.round(x.total / x.allowance * 100) , show: x => C.meter(x.total, x.allowance, x.over > 0 ? 'var(--bad)' : 'var(--break)') }], att.totals, { empty: 'مفيش بريك' });
     // Moments with two or more on break at once, and how many were available then.
     const marks = breaks.filter(b => !b.outsideHours).flatMap(b => [[ms(b.startedAt), 1, b.employeeId], [ms(b.endedAt), -1, b.employeeId]]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
     const on = new Map(), overlaps = [];
@@ -347,7 +350,7 @@
     $('contextTitle').textContent = ampm(m.end || m.start) + ' — ' + m.phone + ' — ' + m.queueLabel;
     $('contextNote').textContent = 'جارٍ المراجعة…'; $('contextTable').replaceChildren(); dlg.showModal();
     try {
-      const c = await api('/api/missed?date=' + state.day + '&index=' + m.index);
+      const c = await api('/api/missed?date=' + (m.businessDate || state.day) + '&index=' + m.index);
       $('contextNote').textContent = 'العميل دخل الطابور ' + clock(c.call.enteredAt) + ' وقفل ' + clock(c.call.leftAt) + ' بعد انتظار ' + dur(m.waitSeconds) + ' · ' + (c.readyCount ? c.readyCount + ' موظف كان متاح في الوقت ده' : 'مفيش موظف كان متاح')
         + (c.call.precision === 'minute' ? ' · توقيت السجل بالدقيقة، فالحالة اللي اتغيرت جوه نفس الدقيقة متعلّم عليها «غير محسومة».' : '');
       table('contextTable', [{ title: 'الموظف', get: e => e.name }, { title: 'لما العميل دخل', get: e => (STATE[e.atEntry] || e.atEntry) + (e.uncertain ? ' (غير محسومة)' : '') },
@@ -366,7 +369,7 @@
     { title: 'المسؤول', get: r => r.owner || '—' }, { title: 'الملاحظة', get: r => r.note || '', cls: () => 'wrap' }, { title: 'آخر تعديل', get: r => r.updatedAt, show: r => stamp(r.updatedAt) + (r.updatedBy ? ' · ' + r.updatedBy : ''), type: 'datetime' }];
   async function renderFollowup() {
     $('reviewForm').hidden = !canWrite(); $('saveReport').hidden = !canWrite();
-    const [day, open, saved] = await Promise.all([api('/api/reviews?date=' + state.day), api('/api/reviews?open=1'), api('/api/saved-reports?date=' + state.day)]);
+    const [day, open, saved] = await Promise.all([api('/api/reviews?' + periodQuery()), api('/api/reviews?open=1'), api('/api/saved-reports?' + periodQuery())]);
     reviewRows = day.reviews;
     table('reviewTable', reviewColumns(), day.reviews, { empty: 'مفيش متابعات لليوم ده' });
     table('openReviews', reviewColumns(), open.reviews.filter(r => r.date !== state.day), { empty: 'مفيش متابعات مفتوحة' });
@@ -377,7 +380,7 @@
     e.preventDefault(); const f = e.target.elements;
     try { await api('/api/reviews', { method: 'POST', body: { date: state.day, title: f.title.value.trim(), employeeId: f.employeeId.value || null, owner: f.owner.value.trim(), status: f.status.value, note: f.note.value.trim() } }); e.target.reset(); say('reviewNote', 'اتضافت'); renderFollowup(); } catch (x) { say('reviewNote', x.message); }
   };
-  $('saveReport').onclick = async () => { try { await api('/api/saved-reports', { method: 'POST', body: { date: state.day } }); renderFollowup(); } catch (e) { alert(e.message); } };
+  $('saveReport').onclick = async () => { try { await api('/api/saved-reports', { method: 'POST', body: { date: state.day, to: state.to } }); renderFollowup(); } catch (e) { alert(e.message); } };
   async function downloadSaved(id) {
     const r = await api('/api/saved-reports?id=' + id), p = r.payload, rep = p.report || {};
     const summary = [['مكالمات محتسبة', rep.calls], ['تم الرد', rep.answered], ['فائتة محتسبة', rep.abandoned], ['الرد خلال 10 ث %', rep.sla == null ? null : Math.round(rep.sla * 10) / 10], ['متوسط انتظار الرد (ث)', rep.asa == null ? null : Math.round(rep.asa * 10) / 10], ['نسبة الفائتة %', rep.abandonmentRate == null ? null : Math.round(rep.abandonmentRate * 10) / 10]];
@@ -556,12 +559,12 @@
     $('dayPicker').hidden = !DAY_VIEWS.includes(view);
     showError(null);
     if (view === 'now') return tick();
-    try { syncStatus(true, 'جارٍ التحميل…'); if (force) cache.delete('day:' + state.day); await VIEWS[view][1](); syncStatus(true); } catch (e) { syncStatus(false); showError(e); }
+    try { syncStatus(true, 'جارٍ التحميل…'); if (force) cache.delete(rangeKey()); await VIEWS[view][1](); syncStatus(true); } catch (e) { syncStatus(false); showError(e); }
   }
   document.querySelector('#nav nav').onclick = e => { const v = e.target.closest('[data-view]')?.dataset.view; if (v) show(v); };
-  const setDay = d => { const today = cairoToday(); state.day = !d || d > today ? today : d; $('day').value = state.day; $('dayNext').disabled = state.day >= today; show(state.view); };
+  const setDay = d => { const today = cairoToday(); state.day = !d || d > today ? today : d; state.to = state.day; $('dayTo').value = state.to; $('day').value = state.day; $('dayNext').disabled = state.day >= today; show(state.view); };
   const shiftDay = n => new Date(Date.parse(state.day + 'T12:00:00Z') + n * 864e5).toISOString().slice(0, 10);
-  $('day').onchange = () => setDay($('day').value);
+  $('applyRange').onclick = () => { const from = $('day').value, to = $('dayTo').value; if (!from || !to || to < from || to > cairoToday()) return showError(Error('اختار فترة صحيحة من وإلى')); if ((Date.parse(to) - Date.parse(from)) / 864e5 >= 93) return showError(Error('اختار فترة لا تتجاوز 93 يوم')); state.day = from; state.to = to; $('dayNext').disabled = to >= cairoToday(); show(state.view); };
   $('dayPrev').onclick = () => setDay(shiftDay(-1)); $('dayNext').onclick = () => setDay(shiftDay(1)); $('dayToday').onclick = () => setDay(cairoToday());
   for (const id of ['callSearch', 'callEmployee', 'callStatus']) $(id).addEventListener('input', () => renderCalls().catch(showError));
   $('missedClass').onchange = () => renderMissed().catch(showError);
@@ -576,7 +579,7 @@
   setInterval(() => { if (state.view === 'now') renderNow(); }, 1000);
   setInterval(() => { if (token) refreshRequests(); }, 5000);
   // Today's numbers on the open page refresh every minute.
-  setInterval(() => { if (token && DAY_VIEWS.includes(state.view) && state.view !== 'followup' && state.day === cairoToday() && !document.hidden) show(state.view, true); }, 60000);
+  setInterval(() => { if (token && DAY_VIEWS.includes(state.view) && state.view !== 'followup' && state.to === cairoToday() && !document.hidden) show(state.view, true); }, 60000);
 
   // ---------- sign in ----------
   async function enter() {
@@ -584,7 +587,7 @@
     who = d.identity;
     $('who').textContent = who.name + ' · ' + ROLE[who.role];
     $('login').hidden = true; $('app').hidden = false;
-    $('day').value = state.day; $('day').max = cairoToday(); $('dayNext').disabled = true;
+    $('dayTo').value = state.to; $('dayTo').max = cairoToday(); $('day').value = state.day; $('day').max = cairoToday(); $('dayNext').disabled = true;
     await loadEmployees();
     refreshRequests();
     show('now');

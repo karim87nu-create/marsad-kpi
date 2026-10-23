@@ -50,12 +50,30 @@ test('telegram: link the bot and the group, then each alert is sent once', async
     await t.tick(s.token, 5 * 60000, 'on_call');
     await t.app.telegramTick();
     assert.match(sent.at(-1), /مكالمة طويلة: Ahmed/);
+    assert.equal(sent.filter(x => x.includes('أنهى البريك')).length, 2, 'both break notifications get a recovery');
+    await t.app.telegramTick();
+    assert.equal(sent.filter(x => x.includes('أنهى البريك')).length, 2, 'recovery is not repeated');
     await t.event(s.token, 'agentunlinked', { callId: '9', durationSeconds: 300, state: 'ready' });
     // Logout with the day's summary.
     await t.device(s.token, 'POST', '/api/session/end', { reason: 'arabicss_logout' });
     await t.app.telegramTick();
     assert.match(sent.at(-1), /خرج/);
     assert.match(sent.at(-1), /مكالماته النهارده: 1/);
+    assert.equal(sent.filter(x => x.includes('أنهى المكالمة الطويلة')).length, 1);
+    const returned = await t.session(); await t.event(returned.token, 'heartbeat', { state: 'ready' }); await t.app.telegramTick();
+    assert.match(sent.at(-1), /رجع للعمل/);
+    const live = t.app.live;
+    t.app.live = async () => [{ employeeId: e.id, name: 'Ahmed', extension: '101', state: 'unknown', since: new Date(t.clock.now - 240000).toISOString() }];
+    await t.app.telegramTick(); assert.match(sent.at(-1), /انقطاع رصد/);
+    const before = sent.length; await t.app.telegramTick(); assert.equal(sent.length, before);
+    t.app.live = live; await t.app.telegramTick(); assert.match(sent.at(-1), /رجع الرصد/);
+    const snap = t.app.latestLive;
+    t.app.live = async () => [];
+    t.app.latestLive = async () => ({ observed_at: t.clock.now, rows: JSON.stringify([Array.from({length:11}, (_,i) => i === 10 ? 'waiting' : '')]) });
+    await t.app.telegramTick(); t.advance(21000); await t.app.telegramTick(); assert.match(sent.at(-1), /عميل منتظر/);
+    t.app.latestLive = async () => null; const stale = sent.length; await t.app.telegramTick(); assert.equal(sent.length, stale, 'no recovery on missing snapshot');
+    t.app.latestLive = async () => ({ observed_at: t.clock.now, rows: '[]' }); await t.app.telegramTick(); assert.match(sent.at(-1), /انتهى انتظار/);
+    t.app.live = live; t.app.latestLive = snap;
     // Switching a rule off stops it.
     await admin('POST', '/api/telegram', { action: 'settings', enabled: true, rules: { breakStart: false } });
     const log = (await admin('GET', '/api/telegram?log=1&date=2026-10-22')).body.log;

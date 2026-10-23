@@ -11,11 +11,12 @@ function setup(app) {
   // ---- المتابعة ----
   app.route('GET', '/api/reviews', async ctx => {
     await app.requireAdmin(ctx);
-    const date = ctx.query.date;
+    const date = ctx.query.from || ctx.query.date, to = ctx.query.to || date;
+    if ((date || to) && (!validDate(date) || !validDate(to) || to < date)) fail(400, 'فترة غير صحيحة');
     const open = ctx.query.open === '1';
     const rows = open
       ? await db.prepare("SELECT * FROM reviews WHERE status IN ('new','in_progress') ORDER BY updated_at DESC LIMIT 300").all()
-      : await db.prepare('SELECT * FROM reviews WHERE date = ? ORDER BY updated_at DESC').all(validDate(date) ? date : '');
+      : await db.prepare('SELECT * FROM reviews WHERE date >= ? AND date <= ? ORDER BY updated_at DESC').all(validDate(date) ? date : '', validDate(to) ? to : '');
     return { reviews: rows.map(r => ({ id: r.id, date: r.date, employeeId: r.employee_id, title: r.title, owner: r.owner, status: r.status, note: r.note, updatedAt: iso(r.updated_at), updatedBy: r.updated_by })) };
   });
   app.route('POST', '/api/reviews', async ctx => {
@@ -49,18 +50,19 @@ function setup(app) {
       if (!r) fail(404, 'التقرير غير موجود');
       return { id: r.id, date: r.date, createdAt: iso(r.created_at), filters: JSON.parse(r.filters || '{}'), payload: JSON.parse(r.payload) };
     }
-    const date = ctx.query.date;
-    const rows = await db.prepare('SELECT id, date, created_at, filters FROM saved_reports WHERE date = ? ORDER BY created_at DESC').all(validDate(date) ? date : '');
+    const date = ctx.query.from || ctx.query.date, to = ctx.query.to || date;
+    if ((date || to) && (!validDate(date) || !validDate(to) || to < date)) fail(400, 'فترة غير صحيحة');
+    const rows = await db.prepare('SELECT id, date, created_at, filters FROM saved_reports WHERE date >= ? AND date <= ? ORDER BY created_at DESC').all(validDate(date) ? date : '', validDate(to) ? to : '');
     return { reports: rows.map(r => ({ id: r.id, date: r.date, createdAt: iso(r.created_at), filters: JSON.parse(r.filters || '{}') })) };
   });
   app.route('POST', '/api/saved-reports', async ctx => {
     const who = await app.requireAdmin(ctx, 'write');
     const date = ctx.body?.date;
     if (!validDate(date)) fail(400, 'التاريخ غير صحيح');
-    const d = await app.heavy('day', date);
+    const d = ctx.body?.to ? await app.heavy('range', date, ctx.body.to, ctx.now) : await app.heavy('day', date);
     const payload = { report: d.history.report, queues: d.history.queues, employees: d.employees, slots: d.slots, attribution: d.history.attribution };
     const id = randomUUID();
-    await db.prepare('INSERT INTO saved_reports (id, date, created_at, filters, payload) VALUES (?,?,?,?,?)').run(id, date, ctx.now, JSON.stringify({ by: who.name }), JSON.stringify(payload));
+    await db.prepare('INSERT INTO saved_reports (id, date, created_at, filters, payload) VALUES (?,?,?,?,?)').run(id, date, ctx.now, JSON.stringify({ by: who.name, from: date, to: ctx.body?.to || date }), JSON.stringify(payload));
     await app.audit('report_saved', null, { actor: who.name, date });
     return { ok: true, id };
   });
