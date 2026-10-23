@@ -70,14 +70,19 @@ test('live presence, calls, breaks and attendance from extension events', async 
     assert.equal(d.calls[0].durationSeconds, 90);
     assert.equal(d.calls[0].eventType, 'agentunlinked');
     const states = d.attendance.states.filter(x => x.employeeId === e.id).map(x => x.state);
-    assert.ok(states.includes('on_call') && states.includes('ready') && states.includes('unknown'));
+    // Silence at the end of what we know is not counted as anything yet…
+    assert.ok(states.includes('on_call') && states.includes('ready') && !states.includes('unknown'));
     assert.equal(d.completedBreaks.length, 1);
     assert.equal(d.completedBreaks[0].durationSeconds, 720);
     assert.equal(d.attendance.sessions[0].running, false);              // silent for 5 minutes: not counted as running
     assert.equal(d.attendance.sessions[0].durationComplete, false);
 
-    // Logout → offline (explicit logout = shift ended) and the shift list.
+    // …once the same session shows activity again, the silence in between is a gap: «انقطاع رصد».
     await t.event(s.token, 'heartbeat', { state: 'ready' });
+    const gap = (await admin('GET', '/api/dashboard?date=2026-10-22&attendance=1')).body.attendance.states.find(x => x.employeeId === e.id && x.state === 'unknown');
+    assert.ok(gap && gap.durationSeconds >= 5 * 60 - 90 && gap.durationSeconds <= 5 * 60, JSON.stringify(gap));
+
+    // Logout → offline (explicit logout = shift ended) and the shift list.
     await t.device(s.token, 'POST', '/api/session/end', { reason: 'manual' });
     d = (await admin('GET', '/api/dashboard?date=2026-10-22')).body;
     assert.equal(d.presence.find(p => p.employeeId === e.id).state, 'shift_ended');

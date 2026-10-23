@@ -8,6 +8,7 @@ const { shiftAt } = require('./legacy-logic/shift-responsibility');
 const { operationalState } = require('./legacy-logic/operational-state');
 const { eventPayload } = require('./legacy-logic/dashboard-logic');
 const { dashboardEvent } = require('./old-shape');
+const { attendance: attendanceRules, mergeBreaks, breakTotals } = require('./attendance-rules');
 const { dayWindow, iso, businessDay } = require('./time');
 
 const OLD_EXIT = { manual: 'explicit_logout' };
@@ -71,7 +72,8 @@ function setup(app) {
       const first = (bySession.get(s.id) || []).filter(p => /^\d+$/.test(p.extension) && ['ready', 'on_call'].includes(p.state) && p.started >= s.issuedAt && p.started < Math.min(s.revokedAt ?? s.expiresAt, now + 1)).sort((a, b) => a.started - b.started)[0];
       s.workStartedAt = first?.started ?? null;
     }
-    return { sessions: L.sessionDurations(sessions, start, end, now), states: L.stateDurations(spans, sessions, start, end, now) };
+    // Durations follow our own rules (attendance-rules.js), not the old server's.
+    return attendanceRules(sessions, spans, { start, operatingEnd: dayWindow(date).operatingEnd, end, now });
   };
 
   // lib/dashboard-presence.ts dashboardPresence() + the shift_ended override both old routes applied.
@@ -158,23 +160,28 @@ function setup(app) {
     const { start, end: finish, operatingEnd } = dayWindow(date);
     const old = app.oldDay(date, { employee, extension }, now);
     const { presence, shiftData } = app.oldPresence(date, now);
+    // Attendance and break time follow our rules (attendance-rules.js); computed on every day view because the
+    // break totals come from it.
+    const att = app.oldAttendance(date, { employee, extension }, now);
+    att.states = restoreCalls(mergeBreaks(att.states, [...old.completedBreaks, ...old.ongoingBreaks], operatingEnd), old.calls);
+    const totals = breakTotals(att.states);
+    const performance = old.performance.map(p => ({ ...p, breakSeconds: totals.find(t => t.employeeId === p.employeeId)?.completedBreakSeconds || 0 }));
     let attendance = null, durations = [];
     if (wantAttendance) {
-      attendance = app.oldAttendance(date, { employee, extension }, now);
+      attendance = att;
       durations = timelineDurations([...old.events, ...old.breakEnds.filter(e => !old.events.some(x => x.id === e.id))], attendance.sessions, now);
-      attendance.states = restoreCalls(L.reconcileBreakStates(attendance.states, [...old.completedBreaks, ...old.ongoingBreaks]), old.calls);
     }
     const shifts = oldShifts(shiftData, start, finish, now, employee, extension);
     const numbered = p => /^\d+$/.test(String(p.extension || ''));
     const loggedIn = presence.filter(p => numbered(p) && ['ready', 'break', 'on_call'].includes(p.state)).length;
     const available = presence.filter(p => numbered(p) && p.state === 'ready').length;
     return {
-      performance: old.performance, historyAttribution: old.historyAttribution,
+      performance, historyAttribution: old.historyAttribution,
       summary: { ...old.summary, active: presence.filter(p => p.state === 'on_call').length, loggedIn, available, connectorOnline: loggedIn > 0, asa: null, sla: null, slaThresholdSeconds: 10,
         abandonmentRate: null, abandoned: 0, queueMetricsAvailable: false, ahtAvailable: false },
       calls: all ? old.calls : old.calls.slice(0, 300),
       timeline: (all ? old.timeline : old.timeline.slice(0, 500)).map(e => ({ ...e, outsideHours: Date.parse(e.occurredAt) >= operatingEnd })),
-      presence, shifts, attendance, durations, completedBreaks: old.completedBreaks, breakTotals: old.breakTotals, dataComplete: true,
+      presence, shifts, attendance, durations, completedBreaks: att.states.filter(x => x.state === 'break' && !x.running && !x.outsideHours), breakTotals: totals, dataComplete: true,
       detailsTruncated: !all && (old.calls.length > 300 || old.timeline.length > 500), date, today: businessDay(now), serverNow: new Date(now).toISOString(),
     };
   };

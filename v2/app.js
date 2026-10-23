@@ -14,7 +14,7 @@
   const secs = v => v == null ? 'غير متاح' : Number(v).toFixed(1) + ' ث';
   const ampm = v => String(v || '').replace(/\bAM\b/i, 'ص').replace(/\bPM\b/i, 'م');
   const cairoToday = () => { const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Cairo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' }).formatToParts(new Date()).map(x => [x.type, x.value])); const d = p.year + '-' + p.month + '-' + p.day; return +p.hour < 9 ? new Date(Date.parse(d + 'T12:00:00Z') - 864e5).toISOString().slice(0, 10) : d; };
-  const STATE = { ready: 'متاح', on_call: 'في مكالمة', break: 'بريك', unknown: 'انقطاع رصد', logged_in: 'سجّل ولسه مدخلش الكونسول', offline: 'خرج', no_session: 'لم يسجل', shift_ended: 'خلص الشيفت', post_call: 'أنهى مكالمة', break_unconfirmed: 'بريك بلا طرفين مؤكدين' };
+  const STATE = { ready_night: 'متاح (بعد 3 الفجر)', on_call_night: 'في مكالمة (بعد 3 الفجر)', break_night: 'بريك (بعد 3 الفجر)', unknown_night: 'انقطاع رصد (بعد 3 الفجر)', ready: 'متاح', on_call: 'في مكالمة', break: 'بريك', unknown: 'انقطاع رصد', logged_in: 'سجّل ولسه مدخلش الكونسول', offline: 'خرج', no_session: 'لم يسجل', shift_ended: 'خلص الشيفت', post_call: 'أنهى مكالمة', break_unconfirmed: 'بريك بلا طرفين مؤكدين' };
   const QUEUE = q => ({ 0: 'خارج ساعات العمل', 1: 'طلب أوردر', 2: 'متابعة أوردر', 3: 'شكاوى' })[String(q || '').slice(-1)] || 'غير معروف';
   const MISSED = { counted: 'محتسبة', short_exempt: 'قصيرة ≤7ث — للتوضيح', after_hours: 'خارج ساعات العمل', unknown_wait: 'انتظار غير معروف', unknown_queue: 'نوع طلب غير معروف' };
   const ROLE = { admin: 'مدير', supervisor: 'مشرف', viewer: 'مشاهدة فقط' };
@@ -145,11 +145,10 @@
     const ids = new Set([...d.performance.map(p => p.employeeId), ...d.attendance.sessions.map(s => s.employeeId)]);
     return [...ids].map(id => {
       const p = d.performance.find(x => x.employeeId === id) || {}, t = d.breakTotals.find(x => x.employeeId === id) || {};
-      const st = d.attendance.states.filter(s => s.employeeId === id), sum = k => st.filter(s => s.state === k).reduce((n, s) => n + s.durationSeconds, 0);
+      const st = d.attendance.states.filter(s => s.employeeId === id && !s.outsideHours), sum = k => st.filter(s => s.state === k).reduce((n, s) => n + s.durationSeconds, 0);
       const sessions = d.attendance.sessions.filter(s => s.employeeId === id);
-      const breaks = d.completedBreaks.filter(b => b.employeeId === id);
       return { id, name: name(id), calls: p.calls || 0, answered: p.answered || 0, aht: p.answered ? p.avgHandleTime : null, work: sessions.reduce((n, s) => n + s.daySeconds, 0),
-        ready: sum('ready'), onCall: sum('on_call'), unknown: sum('unknown') + sum('break_unconfirmed'), breakSeconds: t.totalBreakSeconds || 0, breakCount: breaks.length,
+        ready: sum('ready'), onCall: sum('on_call'), unknown: sum('unknown'), breakSeconds: t.totalBreakSeconds || 0, breakCount: t.breakCount || 0,
         firstLogin: p.firstLogin, lastLogout: p.lastLogout };
     }).sort((a, b) => a.name.localeCompare(b.name, 'ar'));
   }
@@ -172,7 +171,7 @@
       { title: 'المدة في اليوم', get: s => s.daySeconds, show: s => dur(s.daySeconds), type: 'duration' }, { title: 'سبب الخروج', get: s => ({ arabicss_logout: 'خروج من أرابيكس', arabicss_login_page: 'رجع لصفحة الدخول', tab_closed: 'قفل الصفحة', browser_restarted: 'المتصفح اتقفل', expired_or_disconnected: 'انقطاع', work_resumed: 'دخل تاني', explicit_logout: 'خروج', extension_changed: 'غيّر التحويلة' })[s.reason] || s.reason || (s.running ? '' : '—') }],
       d.attendance.sessions.filter(s => s.employeeId === id));
     table(parts[3], [{ title: 'الحالة', get: s => STATE[s.state] || s.state }, { title: 'من', get: s => s.startedAt, show: s => clock(s.startedAt), type: 'datetime' }, { title: 'إلى', get: s => s.endedAt, show: s => clock(s.endedAt), type: 'datetime' }, { title: 'المدة', get: s => s.durationSeconds, show: s => dur(s.durationSeconds), type: 'duration' }],
-      d.attendance.states.filter(s => s.employeeId === id && s.state !== 'offline').sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt)));
+      d.attendance.states.filter(s => s.employeeId === id && s.state !== 'offline').map(s => s.outsideHours ? { ...s, state: s.state + '_night' } : s).sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt)));
     table(parts[5], [{ title: 'من', get: b => b.startedAt, show: b => clock(b.startedAt), type: 'datetime' }, { title: 'إلى', get: b => b.endedAt, show: b => clock(b.endedAt), type: 'datetime' }, { title: 'المدة', get: b => b.durationSeconds, show: b => dur(b.durationSeconds), type: 'duration' }],
       d.completedBreaks.filter(b => b.employeeId === id));
     table(parts[7], callColumns.slice(1), d.calls.filter(c => c.employeeId === id));
