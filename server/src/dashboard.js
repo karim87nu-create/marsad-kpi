@@ -10,18 +10,26 @@ function setup(app) {
   const { db, fail } = app;
 
   // Everything known about one data day, derived from sessions overlapping it.
+  // Everything known about one data day. Session analysis is computed only when a caller needs it,
+  // so the per-second live view (presence + break totals) stays cheap.
   app.dayData = function dayData(date, now) {
     const w = dayWindow(date), until = Math.min(now, w.end);
-    const sessions = db.prepare(`SELECT * FROM employee_sessions WHERE issued_at < ? AND MIN(COALESCE(revoked_at, expires_at), expires_at) >= ?
-      ORDER BY issued_at`).all(w.end, w.start);
     const byEmployee = new Map(db.prepare('SELECT * FROM employees').all().map(e => [e.id, e]));
-    const decisions = db.prepare('SELECT * FROM shift_decisions').all();
-    const eventsFor = db.prepare('SELECT * FROM events WHERE session_id = ? ORDER BY occurred_at, id');
-    const analyzed = sessions.map(s => {
-      const events = eventsFor.all(s.id);
-      return { session: s, employee: byEmployee.get(s.employee_id), events, closure: s.revoked_at ? closure(s, decisions) : null, ...analyzeSession(s, events, now) };
-    });
-    return { date, window: w, until, now, analyzed, employees: byEmployee };
+    let analyzed = null;
+    const day = { date, window: w, until, now, employees: byEmployee };
+    Object.defineProperty(day, 'analyzed', { enumerable: true, get() {
+      if (analyzed) return analyzed;
+      const sessions = db.prepare(`SELECT * FROM employee_sessions WHERE issued_at < ? AND MIN(COALESCE(revoked_at, expires_at), expires_at) >= ?
+        ORDER BY issued_at`).all(w.end, w.start);
+      const decisions = db.prepare('SELECT * FROM shift_decisions').all();
+      const eventsFor = db.prepare('SELECT * FROM events WHERE session_id = ? ORDER BY occurred_at, id');
+      analyzed = sessions.map(s => {
+        const events = eventsFor.all(s.id);
+        return { session: s, employee: byEmployee.get(s.employee_id), events, closure: s.revoked_at ? closure(s, decisions) : null, ...analyzeSession(s, events, now) };
+      });
+      return analyzed;
+    } });
+    return day;
   };
 
   const clip = (a, b, w) => [Math.max(a, w.start), Math.min(b, w.end)];
@@ -53,37 +61,71 @@ function setup(app) {
   }
   app.presence = presence;
 
-  function breakTotals(day, scope) {
-    const totals = new Map();
-    for (const a of day.analyzed.filter(scope)) {
-      const t = totals.get(a.session.employee_id) || { employeeId: a.session.employee_id, completedBreakSeconds: 0, ongoingBreakSeconds: 0, unknownBreaks: 0 };
-      for (const b of a.breaks) {
-        if (b.start != null && b.end != null) {
-          const [x, y] = clip(b.start, b.end, day.window);
-          if (y > x) t.completedBreakSeconds += Math.round((y - x) / 1000);
-        } else if (b.start != null && b.running) {
-          const [x, y] = clip(b.start, day.until, day.window);
-          if (y > x) t.ongoingBreakSeconds += Math.round((y - x) / 1000);
-        } else if ((b.observedAt ?? 0) >= day.window.start && (b.observedAt ?? 0) < day.window.end) t.unknownBreaks++;
-      }
-      totals.set(t.employeeId, t);
+  // ---- Calls and breaks follow the old server's rules exactly (lib/dashboard-metrics.ts,
+  // lib/break-accounting.ts, app/api/dashboard/route.ts) so numbers do not change on migration.
+  const canonicalCallId = id => (String(id).match(/(?:incoming-q\d+-|outgoing-)?(\d+)$/) || [])[1] || String(id);
+  const evScope = scope => e => scope({ session: { employee_id: e.employee_id, extension: e.extension } });
+  const DAY = 86400000;
+
+  function canonicalBreaks(periods, start, end) {
+    const rows = periods.map(p => ({ ...p, a: Math.max(start, p.start), b: Math.min(end, p.end) })).filter(p => p.employeeId && p.b > p.a)
+      .sort((x, y) => x.employeeId - y.employeeId || String(x.extension).localeCompare(String(y.extension)) || x.a - y.a);
+    const out = [];
+    for (const p of rows) {
+      const last = out.at(-1);
+      if (last && last.employeeId === p.employeeId && last.extension === p.extension && p.a < last.b) { last.b = Math.max(last.b, p.b); last.running = last.running || p.running; last.completedBreak = last.completedBreak && p.completedBreak; }
+      else out.push({ ...p });
     }
-    return [...totals.values()].map(t => ({ ...t, totalBreakSeconds: t.completedBreakSeconds + t.ongoingBreakSeconds }));
+    return out.map(p => ({ employeeId: p.employeeId, extension: p.extension, state: 'break', startedAt: iso(p.a), endedAt: iso(p.b), durationSeconds: Math.floor((p.b - p.a) / 1000),
+      running: !!p.running, completedBreak: !!p.completedBreak, evidenceUntil: p.evidenceUntil ?? p.b }));
+  }
+
+  function dayBreaks(day, scope) {
+    if (day._breaks?.scope === scope) return day._breaks;
+    const w = day.window, inScope = evScope(scope);
+    const ends = db.prepare("SELECT * FROM events WHERE event_type = 'break_end' AND occurred_at >= ? AND occurred_at < ? ORDER BY occurred_at").all(w.start, w.end + DAY).filter(inScope);
+    const completed = canonicalBreaks(ends.filter(e => e.duration_seconds > 0 && e.occurred_at <= day.now)
+      .map(e => ({ employeeId: e.employee_id, extension: e.extension, start: e.occurred_at - e.duration_seconds * 1000, end: e.occurred_at, completedBreak: true })), w.start, w.end);
+    const live = day.now >= w.start && day.now < w.end ? presence(day.now).filter(p => p.state === 'break' && p.startedAt && scope({ session: { employee_id: p.employeeId, extension: p.extension } })) : [];
+    const ongoing = canonicalBreaks(live.map(p => ({ employeeId: p.employeeId, extension: p.extension, start: Date.parse(p.startedAt), end: day.now, running: true,
+      completedBreak: false, evidenceUntil: Date.parse(p.evidenceAt || '') + RULES.presenceStaleMs })), w.start, Math.min(w.end, day.now));
+    day._breaks = { scope, completed, ongoing };
+    return day._breaks;
+  }
+
+  function breakTotals(day, scope) {
+    const w = day.window, { completed, ongoing } = dayBreaks(day, scope);
+    const seconds = (list, id) => list.filter(b => b.employeeId === id).reduce((n, b) => n + Math.max(0, Math.floor((Math.min(Date.parse(b.endedAt), w.operatingEnd) - Math.max(Date.parse(b.startedAt), w.start)) / 1000)), 0);
+    const unknown = db.prepare("SELECT employee_id, extension FROM events WHERE event_type = 'break_end_unknown' AND occurred_at >= ? AND occurred_at < ?").all(w.start, Math.min(w.end, w.operatingEnd)).filter(evScope(scope));
+    const ids = new Set([...completed, ...ongoing].map(b => b.employeeId).concat(unknown.map(u => u.employee_id)));
+    return [...ids].map(id => {
+      const c = seconds(completed, id), o = seconds(ongoing, id);
+      return { employeeId: id, completedBreakSeconds: c, ongoingBreakSeconds: o, totalBreakSeconds: c + o, unknownBreaks: unknown.filter(u => u.employee_id === id).length };
+    });
   }
   app.breakTotals = breakTotals;
 
   function callRows(day, scope) {
-    const rows = [];
-    for (const a of day.analyzed.filter(scope)) for (const c of a.calls) {
-      const t = c.startedAt ?? c.observedAt;
-      if (t < day.window.start || t >= day.window.end) continue;
-      const done = c.endedAt != null && c.durationSeconds != null;
-      rows.push({ id: c.eventId, employeeId: a.session.employee_id, agentName: a.employee?.name || '', extension: c.extension,
-        callType: c.callType || null, phone: c.phone, callId: c.callId, queue: c.queue,
-        eventType: done ? 'agentunlinked' : 'agentlinked', startedAt: iso(c.startedAt ?? c.observedAt), occurredAt: iso(c.endedAt ?? c.observedAt),
-        durationSeconds: done ? c.durationSeconds : null, outsideHours: !isOperating(t), attributionSource: 'extension', startKnown: c.startedAt != null });
+    const w = day.window, groups = new Map();
+    const evs = db.prepare("SELECT * FROM events WHERE event_type IN ('agentlinked','agentunlinked') AND call_id IS NOT NULL AND call_id <> '' AND occurred_at >= ? AND occurred_at < ? ORDER BY occurred_at, id")
+      .all(w.start - DAY, w.end + DAY).filter(evScope(scope));
+    for (const e of evs) {
+      const key = e.employee_id + ':' + e.extension + ':' + canonicalCallId(e.call_id);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(e);
     }
-    return rows.sort((x, y) => Date.parse(y.startedAt) - Date.parse(x.startedAt));
+    const names = day.employees, rows = [];
+    for (const list of groups.values()) {
+      const first = list.find(e => e.event_type === 'agentlinked'), ends = list.filter(e => e.event_type === 'agentunlinked');
+      const e = ends.at(-1) || list.at(-1);
+      const at = first ? first.occurred_at : e.occurred_at - (e.duration_seconds || 0) * 1000;
+      if (!(at >= w.start && at < w.end)) continue;
+      rows.push({ id: e.id, employeeId: e.employee_id, agentName: names.get(e.employee_id)?.name || '', extension: e.extension,
+        callType: ['incoming', 'outgoing'].includes(e.call_type) ? e.call_type : null, phone: e.phone || '', callId: canonicalCallId(e.call_id), queue: (first || e).queue || '',
+        eventType: e.event_type, startedAt: iso(at), occurredAt: iso(e.occurred_at), durationSeconds: e.duration_seconds ?? 0,
+        outsideHours: at >= w.operatingEnd, attributionSource: 'extension', startKnown: !!first });
+    }
+    return rows.sort((x, y) => Date.parse(y.occurredAt) - Date.parse(x.occurredAt) || y.id - x.id);
   }
   app.callRows = callRows;
 
@@ -99,26 +141,49 @@ function setup(app) {
         durationSeconds: Math.max(0, Math.round(((a.running ? day.until : end) - start) / 1000)),
         durationComplete: !!s.revoked_at, identityDelaySeconds: s.work_started_at ? Math.max(0, Math.round((s.work_started_at - s.issued_at) / 1000)) : null,
         closeReason: s.revoke_reason || null });
-      const known = a.breaks.filter(b => b.start != null && b.end != null);
-      for (const b of known) {
-        const [x, y] = clip(b.start, b.end, w);
-        if (y > x) completedBreaks.push({ employeeId: s.employee_id, extension: b.extension, state: 'break', startedAt: iso(x), endedAt: iso(y), durationSeconds: Math.round((y - x) / 1000), completedBreak: true });
-      }
       a.spans.forEach((sp, i) => {
-        let state = sp.state;
-        if (state === 'break') {
-          const b = a.breaks.find(b => (b.start ?? b.observedAt) <= sp.start + 1000 && (b.end == null || b.end >= sp.end - 1000));
-          if (b && b.start != null && b.end != null) return;                     // shown as a completed break
-          if (!(b && b.start != null && b.running)) state = 'break_unconfirmed';
-        }
         const [x, y] = clip(sp.start, sp.end, w);
         if (y <= x) return;
         const last = i === a.spans.length - 1 && a.running && day.until === day.now;
-        states.push({ employeeId: s.employee_id, extension: s.extension, state, startedAt: iso(x), endedAt: iso(y),
-          durationSeconds: Math.round((y - x) / 1000), running: last, evidenceUntil: last ? a.lastEvidence + RULES.presenceStaleMs : y,
-          completedBreak: false });
+        states.push({ employeeId: s.employee_id, extension: s.extension, state: sp.state, startedAt: iso(x), endedAt: iso(y),
+          durationSeconds: Math.floor((y - x) / 1000), running: last, evidenceUntil: last ? a.lastEvidence + RULES.presenceStaleMs : y, completedBreak: false });
       });
     }
+    // Breaks come from recorded break ends; other "break" spans become unconfirmed (old reconcileBreakStates).
+    const { completed, ongoing } = dayBreaks(day, scope), breaks = [...completed, ...ongoing];
+    const keyOf = x => x.employeeId + '|' + x.extension, group = list => { const m = new Map(); for (const x of list) { const k = keyOf(x); if (!m.has(k)) m.set(k, []); m.get(k).push(x); } return m; };
+    const breaksBy = group(breaks);
+    let reconciled = [];
+    for (const st of states) {
+      let pieces = [[Date.parse(st.startedAt), Date.parse(st.endedAt)]];
+      for (const b of breaksBy.get(keyOf(st)) || []) {
+        const x = Date.parse(b.startedAt), y = Date.parse(b.endedAt);
+        if (y <= pieces[0][0] || x >= pieces.at(-1)[1]) continue;
+        pieces = pieces.flatMap(([u, v]) => (y <= u || x >= v ? [[u, v]] : [[u, Math.min(x, v)], [Math.max(y, u), v]].filter(([p, q]) => q > p)));
+        if (!pieces.length) break;
+      }
+      for (const [u, v] of pieces) reconciled.push({ ...st, state: st.state === 'break' ? 'break_unconfirmed' : st.state, startedAt: iso(u), endedAt: iso(v),
+        durationSeconds: Math.floor((v - u) / 1000), running: st.running && v === Date.parse(st.endedAt) });
+    }
+    // Completed calls fill "انقطاع رصد" gaps they prove (old dashboard rule). Only unknown spans can change.
+    const callsBy = group(callRows(day, scope).filter(c => c.eventType === 'agentunlinked' && c.durationSeconds > 0)
+      .map(c => ({ employeeId: c.employeeId, extension: c.extension, a: Date.parse(c.startedAt), b: Math.min(Date.parse(c.occurredAt), Date.parse(c.startedAt) + c.durationSeconds * 1000) })));
+    reconciled = reconciled.flatMap(st => {
+      if (st.state !== 'unknown') return [st];
+      let parts = [st];
+      for (const c of callsBy.get(keyOf(st)) || []) {
+        parts = parts.flatMap(p => {
+          const x = Date.parse(p.startedAt), y = Date.parse(p.endedAt), u = Math.max(x, c.a), v = Math.min(y, c.b);
+          if (p.state !== 'unknown' || v <= u) return [p];
+          return [[x, u, 'unknown'], [u, v, 'on_call'], [v, y, 'unknown']].filter(([q, r]) => r > q)
+            .map(([q, r, state]) => ({ ...p, state, startedAt: iso(q), endedAt: iso(r), durationSeconds: Math.floor((r - q) / 1000), running: false }));
+        });
+      }
+      return parts;
+    });
+    states.length = 0;
+    states.push(...reconciled, ...breaks);
+    completedBreaks.push(...completed);
     return { sessions, states, completedBreaks };
   }
   app.attendance = attendance;
@@ -138,24 +203,30 @@ function setup(app) {
   app.shifts = shifts;
 
   function performance(day, scope, calls, totals) {
-    const by = new Map();
-    for (const a of day.analyzed.filter(scope)) {
-      const id = a.session.employee_id, p = by.get(id) || { employeeId: id, employee: a.employee?.name || '', calls: 0, inbound: 0, outbound: 0, answered: 0, handle: 0, firstLogin: null, lastLogout: null };
-      p.firstLogin = p.firstLogin == null ? a.session.issued_at : Math.min(p.firstLogin, a.session.issued_at);
-      if (a.session.revoked_at) p.lastLogout = Math.max(p.lastLogout ?? 0, a.session.revoked_at);
-      by.set(id, p);
+    const w = day.window, by = new Map(), names = day.employees;
+    const get = id => {
+      if (!by.has(id)) by.set(id, { employeeId: id, employee: names.get(id)?.name || '', calls: 0, inbound: 0, outbound: 0, answered: 0, talk: 0, firstLogin: null, lastLogout: null });
+      return by.get(id);
+    };
+    const evs = db.prepare("SELECT employee_id, extension, event_type, occurred_at FROM events WHERE event_type NOT IN ('heartbeat','agentlinked','agentunlinked') AND occurred_at >= ? AND occurred_at < ?")
+      .all(w.start, Math.min(w.end, w.operatingEnd)).filter(evScope(scope));
+    for (const e of evs) {
+      const p = get(e.employee_id);
+      if (e.event_type === 'session_login' && /^\d+$/.test(e.extension || '') && (p.firstLogin == null || e.occurred_at < p.firstLogin)) p.firstLogin = e.occurred_at;
+      if (['session_logout', 'arabicss_logout'].includes(e.event_type) && (p.lastLogout == null || e.occurred_at > p.lastLogout)) p.lastLogout = e.occurred_at;
     }
     for (const c of calls) {
-      const p = by.get(c.employeeId);
-      if (!p) continue;
+      if (c.outsideHours || Date.parse(c.startedAt) >= w.operatingEnd) continue;
+      const p = get(c.employeeId);
       p.calls++;
-      if (c.callType === 'outgoing') p.outbound++; else if (c.callType === 'incoming') p.inbound++;
-      if (c.eventType === 'agentunlinked') { p.answered++; p.handle += c.durationSeconds || 0; }
+      if (c.callType === 'incoming') p.inbound++; else if (c.callType === 'outgoing') p.outbound++;
+      if (c.eventType === 'agentunlinked') { p.answered++; p.talk += c.durationSeconds || 0; }
     }
+    for (const t of totals) get(t.employeeId);
     return [...by.values()].map(p => {
       const t = totals.find(x => x.employeeId === p.employeeId);
       return { employeeId: p.employeeId, employee: p.employee, calls: p.calls, inbound: p.inbound, outbound: p.outbound, answered: p.answered,
-        avgHandleTime: p.answered ? p.handle / p.answered : 0, firstLogin: iso(p.firstLogin), lastLogout: iso(p.lastLogout),
+        avgHandleTime: p.answered ? Math.round(p.talk / p.answered) : 0, firstLogin: iso(p.firstLogin), lastLogout: iso(p.lastLogout),
         breakSeconds: t?.completedBreakSeconds || 0, unknownBreaks: t?.unknownBreaks || 0 };
     });
   }

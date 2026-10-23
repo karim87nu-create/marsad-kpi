@@ -57,7 +57,7 @@ function normalizeDate(value, fallback) {
 
 const purpose = queue => String(queue ?? '').slice(-1);
 const QUEUE_LABELS = { 0: 'خارج ساعات العمل', 1: 'طلب أوردر', 2: 'متابعة أوردر', 3: 'شكاوى' };
-const queueLabel = q => QUEUE_LABELS[purpose(q)] || 'نوع طلب غير معروف';
+const queueLabel = q => QUEUE_LABELS[purpose(q)] || 'طابور غير مصنف';
 
 function toRecord(row, map, fallbackDate, index) {
   const get = f => (map[f] == null ? null : row[map[f]]);
@@ -78,50 +78,48 @@ function toRecord(row, map, fallbackDate, index) {
   };
 }
 
+// Exact port of the old server's lib/history.ts rules, so day indicators match it.
 function classify(r) {
-  const s = r.status.toLowerCase(), t = r.startMs ?? r.endMs;
-  const outside = purpose(r.queue) === '0' || (t != null && !isOperating(t));
-  const known = ['1', '2', '3'].includes(purpose(r.queue));
-  const answered = s === 'success' || s === 'answered' || s === 'completed';
-  const abandoned = s === 'abandoned' || s === 'abandon' || s === 'no answer' || s === 'failure';
+  const s = String(r.status || '').toLowerCase(), t = r.startMs ?? r.endMs, p = purpose(r.queue);
+  const outsideTime = t != null && !isOperating(t);
+  const outside = outsideTime || p === '0';
+  const known = ['1', '2', '3'].includes(p);
+  const answered = s === 'success', abandoned = s === 'abandoned';
+  const short = abandoned && r.waitSeconds != null && r.waitSeconds <= RULES.shortAbandonSeconds;
   let classification = null;
-  if (abandoned) classification = outside ? 'after_hours' : !known ? 'unknown_queue' : r.waitSeconds == null ? 'unknown_wait' : r.waitSeconds <= RULES.shortAbandonSeconds ? 'short_exempt' : 'counted';
-  return { outside, known, answered, abandoned, classification };
+  if (abandoned) classification = outsideTime ? 'after_hours' : short ? 'short_exempt' : p === '0' ? 'after_hours' : !known ? 'unknown_queue' : r.waitSeconds == null ? 'unknown_wait' : 'counted';
+  return { outside, outsideTime, known, answered, abandoned, short, classification };
+}
+
+function metrics(records) {
+  const all = records.map(r => ({ r, c: classify(r) }));
+  const operating = all.filter(x => !x.c.outsideTime && x.c.known);
+  const shortAbandoned = operating.filter(x => x.c.short).length;
+  const calls = operating.filter(x => !x.c.short);
+  const answered = calls.filter(x => x.c.answered), raw = calls.filter(x => x.c.abandoned);
+  const abandoned = raw.filter(x => x.r.waitSeconds != null && x.r.waitSeconds > RULES.shortAbandonSeconds).length;
+  const unclassifiedAbandoned = raw.filter(x => x.r.waitSeconds == null).length;
+  const unknownStatuses = calls.length - answered.length - raw.length;
+  const validWaits = answered.every(x => x.r.waitSeconds != null), validDurations = answered.every(x => x.r.durationSeconds != null);
+  const within = answered.filter(x => x.r.waitSeconds != null && x.r.waitSeconds <= RULES.slaSeconds).length;
+  const clean = !unknownStatuses && !unclassifiedAbandoned;
+  return {
+    calls: calls.length, recordedCalls: operating.length, shortAbandoned, answered: answered.length, abandoned,
+    unclassifiedAbandoned, unknownStatuses, answeredWithinThreshold: within,
+    missingWaits: answered.filter(x => x.r.waitSeconds == null).length,
+    asa: answered.length && validWaits ? answered.reduce((n, x) => n + x.r.waitSeconds, 0) / answered.length : null,
+    sla: clean && validWaits && calls.length ? within / calls.length * 100 : null,
+    abandonmentRate: clean && calls.length ? abandoned / calls.length * 100 : null,
+    meanCallSeconds: answered.length && validDurations ? answered.reduce((n, x) => n + x.r.durationSeconds, 0) / answered.length : null,
+    totalRecords: all.length, afterHours: all.filter(x => x.c.outside).length, unclassified: all.filter(x => !x.c.known && purpose(x.r.queue) !== '0').length,
+  };
 }
 
 function summarize(records) {
-  const z = () => ({ calls: 0, answered: 0, abandoned: 0, shortAbandoned: 0, afterHours: 0, totalRecords: 0, answeredWithinThreshold: 0, missingWaits: 0, unknownStatuses: 0, unclassifiedAbandoned: 0, waitSum: 0, answeredWaits: 0 });
-  const add = (t, r) => {
-    const c = classify(r);
-    t.totalRecords++;
-    if (c.outside) { t.afterHours++; return; }
-    if (c.abandoned && c.classification === 'short_exempt') { t.shortAbandoned++; return; }
-    if (!c.known) { if (c.abandoned) t.unclassifiedAbandoned++; return; }
-    t.calls++;
-    if (r.waitSeconds == null) t.missingWaits++;
-    if (c.answered) {
-      t.answered++;
-      if (r.waitSeconds != null) { t.waitSum += r.waitSeconds; t.answeredWaits++; if (r.waitSeconds <= RULES.slaSeconds) t.answeredWithinThreshold++; }
-    } else if (c.abandoned) { if (r.waitSeconds == null) t.unclassifiedAbandoned++; else t.abandoned++; }
-    else t.unknownStatuses++;
-  };
-  const finish = t => ({
-    calls: t.calls, answered: t.answered, abandoned: t.abandoned, shortAbandoned: t.shortAbandoned, afterHours: t.afterHours,
-    totalRecords: t.totalRecords, answeredWithinThreshold: t.answeredWithinThreshold, missingWaits: t.missingWaits,
-    unknownStatuses: t.unknownStatuses, unclassifiedAbandoned: t.unclassifiedAbandoned,
-    asa: t.answered && t.answeredWaits === t.answered ? t.waitSum / t.answered : null,
-    sla: t.calls && !t.missingWaits ? t.answeredWithinThreshold / t.calls * 100 : null,
-    abandonmentRate: t.calls ? t.abandoned / t.calls * 100 : null,
-  });
-  const total = z(), queues = new Map();
-  for (const r of records) {
-    add(total, r);
-    if (!queues.has(r.queue)) queues.set(r.queue, z());
-    add(queues.get(r.queue), r);
-  }
+  const queues = [...new Set(records.map(r => r.queue))];
   return {
-    report: finish(total),
-    queues: [...queues].sort(([a], [b]) => String(a).localeCompare(String(b))).map(([queue, t]) => ({ queue, label: queueLabel(queue), ...finish(t) })),
+    report: metrics(records),
+    queues: queues.map(queue => ({ queue, label: queueLabel(queue), ...metrics(records.filter(r => r.queue === queue)) })),
   };
 }
 

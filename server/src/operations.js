@@ -127,7 +127,7 @@ function setup(app) {
       operatingWindow: { start: iso(w.start), end: iso(w.operatingEnd) },
       historyReport: h.report ? { importedAt: h.report.importedAt, ...A.summarize(records).report } : null,
       profiles, calls, buckets, breakOverlaps, queueSamples: samples, connections, handovers,
-      states: att.states.concat(att.completedBreaks.map(b => ({ ...b, running: false }))),
+      states: att.states,
       sessions: att.sessions,
       timeline: day.analyzed.filter(scope).flatMap(a => a.events.filter(e => e.event_type === 'session_login' && e.occurred_at >= w.start && e.occurred_at < w.end)
         .map(e => ({ employeeId: e.employee_id, extension: e.extension, eventType: e.event_type, occurredAt: iso(e.occurred_at) }))),

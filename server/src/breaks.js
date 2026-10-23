@@ -36,7 +36,7 @@ function setup(app) {
         if ((b.start ?? b.observedAt) < w.start) continue;
         starts++;
         if (b.start == null) { used += RULES.breakPeriodSeconds; estimated = true; }
-        else used += Math.round(((b.end ?? now) - b.start) / 1000);
+        else used += Math.floor(((b.end ?? now) - b.start) / 1000);
       }
     }
     const remaining = Math.max(0, RULES.breakBudgetSeconds - used);

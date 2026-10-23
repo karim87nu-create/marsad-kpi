@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { start } = require('./helpers');
-const { cairoToUtc } = require('../src/time');
+const { cairoParts } = require('../src/time');
 
 let JSDOM, VirtualConsole;
 try { ({ JSDOM, VirtualConsole } = require('jsdom')); } catch {}
@@ -16,7 +16,9 @@ const OLD_API = 'https://marsad-kpi-live.karim87nu.chatgpt.site';
 const RUNTIME = ['admin-live-groups.js', 'admin-view-model-3.7.1.js', 'admin-shell-3.7.2.js', 'admin-derived-3.7.2.js', 'admin-profile-3.7.1.js', 'admin-access-3.7.1.js'];
 
 test('real admin page works against the new server', { skip: !JSDOM && 'jsdom not installed' }, async () => {
-  const t = await start({ at: cairoToUtc(2026, 10, 22, 14, 0, 0) });
+  // The page uses the real date, so the server clock starts a few minutes before now.
+  const t = await start({ at: Date.now() - 5 * 60000 });
+  const cairo = ms => { const p = cairoParts(ms), z = n => String(n).padStart(2, '0'); return { date: p.year + '-' + z(p.month) + '-' + z(p.day), clock: z(p.hour) + ':' + z(p.minute) + ':' + z(p.second) }; };
   try {
     const admin = await t.admin();
     const e = await t.employee(admin);
@@ -28,7 +30,7 @@ test('real admin page works against the new server', { skip: !JSDOM && 'jsdom no
     const tok = (await admin('POST', '/api/history', { action: 'token' })).body.token;
     await t.call('POST', '/api/history', { headers: { 'x-history-token': tok }, body: { rows: [
       ['Queue', 'Agent', 'Call Date', 'Start Time', 'End Time', 'Duration', 'Wait Time', 'Caller ID', 'Status', 'Trunk'],
-      ['2001', '', '2026-10-22', '14:00:30', '14:00:50', '00:00:00', '00:00:20', '0166', 'Abandoned', 'T']], expectedCount: 1, reportDate: '2026-10-22' } });
+      [ '2001', '', cairo(t.clock.now + 30000).date, cairo(t.clock.now + 30000).clock, cairo(t.clock.now + 50000).clock, '00:00:00', '00:00:20', '0166', 'Abandoned', 'T']], expectedCount: 1, reportDate: cairo(t.clock.now + 30000).date } });
     await t.call('POST', '/api/history', { headers: { 'x-history-token': tok }, body: { action: 'live', rows: [['2001', '', 'A', '', '', '', '', '', '0:00:09', '0177', 'On Wait']],
       capture: { id: crypto.randomUUID(), kind: 'native_report_snapshot', pageId: crypto.randomUUID(), sequence: 1, changed: true, observedAt: new Date(t.clock.now).toISOString(), timeBasis: 'server-clock-v1' } } });
 
