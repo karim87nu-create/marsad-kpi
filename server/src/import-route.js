@@ -12,7 +12,6 @@ import { importOldDatabase } from './import-old-db.js';
 function setup(app) {
   const { db, fail } = app;
   const empty = async () => !await db.prepare('SELECT 1 FROM events LIMIT 1').get() && !await db.prepare('SELECT 1 FROM employees LIMIT 1').get();
-  app.route('GET', '/api/import-old', async ctx => { await app.requireAdmin(ctx, 'admin'); return { available: await empty() }; });
   app.route('POST', '/api/import-old', async ctx => {
     const who = await app.requireAdmin(ctx, 'admin');
     if (who.id !== 0) fail(403, 'الاستيراد بالباسورد الرئيسي بس');

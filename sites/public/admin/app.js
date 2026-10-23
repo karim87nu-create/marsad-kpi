@@ -2,6 +2,7 @@
 // مرصد الأداء — admin page (v2). One file, no framework. Talks only to the new server.
 (() => {
   const API = window.MARSAD_API;
+  const BASE = new URL('.', document.currentScript?.src || location.href).href;
   const $ = id => document.getElementById(id);
   const h = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids.filter(k => k != null)); return e; };
   const TOKEN = 'marsadAdminToken';
@@ -278,18 +279,19 @@
     const f = $('importFile').files[0];
     if (!f) return say('importNote', 'اختار الملف الأول');
     if (!confirm('نقل بيانات النظام القديم للسيرفر ده؟ العملية دي بتتعمل مرة واحدة.')) return;
-    $('importButton').disabled = true; say('importNote', 'جارٍ الرفع والنقل… ممكن ياخد دقيقة أو اتنين، متقفلش الصفحة.');
+    $('importButton').disabled = true;
     try {
-      say('importNote', 'جارٍ ضغط الملف…');
-      const packed = await new Response(f.stream().pipeThrough(new CompressionStream('gzip'))).blob();
-      say('importNote', 'جارٍ الرفع (' + Math.round(packed.size / 1048576) + ' ميجا) والنقل… ممكن ياخد كام دقيقة، متقفلش الصفحة.');
-      const r = await fetch(API + '/api/import-old', { method: 'POST', headers: { 'x-admin-password': token, 'content-type': 'application/octet-stream', 'x-compressed': 'gzip' }, body: packed });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) throw Error(d.error || 'تعذر النقل');
-      const x = d.report;
+      const { run } = await import('./import-old.js?v=1');
+      const post = async body => {
+        const r = await fetch(API + '/api/import-old/rows', { method: 'POST', headers: { 'x-admin-password': token, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { const e = Error(d.error || 'تعذر النقل (' + r.status + ')'); e.status = r.status; throw e; }
+        return d;
+      };
+      const x = await run({ file: f, post, say: t => say('importNote', t), base: BASE });
       say('importNote', 'اتنقل: ' + x.employees + ' موظف، ' + x.adminAccounts + ' مستخدم إدارة، ' + x.sessions + ' جلسة، ' + x.events + ' حدث، ' + x.historyDays + ' يوم من سجل أرابيكس.');
       $('importPanel').hidden = true; renderManage();
-    } catch (e) { say('importNote', e.message); } finally { $('importButton').disabled = false; }
+    } catch (e) { say('importNote', (e.message || 'تعذر النقل') + ' — تقدر تعيد المحاولة بنفس الملف، اللي اتنقل مش هيتكرر.'); } finally { $('importButton').disabled = false; }
   };
 
   // ---------- تليجرام ----------
