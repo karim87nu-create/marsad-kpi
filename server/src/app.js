@@ -1,6 +1,7 @@
 'use strict';
 const { URL } = require('node:url');
 const { createSigner, createLimiter } = require('./security');
+const { createLegacy } = require('./legacy');
 
 class HttpError extends Error {
   constructor(status, code, extra) {
@@ -35,6 +36,7 @@ function createApp({ db, config, now = () => Date.now() }) {
     config,
     now,
     signer: createSigner(config.secret),
+    legacy: createLegacy({ deviceTokens: config.deviceTokens }),
     limiters: {
       employeeLogin: createLimiter({ limit: 10, windowMs: 15 * 60000 }),
       adminLogin: createLimiter({ limit: 10, windowMs: 15 * 60000 }),

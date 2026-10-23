@@ -12,8 +12,13 @@ function setup(app) {
   function identityForPassword(password) {
     if (!password) return null;
     if (app.config.adminPasswordHash && verifyPassword(password, app.config.adminPasswordHash)) return MASTER;
-    for (const a of db.prepare('SELECT * FROM admin_accounts WHERE deleted_at IS NULL AND active = 1').all())
+    for (const a of db.prepare('SELECT * FROM admin_accounts WHERE deleted_at IS NULL AND active = 1').all()) {
       if (verifyPassword(password, a.password_hash)) return { id: a.id, name: a.name, role: a.role };
+      if (app.legacy.verifyAdmin(password, a.password_hash)) {
+        db.prepare('UPDATE admin_accounts SET password_hash = ? WHERE id = ?').run(hashPassword(password), a.id);
+        return { id: a.id, name: a.name, role: a.role };
+      }
+    }
     return null;
   }
 
@@ -55,7 +60,7 @@ function setup(app) {
   function passwordTaken(password, exceptId) {
     if (app.config.adminPasswordHash && verifyPassword(password, app.config.adminPasswordHash)) return true;
     return db.prepare('SELECT * FROM admin_accounts WHERE deleted_at IS NULL').all()
-      .some(a => a.id !== exceptId && verifyPassword(password, a.password_hash));
+      .some(a => a.id !== exceptId && (verifyPassword(password, a.password_hash) || app.legacy.verifyAdmin(password, a.password_hash)));
   }
 
   function checkNewPassword(password, confirmation, exceptId) {
