@@ -3,7 +3,7 @@
   "name": "Arabicss KPI Connector",
   "version": "3.0.0",
   "description": "يربط جلسات ومكالمات وبريكات أرابيكس بمرصد الأداء",
-  "permissions": ["storage", "notifications", "*://41.38.207.218/*", "https://41.38.207.218:11594/*", "https://marsad-api.example.invalid/*"],
+  "permissions": ["storage", "notifications", "*://41.38.207.218/*", "https://41.38.207.218:11594/*", "https://marsad-v2.karim87nu.chatgpt.site/*"],
   "content_scripts": [
     { "matches": ["*://41.38.207.218/*"], "exclude_matches": ["*://41.38.207.218/themes/arabicssReportsInclude/*"], "js": ["config.js", "agent.js"], "css": ["panel.css"], "run_at": "document_start" },
     { "matches": ["https://karim87nu-create.github.io/marsad-kpi/*"], "js": ["config.js", "admin-link.js"], "run_at": "document_idle" }

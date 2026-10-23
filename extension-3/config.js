@@ -1,6 +1,6 @@
 // One place for the connector's settings. API is set to the new server's address at cutover.
 globalThis.MARSAD = Object.freeze({
-  API: 'https://marsad-api.example.invalid',
+  API: 'https://marsad-v2.karim87nu.chatgpt.site',
   DEVICE_TOKEN: '7000865f1220458f86506b41a97cab7d',
   VERSION: '3.0.0',
   ARABICSS_HOST: '41.38.207.218',

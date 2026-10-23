@@ -20,7 +20,7 @@ const PAGES = {
 };
 
 async function harness(t) {
-  const read = f => fs.readFileSync(path.join(EXT, f), 'utf8').replace("API: 'https://marsad-api.example.invalid'", "API: '" + t.base + "'");
+  const read = f => fs.readFileSync(path.join(EXT, f), 'utf8').replace("API: 'https://marsad-v2.karim87nu.chatgpt.site'", "API: '" + t.base + "'");
   const store = {}, listeners = [], pageListeners = [];
   let current = '', w = null;
   const browser = {
@@ -164,7 +164,7 @@ test('extension 3 collector: linked from the admin page, sends the day history a
   const root = 'http://127.0.0.1:' + reports.address().port + '/';
   try {
     const admin = await t.admin();
-    const read = f => fs.readFileSync(path.join(EXT, f), 'utf8').replace("API: 'https://marsad-api.example.invalid'", "API: '" + t.base + "'").replace("REPORTS_ROOT: 'https://41.38.207.218:11594/themes/arabicssReportsInclude/dark/'", "REPORTS_ROOT: '" + root + "'");
+    const read = f => fs.readFileSync(path.join(EXT, f), 'utf8').replace("API: 'https://marsad-v2.karim87nu.chatgpt.site'", "API: '" + t.base + "'").replace("REPORTS_ROOT: 'https://41.38.207.218:11594/themes/arabicssReportsInclude/dark/'", "REPORTS_ROOT: '" + root + "'");
     const store = {}, listeners = [];
     const browser = { storage: { local: { get: async k => ({ [k]: structuredClone(store[k]) }), set: async o => { Object.assign(store, structuredClone(o)); } } },
       runtime: { onMessage: { addListener: f => listeners.push(f) }, getURL: x => 'moz-extension://x/' + x },
