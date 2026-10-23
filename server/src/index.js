@@ -6,7 +6,7 @@ const { open } = require('./db');
 const { createApp } = require('./app');
 const { hashPassword, randomToken } = require('./security');
 
-const MODULES = ['./admin', './employees', './sessions', './dashboard', './breaks', './messages', './shifts', './history', './missed', './legacy-dashboard', './operations', './telegram'];
+const MODULES = ['./admin', './employees', './sessions', './dashboard', './breaks', './messages', './shifts', './history', './missed', './legacy-dashboard', './legacy-attendance', './operations', './telegram'];
 
 function buildApp(config, { now } = {}) {
   const db = open(config.databasePath);
@@ -36,4 +36,4 @@ if (require.main === module) {
   http.createServer((req, res) => app.handle(req, res)).listen(port, () => console.log('marsad-kpi server on :' + port));
 }
 
-module.exports = { buildApp, configFromEnv };
+module.exports = { MODULES, buildApp, configFromEnv };

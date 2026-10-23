@@ -4,7 +4,7 @@
 const D=require('better-sqlite3');const [oldP,newP]=process.argv.slice(2);const o=new D(oldP,{readonly:true});
 const {prepareMissedContext}=require('../src/legacy-logic/missed-context');const {loadShiftData}=require('../src/legacy-logic/shift-responsibility');
 const {open}=require('../src/db');const {createApp}=require('../src/app');const {dayWindow}=require('../src/time');
-const app=createApp({db:open(newP),config:{secret:'x',deviceTokens:[],allowedOrigins:[]}});for(const m of ['admin','employees','sessions','dashboard','breaks','messages','shifts','history','missed','operations','telegram'])require('../src/'+m).setup(app);
+const app=createApp({db:open(newP),config:{secret:'x',deviceTokens:[],allowedOrigins:[]}});for(const m of require('../src/index').MODULES.map(x=>x.slice(2)))require('../src/'+m).setup(app);
 const shift=(d,n)=>new Date(Date.parse(d+'T12:00:00Z')+n*864e5).toISOString().slice(0,10);
 const {businessTime}=(()=>{ // old historyBusinessTime via old cairoClockWindow
   const {cairoClockWindow}=require('../src/legacy-logic/missed-context');

@@ -50,6 +50,13 @@ function setup(app) {
     const ev = e => dashboardEvent(e, names);
 
     const events = db.prepare("SELECT * FROM events WHERE occurred_at >= ? AND occurred_at < ? AND event_type <> 'heartbeat' ORDER BY occurred_at, id").all(start, finish).filter(inScope).map(ev);
+    // The old server kept admin shift decisions in the same event log, so they appear on the day's timeline.
+    const decisions = db.prepare(`SELECT d.*, s.extension, s.revoked_at, e.employee_code FROM shift_decisions d JOIN employee_sessions s ON s.id = d.session_id LEFT JOIN employees e ON e.id = d.employee_id
+      WHERE d.decided_at >= ? AND d.decided_at < ? ORDER BY d.decided_at, d.id`).all(start, finish).filter(d => inScope({ employee_id: d.employee_id, extension: d.extension || 'unbound' }))
+      .map(d => ({ id: -d.id, eventType: 'shift_' + d.action, callId: null, agentName: names.get(d.employee_id)?.name || '', extension: d.extension || 'unbound', phone: null, callType: null,
+        occurredAt: iso(d.decided_at), durationSeconds: null, payload: JSON.stringify({ employeeId: d.employee_id, employeeCode: d.employee_code, targetSessionId: String(d.session_id), effectiveAt: d.revoked_at,
+          state: d.action === 'include' ? 'admin_responsibility_included' : 'admin_shift_excluded', note: d.note, actor: d.decided_by }) }));
+    if (decisions.length) events.push(...decisions), events.sort((a, b) => Date.parse(a.occurredAt) - Date.parse(b.occurredAt));
     const allCallRows = db.prepare(`SELECT * FROM events WHERE occurred_at >= ? AND occurred_at < ? AND event_type IN ${CALL_TYPES} ORDER BY occurred_at, id`).all(start - DAY, finish + DAY);
     const callEvents = allCallRows.filter(inScope).map(ev), observed = allCallRows.map(ev);
     const groups = new Map(), gkey = e => eventPayload(e).employeeId + ':' + e.extension + ':' + canonicalCallId(e.callId);
@@ -90,7 +97,8 @@ function setup(app) {
     }
     const completedBreaks = canonicalBreaks(breakEnds.filter(e => e.durationSeconds > 0 && Date.parse(e.occurredAt) <= now).map(e => ({ employeeId: Number(eventPayload(e).employeeId), extension: e.extension,
       startedAt: new Date(Date.parse(e.occurredAt) - e.durationSeconds * 1000).toISOString(), endedAt: e.occurredAt, durationSeconds: e.durationSeconds, running: false, completedBreak: true })), start, finish);
-    const live = now >= start && now < finish ? app.presence(now).filter(p => p.state === 'break' && p.startedAt && (!employee || p.employeeId === Number(employee)) && (!extension || p.extension === String(extension))) : [];
+    // Old route: presence before the shift_ended override (lib/dashboard-presence.ts).
+    const live = now >= start && now < finish ? app.oldPresence(date, now, { shiftOverride: false }).presence.filter(p => p.state === 'break' && p.startedAt && (!employee || p.employeeId === Number(employee)) && (!extension || p.extension === String(extension))) : [];
     const ongoingBreaks = canonicalBreaks(live.map(p => ({ employeeId: p.employeeId, extension: p.extension, startedAt: p.startedAt, endedAt: iso(now), durationSeconds: 0, running: true, completedBreak: false,
       evidenceUntil: Date.parse(p.evidenceAt || '') + 90000 })), start, Math.min(finish, now));
     for (const b of ongoingBreaks) if (!metrics.performance.some(p => p.employeeId === b.employeeId))
@@ -103,6 +111,8 @@ function setup(app) {
       performance: metrics.performance, summary: metrics.summary, timeline: metrics.timeline, breakTotals, completedBreaks, ongoingBreaks,
       historyAttribution: { summary: attribution.summary, rows: attribution.rows.filter(x => (!employee || x.employeeId === Number(employee)) && (!extension || x.extension === String(extension))) },
     };
+    // Inputs the attendance timeline needs (not part of the response).
+    Object.defineProperties(out, { events: { value: events }, breakEnds: { value: breakEnds } });
     if (cache.size > 30) cache.delete(cache.keys().next().value);
     cache.set(key, out);
     return out;

@@ -72,7 +72,7 @@ function setup(app) {
       key, records,
       report: present.length ? {
         id: date + ':' + present.map(r => r.id).join('-'), date, importedAt: iso(Math.max(...present.map(r => r.imported_at))),
-        verifiedTotal: present.every(r => r.verified_total), missingCalendarDates, precision: records.some(r => r.precision === 'minute') ? 'minute' : 'second', ...s.report,
+        verifiedTotal: present.every(r => r.verified_total) && !missingCalendarDates.length, missingCalendarDates, precision: records.some(r => r.precision === 'minute') ? 'minute' : 'second', ...s.report,
       } : null,
       queues: s.queues,
       missed: records.map(r => ({ r, c: A.classify(r) })).filter(x => x.c.abandoned).map(({ r, c }) => ({

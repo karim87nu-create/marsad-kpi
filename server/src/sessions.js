@@ -3,9 +3,12 @@ const { RULES } = require('./time');
 
 const SESSION_MS = 18 * 3600000;
 const CLOSE_GRACE_MS = 5000;
-const CLIENT_CLOSE = new Set(['manual', 'arabicss_logout', 'arabicss_login_page', 'extension_changed', 'tab_closed', 'browser_restarted', 'session_rejected']);
+// Closure reasons use the old server's vocabulary (app/api/session/end, app/api/events) so the old logic reads them the same way.
+const CLIENT_REASONS = ['arabicss_logout', 'arabicss_login_page', 'extension_changed', 'extension_restarted', 'tab_closed', 'browser_restarted'];
+const CLIENT_CLOSE = new Set([...CLIENT_REASONS, 'explicit_logout', 'session_logout', 'session_rejected']);
 const EVENT_TYPE = /^[a-z_]{2,40}$/;
 const DIGITS = /^\d{1,10}$/;
+const COLUMNS = new Set(['eventType', 'eventKey', 'extension', 'occurredAt', 'durationSeconds', 'state', 'callId', 'phone', 'queue', 'callType', 'clientVersion', 'payload', '_sessionToken', 'sessionToken']);
 
 function setup(app) {
   const { db, fail } = app;
@@ -31,7 +34,7 @@ function setup(app) {
   };
 
   function closeSession(id, reason, now) {
-    db.prepare('UPDATE employee_sessions SET revoked_at = ?, revoke_reason = ? WHERE id = ? AND revoked_at IS NULL').run(now, String(reason || 'manual').slice(0, 60), id);
+    db.prepare('UPDATE employee_sessions SET revoked_at = ?, revoke_reason = ? WHERE id = ? AND revoked_at IS NULL').run(now, String(reason || 'explicit_logout').slice(0, 60), id);
   }
   app.closeSession = closeSession;
 
@@ -52,8 +55,10 @@ function setup(app) {
     const holder = extension && open.find(s => s.employee_id !== e.id && s.extension === extension && fresh(s));
     if (holder) fail(409, 'extension_in_use');
     const result = db.transaction(() => {
-      for (const s of mine) closeSession(s.id, 'work_resumed', ctx.now);
-      if (extension) for (const s of open.filter(s => s.employee_id !== e.id && s.extension === extension)) closeSession(s.id, 'extension_handover', ctx.now);
+      // Stale or expired sessions close as the old server did; a still-live one is replaced by the new login.
+      for (const s of mine) closeSession(s.id, fresh(s) ? 'work_resumed' : 'expired_or_disconnected', ctx.now);
+      if (extension) for (const s of open.filter(s => s.employee_id !== e.id && s.extension === extension)) closeSession(s.id, 'expired_or_disconnected', ctx.now);
+      db.prepare("UPDATE employee_sessions SET revoked_at = ?, revoke_reason = 'expired_or_disconnected' WHERE revoked_at IS NULL AND expires_at <= ?").run(ctx.now, ctx.now);
       const r = db.prepare('INSERT INTO employee_sessions (employee_id, device, extension, issued_at, bound_at, last_seen, expires_at) VALUES (?,?,?,?,?,?,?)')
         .run(e.id, device, extension, ctx.now, extension ? ctx.now : null, ctx.now, ctx.now + SESSION_MS);
       return Number(r.lastInsertRowid);
@@ -63,8 +68,15 @@ function setup(app) {
   });
 
   app.route('POST', '/api/session/end', ctx => {
-    const { session } = app.requireSession(ctx, { allowRevoked: true });
-    closeSession(session.id, ctx.body.reason, ctx.now);
+    const { session, closed } = app.requireSession(ctx, { allowRevoked: true });
+    const reason = CLIENT_REASONS.includes(ctx.body.reason) ? ctx.body.reason : 'explicit_logout';
+    if (!closed) db.transaction(() => {
+      // Same logout record the old /api/session/end wrote when the extension's own logout event did not arrive first.
+      db.prepare(`INSERT OR IGNORE INTO events (session_id, employee_id, extension, event_type, event_key, occurred_at, received_at, state, client_version, extra)
+        VALUES (?,?,?,?,?,?,?,?,?,?)`).run(session.id, session.employee_id, session.extension || 'unbound', 'session_logout', session.id + ':logout:end', ctx.now, ctx.now, reason,
+        session.client_version || '', JSON.stringify({ closureTimeKnown: reason !== 'browser_restarted' }));
+      closeSession(session.id, reason, ctx.now);
+    })();
     return { ok: true };
   });
 
@@ -90,7 +102,9 @@ function setup(app) {
     }
     if (session.extension && session.extension !== extension) fail(403, 'extension_mismatch');
     const payload = ev.payload === undefined ? null : JSON.stringify(ev.payload);
-    if (payload && payload.length > 32000) fail(413, 'payload_too_large');
+    const rest = Object.fromEntries(Object.entries(ev).filter(([k]) => !COLUMNS.has(k)));
+    const extra = Object.keys(rest).length ? JSON.stringify(rest) : null;
+    if ((payload?.length || 0) + (extra?.length || 0) > 32000) fail(413, 'payload_too_large');
 
     const existing = db.prepare('SELECT id FROM events WHERE session_id = ? AND event_key = ?').get(session.id, key);
     if (existing) return { ok: true, duplicate: true, id: existing.id };
@@ -105,7 +119,7 @@ function setup(app) {
       }
       if (type === 'break_end' && !openBreak(session.id)) fail(409, 'break_start_missing');
       const r = db.prepare(`INSERT INTO events (session_id, employee_id, extension, event_type, event_key, occurred_at, received_at,
-        duration_seconds, state, call_id, phone, queue, call_type, client_version, payload) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        duration_seconds, state, call_id, phone, queue, call_type, client_version, payload, extra) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
         session.id, employee.id, extension, type, key, occurred, ctx.now,
         Number.isFinite(Number(ev.durationSeconds)) ? Math.max(0, Math.round(Number(ev.durationSeconds))) : null,
         ev.state == null ? null : String(ev.state).slice(0, 40),
@@ -113,8 +127,11 @@ function setup(app) {
         ev.phone == null ? null : String(ev.phone).slice(0, 40),
         ev.queue == null ? null : String(ev.queue).slice(0, 20),
         ev.callType == null ? null : String(ev.callType).slice(0, 20),
-        String(ev.clientVersion || '').slice(0, 20), payload);
-      if (!closed) {
+        String(ev.clientVersion || '').slice(0, 20), payload, extra);
+      // A logout event ends the session at its own time (old app/api/events closureReason).
+      if (!closed && (type === 'session_logout' || type === 'arabicss_logout'))
+        closeSession(session.id, CLIENT_REASONS.includes(String(ev.state)) ? String(ev.state) : type, Math.min(occurred, ctx.now));
+      else if (!closed) {
         const working = ['ready', 'on_call'].includes(ev.state) || ['agentlinked', 'call_observed'].includes(type);
         db.prepare(`UPDATE employee_sessions SET last_seen = MAX(last_seen, ?), client_version = ?,
           extension = CASE WHEN extension = '' THEN ? ELSE extension END,

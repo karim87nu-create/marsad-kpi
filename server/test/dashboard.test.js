@@ -51,7 +51,9 @@ test('live presence, calls, breaks and attendance from extension events', async 
     await t.tick(s.token, 6 * 60000, 'break');
     d = (await admin('GET', '/api/dashboard?live=1')).body;
     assert.equal(d.presence.find(p => p.employeeId === e.id).state, 'break');
-    assert.equal(d.breakTotals.find(x => x.employeeId === e.id).ongoingBreakSeconds, 360);
+    assert.equal(Date.parse(d.presence.find(p => p.employeeId === e.id).startedAt), t.clock.now - 360000);
+    const full = (await admin('GET', '/api/dashboard?date=2026-10-22')).body;     // break totals come with the day view (as before)
+    assert.equal(full.breakTotals.find(x => x.employeeId === e.id).ongoingBreakSeconds, 360);
     await t.tick(s.token, 6 * 60000, 'break');
     await t.event(s.token, 'break_end', { state: 'ready', durationSeconds: 720 });
     await t.event(s.token, 'heartbeat', { state: 'ready' });
@@ -71,7 +73,8 @@ test('live presence, calls, breaks and attendance from extension events', async 
     assert.ok(states.includes('on_call') && states.includes('ready') && states.includes('unknown'));
     assert.equal(d.completedBreaks.length, 1);
     assert.equal(d.completedBreaks[0].durationSeconds, 720);
-    assert.equal(d.attendance.sessions[0].running, true);
+    assert.equal(d.attendance.sessions[0].running, false);              // silent for 5 minutes: not counted as running
+    assert.equal(d.attendance.sessions[0].durationComplete, false);
 
     // Logout → offline (explicit logout = shift ended) and the shift list.
     await t.event(s.token, 'heartbeat', { state: 'ready' });

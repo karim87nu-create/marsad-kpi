@@ -10,7 +10,11 @@ const parse = s => { try { return s ? JSON.parse(s) : {}; } catch { return {}; }
 function oldPayload(e) {
   const stored = parse(e.payload);
   if (stored.employeeId !== undefined && stored.sessionId !== undefined) return { ...stored, sessionId: String(e.session_id), employeeId: e.employee_id };
-  return { state: e.state, callId: e.call_id, phone: e.phone, queue: e.queue, payload: stored, employeeId: e.employee_id, sessionId: String(e.session_id) };
+  // Rebuild the event body the old server stored: every field the extension sent, plus employeeId and sessionId.
+  const body = { ...parse(e.extra), eventType: e.event_type, eventKey: e.event_key, extension: e.extension, occurredAt: iso(e.occurred_at) };
+  for (const [k, v] of [['durationSeconds', e.duration_seconds], ['state', e.state], ['callId', e.call_id], ['phone', e.phone], ['queue', e.queue], ['callType', e.call_type], ['clientVersion', e.client_version || null]]) if (v != null) body[k] = v;
+  if (e.payload != null) body.payload = stored;
+  return { ...body, employeeId: e.employee_id, sessionId: String(e.session_id) };
 }
 
 const presenceEvent = e => ({ id: e.id, eventType: e.event_type, extension: e.extension, occurredAt: iso(e.occurred_at), payload: JSON.stringify(oldPayload(e)) });

@@ -49,7 +49,7 @@ test('migration copies employees, admin users, history and day activity without 
     const http = require('node:http');
     const { hashPassword } = require('../src/security');
     const app = createApp({ db, config: { secret: 'x', adminPasswordHash: hashPassword('new-master'), deviceTokens: [], allowedOrigins: [] }, now: () => old.clock.now });
-    for (const m of ['./admin', './employees', './sessions', './dashboard', './breaks', './messages', './shifts', './history', './missed', './legacy-dashboard', './operations', './telegram']) require('../src/' + m.slice(2)).setup(app);
+    for (const m of require('../src/index').MODULES) require('../src/' + m.slice(2)).setup(app);
     void buildApp;
     const server = http.createServer((q, r) => app.handle(q, r));
     await new Promise(r => server.listen(0, r));

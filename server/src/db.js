@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS events (
   call_type TEXT,
   client_version TEXT,
   payload TEXT,
+  extra TEXT, -- other top-level fields the extension sent (the old server kept the whole event body)
   UNIQUE (session_id, event_key)
 );
 CREATE INDEX IF NOT EXISTS events_time ON events(occurred_at);
@@ -207,6 +208,7 @@ function open(file) {
   db.pragma('foreign_keys = ON');
   db.pragma('busy_timeout = 5000');
   db.exec(SCHEMA);
+  if (!db.prepare('PRAGMA table_info(events)').all().some(c => c.name === 'extra')) db.exec('ALTER TABLE events ADD COLUMN extra TEXT');
   return db;
 }
 

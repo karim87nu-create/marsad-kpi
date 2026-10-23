@@ -12,7 +12,7 @@ const { dayWindow } = require('../src/time');
 const [oldP, newP] = process.argv.slice(2);
 const o = new D(oldP, { readonly: true });
 const app = createApp({ db: open(newP), config: { secret: 'x', deviceTokens: [], allowedOrigins: [] } });
-for (const m of ['admin', 'employees', 'sessions', 'dashboard', 'breaks', 'messages', 'shifts', 'history', 'missed', 'legacy-dashboard', 'operations', 'telegram']) require('../src/' + m).setup(app);
+for (const m of require('../src/index').MODULES.map(x => x.slice(2))) require('../src/' + m).setup(app);
 const F = ms => new Date(ms).toISOString(), DAY = 864e5, fields = 'id,event_type AS eventType,call_id AS callId,agent_name AS agentName,extension,phone,call_type AS callType,occurred_at AS occurredAt,duration_seconds AS durationSeconds,payload';
 const shiftDate = (d, n) => new Date(Date.parse(d + 'T12:00:00Z') + n * DAY).toISOString().slice(0, 10);
 const parts = ms => Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Cairo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' }).formatToParts(ms).filter(p => p.type !== 'literal').map(p => [p.type, +p.value]));

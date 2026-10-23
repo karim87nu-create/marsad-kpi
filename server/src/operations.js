@@ -1,203 +1,136 @@
 'use strict';
+// /api/operations: same inputs, logic (lib/operations-insights.ts, unchanged in src/legacy-logic)
+// and response as the old app/api/operations/route.ts.
 const crypto = require('node:crypto');
-const { RULES, businessDay, dayWindow, validDate, addDays, iso, isOperating } = require('./time');
-const A = require('./arabicss');
+const { businessDay, dayWindow, validDate, addDays, iso } = require('./time');
+const { operationsInsights, historyMetrics, operatingCalls } = require('./legacy-logic/attendance-logic');
+const { cairoClockWindow } = require('./legacy-logic/missed-context');
+const { historyCall, parse } = require('./old-shape');
 
-const BUCKET_MS = 30 * 60000;
 const STATUSES = ['new', 'working', 'resolved', 'reviewed'];
+const IDENTITY_NOTE = 'الدخول الإداري الحالي بكلمة مرور مشتركة؛ سجل التغييرات يثبت حساب الإدارة، وليس هوية مشرف منفرد.';
 
 function setup(app) {
   const { db, fail } = app;
 
-  const overlapSeconds = (a, b, x, y) => Math.max(0, Math.min(b, y) - Math.max(a, x)) / 1000;
+  const reviews = date => db.prepare('SELECT * FROM reviews WHERE date = ? ORDER BY updated_at DESC LIMIT 501').all(date)
+    .map(r => ({ id: r.id, reference: r.reference, title: r.title, employeeId: r.employee_id, status: r.status, owner: r.owner, note: r.note, updatedAt: iso(r.updated_at) }));
+  const reports = date => db.prepare('SELECT id, created_at, filters FROM saved_reports WHERE date = ? ORDER BY created_at DESC LIMIT 51').all(date)
+    .map(r => ({ id: r.id, createdAt: iso(r.created_at), filters: r.filters }));
+  const audit = w => db.prepare('SELECT * FROM audit WHERE occurred_at >= ? AND occurred_at < ? ORDER BY id DESC LIMIT 501').all(w.start, w.end).map(a => {
+    const { reference, ...details } = parse(a.details);
+    return { id: a.id, occurredAt: iso(a.occurred_at), action: a.action, employeeId: a.employee_id, reference: reference ?? null, details: JSON.stringify(details) };
+  });
+  // Latest heartbeat per employee: which connector version and Arabicss connection each PC reported.
+  function connections(w) {
+    const rows = db.prepare("SELECT * FROM events WHERE event_type = 'heartbeat' AND occurred_at >= ? AND occurred_at < ? ORDER BY occurred_at DESC, id DESC LIMIT 2001").all(w.start, w.end);
+    const names = new Map(db.prepare('SELECT id, name FROM employees').all().map(e => [e.id, e.name])), seen = new Set(), out = [];
+    for (const e of rows) {
+      if (seen.has(e.employee_id)) continue;
+      seen.add(e.employee_id);
+      const p = parse(e.payload), x = parse(e.extra);
+      out.push({ name: names.get(e.employee_id) || '', extension: e.extension, occurredAt: iso(e.occurred_at), employeeId: e.employee_id,
+        sourceConnection: p.sourceConnection ?? x.sourceConnection ?? null, version: p.connectorVersion ?? x.connectorVersion ?? e.client_version ?? null });
+    }
+    return { rows: out, truncated: rows.length > 2000 };
+  }
+  const queueSamples = w => db.prepare('SELECT observed_at, waiting, active, longest_wait FROM live_snapshots WHERE observed_at >= ? AND observed_at < ? AND (changed = 1 OR id % 6 = 0) ORDER BY observed_at LIMIT 3001')
+    .all(w.start, w.end).map(s => ({ observedAt: iso(s.observed_at), waiting: s.waiting, active: s.active, longestWaitSeconds: s.longest_wait }));
 
-  function compute(date, extension, queue, now) {
-    const day = app.dayData(date, now), w = day.window;
-    const opEnd = Math.min(w.operatingEnd, now);
-    const scope = app.scopeFilter(null, extension);
-    const att = app.attendance(day, scope);
-    const old = app.oldDay(date, { extension }, now);
-    const totals = old.breakTotals, attribution = old.historyAttribution, calls = old.calls;
+  // Old /api/history?all=1 for one day, in the old record shape.
+  function history(date, now, queueFilter) {
     const h = app.dayHistory(date, now);
-    const records = h.records.filter(r => !queue || r.queue === queue);
-
-    // Spans for analysis: every state (breaks included) within operating hours.
-    const spans = [];
-    for (const a of day.analyzed.filter(scope)) for (const s of a.spans) {
-      const x = Math.max(s.start, w.start), y = Math.min(s.end, w.end);
-      if (y > x) spans.push({ employeeId: a.session.employee_id, extension: a.session.extension, state: s.state, start: x, end: y, sessionRunning: a.running });
+    let records = h.records.map(historyCall), report = h.report, queues = h.queues, missed = h.missed;
+    if (queueFilter) {
+      records = records.filter(c => c.queue === queueFilter);
+      if (report) report = { ...report, ...historyMetrics(operatingCalls(records)), totalRecords: records.length };
+      queues = queues.filter(q => q.queue === queueFilter);
+      missed = missed.filter(c => c.queue === queueFilter);
     }
-    const opSeconds = (list, state) => list.filter(s => s.state === state).reduce((n, s) => n + overlapSeconds(s.start, s.end, w.start, opEnd), 0);
-
-    const profiles = [...new Set(day.analyzed.filter(scope).map(a => a.session.employee_id))].map(id => {
-      const e = day.employees.get(id) || {}, mine = spans.filter(s => s.employeeId === id);
-      const t = totals.find(x => x.employeeId === id) || { completedBreakSeconds: 0, ongoingBreakSeconds: 0, totalBreakSeconds: 0 };
-      const myCalls = calls.filter(c => c.employeeId === id), done = myCalls.filter(c => c.eventType === 'agentunlinked');
-      const ready = opSeconds(mine, 'ready'), onCall = opSeconds(mine, 'on_call'), unknown = opSeconds(mine, 'unknown');
-      const sessions = att.sessions.filter(s => s.employeeId === id);
-      const observedTotal = mine.reduce((n, s) => n + overlapSeconds(s.start, s.end, w.start, opEnd), 0);
-      return {
-        id, name: e.name || '', employeeCode: e.employee_code || '',
-        sessionSeconds: sessions.reduce((n, s) => n + s.daySeconds, 0),
-        readySeconds: Math.round(ready), callSeconds: Math.round(onCall), unknownSeconds: Math.round(unknown),
-        breakSeconds: t.totalBreakSeconds, completedBreakSeconds: t.completedBreakSeconds, ongoingBreakSeconds: t.ongoingBreakSeconds,
-        breakRemainingSeconds: Math.max(0, RULES.breakBudgetSeconds - t.totalBreakSeconds), breakExcessSeconds: Math.max(0, t.totalBreakSeconds - RULES.breakBudgetSeconds),
-        calls: myCalls.length, averageCallSeconds: done.length ? done.reduce((n, c) => n + (c.durationSeconds || 0), 0) / done.length : null,
-        longCalls: done.filter(c => c.durationSeconds > RULES.callAlertSeconds).length,
-        callExcessSeconds: done.reduce((n, c) => n + Math.max(0, (c.durationSeconds || 0) - RULES.callAlertSeconds), 0),
-        occupancy: ready + onCall ? onCall / (ready + onCall) * 100 : null,
-        callsPerReadyHour: ready ? myCalls.length / (ready / 3600) : null,
-        observedPercent: observedTotal ? (observedTotal - unknown) / observedTotal * 100 : null,
-        smallSample: myCalls.length < 10 || ready + onCall < 3600,
-        transitions: day.analyzed.filter(a => a.session.employee_id === id && scope(a)).map(a => {
-          const readyAt = a.spans.find(s => ['ready', 'on_call'].includes(s.state))?.start ?? null;
-          return { sessionId: a.session.id, loginAt: iso(a.session.issued_at), boundAt: iso(a.session.bound_at), readyAt: iso(readyAt),
-            delaySeconds: readyAt ? Math.round((readyAt - a.session.issued_at) / 1000) : null, logoutAt: iso(a.session.revoked_at) };
-        }),
-      };
-    });
-
-    // Half-hour pressure buckets across operating hours.
-    const buckets = [];
-    for (let s = w.start; s < w.operatingEnd; s += BUCKET_MS) {
-      const e = s + BUCKET_MS, inBucket = records.filter(r => { const t = r.startMs ?? r.endMs; return t != null && t >= s && t < e; });
-      const sum = A.summarize(inBucket).report;
-      const readyMs = spans.filter(x => x.state === 'ready').reduce((n, x) => n + overlapSeconds(x.start, x.end, s, Math.min(e, now)) * 1000, 0);
-      const waits = inBucket.filter(r => A.classify(r).answered || A.classify(r).abandoned);
-      buckets.push({ start: iso(s), end: iso(e), future: s > now, received: h.report ? sum.calls : null, answered: h.report ? sum.answered : null,
-        abandoned: h.report ? sum.abandoned : null, asa: sum.asa, sla: sum.sla, answeredWithinThreshold: sum.answeredWithinThreshold,
-        averageReadyEmployees: s > now ? null : Math.round(readyMs / Math.max(1, Math.min(e, now) - s) * 100) / 100,
-        readyAgentMinutes: Math.round(readyMs / 60000),
-        totalWaitSeconds: waits.reduce((n, r) => n + (r.waitSeconds || 0), 0), unknownWaitCalls: waits.filter(r => r.waitSeconds == null).length });
-    }
-
-    // Periods where two or more people were on break at once.
-    const breakSpans = spans.filter(s => s.state === 'break');
-    const points = [...new Set(breakSpans.flatMap(s => [s.start, s.end]))].sort((a, b) => a - b), overlaps = [];
-    for (let i = 0; i < points.length - 1; i++) {
-      const a = points[i], b = points[i + 1], who = [...new Set(breakSpans.filter(s => s.start <= a && s.end >= b).map(s => s.employeeId))];
-      if (who.length < 2) continue;
-      const last = overlaps.at(-1);
-      if (last && last.end === a && last.ids === who.join(',')) { last.end = b; continue; }
-      overlaps.push({ start: a, end: b, ids: who.join(','), employeeIds: who });
-    }
-    const breakOverlaps = overlaps.map(o => ({ startedAt: iso(o.start), endedAt: iso(o.end), employeeIds: o.employeeIds, seconds: Math.round((o.end - o.start) / 1000),
-      readyEmployeeIds: [...new Set(spans.filter(s => s.state === 'ready' && s.start <= o.start && s.end >= o.end).map(s => s.employeeId))] }));
-
-    const samples = db.prepare('SELECT observed_at, waiting, active, longest_wait FROM live_snapshots WHERE observed_at >= ? AND observed_at < ? AND (changed = 1 OR id % 6 = 0) ORDER BY observed_at')
-      .all(w.start, w.end).map(s => ({ observedAt: iso(s.observed_at), waiting: s.waiting, active: s.active, longestWaitSeconds: s.longest_wait }));
-
-    const connections = [];
-    for (const a of day.analyzed.filter(scope)) {
-      const last = [...a.events].reverse().find(e => /sourceConnection/.test(e.payload || ''));
-      let source = null;
-      try { source = last ? JSON.parse(last.payload).sourceConnection : null; } catch {}
-      connections.push({ employeeId: a.session.employee_id, extension: a.session.extension, occurredAt: iso(a.lastEvidence), sourceConnection: source, version: a.session.client_version || null });
-    }
-
-    const handovers = [];
-    const byExt = new Map();
-    for (const a of day.analyzed.filter(x => x.session.extension && scope(x))) { if (!byExt.has(a.session.extension)) byExt.set(a.session.extension, []); byExt.get(a.session.extension).push(a.session); }
-    for (const [ext, list] of byExt) {
-      list.sort((x, y) => x.issued_at - y.issued_at);
-      for (let i = 1; i < list.length; i++) if (list[i].employee_id !== list[i - 1].employee_id) {
-        const prev = list[i - 1], next = list[i];
-        handovers.push({ extension: ext, previousEmployeeId: prev.employee_id, previousLogoutAt: iso(prev.revoked_at), nextEmployeeId: next.employee_id,
-          nextLoginAt: iso(next.issued_at), gapSeconds: prev.revoked_at ? Math.round((next.issued_at - prev.revoked_at) / 1000) : null });
-      }
-    }
-
-    const customers = new Map();
-    for (const r of records) {
-      const key = String(r.phone || '').replace(/\D/g, '');
-      if (!key) continue;
-      const c = customers.get(key) || { phone: r.phone, calls: 0, answered: 0, abandoned: 0, employeeIds: new Set(), first: Infinity, last: -Infinity };
-      const k = A.classify(r), t = r.startMs ?? r.endMs ?? 0;
-      c.calls++; if (k.answered) c.answered++; if (k.abandoned) c.abandoned++;
-      c.first = Math.min(c.first, t); c.last = Math.max(c.last, t);
-      customers.set(key, c);
-    }
-    for (const c of calls) { const key = String(c.phone || '').replace(/\D/g, ''); const x = [...customers.keys()].find(k => key && (k.endsWith(key.slice(-9)) || key.endsWith(k.slice(-9)))); if (x) customers.get(x).employeeIds.add(c.employeeId); }
-
-    const unknownSeconds = Math.round(spans.filter(s => s.state === 'unknown').reduce((n, s) => n + overlapSeconds(s.start, s.end, w.start, opEnd), 0));
-    const waitRecords = records.filter(r => !A.classify(r).outside);
-    return {
-      date, profileExtension: extension || '', queueFilter: queue || '', generatedAt: iso(now),
-      operatingWindow: { start: iso(w.start), end: iso(w.operatingEnd) },
-      historyReport: h.report ? { importedAt: h.report.importedAt, ...A.summarize(records).report } : null,
-      profiles, calls, buckets, breakOverlaps, queueSamples: samples, connections, handovers,
-      states: att.states,
-      sessions: att.sessions,
-      timeline: day.analyzed.filter(scope).flatMap(a => a.events.filter(e => e.event_type === 'session_login' && e.occurred_at >= w.start && e.occurred_at < w.end)
-        .map(e => ({ employeeId: e.employee_id, extension: e.extension, eventType: e.event_type, occurredAt: iso(e.occurred_at) }))),
-      historyRecords: records.map(r => ({ date: r.date, start: r.start, end: r.end, phone: r.phone, queue: r.queue, status: r.status, waitSeconds: r.waitSeconds, outsideHours: A.classify(r).outside })),
-      attribution: attribution ? { summary: attribution.summary, rows: attribution.rows } : null,
-      coverage: { hasHistory: !!h.report, historyVerified: !!h.report?.verifiedTotal, unknownSeconds, missingDates: h.report?.missingCalendarDates || [] },
-      wait: { totalSeconds: waitRecords.reduce((n, r) => n + (r.waitSeconds || 0), 0), unknownCalls: waitRecords.filter(r => r.waitSeconds == null).length },
-      customers: [...customers.values()].sort((a, b) => b.calls - a.calls).map(c => ({ phone: c.phone, calls: c.calls, answered: c.answered, abandoned: c.abandoned,
-        employeeIds: [...c.employeeIds], firstAt: iso(c.first), lastAt: iso(c.last) })),
-      reviews: db.prepare('SELECT * FROM reviews WHERE date = ? ORDER BY updated_at DESC').all(date).map(r => ({ id: r.id, reference: r.reference, title: r.title,
-        employeeId: r.employee_id, owner: r.owner, status: r.status, note: r.note, updatedAt: iso(r.updated_at) })),
-      reports: db.prepare('SELECT id, created_at, filters FROM saved_reports WHERE date = ? ORDER BY created_at DESC').all(date).map(r => ({ id: r.id, createdAt: iso(r.created_at), filters: r.filters })),
-      audit: db.prepare('SELECT * FROM audit WHERE occurred_at >= ? AND occurred_at < ? ORDER BY occurred_at DESC LIMIT 500').all(w.start, w.end)
-        .map(a => ({ occurredAt: iso(a.occurred_at), action: a.action, employeeId: a.employee_id, details: a.details })),
-      rules: { slaSeconds: RULES.slaSeconds, shortAbandonSeconds: RULES.shortAbandonSeconds, callAlertSeconds: RULES.callAlertSeconds,
-        breakPeriodSeconds: RULES.breakPeriodSeconds, breakBudgetSeconds: RULES.breakBudgetSeconds, businessStart: '09:00', operatingEnd: '03:00', businessEnd: '09:00' },
-    };
+    return { records, report, queues, missed };
   }
 
-  // Same day-so-far comparison with the previous day.
-  function comparison(date, queue, now) {
-    const prev = addDays(date, -1), cut = now - dayWindow(businessDay(now)).start;
-    const pick = d => {
-      const h = app.dayHistory(d, now), w = dayWindow(d), limit = w.start + Math.max(0, Math.min(cut, w.end - w.start));
-      if (!h.report) return null;
-      return A.summarize(h.records.filter(r => (!queue || r.queue === queue) && (r.startMs ?? r.endMs ?? 0) < limit)).report;
-    };
-    const current = pick(date), previous = pick(prev);
-    return { date: prev, available: !!(current && previous), current, previous, missingDates: [current ? null : date, previous ? null : prev].filter(Boolean) };
+  function data(date, profileExtension, queueFilter, now) {
+    const d = app.oldDashboard(date, { attendance: true, all: true }, now), h = history(date, now, queueFilter), w = dayWindow(date);
+    const staff = db.prepare('SELECT id, name, employee_code FROM employees').all().map(e => ({ id: e.id, name: e.name, employeeCode: e.employee_code }));
+    for (const p of d.performance || []) if (!staff.some(s => s.id === p.employeeId)) staff.push({ id: p.employeeId, name: p.employee, employeeCode: 'حساب سابق' });
+    const insights = operationsInsights({ date, now, staff, sessions: d.attendance?.sessions || [], states: d.attendance?.states || [], calls: d.calls || [], events: d.timeline || [],
+      history: h.records, hasHistory: !!h.report, historyVerified: !!h.report?.verifiedTotal, missingDates: h.report?.missingCalendarDates || [],
+      breakTotals: profileExtension ? undefined : d.breakTotals }, profileExtension);
+    const c = connections(w), rv = reviews(date), au = audit(w), rp = reports(date), qs = queueSamples(w);
+    return { date, profileExtension, queueFilter, generatedAt: iso(now), ...insights, historyReport: h.report, historyRecords: h.records, queues: h.queues, missed: h.missed,
+      attribution: d.historyAttribution, calls: d.calls || [], timeline: d.timeline || [], sessions: d.attendance?.sessions || [], states: d.attendance?.states || [],
+      connections: c.rows, queueSamples: qs.slice(0, 3000), reviews: rv.slice(0, 500), audit: au.slice(0, 500), reports: rp.slice(0, 50),
+      truncated: { reviews: rv.length > 500, audit: au.length > 500, reports: rp.length > 50, connections: c.truncated, queueSamples: qs.length > 3000 }, identityNote: IDENTITY_NOTE };
   }
+
+  // Same-time-of-day comparison with the previous day (old route).
+  function comparison(date, queue, result, now) {
+    const previous = addDays(date, -1), h = history(previous, now, ''), w = dayWindow(date), prev = dayWindow(previous);
+    let cutoff = prev.operatingEnd, currentCutoff = w.operatingEnd;
+    if (now >= w.start && now < w.operatingEnd) {
+      const p = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(now)), v = k => p.find(x => x.type === k).value;
+      cutoff = cairoClockWindow(Number(v('hour')) < 9 ? date : previous, v('hour') + ':' + v('minute') + ':' + v('second')).start; currentCutoff = now;
+    }
+    const before = (rows, end) => operatingCalls(rows).filter(c => { const t = cairoClockWindow(c.date, c.start); return (!queue || c.queue === queue) && t && t.start < end; });
+    return { date: previous, cutoff: iso(cutoff), available: !!h.report && !!result.historyReport, previous: h.report ? historyMetrics(before(h.records, cutoff)) : null,
+      current: result.historyReport ? historyMetrics(before(result.historyRecords, currentCutoff)) : null, missingDates: h.report?.missingCalendarDates || [] };
+  }
+
+  app.operationsData = data;
 
   app.route('GET', '/api/operations', ctx => {
     app.requireAdmin(ctx);
-    const q = ctx.query, today = businessDay(ctx.now), date = q.date || today;
-    if (!validDate(date) || date > today) fail(400, 'تاريخ غير صحيح');
-    if (q.saved) {
-      const r = db.prepare('SELECT * FROM saved_reports WHERE id = ?').get(String(q.saved));
-      if (!r) fail(404, 'التقرير غير موجود');
-      return { createdAt: iso(r.created_at), businessDate: r.date, payload: r.payload };
+    const q = ctx.query, date = q.date || businessDay(ctx.now);
+    if (!validDate(date) || date > businessDay(ctx.now)) fail(400, 'invalid_date');
+    if (q.saved !== undefined) {
+      const r = db.prepare('SELECT * FROM saved_reports WHERE id = ? AND date = ?').get(String(q.saved), date);
+      if (!r) fail(404, 'report_not_found');
+      return { id: r.id, businessDate: r.date, createdAt: iso(r.created_at), filters: r.filters, payload: r.payload };
     }
-    const out = compute(date, q.extension || '', q.queue || '', ctx.now);
-    if (q.compare === '1') out.comparison = comparison(date, q.queue || '', ctx.now);
-    return out;
+    const extension = q.extension || '', queue = q.queue || '', section = q.section || '';
+    if (extension && !/^\d{1,10}$/.test(extension)) fail(400, 'invalid_extension');
+    if (queue && !/^\d{1,10}$/.test(queue)) fail(400, 'invalid_queue');
+    if (['followup', 'reports', 'audit', 'health'].includes(section)) {
+      const w = dayWindow(date), rv = section === 'followup' ? reviews(date) : [], rp = section === 'reports' ? reports(date) : [], au = section === 'audit' ? audit(w) : [];
+      const c = section === 'health' ? connections(w) : { rows: [], truncated: false };
+      return { section, date, profileExtension: extension, queueFilter: queue, generatedAt: iso(ctx.now), profiles: [], calls: [], sessions: [], states: [], historyRecords: [], handovers: [],
+        customers: [], breakOverlaps: [], queueSamples: [], coverage: { unknownSeconds: null, missingDates: [] }, reviews: rv.slice(0, 500), reports: rp.slice(0, 50), audit: au.slice(0, 500),
+        connections: c.rows, truncated: { reviews: rv.length > 500, reports: rp.length > 50, audit: au.length > 500, connections: c.truncated } };
+    }
+    const result = { ...data(date, extension, queue, ctx.now), section };
+    if (q.compare === '1') result.comparison = comparison(date, queue, result, ctx.now);
+    return result;
   });
 
   app.route('POST', '/api/operations', ctx => {
     const who = app.requireAdmin(ctx, 'write');
     const b = ctx.body;
-    if (!validDate(b.date)) fail(400, 'تاريخ غير صحيح');
+    if (!validDate(b.date) || b.date > businessDay(ctx.now)) fail(400, 'invalid_date');
     if (b.action === 'review') {
-      const title = String(b.title || '').trim();
-      if (!title || title.length > 200 || !STATUSES.includes(b.status)) fail(400, 'اكتب الموضوع واختار الحالة');
-      const reference = String(b.reference || '').slice(0, 200);
-      const existing = db.prepare('SELECT * FROM reviews WHERE date = ? AND reference = ?').get(b.date, reference);
-      if (existing && b.expectedUpdatedAt && iso(existing.updated_at) !== b.expectedUpdatedAt) fail(409, 'review_changed_reload');
-      const id = existing?.id || crypto.randomUUID();
+      if (typeof b.reference !== 'string' || !b.reference || b.reference.length > 180 || typeof b.title !== 'string' || !b.title || b.title.length > 200 || !STATUSES.includes(b.status)
+        || typeof b.note !== 'string' || b.note.length > 2000 || typeof b.owner !== 'string' || b.owner.length > 100 || (b.employeeId != null && !Number.isSafeInteger(b.employeeId))) fail(400, 'invalid_fields');
+      const existing = db.prepare('SELECT * FROM reviews WHERE date = ? AND reference = ?').get(b.date, b.reference);
+      if (existing && b.expectedUpdatedAt !== iso(existing.updated_at)) fail(409, 'review_changed_reload');
+      const id = existing?.id || crypto.randomUUID(), changedAt = Math.max(ctx.now, existing ? existing.updated_at + 1 : 0);
       db.prepare(`INSERT INTO reviews (id, date, reference, employee_id, title, owner, status, note, updated_at, updated_by) VALUES (?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(date, reference) DO UPDATE SET title = excluded.title, owner = excluded.owner, status = excluded.status, note = excluded.note,
         employee_id = excluded.employee_id, updated_at = excluded.updated_at, updated_by = excluded.updated_by`)
-        .run(id, b.date, reference, b.employeeId ? Number(b.employeeId) : null, title, String(b.owner || '').slice(0, 100), b.status, String(b.note || '').slice(0, 2000), ctx.now, who.name);
-      app.audit('review_updated', b.employeeId || null, { actor: who.name, status: b.status, owner: b.owner, note: String(b.note || '').slice(0, 200) });
+        .run(id, b.date, b.reference, b.employeeId ?? null, b.title, b.owner, b.status, b.note, changedAt, who.name);
+      app.audit('review_updated', b.employeeId ?? null, { actor: who.name, date: b.date, status: b.status, owner: b.owner, note: b.note, title: b.title, reference: b.reference });
       return { ok: true, id };
     }
     if (b.action === 'snapshot') {
-      const data = compute(b.date, b.extension || '', b.queue || '', ctx.now);
-      const profiles = data.profiles.filter(p => !b.employeeId || p.id === Number(b.employeeId));
-      const id = crypto.randomUUID();
-      db.prepare('INSERT INTO saved_reports (id, date, created_at, filters, payload) VALUES (?,?,?,?,?)').run(id, b.date, ctx.now,
-        JSON.stringify({ employeeId: b.employeeId || null, extension: b.extension || '', queue: b.queue || '', phoneMasked: !!b.phoneMasked }),
-        JSON.stringify({ profiles, coverage: data.coverage, historyReport: data.historyReport }));
-      app.audit('report_saved', b.employeeId || null, { actor: who.name });
+      if (b.employeeId != null && (!Number.isSafeInteger(b.employeeId) || b.employeeId < 1) || b.extension != null && (typeof b.extension !== 'string' || b.extension && !/^\d{1,10}$/.test(b.extension))) fail(400, 'invalid_fields');
+      const queue = typeof b.queue === 'string' ? b.queue : '';
+      if (queue && !/^\d{1,10}$/.test(queue)) fail(400, 'invalid_queue');
+      const result = data(b.date, b.extension || '', queue, ctx.now), id = crypto.randomUUID();
+      const filters = { employeeId: b.employeeId ?? null, extension: b.extension || '', queue, source: 'operations', phoneMasked: !!b.phoneMasked, generalMetricsScope: queue ? 'request_type' : 'whole_service' };
+      const payload = JSON.stringify({ date: result.date, generatedAt: result.generatedAt, historyReport: result.historyReport, coverage: result.coverage, rules: result.rules,
+        profiles: result.profiles.filter(p => !b.employeeId || p.id === b.employeeId), buckets: result.buckets, wait: result.wait, attribution: result.attribution?.summary, reviews: result.reviews });
+      if (payload.length > 400000) fail(422, 'report_too_large');
+      db.prepare('INSERT INTO saved_reports (id, date, created_at, filters, payload) VALUES (?,?,?,?,?)').run(id, b.date, ctx.now, JSON.stringify(filters), payload);
+      app.audit('report_saved', null, { actor: who.name, ...filters, reference: id });
       return { ok: true, id };
     }
     fail(400, 'invalid_action');
