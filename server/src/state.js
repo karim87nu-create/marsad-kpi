@@ -3,7 +3,8 @@
 // Pure functions: everything is derived from what the extension actually reported.
 const { RULES, iso } = require('./time');
 
-const EXPLICIT_LOGOUT = new Set(['manual', 'arabicss_logout', 'arabicss_login_page']);
+// Same exits as the old lib/shift-responsibility.ts (plus this server's 'manual').
+const EXPLICIT_LOGOUT = new Set(['manual', 'explicit_logout', 'arabicss_logout', 'arabicss_login_page', 'extension_changed', 'session_logout']);
 const STALE = RULES.presenceStaleMs;
 const parse = s => { try { return s ? JSON.parse(s) : {}; } catch { return {}; } };
 

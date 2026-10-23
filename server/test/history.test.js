@@ -97,7 +97,7 @@ test('missed call context: who was available, to the second', async () => {
     assert.equal(mo.state, 'on_call');
     assert.equal(mo.queueEntryState, 'on_call');
     assert.equal(mo.elapsedSeconds, 22);                    // on call since 14:00:20
-    assert.equal(ah.ringResult, 'unknown');
+    assert.equal(ah.ringResult, 'not_recorded');
     const all = (await admin('GET', '/api/history?date=2026-10-22&reportId=' + h.report.id + '&contexts=1')).body;
     assert.equal(all.contexts.length, 1);
   } finally { await t.close(); }
@@ -113,8 +113,8 @@ test('answered history calls are attributed to the employee on that extension', 
     await t.tick(s.token, 10 * 60000, 'ready');
     const { post } = await collector(t, admin);
     await post({ rows: [HEADER,
-      ['2001', 'SIP/101', '2026-10-22', '15:02:00', '15:04:00', '00:02:00', '00:00:03', '0122', 'Success', 'T'],
-      ['2001', 'SIP/150', '2026-10-22', '15:03:00', '15:04:00', '00:01:00', '00:00:03', '0133', 'Success', 'T']], expectedCount: 2, reportDate: '2026-10-22' });
+      ['2001', '101', '2026-10-22', '15:02:00', '15:04:00', '00:02:00', '00:00:03', '0122', 'Success', 'T'],
+      ['2001', '150', '2026-10-22', '15:03:00', '15:04:00', '00:01:00', '00:00:03', '0133', 'Success', 'T']], expectedCount: 2, reportDate: '2026-10-22' });
     const d = (await admin('GET', '/api/dashboard?date=2026-10-22')).body;
     assert.equal(d.historyAttribution.summary.recovered, 1);
     assert.equal(d.historyAttribution.summary.unattributedAnswered, 1);

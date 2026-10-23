@@ -52,7 +52,7 @@ function oldDay(date) {
   const { open } = require('../src/db');
   const db = open(newPath);
   const app = createApp({ db, config: { secret: 'cmp', adminPasswordHash: hashPassword('cmp-pass'), deviceTokens: [], allowedOrigins: [] } });
-  for (const m of ['admin', 'employees', 'sessions', 'dashboard', 'breaks', 'messages', 'shifts', 'history', 'operations', 'telegram']) require('../src/' + m).setup(app);
+  for (const m of ['admin', 'employees', 'sessions', 'dashboard', 'breaks', 'messages', 'shifts', 'history', 'missed', 'legacy-dashboard', 'operations', 'telegram']) require('../src/' + m).setup(app);
   const server = http.createServer((q, r) => app.handle(q, r));
   server.keepAliveTimeout = 600000;
   await new Promise(r => server.listen(0, r));

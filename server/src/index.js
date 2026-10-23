@@ -6,7 +6,7 @@ const { open } = require('./db');
 const { createApp } = require('./app');
 const { hashPassword, randomToken } = require('./security');
 
-const MODULES = ['./admin', './employees', './sessions', './dashboard', './breaks', './messages', './shifts', './history', './operations', './telegram'];
+const MODULES = ['./admin', './employees', './sessions', './dashboard', './breaks', './messages', './shifts', './history', './missed', './legacy-dashboard', './operations', './telegram'];
 
 function buildApp(config, { now } = {}) {
   const db = open(config.databasePath);

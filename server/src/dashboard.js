@@ -260,15 +260,15 @@ function setup(app) {
     const totals = breakTotals(day, scope);
     out.breakTotals = totals;
     if (live && !wantAttendance) return { ...out, liveOnly: true };
-    let calls = callRows(day, scope);
-    const attribution = app.historyAttribution ? app.historyAttribution(day, scope) : null;
-    if (attribution) calls = [...calls, ...attribution.recoveredCalls].sort((x, y) => Date.parse(y.startedAt) - Date.parse(x.startedAt));
+    // Calls, attribution, performance and break totals: the old dashboard's own pipeline.
+    const old = app.oldDay(date, { employee: q.employee || '', extension: q.extension || '' }, ctx.now);
+    const calls = old.calls;
     const t = timeline(day, scope);
     Object.assign(out, {
-      performance: performance(day, scope, calls, totals),
+      performance: old.performance, breakTotals: old.breakTotals,
       calls: q.all === '1' ? calls : calls.slice(0, DETAILS_LIMIT), detailsTruncated: q.all !== '1' && calls.length > DETAILS_LIMIT,
       timeline: t.rows, durations: t.durations, shifts: shifts(day, scope),
-      historyAttribution: attribution ? { summary: attribution.summary, rows: attribution.rows } : null,
+      historyAttribution: old.historyAttribution,
     });
     if (wantAttendance || !live) {
       const at = attendance(day, scope);

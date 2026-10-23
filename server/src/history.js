@@ -85,99 +85,6 @@ function setup(app) {
   }
   app.dayHistory = dayHistory;
 
-  // ---------- employee states during a missed call ----------
-  function stateAt(a, t) {
-    const span = a.spans.find(s => s.start <= t && t < s.end);
-    if (span) return { state: span.state === 'post_call' ? 'post_call' : span.state, since: span.start };
-    if (a.session.revoked_at != null && t >= a.session.revoked_at) return { state: a.closure?.excluded ? 'shift_ended' : 'offline', since: a.session.revoked_at };
-    return null;
-  }
-
-  function missedContext(day, rec) {
-    const end = rec.endMs ?? rec.startMs, precision = rec.precision;
-    const slack = precision === 'minute' ? 60000 : 1000;
-    const entry = rec.waitSeconds != null && end != null ? end - rec.waitSeconds * 1000 : rec.startMs;
-    const out = [];
-    for (const [employeeId, list] of groupBy(day.analyzed, a => a.session.employee_id)) {
-      const relevant = list.filter(a => a.session.issued_at <= end + slack);
-      if (!relevant.length || end == null) continue;
-      const a = relevant.sort((x, y) => y.session.issued_at - x.session.issued_at)[0];
-      const atEnd = stateAt(a, end), atEntry = entry != null ? stateAt(a, entry) : null;
-      const readySpan = entry != null && a.spans.find(s => s.state === 'ready' && s.start > entry && s.start <= end);
-      const changed = precision === 'minute' && a.spans.some(s => s.start > end && s.start < end + slack);
-      const e = a.employee || {};
-      out.push({
-        employeeId, name: e.name || '—', code: e.employee_code || '', extension: a.session.extension,
-        queueEntryState: atEntry ? atEntry.state : 'unknown', state: changed ? 'uncertain' : atEnd ? atEnd.state : 'unknown',
-        becameReadyDuringWait: !!readySpan, readyDuringWaitAt: readySpan ? iso(readySpan.start) : null,
-        ringResult: ringProved(a, entry, end) ? 'proved' : 'unknown',
-        stateStartedAt: atEnd ? iso(atEnd.since) : null, elapsedSeconds: atEnd ? Math.round((end - atEnd.since) / 1000) : null,
-        elapsedMaxSeconds: atEnd && precision === 'minute' ? Math.round((end + slack - atEnd.since) / 1000) : null,
-        durationBasis: atEnd ? (atEnd.since > a.session.issued_at ? 'recorded_start' : 'observed_since') : null,
-        reason: a.closure ? a.closure.reason : atEnd ? 'recent_identity_event' : 'no_identity_events',
-        evidenceAt: iso(Math.min(a.lastEvidence, end)),
-      });
-    }
-    return {
-      employees: out,
-      timeWindow: { start: rec.start, end: rec.end || rec.start, precision },
-      queueEntryWindow: entry != null ? { start: new Date(entry).toLocaleTimeString('en-GB', { timeZone: 'Africa/Cairo' }), end: rec.end } : null,
-      timeReference: 'Arabicss server clock (call) / Marsad clock (employee states)',
-    };
-  }
-
-  // Ringing on this extension is only proven by an explicit source event for the call window.
-  function ringProved(a, entry, end) {
-    if (entry == null) return false;
-    return a.events.some(e => e.event_type === 'heartbeat' && e.occurred_at >= entry - 2000 && e.occurred_at <= end + 2000 && /ringProof":"ring/.test(e.payload || ''));
-  }
-
-  const groupBy = (list, key) => { const m = new Map(); for (const x of list) { const k = key(x); if (!m.has(k)) m.set(k, []); m.get(k).push(x); } return m; };
-
-  // ---------- attribution of answered history calls to employees ----------
-  app.historyAttribution = function attribution(day, scope) {
-    const h = dayHistory(day.date, day.now);
-    if (!h.report) return null;
-    const rows = [], recovered = [];
-    let recoveredCount = 0, observed = 0, unattributed = 0;
-    for (const r of h.records) {
-      const c = A.classify(r);
-      const base = { date: r.date, start: r.start, end: r.end, phone: r.phone, accountId: r.accountName, extension: r.extension };
-      if (!c.answered) { rows.push({ ...base, employeeId: null, employeeName: null, reason: 'not_answered', included: false }); continue; }
-      const t = r.startMs ?? r.endMs;
-      let reason = null, match = null;
-      if (!r.extension) reason = 'unverified_extension';
-      else if (t == null) reason = 'uncertain_time';
-      else {
-        const slack = r.precision === 'minute' ? 60000 : 2000;
-        const candidates = day.analyzed.filter(a => a.session.extension === r.extension && a.session.issued_at <= t + slack && (a.session.revoked_at ?? a.end) >= t - slack);
-        const people = new Set(candidates.map(a => a.session.employee_id));
-        if (!candidates.length) reason = 'no_session_at_call';
-        else if (people.size > 1) reason = 'ambiguous_session';
-        else {
-          match = candidates[0];
-          const seen = candidates.some(a => a.calls.some(x => Math.abs((x.startedAt ?? x.observedAt) - t) <= 120000 + slack && (!r.phone || !x.phone || String(x.phone).endsWith(String(r.phone).slice(-7)))));
-          reason = seen ? 'already_observed' : r.durationSeconds == null ? 'missing_duration' : 'session_at_call';
-        }
-      }
-      const include = reason === 'session_at_call';
-      if (reason === 'already_observed') observed++;
-      else if (include) recoveredCount++;
-      else unattributed++;
-      rows.push({ ...base, employeeId: match ? match.session.employee_id : null, employeeName: match ? match.employee?.name || null : null, reason, included: include });
-      if (include && scope(match)) recovered.push({
-        id: 'h:' + r.reportId + ':' + r.index, employeeId: match.session.employee_id, agentName: match.employee?.name || '', extension: r.extension,
-        callType: 'incoming', phone: r.phone, queue: r.queue, callId: '', eventType: 'agentunlinked', startedAt: iso(t), occurredAt: iso(r.endMs ?? t),
-        durationSeconds: r.durationSeconds, outsideHours: c.outside, attributionSource: 'history_session', startKnown: true,
-      });
-    }
-    return {
-      summary: { recovered: recoveredCount, alreadyObserved: observed, unattributedAnswered: unattributed },
-      rows: rows.filter(x => !x.employeeId || scope({ session: { employee_id: x.employeeId, extension: x.extension } })),
-      recoveredCalls: recovered,
-    };
-  };
-
   // ---------- live snapshots ----------
   const latestLive = () => db.prepare('SELECT * FROM live_snapshots ORDER BY observed_at DESC, id DESC LIMIT 1').get();
   app.latestLive = latestLive;
@@ -280,13 +187,12 @@ function setup(app) {
     if (q.reportId && h.report && q.reportId !== h.report.id) fail(409, 'وصل سجل أحدث؛ أعد فتح التفاصيل');
     if (q.missedIndex !== undefined) {
       const rec = h.records[Number(q.missedIndex)];
-      if (!rec) fail(404, 'المكالمة غير موجودة في السجل');
-      const day = app.dayData(date, ctx.now);
-      return { call: { date: rec.date, start: rec.start, end: rec.end, phone: rec.phone, queue: rec.queue }, context: missedContext(day, rec) };
+      if (!rec || String(rec.status).toLowerCase() !== 'abandoned') fail(400, 'invalid_missed_call');
+      return app.missedResolver(date, h.records)(rec);
     }
     if (q.contexts === '1') {
-      const day = app.dayData(date, ctx.now);
-      return { contexts: h.missed.map(m => { const rec = h.records[m.index]; return { index: m.index, call: { date: rec.date, start: rec.start, end: rec.end, phone: rec.phone, queue: rec.queue }, context: missedContext(day, rec) }; }) };
+      const resolve = app.missedResolver(date, h.records);
+      return { contexts: h.missed.map(m => ({ index: m.index, ...resolve(h.records[m.index]) })) };
     }
     if (q.all === '1') out.records = h.records.map(r => ({ queue: r.queue, accountName: r.accountName, date: r.date, start: r.start, end: r.end,
       durationSeconds: r.durationSeconds, waitSeconds: r.waitSeconds, phone: r.phone, status: r.status, outsideHours: A.classify(r).outside }));

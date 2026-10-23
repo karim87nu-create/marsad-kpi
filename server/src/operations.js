@@ -16,9 +16,8 @@ function setup(app) {
     const opEnd = Math.min(w.operatingEnd, now);
     const scope = app.scopeFilter(null, extension);
     const att = app.attendance(day, scope);
-    const totals = app.breakTotals(day, scope);
-    const attribution = app.historyAttribution(day, scope);
-    const calls = [...app.callRows(day, scope), ...(attribution?.recoveredCalls || [])];
+    const old = app.oldDay(date, { extension }, now);
+    const totals = old.breakTotals, attribution = old.historyAttribution, calls = old.calls;
     const h = app.dayHistory(date, now);
     const records = h.records.filter(r => !queue || r.queue === queue);
 

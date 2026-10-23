@@ -63,7 +63,7 @@ function importOldDatabase(target, oldPath, { log = () => {}, now = Date.now() }
         if (!s) { report.skippedEvents++; continue; }
         const at = ms(e.occurred_at);
         const state = p.state == null ? null : String(p.state).slice(0, 40);
-        const r = addEvent.run(s.id, s.employeeId, e.extension === 'unbound' ? s.extension : e.extension, e.event_type, String(e.event_key).slice(0, 300), at, at,
+        const r = addEvent.run(s.id, s.employeeId, e.extension, e.event_type, String(e.event_key).slice(0, 300), at, at,
           e.duration_seconds ?? null, state, e.call_id, e.phone, p.queue != null ? String(p.queue).slice(0, 20) : null, e.call_type, String(p.clientVersion || '').slice(0, 20), e.payload);
         if (r.changes) report.events++;
         if ((['ready', 'on_call'].includes(state) || ['agentlinked', 'call_observed'].includes(e.event_type)) && !firstWork.has(s.id)) firstWork.set(s.id, at);
