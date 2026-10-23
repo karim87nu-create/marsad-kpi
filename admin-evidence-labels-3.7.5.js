@@ -9,7 +9,7 @@ function patchMissed(){
  const rows=$('contextRows');if(rows)for(const td of rows.querySelectorAll('td'))if(READY_OLD.has(td.textContent.trim()))td.textContent='متاح حسب آخر رصد — لم يثبت الرنين';
 }
 function patchLabels(root=document){
- for(const el of root.querySelectorAll?.('td,span,p,div')||[]){const t=el.textContent.trim();if(t==='بريك لم تصل بدايته أو نهايته'&&el.children.length===0)el.textContent='بريك مرصود جزئيًا — البداية أو النهاية غير مؤكدة';if(t==='observed_owner'&&el.children.length===0)el.textContent='التحويلة كانت مرتبطة بالموظف وقت المكالمة';}
+ for(const el of root.querySelectorAll?.('td,span,p,div')||[]){if(el.children.length)continue;const t=el.textContent.trim();if(t==='بريك لم تصل بدايته أو نهايته'&&el.children.length===0)el.textContent='بريك مرصود جزئيًا — البداية أو النهاية غير مؤكدة';if(t==='observed_owner'&&el.children.length===0)el.textContent='التحويلة كانت مرتبطة بالموظف وقت المكالمة';}
  patchMissed();
 }
 const observer=new MutationObserver(m=>{for(const x of m)for(const n of x.addedNodes)if(n.nodeType===1)patchLabels(n)});

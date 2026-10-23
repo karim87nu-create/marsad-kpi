@@ -1,0 +1,112 @@
+name: Sign and publish Firefox connector (clock check) 2.5.33
+
+on:
+  push:
+    paths:
+      - 'extension-2.5.33/**'
+      - '.github/workflows/sign-extension-2.5.33.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-sign:
+    runs-on: ubuntu-latest
+    env:
+      AMO_KEY: ${{ secrets.AMO_JWT_ISSUER || secrets.WEB_EXT_API_KEY || secrets.AMO_API_KEY || secrets.MOZILLA_API_KEY }}
+      AMO_SECRET: ${{ secrets.AMO_JWT_SECRET || secrets.WEB_EXT_API_SECRET || secrets.AMO_API_SECRET || secrets.MOZILLA_API_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate 2.5.33 source
+        run: |
+          node --check extension-2.5.33/content.js
+          node --check extension-2.5.33/page-hook.js
+          node --check extension-2.5.33/break-requests.js
+          node --check extension-2.5.33/background.js
+          grep -q 'setInterval(collectLive,5000)' extension-2.5.33/background.js
+          node --check extension-2.5.33/collector.js
+          python -m json.tool extension-2.5.33/manifest.json >/dev/null
+          test "$(python -c "import json;print(json.load(open('extension-2.5.33/manifest.json'))['version'])")" = "2.5.33"
+          grep -q "VERSION='2.5.33'" extension-2.5.33/content.js
+      - name: Build unsigned audit package
+        run: |
+          rm -f arabicss-kpi-2.5.33-unsigned.xpi
+          cd extension-2.5.33
+          zip -qr ../arabicss-kpi-2.5.33-unsigned.xpi .
+          cd ..
+          unzip -t arabicss-kpi-2.5.33-unsigned.xpi >/dev/null
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arabicss-kpi-2.5.33-unsigned-audit
+          path: arabicss-kpi-2.5.33-unsigned.xpi
+          retention-days: 14
+      - name: Check signing credentials
+        id: creds
+        shell: bash
+        run: |
+          if [ -n "$AMO_KEY" ] && [ -n "$AMO_SECRET" ]; then
+            echo 'available=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'available=false' >> "$GITHUB_OUTPUT"
+            echo 'No AMO signing credentials are configured; the update feed will remain unchanged.'
+          fi
+      - name: Install Mozilla web-ext signer
+        if: steps.creds.outputs.available == 'true'
+        run: npm install --global web-ext
+      - name: Sign unlisted 2.5.33 package with Mozilla
+        if: steps.creds.outputs.available == 'true'
+        run: |
+          rm -rf signed-artifacts
+          mkdir signed-artifacts
+          web-ext sign --source-dir extension-2.5.33 --artifacts-dir signed-artifacts --api-key "$AMO_KEY" --api-secret "$AMO_SECRET" --channel unlisted
+          python - <<'PY'
+          from pathlib import Path
+          files=list(Path('signed-artifacts').glob('*.xpi'))
+          if len(files)!=1:
+              raise SystemExit(f'expected one signed xpi, found {len(files)}')
+          Path('signed-artifacts/selected.txt').write_text(str(files[0]))
+          PY
+          SIGNED=$(cat signed-artifacts/selected.txt)
+          unzip -l "$SIGNED" | grep -q 'META-INF/mozilla.rsa'
+      - uses: actions/upload-artifact@v4
+        if: steps.creds.outputs.available == 'true'
+        with:
+          name: arabicss-kpi-2.5.33-signed
+          path: signed-artifacts/*.xpi
+          retention-days: 30
+      - name: Publish signed package and update feed
+        if: steps.creds.outputs.available == 'true'
+        shell: bash
+        run: |
+          SIGNED=$(cat signed-artifacts/selected.txt)
+          cp "$SIGNED" releases/arabicss-kpi-2.5.33.xpi
+          SHA=$(sha256sum releases/arabicss-kpi-2.5.33.xpi | awk '{print $1}')
+          python - "$SHA" <<'PY'
+          import json,sys
+          from pathlib import Path
+          sha=sys.argv[1]
+          p=Path('firefox-updates.json')
+          data=json.loads(p.read_text())
+          addon=data['addons']['arabicss-kpi@eldahan.local']
+          updates=[u for u in addon.get('updates',[]) if u.get('version')!='2.5.33']
+          updates.insert(0,{
+              'version':'2.5.33',
+              'update_link':'https://karim87nu-create.github.io/marsad-kpi/releases/arabicss-kpi-2.5.33.xpi',
+              'update_hash':'sha256:'+sha,
+              'applications':{'gecko':{'strict_min_version':'142.0'}}
+          })
+          addon['updates']=updates
+          p.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
+          r=Path('firefox-release.json');rel=json.loads(r.read_text());rel['version']='2.5.33';rel['sha256']=sha;r.write_text(json.dumps(rel,ensure_ascii=False,indent=2)+'\n')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          cp releases/arabicss-kpi-2.5.33.xpi arabicss-kpi-latest.xpi
+          git add releases/arabicss-kpi-2.5.33.xpi arabicss-kpi-latest.xpi firefox-updates.json firefox-release.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Publish signed Firefox connector 2.5.33'
+          git pull --rebase origin main
+          git push

@@ -144,7 +144,7 @@
  const oldLive=renderLive;renderLive=function(...args){oldLive(...args);renderLiveExtras()};
  document.addEventListener('marsad-table-filter',()=>{if(valid())render()});
  const oldTab=showTab;showTab=function(id){oldTab(id);render();if(['live','intervention','analysis','profile','followup','health','guide','calls','attendance','shifts','metrics','unattributed','customers','reports','audit','adminUsers','alertLog','queue'].includes(id))load()};
- window.addEventListener('kpi-admin-refresh',()=>{render();load()});
+ window.addEventListener('kpi-admin-refresh',()=>{if(selectedTab!=='live')render();load()});
  document.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
   if(b.dataset.opsProfile){$('employeeFilter').value=b.dataset.opsProfile;syncPicker('employeeFilter');showTab('profile');renderProfile();refresh(true)}
   if(b.dataset.opsIncident!==undefined){const item=currentIncidents[Number(b.dataset.opsIncident)];if(item)openReview(valid()?operations.reviews.find(r=>r.reference===item.reference)||item:item)}
