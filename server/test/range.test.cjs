@@ -10,3 +10,11 @@ const r=await admin('GET','/api/day?from=2026-10-22&to=2026-10-23');assert.equal
 assert.deepEqual((await admin('GET','/api/day?from=2026-10-22&to=2026-10-22')).body,a);
 for(const p of ['from=2026-10-23&to=2026-10-22','from=2026-01-01&to=2026-10-23','from=2026-10-22&to=2026-10-25'])assert.equal((await admin('GET','/api/day?'+p)).status,400);
 }finally{await t.close();}});
+test('period ratios use all source calls rather than daily percentage averages',async()=>{
+ const {setup}=await import('../src/range.js');const {toRecord,mapHeader}=await import('../src/arabicss.js');
+ const header=['Queue','Agent','Call Date','Start Time','End Time','Duration','Wait Time','Caller ID','Status','Trunk'],map=mapHeader(header);
+ const days=['2026-10-20','2026-10-21'];let app={now:()=>Date.now(),fail:(status,message)=>{throw Error(message)}};
+ const data=days.map((date,i)=>{const records=Array.from({length:i?3:1},(_,idx)=>toRecord(['2001','SIP/101',date,'10:00:00','10:02:00','00:02:00',i?'00:00:30':'00:00:04','0111','Success','T'],map,date,idx));return {date,raw:{records},employees:[],sessions:[],states:[],calls:[],slots:[],window:{start:date+'T06:00:00Z',end:date+'T23:59:59Z',operatingEnd:date+'T23:00:00Z'},history:{report:{importedAt:date+'T12:00:00Z',verifiedTotal:true,missingCalendarDates:[]},queues:[],missed:[],unattributed:[],attribution:{}}}});
+ app.day=async date=>data.find(d=>d.date===date);setup(app);const r=await app.range(...days);
+ assert.equal(r.history.report.calls,4);assert.equal(r.history.report.sla,25);assert.equal(r.history.report.asa,23.5);
+});
