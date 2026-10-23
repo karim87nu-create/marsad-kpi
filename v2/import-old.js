@@ -1,6 +1,6 @@
 // نقل بيانات النظام القديم من الصفحة نفسها: الملف بيتفك ويتحوّل هنا في المتصفح، والصفوف بتتبعت للسيرفر على دفعات.
 // The old database is opened as an in-memory copy (sql.js); the file the person picked is never changed.
-import { convertOld, IMPORT_TABLES } from './lib/import-convert.js';
+import { convertOld, IMPORT_TABLES } from './lib/import-convert.js?v=2';
 import { SCHEMA_STATEMENTS } from './lib/db.js';
 
 const norm = p => p.map(v => (v === undefined ? null : typeof v === 'boolean' ? (v ? 1 : 0) : typeof v === 'bigint' ? Number(v) : v));
@@ -90,6 +90,8 @@ function convert(SQL, bytes, log = () => {}) {
   try { return { target, report: convertOld(t, old, { log }) }; } finally { old.free(); t.free(); oldDb.close(); }
 }
 
+const NATURAL = { events: ['session_id', 'event_key'], live_snapshots: ['capture_id'], shift_decisions: ['request_id'], audit: ['details'] };
+
 // Sends every converted row, a chunk at a time. post(body) → server answer; a failed chunk is retried.
 async function send(target, post, progress = () => {}, { bytes: chunkBytes = 1500000 } = {}) {
   const total = IMPORT_TABLES.reduce((n, t) => n + target.exec('SELECT COUNT(*) FROM ' + t)[0].values[0][0], 0);
@@ -100,11 +102,17 @@ async function send(target, post, progress = () => {}, { bytes: chunkBytes = 150
     }
   };
   for (const table of IMPORT_TABLES) {
-    const columns = target.exec('PRAGMA table_info(' + table + ')')[0].values.map(c => c[1]);
+    const info = target.exec('PRAGMA table_info(' + table + ')')[0].values;   // [cid, name, type, notnull, default, pk]
+    // Rows are matched to the copy sent last time by a key that stays the same between two copies of the old
+    // database: their own natural key where they have one (their ids here depend on what came before them), the old
+    // id inside details for the log (see import-rows.js), the primary key for the rest.
+    const natural = NATURAL[table];
+    const columns = info.map(c => c[1]).filter(c => !(natural && c === 'id'));
+    const key = natural || info.filter(c => c[5] > 0).sort((a, b) => a[5] - b[5]).map(c => c[1]);
     const chunkRows = Math.min(1000, 40 * Math.max(1, Math.floor(100 / columns.length)));   // the server's per-request limit (import-rows.js)
     const s = target.prepare('SELECT ' + columns.join(', ') + ' FROM ' + table + ' ORDER BY rowid');
     let rows = [], size = 0;
-    const flush = async () => { if (!rows.length) return; await retry({ action: 'rows', table, columns, rows }); done += rows.length; progress(done, total, table); rows = []; size = 0; };
+    const flush = async () => { if (!rows.length) return; await retry({ action: 'rows', table, columns, key, rows }); done += rows.length; progress(done, total, table); rows = []; size = 0; };
     try {
       while (s.step()) {
         const r = s.get().map(v => (v instanceof Uint8Array ? null : v));

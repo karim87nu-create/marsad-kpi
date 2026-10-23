@@ -35,7 +35,7 @@ function convertOld(target, old, { log = () => {}, now = Date.now() } = {}) {
   const sessionMap = new Map();
   target.transaction(() => {
     const add = target.prepare('INSERT INTO employee_sessions (employee_id, device, extension, issued_at, bound_at, work_started_at, last_seen, expires_at, revoked_at, revoke_reason, client_version) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
-    for (const s of old.prepare('SELECT * FROM employee_sessions ORDER BY issued_at').all()) {
+    for (const s of old.prepare('SELECT * FROM employee_sessions ORDER BY issued_at, id').all()) {
       const r = add.run(s.employee_id, 'legacy:' + s.id, s.extension || '', s.issued_at, s.extension ? s.issued_at : null, null, s.last_seen, s.expires_at, s.revoked_at, s.reason, null);
       sessionMap.set(s.id, { id: Number(r.lastInsertRowid), employeeId: s.employee_id, extension: s.extension || '' });
       report.sessions++;
@@ -102,12 +102,12 @@ function convertOld(target, old, { log = () => {}, now = Date.now() } = {}) {
   // ---- live queue captures and samples ----
   target.transaction(() => {
     const add = target.prepare('INSERT OR IGNORE INTO live_snapshots (capture_id, observed_at, received_at, changed, rows, waiting, active, longest_wait) VALUES (?,?,?,?,?,?,?,?)');
-    if (has(old, 'queue_captures')) for (const c of old.prepare('SELECT * FROM queue_captures WHERE observed_at IS NOT NULL').iterate()) {
+    if (has(old, 'queue_captures')) for (const c of old.prepare('SELECT * FROM queue_captures WHERE observed_at IS NOT NULL ORDER BY observed_at, id').iterate()) {
       const rows = json(c.records), list = Array.isArray(rows) ? rows : [];
       const s = liveSummary(list);
       report.liveSnapshots += add.run(c.id, ms(c.observed_at), ms(c.received_at), 1, JSON.stringify(list), s.waiting, s.active, s.longest).changes;
     }
-    if (has(old, 'queue_observations')) for (const o of old.prepare('SELECT * FROM queue_observations').iterate())
+    if (has(old, 'queue_observations')) for (const o of old.prepare('SELECT * FROM queue_observations ORDER BY observed_at').iterate())
       report.liveSnapshots += add.run('obs:' + o.observed_at, ms(o.observed_at), ms(o.observed_at), 1, '[]', o.waiting, o.active, o.longest_wait_seconds).changes;
   })();
 
@@ -132,7 +132,7 @@ function convertOld(target, old, { log = () => {}, now = Date.now() } = {}) {
     }
     if (has(old, 'admin_audit')) for (const a of old.prepare('SELECT * FROM admin_audit ORDER BY id').iterate()) {
       const d = json(a.details);
-      target.prepare('INSERT INTO audit (occurred_at, action, employee_id, details) VALUES (?,?,?,?)').run(ms(a.occurred_at), a.action, a.employee_id, JSON.stringify({ ...d, reference: a.reference || undefined }));
+      target.prepare('INSERT INTO audit (occurred_at, action, employee_id, details) VALUES (?,?,?,?)').run(ms(a.occurred_at), a.action, a.employee_id, JSON.stringify({ ...d, reference: a.reference || undefined, legacyId: a.id }));
       report.audit++;
     }
   })();

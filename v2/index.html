@@ -115,7 +115,7 @@
         <div id="adminsTable"></div>
       </article>
       <article class="panel" id="importPanel" hidden><h2>نقل بيانات النظام القديم</h2>
-        <p class="muted">مرة واحدة بس، على السيرفر الجديد وهو فاضي: ارفع ملف الـ zip اللي نزلته من شات «تصدير كود marsad-kpi-live» على ChatGPT (أو ملف database/marsad-kpi-live.sqlite اللي جواه). الملف بيتفك ويتحوّل هنا في المتصفح. الموظفين بباسورداتهم ومستخدمين الإدارة وكل الأيام هتتنقل. لازم تكون داخل بالباسورد الرئيسي.</p>
+        <p class="muted">ارفع ملف الـ zip اللي نزلته من شات «تصدير كود marsad-kpi-live» على ChatGPT (أو ملف database/marsad-kpi-live.sqlite اللي جواه)، والملف بيتفك ويتحوّل هنا في المتصفح. الموظفين بباسورداتهم ومستخدمين الإدارة وكل الأيام هتتنقل. تقدر تنقل دلوقتي، وقبل التحويل ترفع نسخة أحدث وهو يكمّل الناقص من غير تكرار. النقل بيتقفل أول ما أي موظف يسجّل دخول على السيستم الجديد. لازم تكون داخل بالباسورد الرئيسي.</p><p id="importLast" class="muted"></p>
         <div class="inline"><input type="file" id="importFile" accept=".zip,.sqlite,.db,.gz"><button type="button" id="importButton">رفع ونقل البيانات</button></div>
         <p id="importNote" class="muted" role="status"></p>
       </article>
@@ -138,6 +138,6 @@
 </div>
 <script src="config.js?v=1"></script>
 <script src="xlsx.js?v=1"></script>
-<script src="app.js?v=2"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>

@@ -257,7 +257,7 @@
           btn('حذف', () => confirm('حذف ' + x.name + '؟') && act('adminMessage', () => api('/api/admin-access', { method: 'DELETE', body: { id: x.id } }), 'اتحذف'), 'danger')) }], a.accounts || []);
     }
     $('telegramPanel').hidden = !isAdmin();
-    if (isAdmin()) api('/api/import-old').then(r => { $('importPanel').hidden = !r.available; }).catch(() => {});
+    if (isAdmin()) api('/api/import-old').then(r => { $('importPanel').hidden = !r.available; $('importLast').textContent = r.lastImportAt ? 'آخر نقل: ' + new Date(r.lastImportAt).toLocaleString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo' }) : ''; }).catch(() => {});
     if (isAdmin()) renderTelegram().catch(e => say('tgNote', e.message));
     for (const f of ['addEmployee', 'addAdmin', 'messageForm']) $(f).hidden = f === 'messageForm' ? !canWrite() : !isAdmin();
     $('linkCollector').hidden = !canWrite();
@@ -281,7 +281,7 @@
     if (!confirm('نقل بيانات النظام القديم للسيرفر ده؟ العملية دي بتتعمل مرة واحدة.')) return;
     $('importButton').disabled = true;
     try {
-      const { run } = await import('./import-old.js?v=1');
+      const { run } = await import('./import-old.js?v=2');
       const post = async body => {
         const r = await fetch(API + '/api/import-old/rows', { method: 'POST', headers: { 'x-admin-password': token, 'content-type': 'application/json' }, body: JSON.stringify(body) });
         const d = await r.json().catch(() => ({}));
@@ -290,7 +290,7 @@
       };
       const x = await run({ file: f, post, say: t => say('importNote', t), base: BASE });
       say('importNote', 'اتنقل: ' + x.employees + ' موظف، ' + x.adminAccounts + ' مستخدم إدارة، ' + x.sessions + ' جلسة، ' + x.events + ' حدث، ' + x.historyDays + ' يوم من سجل أرابيكس.');
-      $('importPanel').hidden = true; renderManage();
+      renderManage();
     } catch (e) { say('importNote', (e.message || 'تعذر النقل') + ' — تقدر تعيد المحاولة بنفس الملف، اللي اتنقل مش هيتكرر.'); } finally { $('importButton').disabled = false; }
   };
 
