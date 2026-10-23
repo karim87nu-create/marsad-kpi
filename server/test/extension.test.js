@@ -10,10 +10,10 @@ const { start, DEVICE } = require('./helpers');
 
 let JSDOM, VirtualConsole;
 try { ({ JSDOM, VirtualConsole } = require('jsdom')); } catch {}
-const EXT = path.join(__dirname, '..', '..', 'extension-2.5.33');
+const EXT = path.join(__dirname, '..', '..', 'extension-2.5.34');
 const OLD_API = 'https://marsad-kpi-live.karim87nu.chatgpt.site';
 
-test('real extension 2.5.33 talks to the new server', { skip: !JSDOM && 'jsdom not installed' }, async () => {
+test('real extension 2.5.34 talks to the new server', { skip: !JSDOM && 'jsdom not installed' }, async () => {
   // Real clock: the extension measures time with performance.now().
   const t = await start({ at: Date.now() });
   t.clock.now = Date.now();

@@ -15,6 +15,36 @@ const reason = r => OLD_EXIT[r] || r || null;
 const PRESENCE_TYPES = "('heartbeat','session_login','session_logout','arabicss_login','arabicss_logout','page_closed','break_start','break_observed','break_end','break_end_unknown','agentlinked','agentunlinked','call_observed','call_observed_end')";
 const SPAN_TYPES = "('heartbeat','session_login','arabicss_login','break_start','break_observed','break_end','break_end_unknown','agentlinked','agentunlinked','call_observed','call_observed_end','page_closed')";
 
+// lib/attendance-durations.ts attendanceTimeline() looks, for each event, only at events of the same session.
+// Running it per session gives the same rows (returned in the original order) without the quadratic scan.
+function timelineDurations(events, sessions, now) {
+  const bySession = new Map(), order = new Map();
+  events.forEach((e, i) => { const k = eventPayload(e).sessionId; if (!bySession.has(k)) bySession.set(k, []); bySession.get(k).push(e); order.set(e, i); });
+  const rows = [];
+  for (const list of bySession.values()) {
+    const kept = list.filter(e => !e.callId && e.eventType !== 'heartbeat');
+    L.attendanceTimeline(list, sessions, now).forEach((r, j) => rows.push([order.get(kept[j]), r]));
+  }
+  return rows.sort((a, b) => a[0] - b[0]).map(r => r[1]);
+}
+
+// Old dashboard route: completed calls with second precision fill the "unknown" spans they cover.
+// Same splitting as the route, applied per employee and extension; the original order is kept.
+function restoreCalls(states, calls) {
+  const pieces = states.map(s => [s]), groups = new Map();
+  states.forEach((s, i) => { const k = s.employeeId + '|' + s.extension; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(i); });
+  for (const call of calls.filter(c => c.eventType === 'agentunlinked' && c.durationSeconds > 0 && c.timePrecision === 'second')) {
+    const a = Date.parse(call.startedAt), b = Math.min(Date.parse(call.occurredAt), a + call.durationSeconds * 1000);
+    for (const i of groups.get(call.employeeId + '|' + call.extension) || []) pieces[i] = pieces[i].flatMap(s => {
+      const x = Date.parse(s.startedAt), y = Date.parse(s.endedAt), u = Math.max(x, a), v = Math.min(y, b);
+      if (s.state !== 'unknown' || v <= u) return [s];
+      return [[x, u, 'unknown'], [u, v, 'on_call'], [v, y, 'unknown']].filter(([p, q]) => q > p)
+        .map(([p, q, state]) => ({ ...s, state, startedAt: new Date(p).toISOString(), endedAt: new Date(q).toISOString(), durationSeconds: Math.floor((q - p) / 1000), running: false }));
+    });
+  }
+  return pieces.flat();
+}
+
 function setup(app) {
   const { db } = app;
   const names = () => new Map(db.prepare('SELECT id, name FROM employees').all().map(e => [e.id, e]));
@@ -131,18 +161,8 @@ function setup(app) {
     let attendance = null, durations = [];
     if (wantAttendance) {
       attendance = app.oldAttendance(date, { employee, extension }, now);
-      durations = L.attendanceTimeline([...old.events, ...old.breakEnds.filter(e => !old.events.some(x => x.id === e.id))], attendance.sessions, now);
-      attendance.states = L.reconcileBreakStates(attendance.states, [...old.completedBreaks, ...old.ongoingBreaks]);
-      // Completed, identity-attributed calls can restore missing state intervals (old route).
-      for (const call of old.calls.filter(c => c.eventType === 'agentunlinked' && c.durationSeconds > 0 && c.timePrecision === 'second')) {
-        const a = Date.parse(call.startedAt), b = Math.min(Date.parse(call.occurredAt), a + call.durationSeconds * 1000);
-        attendance.states = attendance.states.flatMap(s => {
-          const x = Date.parse(s.startedAt), y = Date.parse(s.endedAt), u = Math.max(x, a), v = Math.min(y, b);
-          if (s.state !== 'unknown' || s.employeeId !== call.employeeId || s.extension !== call.extension || v <= u) return [s];
-          return [[x, u, 'unknown'], [u, v, 'on_call'], [v, y, 'unknown']].filter(([p, q]) => q > p)
-            .map(([p, q, state]) => ({ ...s, state, startedAt: new Date(p).toISOString(), endedAt: new Date(q).toISOString(), durationSeconds: Math.floor((q - p) / 1000), running: false }));
-        });
-      }
+      durations = timelineDurations([...old.events, ...old.breakEnds.filter(e => !old.events.some(x => x.id === e.id))], attendance.sessions, now);
+      attendance.states = restoreCalls(L.reconcileBreakStates(attendance.states, [...old.completedBreaks, ...old.ongoingBreaks]), old.calls);
     }
     const shifts = oldShifts(shiftData, start, finish, now, employee, extension);
     const numbered = p => /^\d+$/.test(String(p.extension || ''));

@@ -103,8 +103,9 @@ function setup(app) {
     if (session.extension && session.extension !== extension) fail(403, 'extension_mismatch');
     const payload = ev.payload === undefined ? null : JSON.stringify(ev.payload);
     const rest = Object.fromEntries(Object.entries(ev).filter(([k]) => !COLUMNS.has(k)));
-    const extra = Object.keys(rest).length ? JSON.stringify(rest) : null;
-    if ((payload?.length || 0) + (extra?.length || 0) > 32000) fail(413, 'payload_too_large');
+    let extra = Object.keys(rest).length ? JSON.stringify(rest) : null;
+    // Like the old server: an oversized event is a permanent 400 (the extension sets it aside instead of retrying forever).
+    if (JSON.stringify(ev).length > 32000) fail(400, 'invalid_event');
 
     const existing = db.prepare('SELECT id FROM events WHERE session_id = ? AND event_key = ?').get(session.id, key);
     if (existing) return { ok: true, duplicate: true, id: existing.id };
@@ -115,7 +116,11 @@ function setup(app) {
         if (!p || p.session_id !== session.id || p.used_at || p.expires_at < occurred - 5000 || p.extension !== extension)
           fail(409, 'break_authorization_rejected');
         db.prepare('UPDATE break_permissions SET used_at = ? WHERE id = ?').run(occurred, p.id);
-        if (p.request_id) db.prepare("UPDATE break_requests SET status = 'starting' WHERE id = ?").run(p.request_id);
+        const r = p.request_id ? db.prepare('SELECT * FROM break_requests WHERE id = ?').get(p.request_id) : null;
+        if (r) db.prepare("UPDATE break_requests SET status = 'starting' WHERE id = ?").run(r.id);
+        // Same break details the old server stored with every authorized break start (read by lib/break-policy.ts).
+        extra = JSON.stringify({ ...(extra ? JSON.parse(extra) : {}), breakPolicyKind: r ? 'approved' : 'regular', breakReasonId: String(ev.breakReasonId || r?.reason_id || '2'),
+          breakRequestedMinutes: r ? r.requested_minutes : 15, breakPermissionId: p.id, breakAllowedSeconds: p.allowed_seconds, breakGraceSeconds: p.grace_seconds });
       }
       if (type === 'break_end' && !openBreak(session.id)) fail(409, 'break_start_missing');
       const r = db.prepare(`INSERT INTO events (session_id, employee_id, extension, event_type, event_key, occurred_at, received_at,

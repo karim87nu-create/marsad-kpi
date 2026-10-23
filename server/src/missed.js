@@ -32,6 +32,16 @@ function setup(app) {
     return { employees, events, shifts: app.oldShiftData(from, to) };
   }
 
+  // Cached per day until a new event or a newer Arabicss report arrives.
+  const cache = new Map();
+  function cachedResolver(date, now) {
+    const h = app.dayHistory(date, now), key = date + '|' + h.key + '|' + db.prepare('SELECT MAX(id) m FROM events').get().m + '|' + db.prepare('SELECT COUNT(*) n FROM shift_decisions').get().n;
+    if (!cache.has(key)) { if (cache.size > 6) cache.delete(cache.keys().next().value); cache.set(key, { h, resolve: app.missedResolver(date, h.records) }); }
+    return cache.get(key);
+  }
+  app.missedOne = (date, index, now = app.now()) => { const { h, resolve } = cachedResolver(date, now), rec = h.records[index]; return rec ? resolve(rec) : null; };
+  app.missedAll = (date, now = app.now()) => { const { h, resolve } = cachedResolver(date, now); return { reportId: h.report?.id, contexts: h.missed.map(m => ({ index: m.index, ...resolve(h.records[m.index]) })) }; };
+
   // Returns resolve(record) → { call, context } for one data day.
   app.missedResolver = function missedResolver(date, records) {
     const { employees, events, shifts } = inputs(date);

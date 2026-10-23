@@ -26,11 +26,23 @@
    }
    panel.querySelector('[data-note]').textContent=pending.length&&!canDecide?'توجد طلبات معلقة، لكن هذا الحساب للعرض فقط. استخدم حساب مدير أو مشرف للموافقة.':requests.length?'':'لا توجد طلبات بريك حديثة.';
    panel.querySelector('summary').textContent='طلبات البريك — '+pending.length+(pending.length?' طلب ينتظر الموافقة':' لا توجد طلبات معلقة');
+   badge(pending.length);
   }catch(e){panel.querySelector('[data-note]').textContent='تعذر تحميل طلبات البريك: '+(e.message||'تحقق من الاتصال وصلاحية الدخول')}
   finally{busy=false}
+ }
+ // Pending requests are announced on every page (menu badge and tab title), not only inside «محتاج تدخل»,
+ // so a supervisor watching another page still sees them within 10 seconds.
+ const baseTitle=document.title;
+ function badge(count){
+  document.title=(count?'('+count+') ':'')+baseTitle;
+  const target=document.querySelector('[data-workspace="action"]')||document.querySelector('[data-tab="intervention"]');if(!target)return;
+  let b=target.querySelector('.break-request-badge');
+  if(!count){b?.remove();return}
+  if(!b){b=document.createElement('span');b.className='break-request-badge';b.style.cssText='margin-inline-start:6px;padding:1px 8px;border-radius:999px;background:#f59e0b;color:#111;font-weight:700;font-size:13px';target.appendChild(b)}
+  b.textContent=count+' بريك';b.title=count+' طلب بريك ينتظر الموافقة';
  }
  panel.querySelector('[data-refresh]').onclick=()=>load(true);panel.addEventListener('toggle',()=>{if(panel.open)load(true)});
  const visibility=new MutationObserver(()=>{if(!section.hidden)load(true)});visibility.observe(section,{attributes:true,attributeFilter:['hidden']});
  window.addEventListener('kpi-admin-refresh',()=>{if(token!==sessionStorage.getItem('adminPassword')){token='';last=0;priorPending.clear();panel.querySelector('tbody').replaceChildren()}if(!section.hidden||panel.open)load(true)});
- setInterval(()=>{if(!section.hidden)load()},10000);if(!section.hidden)load(true);
+ setInterval(()=>{if(sessionStorage.getItem('adminPassword'))load()},10000);if(!section.hidden)load(true);
 })();

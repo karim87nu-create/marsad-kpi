@@ -18,7 +18,7 @@ function setup(app) {
       return { presence, liveQueue, summary: {}, performance: [], calls: [], timeline: [], shifts: [], attendance: null, durations: [], completedBreaks: [], breakTotals: [],
         date, today, serverNow: iso(ctx.now), liveOnly: true, dataComplete: true };
     }
-    return app.oldDashboard(date, { employee, extension, attendance: q.attendance === '1', all: q.all === '1' }, ctx.now);
+    return app.heavy('oldDashboard', date, { employee, extension, attendance: q.attendance === '1', all: q.all === '1' }, ctx.now);
   });
 }
 

@@ -52,14 +52,14 @@ async function refresh(force=false){
   // the same day-wide history attribution and session aggregation twice.
   const operationsViews=['intervention','analysis','followup','health','guide','unattributed','customers','reports','audit','adminUsers','alertLog','queue'];
   const liveOnly=selectedTab==='live'||operationsViews.includes(selectedTab);
-  const [d,h,employees]=await Promise.all([api(dashboardQuery(date)),api('/api/history?date='+date+(liveOnly?'&live=1':'')),staff.length&&(!force&&Date.now()-lastEmployeesFetch<60000)?Promise.resolve(null):api('/api/employees')]);
+  const [d,h,employees]=await Promise.all([api(dashboardQuery(date)),api('/api/history?date='+date+(selectedTab==='live'?'&live=1':'')),staff.length&&(!force&&Date.now()-lastEmployeesFetch<60000)?Promise.resolve(null):api('/api/employees')]);
   if(seq!==generation||date!==$('day').value)return;
   $('day').max=d.today;d.adminClientScope=dataScope;daily=d;historical=h;if(employees){staff=[...employees.employees,...(employees.archivedEmployees||[])];lastEmployeesFetch=Date.now()}offset=Date.parse(d.serverNow)-Date.now();lastLiveFetch=Date.now();
   const choice=$('employeeFilter').value,employeeOptions='<option value="">كل الموظفين</option>'+staff.map(e=>'<option value="'+e.id+'">'+esc(e.name+(e.active?'':' — محذوف'))+'</option>').join('');if($('employeeFilter').innerHTML!==employeeOptions)$('employeeFilter').innerHTML=employeeOptions;$('employeeFilter').value=choice;
   const queueChoice=$('queueFilter').value,queueOptions='<option value="">كل أنواع الطلبات</option>'+(h.queues||[]).map(q=>'<option value="'+esc(q.queue)+'">'+esc(q.label)+'</option>').join('');if($('queueFilter').innerHTML!==queueOptions)$('queueFilter').innerHTML=queueOptions;$('queueFilter').value=queueChoice;
   $('syncStatus').textContent='آخر تحديث '+new Date().toLocaleTimeString('ar-EG',{timeZone:'Africa/Cairo'});$('syncStatus').classList.remove('bad');$('message').textContent='';
   $('periodNote').textContent='يوم البيانات: '+date+' من 9ص حتى قبل 9ص اليوم التالي. التشغيل 9ص–3ص؛ الفترة 3ص–8:59ص خارج ساعات العمل ومحفوظة ضمن نفس اليوم. المباشر يعرض الآن.';
-  if(!liveOnly){renderDaily();renderHistory()}renderRoster();renderLive();filterSummary();window.dispatchEvent(new Event('kpi-admin-refresh'));
+  if(!liveOnly){renderDaily();renderHistory()}else if(selectedTab!=='live')renderHistory();renderRoster();renderLive();renderOverviewDay();filterSummary();window.dispatchEvent(new Event('kpi-admin-refresh'));
  }catch(e){if(seq===generation){$('syncStatus').textContent='تعذر التحديث — البيانات المعروضة قديمة';$('syncStatus').classList.add('bad');$('message').textContent=e.message;renderLive()}}finally{if(seq===generation)refreshing=false}
 }
 function metricsFiltered(){const perf=daily?.performance||[];const records=$('extensionFilter').value?perf:staff.filter(e=>e.active||perf.some(p=>p.employeeId===e.id)||Number($('employeeFilter').value)===e.id).map(e=>perf.find(p=>p.employeeId===e.id)||{employeeId:e.id,employee:e.name,calls:0,inbound:0,outbound:0,answered:0,avgHandleTime:0,breakSeconds:0,unknownBreaks:0,firstLogin:null,lastLogout:null});return tableScope('metricRows',records.filter(p=>!$('employeeFilter').value||p.employeeId===Number($('employeeFilter').value)),metricCells)}
@@ -123,6 +123,10 @@ function renderLive(preserveGroups=false){
  const overCall=people.filter(p=>liveState(p)==='on_call'&&p.startedAt&&now-Date.parse(p.startedAt)>240000);
  if(overBreak.length)alerts.push(overBreak.length+' موظف تجاوز بريك 15 دقيقة');if(overCall.length)alerts.push(overCall.length+' مكالمة تجاوزت 4 دقائق');
  $('attentionNow').textContent=alerts.length?alerts.join(' · '):'لا توجد تنبيهات تأخير في البيانات الحالية';$('attentionNow').classList.toggle('warning',!!alerts.length);
+ renderOverviewDay();
+}
+// Day summary cards (shown on «ملخص يوم التشغيل»). Kept separate from renderLive, which only runs on the live views.
+function renderOverviewDay(){
  const h=historyScope();
  cards('overviewDayCards',h?[['مكالمات يوم التشغيل',h.calls],['تم الرد',h.answered],['فائتة محتسبة',h.abandoned],['الرد خلال 10ث',h.sla==null?'غير متاح':Number(h.sla).toFixed(2)+'%']]:[['مؤشرات اليوم','لا يوجد سجل محفوظ']]);
  $('overviewDayNote').textContent='يوم التشغيل '+($('day').value||'—')+' من 9ص إلى 3ص اليوم التالي. '+(h?'سجل '+($('queueFilter').value?requestType($('queueFilter').value):'كل أنواع الطلبات')+'؛ ليس إجمالي الموظف المحدد.':'استكمل سحب السجل من قسم مؤشرات المكالمات.');
@@ -173,7 +177,7 @@ async function addEmployee(){
  try{const records=(await api('/api/employees')).employees,old=records.find(e=>e.employeeCode===employeeCode);
  if(old&&(old.name!==name||old.active))throw Error('الكود موجود باسم '+old.name+(old.active?' والموظف نشط بالفعل':'؛ استخدم نفس الاسم لاستعادته'));
  await api('/api/employees',{method:old?'PATCH':'POST',headers:{'content-type':'application/json'},body:JSON.stringify(old?{id:old.id,active:true,pin,pinConfirmation}:{name,employeeCode,pin,pinConfirmation})});
- $('empName').value=$('empCode').value=$('empPin').value=$('empPinConfirm').value='';await refresh(true);$('employeeMessage').textContent=old?'تمت الاستعادة وتحديث الباسورد':'تمت إضافة الموظف؛ الدخول بباسورده عبر الإضافة 2.5.2 أو أحدث';
+ $('empName').value=$('empCode').value=$('empPin').value=$('empPinConfirm').value='';await refresh(true);$('employeeMessage').textContent=old?'تمت الاستعادة وتحديث الباسورد':'تمت إضافة الموظف؛ يدخل بباسورده من الإضافة';
  }catch(e){$('employeeMessage').textContent=passwordError(e)}
 }
 function csv(name,head,rows){const url=URL.createObjectURL(MarsadExcel.build(head,rows));const a=document.createElement('a');a.href=url;a.download=name.replace(/\.(csv|xlsx)$/i,'')+'-'+(['live-snapshot','queue-live'].includes(name)?today():$('day').value)+'.xlsx';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
@@ -193,7 +197,7 @@ async function exportData(kind,button){
  else if(kind==='context'){if(!context)throw Error('اختر المكالمة أولًا');csv('missed-staff',contextHeaders,contextLines(contextCall,context));}
  else if(kind==='contexts'){if(!reportId)throw Error('لا يوجد سجل لهذا اليوم');const d=await api('/api/history?reportId='+reportId+'&date='+date+'&contexts=1');if(reportId!==historical?.report?.id)throw Error('تغير السجل؛ أعد التصدير');const indices=new Set(missedFiltered().map(c=>c.index));csv('all-missed-staff',contextHeaders,d.contexts.filter(x=>indices.has(x.index)).flatMap(x=>contextLines(x.call,x.context)));}
  else if(kind==='history'){if(!reportId)throw Error('لا يوجد سجل لهذا اليوم');const d=await api('/api/history?reportId='+reportId+'&date='+date+'&all=1');if(date!==$('day').value)throw Error('تغير التاريخ');csv('arabicss-history',['نوع الطلب','حساب أرابيكس','التاريخ الفعلي','البداية','النهاية','المدة','الانتظار','الهاتف','الحالة'],d.records.filter(c=>!$('queueFilter').value||c.queue===$('queueFilter').value).map(c=>[requestType(c.queue),c.accountName,c.date,c.start,c.end,c.durationSeconds,c.waitSeconds,c.phone,c.status+(c.outsideHours?' — خارج فترة التشغيل':'')]));}
- $('message').textContent='تم تجهيز الشيت. CSV يفتح في Excel؛ النصوص والأرقام المفقودة لا تُستبدل بصفر.';
+ $('message').textContent='تم تجهيز شيت Excel؛ النصوص والأرقام المفقودة لا تُستبدل بصفر.';
  }catch(e){$('message').textContent='لم يتم التصدير: '+e.message}finally{button.disabled=false}
 }
 async function login(){ $('loginError').textContent='';$('loginButton').disabled=true;try{const r=await fetch(API+'/api/dashboard?live=1',{headers:{'x-admin-password':$('password').value},cache:'no-store'});if(!r.ok)throw Error(r.status===401?'كلمة مرور الإدارة غير صحيحة':'تعذر الاتصال');sessionStorage.setItem('adminPassword',$('password').value);$('password').value='';$('login').hidden=true;$('dashboard').hidden=false;await refresh(true)}catch(e){$('loginError').textContent=e.message}finally{$('loginButton').disabled=false}}
@@ -206,7 +210,7 @@ $('todayButton').onclick=()=>{$('day').value=today();clearDay();refresh(true)};
 $('refreshButton').onclick=()=>refresh(true);
 for(const id of ['callSearch','callType','callStatus','eventFilter','contextFilter'])$(id).addEventListener('input',()=>{renderDaily();renderLive()});
 let filterTimer;for(const id of ['employeeFilter','extensionFilter'])$(id).addEventListener('input',()=>{generation++;clearDay();clearTimeout(filterTimer);filterTimer=setTimeout(()=>refresh(true),350)});
-for(const id of ['queueFilter','missedFilter'])$(id).addEventListener('change',()=>{renderHistory();renderLive()});
+for(const id of ['queueFilter','missedFilter'])$(id).addEventListener('change',()=>{renderHistory();renderLive();renderOverviewDay()});
 if($('queueFilter'))$('queueFilter').addEventListener('change',filterSummary);
 function moveDay(delta){const d=new Date($('day').value+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+delta);const value=d.toISOString().slice(0,10);if(value>today())return;$('day').value=value;generation++;clearDay();refresh(true)}
 if($('previousDayButton'))$('previousDayButton').onclick=()=>moveDay(-1);

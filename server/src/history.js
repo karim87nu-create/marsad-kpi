@@ -174,25 +174,30 @@ function setup(app) {
     return String(v);
   };
 
-  app.route('GET', '/api/history', ctx => {
+  app.route('GET', '/api/history', async ctx => {
     app.requireAdmin(ctx);
     const q = ctx.query, today = businessDay(ctx.now), date = q.date || today;
     if (!validDate(date)) fail(400, 'تاريخ غير صحيح');
+    const latest = latestLive();
+    const live = latest ? { observedAt: iso(latest.observed_at), stale: ctx.now - latest.observed_at > 30000, records: JSON.parse(latest.rows) } : null;
+    // The admin page asks for this every second on the live view: only the live snapshot (as the old server did).
+    if (q.live === '1' && q.missedIndex === undefined && q.contexts !== '1' && q.all !== '1')
+      return { live, report: null, reports: [], queues: [], missed: [], records: [], liveOnly: true };
     const h = dayHistory(date, ctx.now);
-    const live = latestLive();
     const out = {
       report: h.report, queues: h.queues, missed: h.missed,
-      live: live ? { observedAt: iso(live.observed_at), records: JSON.parse(live.rows) } : null,
+      live,
     };
     if (q.reportId && h.report && q.reportId !== h.report.id) fail(409, 'وصل سجل أحدث؛ أعد فتح التفاصيل');
     if (q.missedIndex !== undefined) {
       const rec = h.records[Number(q.missedIndex)];
       if (!rec || String(rec.status).toLowerCase() !== 'abandoned') fail(400, 'invalid_missed_call');
-      return app.missedResolver(date, h.records)(rec);
+      return app.heavy('missedOne', date, Number(q.missedIndex), ctx.now);
     }
     if (q.contexts === '1') {
-      const resolve = app.missedResolver(date, h.records);
-      return { contexts: h.missed.map(m => ({ index: m.index, ...resolve(h.records[m.index]) })) };
+      const all = await app.heavy('missedAll', date, ctx.now);
+      if (h.report && all.reportId !== h.report.id) fail(409, 'وصل سجل أحدث؛ أعد فتح التفاصيل');
+      return { contexts: all.contexts };
     }
     if (q.all === '1') out.records = h.records.map(r => ({ queue: r.queue, accountName: r.accountName, date: r.date, start: r.start, end: r.end,
       durationSeconds: r.durationSeconds, waitSeconds: r.waitSeconds, phone: r.phone, status: r.status, outsideHours: A.classify(r).outside }));

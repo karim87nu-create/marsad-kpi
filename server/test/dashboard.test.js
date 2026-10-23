@@ -134,6 +134,25 @@ test('break policy: two regular breaks, 30 minutes total, then supervisor approv
   } finally { await t.close(); }
 });
 
+test('break policy: a short first break still leaves at most 15 minutes for the second (old rule)', async () => {
+  const t = await start({ at: cairoToUtc(2026, 10, 22, 12, 0, 0) });
+  try {
+    const admin = await t.admin();
+    await t.employee(admin);
+    const s = await t.session('1234');
+    await t.event(s.token, 'heartbeat', { state: 'ready' });
+    const p = await t.device(s.token, 'POST', '/api/break-requests', { action: 'regular_start' });
+    await t.event(s.token, 'break_start', { state: 'break', permissionId: p.body.permissionId });
+    t.advance(10 * 60000);
+    await t.event(s.token, 'break_end', { state: 'ready', durationSeconds: 600 });
+    await t.event(s.token, 'heartbeat', { state: 'ready' });
+    const pol = (await t.device(s.token, 'GET', '/api/break-requests')).body.breakPolicy;
+    assert.equal(pol.remainingSeconds, 1200);              // 30 − 10 minutes left in the day
+    assert.equal(pol.nextAllowedSeconds, 900);             // but one break is never more than 15 minutes
+    assert.equal((await t.device(s.token, 'POST', '/api/break-requests', { action: 'regular_start' })).body.allowedSeconds, 900);
+  } finally { await t.close(); }
+});
+
 test('messages: send, deliver, acknowledge, admin log', async () => {
   const t = await start();
   try {

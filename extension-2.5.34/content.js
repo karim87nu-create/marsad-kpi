@@ -1,0 +1,370 @@
+(function(){
+ if(location.hostname!=='41.38.207.218'||/^\/themes\/arabicssReportsInclude(?:\/|$)/i.test(location.pathname))return;
+ if(globalThis.__marsadEmployeeConnector)return;globalThis.__marsadEmployeeConnector=true;
+const API='https://marsad-kpi-live.karim87nu.chatgpt.site',TOKEN='7000865f1220458f86506b41a97cab7d',VERSION='2.5.34';
+ const SESSION='arabicss_kpi_employee_session',STATE='arabicss_kpi_state',EPOCH='arabicss_kpi_runtime_epoch';
+ let employee=null,sessionToken='',runtimeEpoch='',sourceConnection='unknown',sourceStateKnown=false,call=null,breakActive=false,breakStarted=null,breakAllowedSeconds=900,breakGraceSeconds=0,scanTimer=null,refreshTimer=null,focusRefresh=null,flushing=false,initialized=false,sessionRegistrationBlocked=false,sessionRegistering=false,sessionRegistrationRetryAt=0,logoutNotice='';
+ const availability=globalThis.createKpiAvailability();
+ const clock=globalThis.createKpiClock();globalThis.kpiEventClock=clock;
+ let latestSourceSnapshot=null;
+ function replaySourceSnapshot(){const sample=latestSourceSnapshot;if(sample&&ext()&&clock.monotonic()-sample.at<=5000&&(!sample.payload.extension||sample.payload.extension===ext())){captureArabicssStateEvidence(sample.payload);acceptState(sample.payload)}}
+ let clockFlight=null,clockRetryAt=0;
+ function ensureClock(){if(clock.synced)return Promise.resolve(true);if(clockFlight)return clockFlight;if(clock.monotonic()<clockRetryAt)return Promise.resolve(false);clockFlight=apiFetch('/api/employees/list').then(()=>clock.synced).catch(()=>false).then(ok=>{if(!ok)clockRetryAt=clock.monotonic()+30000;return ok}).finally(()=>{clockFlight=null});return clockFlight}
+ let outageIdleConfirmed=false,sourceWaitingOrHeld=false,availabilityProbeBusy=false;
+ function renderAvailability(){
+  // A recovered backend must never put a full-screen gate over an ongoing or
+  // unconfirmed call. Anonymous source observations cannot assign any identity.
+  availability.settle(!ext()||outageIdleConfirmed);
+  document.getElementById('kpi-session-box')?._kpiRender?.();
+ }
+ async function probeAvailability(){
+  if(availabilityProbeBusy)return;availabilityProbeBusy=true;
+  try{
+   const r=await apiFetch('/api/employees/list?t='+clock.now());
+   if(r.status>=500&&r.status<=599)availability.observe('unavailable');
+   else if(!r.ok)availability.observe('denied');
+   else {let d;try{d=r.json()}catch{};availability.observe(Array.isArray(d?.employees)?'healthy':'unavailable');if(Array.isArray(d?.employees))return d}
+  }catch{availability.observe('unavailable')}
+  finally{availabilityProbeBusy=false;renderAvailability()}
+ }
+ const ext=()=>((document.querySelector('#issabel-callcenter-titulo-consola')?.textContent||'').match(/(?:IAX2|SIP)\/(\d+)/i)||[])[1]||'';
+ globalThis.kpiMessageIdentity=()=>employee&&sessionToken&&!sessionRegistrationBlocked&&ext()?{token:sessionToken,deviceToken:TOKEN,employeeId:employee.id}:null;
+ globalThis.kpiBreakIdentity=()=>employee&&sessionToken&&!sessionRegistrationBlocked&&ext()?{token:sessionToken,deviceToken:TOKEN,employeeId:employee.id,extension:ext(),ready:clock.synced&&sourceConnection==='connected'&&sourceStateKnown&&outageIdleConfirmed&&!call&&!breakActive,breakActive,breakAllowedSeconds,breakGraceSeconds}:null;
+ globalThis.kpiConfirmBreakReadiness=async()=>{
+  const who=globalThis.kpiBreakIdentity();if(!who?.ready)return false;
+  const accepted=await reportPresence(true,'break_readiness_check');
+  const current=globalThis.kpiBreakIdentity();return accepted===true&&current?.token===who.token&&current.extension===who.extension&&current.ready===true;
+ };
+ const apiFetch=async(path,options={})=>{const started=clock.monotonic(),r=await browser.runtime.sendMessage({type:'KPI_API',path,method:options.method||'GET',headers:options.headers||{},body:options.body});const wasSynced=clock.synced;clock.observe(r.serverDate,started);if(!wasSynced&&clock.synced){if(call)call={...call,startedAt:null,elapsed:0,observed:true};breakStarted=null;presenceStateSince=''}return {...r,json:()=>JSON.parse(r.body)}};
+ const seconds=v=>{if(typeof v==='number')return Math.max(0,Math.round(v));const s=String(v??'').trim();if(/^\d+$/.test(s))return Number(s);return /^\d{1,3}:[0-5]\d(?::[0-5]\d)?$/.test(s)?s.split(':').reduce((a,n)=>a*60+Number(n),0):null};
+ const canonicalId=v=>String(v||'').match(/(?:incoming-q\d+-|outgoing-)?(\d+)$/)?.[1]||String(v||'');
+
+const evidenceState=()=>sourceConnection!=='connected'?'unknown':breakActive?'break':call?'on_call':sourceStateKnown&&outageIdleConfirmed?'ready':'unknown';
+const evidenceReceivedAt=()=>clock.iso();
+const channelExtension=value=>(String(value||'').match(/(?:SIP|IAX2|PJSIP|Local)\/(\d+)/i)||[])[1]||'';
+function captureSourceEvidence(type,payload={}){
+ const extension=ext()||boundExtension();if(!employee||!sessionToken||!extension)return;
+ const receivedAt=evidenceReceivedAt(payload),queues=Array.isArray(payload.queues)?payload.queues.map(String):[],agentChannel=String(payload.agentchannel||payload.agent_channel||payload.agent||''),agentExtension=channelExtension(agentChannel),newStatus=String(payload.new_status||payload.status||'');
+ const sourceOccurredAt=String(payload.datetime_entry||payload.pause_start||payload.pause_end||'')||null;
+ const sourceDuration=seconds(payload.pause_duration??payload.duration);
+ const sourceParts=[payload.id,payload.datetime_entry,payload.call_id,payload.callid,newStatus,payload.pause_start,payload.pause_end,queues.join(','),agentChannel].filter(v=>v!==undefined&&v!==null&&String(v)!=='').map(String);
+ const sourceId=(sourceParts.join('|')||receivedAt).slice(0,180);
+ const matchedAgent=!!agentExtension&&agentExtension===extension;
+ const statusLower=newStatus.toLowerCase();
+ const ringProof=matchedAgent&&(statusLower==='ringing'||statusLower==='noanswer'||statusLower==='no answer')?(statusLower==='ringing'?'ringing_on_this_extension':'ring_no_answer_on_this_extension'):null;
+ const evidence={evidenceType:type,evidenceSource:'issabel_eccp_sse',observationKind:type==='arabicss_state'?'source_snapshot':'source_event',sourceEvent:String(payload._sourceEvent||type),sourceReceivedAt:receivedAt,sourceOccurredAt,sourceDurationSeconds:sourceDuration,queues,agentChannel,agentExtension,matchedAgentExtension:matchedAgent,newStatus:newStatus||null,ringProof,callId:String(payload.call_id||payload.callid||''),uniqueid:String(payload.uniqueid||''),queue:String(payload.queue||''),phone:String(payload.phone||''),raw:payload};
+ send({eventType:'heartbeat',eventKey:extension+':source-evidence:'+type+':'+sourceId,extension,occurredAt:receivedAt,durationSeconds:0,clientVersion:VERSION,state:evidenceState(),payload:{sourceConnection,connectorVersion:VERSION,evidence}}).catch(()=>{});
+}
+ const status=text=>{const el=document.getElementById('kpi-status');if(el)el.textContent=text};
+ const alertAttempts=new Map();
+ function checkAlerts(){
+  if(!employee||!sessionToken||sessionRegistrationBlocked||!ext()||sourceConnection!=='connected'||!sourceStateKnown)return;
+  const items=[];
+  if(call&&!call.observed&&call.startedAt&&clock.now()-call.startedAt>240000)items.push(['call_long','call:'+call.callId+':'+call.startedAt,'مكالمتك تجاوزت 4 دقائق']);
+  if(breakActive&&breakStarted){const age=Math.max(0,clock.now()-Date.parse(breakStarted)),limit=Math.max(60,breakAllowedSeconds)*1000,warning=Math.max(0,limit-60000),graceAt=Math.max(0,breakAllowedSeconds-breakGraceSeconds)*1000;if(breakGraceSeconds&&age>=graceAt&&age<limit)items.push(['break_grace','break:'+breakStarted+':grace','انتهت 15 دقيقة الأساسية؛ بدأ السماح الإضافي ويُخصم من البريك الثاني']);if(age>=limit)items.push(['break_limit','break:'+breakStarted+':limit','انتهت المدة الموافق عليها للبريك — ارجع لاستقبال المكالمات']);else if(age>=warning)items.push(['break_warning','break:'+breakStarted+':warning','باقي دقيقة على نهاية المدة المسموح بها للبريك']);}
+  const box=document.getElementById('kpi-session-box');let banner=document.getElementById('kpi-alert-banner');
+  if(box&&!banner){banner=document.createElement('div');banner.id='kpi-alert-banner';banner.setAttribute('role','alert');banner.style.cssText='margin-top:10px;padding:10px;background:#713f12;color:#fff;border-radius:8px';box.appendChild(banner)}
+  if(banner){const text=items.map(i=>i[2]).join(' — ');if(banner.hidden!==!items.length)banner.hidden=!items.length;if(banner.textContent!==text)banner.textContent=text}
+  for(const [kind,key] of items){if((alertAttempts.get(key)||0)>clock.now()-60000)continue;alertAttempts.set(key,clock.now());if(alertAttempts.size>100)alertAttempts.delete(alertAttempts.keys().next().value);browser.runtime.sendMessage({type:'EMPLOYEE_ALERT',kind,key,token:sessionToken}).catch(()=>{});}
+ }
+ setInterval(checkAlerts,1000);
+ let savedFingerprint='',arabicssAuthenticated=false,identityStartedHere=false,identityStartedAt=0;
+ // A password entered before Arabicss sign-in stays valid while the employee goes through Arabicss's own
+ // login pages (main login → agent console login → console). Without this the first navigation ended it and
+ // the employee had to enter the password a second time.
+ const IDENTITY_GRACE_MS=5*60000;
+ const freshIdentity=()=>!!identityStartedAt&&!boundExtension()&&clock.now()-identityStartedAt>=0&&clock.now()-identityStartedAt<IDENTITY_GRACE_MS;
+ function saveState(){const state={timeBasis:clock.synced?'server-clock-v1':'unverified',token:sessionToken,extension:ext()||boundExtension(),arabicssAuthenticated,identityStartedAt,call,breakActive,breakStarted,breakAllowedSeconds,breakGraceSeconds};sessionStorage.setItem(STATE,JSON.stringify(state));const fingerprint=JSON.stringify({...state,call:call?{...call,elapsed:null}:null});if(employee&&sessionToken&&fingerprint!==savedFingerprint){savedFingerprint=fingerprint;registerSession()}}
+ function readState(){try{return JSON.parse(sessionStorage.getItem(STATE)||'null')}catch{return null}}
+ function boundExtension(){const state=readState();return state?.token===sessionToken?state.extension||'':''}
+ function restoreState(){const s=readState();if(s?.token===sessionToken&&(!ext()||s.extension===ext())){const knownTime=s.timeBasis==='server-clock-v1';arabicssAuthenticated=!!s.arabicssAuthenticated;identityStartedAt=knownTime&&!s.extension?Number(s.identityStartedAt)||0:0;call=s.call?{...s.call,...(!knownTime?{startedAt:null,elapsed:0,observed:true}:{})}:null;breakActive=!!s.breakActive;breakStarted=knownTime?s.breakStarted||null:null;breakAllowedSeconds=Number(s.breakAllowedSeconds)||900;breakGraceSeconds=Number(s.breakGraceSeconds)||0}}
+ async function enqueue(event,token,replaceUnverified=false){return browser.runtime.sendMessage({type:'QUEUE_EVENT',event,token,replaceUnverified})}
+ const settleEvent=(event,token,reason)=>browser.runtime.sendMessage({type:reason?'REJECT_EVENT':'ACK_EVENT',eventKey:event.eventKey,token,...reason?{reason}:{}});
+ const eventFlights=new Map();
+ function send(event,token=sessionToken){
+  if(!token||!event.extension||sessionRegistrationBlocked&&token===sessionToken)return Promise.resolve(false);
+  const captured=clock.monotonic(),originalOccurredAt=new Date().toISOString();
+  const capturedAt=clock.synced?clock.at(captured):null;
+  const draft={...event,clientVersion:VERSION,payload:{...event.payload,eventClock:{method:'unsynchronized',originalOccurredAt}}};
+  const durable=capturedAt===null?enqueue(draft,token):enqueue({...event,occurredAt:new Date(capturedAt).toISOString(),clientVersion:VERSION,payload:{...event.payload,eventClock:{...clock.metadata(),originalOccurredAt}}},token);
+  // Persist immediately, before this event waits behind another network job.
+  // Captured time and original signed identity survive navigation/shutdown.
+  const persisted=(async()=>{try{
+   const first=await durable;if(first?.ok!==true)throw Error('outbox_not_saved');
+   if(!await ensureClock()){status('تعذر تأكيد وقت الخادم — الحدث محفوظ للمراجعة وليس رصدًا مباشرًا');return null}
+   const saved={...event,occurredAt:new Date(capturedAt??clock.at(captured)).toISOString(),clientVersion:VERSION,payload:{...event.payload,eventClock:{...clock.metadata(),originalOccurredAt}}};
+   if(capturedAt===null){const result=await enqueue(saved,token,true);if(result?.ok!==true)throw Error('outbox_not_saved')}return saved;
+  }catch{status('تعذر حفظ الحدث على الجهاز — لا تعتمد على اكتمال الرصد حتى استعادة الحفظ');return null}})();
+  const deliver=async()=>{const saved=await persisted;return saved?sendNow(saved,token):false};
+  const before=eventFlights.get(token);
+  const job=before?before.catch(()=>{}).then(deliver):deliver();
+  job.persisted=durable;
+  eventFlights.set(token,job);
+  job.finally(()=>{if(eventFlights.get(token)===job)eventFlights.delete(token)}).catch(()=>{});
+  return job;
+ }
+ async function sendNow(event,token=sessionToken){
+  if(!token||!event.extension||sessionRegistrationBlocked&&token===sessionToken)return false;
+  try{
+   const r=await apiFetch('/api/events',{method:'POST',headers:{'content-type':'application/json','x-device-token':TOKEN,'x-employee-session':token},body:JSON.stringify(event)});
+   if(r.ok){await settleEvent(event,token).catch(()=>{});status('الإضافة متصلة — أرابيكس: '+(sourceConnection==='connected'?'متصل':sourceConnection==='disconnected'?'منقطع':'غير مؤكد'));return true}
+   if(r.status===409&&event.eventType==='break_start'&&token===sessionToken){const {permissionId,breakReasonId,allowedSeconds,...rest}=event;void permissionId;void breakReasonId;void allowedSeconds;await settleEvent(event,token,r.body||'break_authorization_rejected');await enqueue({...rest,eventType:'break_observed',eventKey:event.eventKey+':observed',payload:{...event.payload,breakPolicyEstimated:true,breakAuthorizationFailed:true}},token);status('تم رصد بريك بدأ بدون سماح صالح — حُسب ربع ساعة من الرصيد');return false}
+   if(r.status===409&&event.eventType==='break_end'&&token===sessionToken){let error='';try{error=r.json().error||''}catch{}if(error==='break_start_missing'){await enqueue(event,token);status('نهاية البريك محفوظة لحين وصول بدايته');return false}await settleEvent(event,token,r.body||'break_end_rejected');await enqueue({...event,eventType:'break_end_unknown',eventKey:event.eventKey+':unknown',durationSeconds:0,payload:{...event.payload,durationKnown:false,breakEndUnverified:true}},token);status('تسجيل نهاية البريك غير مكتمل؛ أُرسل كمدة غير مؤكدة');return false}
+   if([401,403].includes(r.status)&&token===sessionToken){
+    await enqueue(event,token);let error='';try{error=r.json().error||''}catch{}
+    if(['invalid_employee_session','employee_inactive','extension_mismatch','unbound_session_closed'].includes(error)){
+     browser.runtime.sendMessage({type:'END_EMPLOYEE_SESSION',token,deviceToken:TOKEN,reason:'session_rejected'}).catch(()=>{});
+     logoutNotice='انتهت صلاحية جلسة الموظف أو تغيرت التحويلة؛ أدخل كلمة المرور لبدء جلسة جديدة.';resetLocal();
+    }else status(error==='invalid_device'?'تعذر التحقق من ربط الإضافة؛ راجع الإدارة':'الحدث محفوظ للمراجعة؛ جلسة الموظف ما زالت مفتوحة');
+    return false;
+   }
+   await enqueue(event,token);status('الحدث محفوظ للمراجعة/إعادة الإرسال');return false;
+  }catch{try{await enqueue(event,token);status('الحدث محفوظ لحين عودة الاتصال')}catch{status('تعذر حفظ الحدث — لا تعتمد على اكتمال البيانات')}return false}
+ }
+ function activity(eventType,extra={},token=sessionToken,extension=ext()||boundExtension()){
+  const at=clock.iso(),permit=eventType==='break_start'?globalThis.kpiBreakPermit:null;return send({eventType,eventKey:extension+':'+eventType+':'+at+':'+crypto.randomUUID(),extension,occurredAt:at,clientVersion:VERSION,...extra,...(permit?{permissionId:permit.id,breakReasonId:permit.reasonId,allowedSeconds:permit.allowedSeconds}:{})},token);
+ }
+ let presenceFingerprint='',presenceState='unknown',presenceStateSince='',presenceSequence=0,lastArabicssSnapshotFingerprint='';
+ function reportPresence(force=false,observationKind='source_state'){
+  if(!employee||!sessionToken||sessionRegistrationBlocked||!ext())return;
+  // The periodic transport check is not a new call/ready/break transition.
+  // A stalled content/page bridge cannot keep refreshing cached readiness.
+  const snapshotFresh=latestSourceSnapshot&&clock.monotonic()-latestSourceSnapshot.at<=10000;
+  const state=observationKind==='transport_check'&&!snapshotFresh?'unknown':evidenceState();
+  const now=clock.iso(),previousState=presenceState||'unknown',changed=state!==presenceState;
+  if(changed||!presenceStateSince){presenceState=state;presenceStateSince=now;presenceSequence+=1}
+  const payload={observationKind,sourceConnection,waitingOrHeld:sourceWaitingOrHeld,breakStartedAt:breakStarted,callStartedAt:call?.startedAt||null,callId:call?.callId||'',phone:call?.phone||'',callType:call?.callType||'',queue:call?.queue||'',presenceStateSince,presenceSequence,stateTransition:changed?{from:previousState,to:state,at:now}:null,availabilityAtThisMoment:state==='ready'};
+  const fingerprint=JSON.stringify({extension:ext(),state,payload:{...payload,observationKind:null,stateTransition:null}});
+  if(!force&&!changed&&fingerprint===presenceFingerprint)return;
+  presenceFingerprint=fingerprint;return activity('heartbeat',{state,payload});
+ }
+ function captureArabicssStateEvidence(payload={}){
+  const snapshot={connection:payload.connection||sourceConnection,callid:String(payload.callid||''),waitingcall:payload.waitingcall??null,onhold:payload.onhold??null,break_id:payload.break_id??null,calltype:payload.calltype??null};
+  const fingerprint=JSON.stringify(snapshot);
+  if(fingerprint===lastArabicssSnapshotFingerprint)return;
+  lastArabicssSnapshotFingerprint=fingerprint;
+  captureSourceEvidence('arabicss_state',{...payload,_snapshotChanged:true,_presenceStateBefore:evidenceState()});
+ }
+ async function registerSession(){
+  if(!sessionToken||!employee||sessionRegistering||clock.now()<sessionRegistrationRetryAt)return false;
+  const token=sessionToken;
+  sessionRegistering=true;
+  try{
+   const r=await browser.runtime.sendMessage({type:'REGISTER_SESSION',token,deviceToken:TOKEN,employee,version:VERSION,state:readState()});
+   if(token!==sessionToken)return false;
+   if(r?.closing){logoutNotice='جلسة العمل السابقة انتهت؛ أدخل كلمة المرور لتسجيل الموظف الجديد.';resetLocal();return false}
+   if(r?.duplicate){sessionRegistrationBlocked=true;sessionRegistrationRetryAt=clock.now()+30000;status('جلسة الموظف مفتوحة في تبويب آخر — أوقفنا الرصد هنا لمنع التكرار');return false}
+   const wasBlocked=sessionRegistrationBlocked;sessionRegistrationBlocked=false;sessionRegistrationRetryAt=0;
+   if(wasBlocked)status('تم استعادة المزامنة في هذا التبويب');
+   return !!r?.ok;
+  }catch{if(token===sessionToken)status('تعذر الاتصال المؤقت بالخلفية — ستُحفظ الجلسة وتُستعاد تلقائيًا');return false}
+  finally{sessionRegistering=false}
+ }
+ async function flush(){
+  if(flushing)return;flushing=true;try{const result=await browser.runtime.sendMessage({type:'FLUSH_EVENTS',deviceToken:TOKEN});const review=document.getElementById('kpi-review-note');if(review)review.textContent=result.rejected?'سجل مراجعة سابق: '+result.rejected+' حدث محفوظ؛ العدد تراكمي وليس أعطالًا جديدة.':'';if(result.rejectedNow>0)status('رفض الخادم '+result.rejectedNow+' حدثًا في آخر محاولة؛ محفوظة للمراجعة')}catch{}finally{flushing=false}
+ }
+ function resetLocal(){
+  latestSourceSnapshot=null;
+  alertAttempts.clear();
+  outageIdleConfirmed=false;sourceWaitingOrHeld=false;
+  employee=null;sessionToken='';call=null;breakActive=false;breakStarted=null;breakAllowedSeconds=900;breakGraceSeconds=0;sourceStateKnown=false;savedFingerprint='';presenceFingerprint='';presenceState='unknown';presenceStateSince='';presenceSequence=0;lastArabicssSnapshotFingerprint='';arabicssAuthenticated=false;identityStartedHere=false;identityStartedAt=0;sessionRegistrationBlocked=false;sessionRegistrationRetryAt=0;globalThis.kpiBreakPermit=null;
+  for(const key of [SESSION,SESSION+'_token',STATE,SESSION+'_version'])sessionStorage.removeItem(key);
+  document.getElementById('kpi-session-box')?.remove();if(initialized&&document.body)mount();
+ }
+ function finishSession(reason='manual'){
+  if(sessionRegistrationBlocked){resetLocal();return}
+  if(!employee||!sessionToken)return;
+  const token=sessionToken,extension=ext()||boundExtension();
+  logoutNotice='تم تسجيل الخروج من جلسة العمل؛ حساب الموظف لم يُحذف. أدخل كلمة المرور لبدء جلسة جديدة.';
+  if(!token){resetLocal();return}
+  const outgoing=activity(reason==='manual'?'session_logout':'arabicss_logout',{state:reason},token,extension);
+  const fallback=()=>apiFetch('/api/session/end',{method:'POST',headers:{'content-type':'application/json','x-device-token':TOKEN,'x-employee-session':token},body:JSON.stringify({reason})}).catch(()=>{});
+  Promise.resolve(outgoing?.persisted||outgoing).catch(()=>{}).then(()=>browser.runtime.sendMessage({type:'END_EMPLOYEE_SESSION',token,deviceToken:TOKEN,reason})).then(r=>{if(!r.ok&&!r.pending)return fallback()}).catch(fallback);
+  resetLocal();
+ }
+ function callData(payload={}){
+  const raw=payload.call||payload.data||payload;
+  const html=String(raw.llamada_informacion||''),doc=html?new DOMParser().parseFromString(html,'text/html'):null;
+  const text=(doc?.body.textContent||document.querySelector('#issabel-callcenter-llamada-info')?.textContent||'').replace(/\s+/g,' ');
+  const visibleId=(text.match(/Internal Call ID:\s*([^\s]+)/i)||[])[1]||'';
+  return {callId:canonicalId(raw.callid||raw.callId||visibleId),phone:String(raw.txt_contacto_telefono||raw.phone||raw.phonenumber||(text.match(/Phone number:\s*([+\d]+)/i)||[])[1]||''),
+   queue:String(raw.queue||(visibleId.match(/incoming-q(\d+)-/)||[])[1]||''),callType:raw.calltype||raw.callType||(visibleId.startsWith('incoming')?'incoming':visibleId?'outgoing':null)};
+ }
+ function startCall(payload){
+  const c=callData(payload);if(!c.callId)return;
+  if(call?.callId===c.callId)return;
+  call={...c,startedAt:clock.now(),elapsed:0,observed:false};saveState();
+  // Call identity/number were parsed above. Large native form markup is not
+  // call evidence and must not make the entire event exceed the API limit.
+  if(JSON.stringify(payload).length>28000)payload=JSON.parse(JSON.stringify(payload,(key,value)=>key==='llamada_informacion'&&typeof value==='string'?{omittedHtml:true,characters:value.length}:value));
+  send({...c,eventType:'agentlinked',eventKey:ext()+':'+c.callId+':start',extension:ext(),occurredAt:clock.iso(),durationSeconds:0,payload});
+ }
+ function endCall(payload){
+  const c=callData(payload),ended=call;
+  if(!ended||c.callId&&c.callId!==ended.callId)return;
+  if(!ended.observed){const duration=Math.max(ended.elapsed||0,Math.round((clock.now()-ended.startedAt)/1000));
+   send({...ended,eventType:'agentunlinked',eventKey:ext()+':'+ended.callId+':end',extension:ext(),occurredAt:clock.iso(),durationSeconds:duration,payload:{...payload,durationKnown:true}})}
+  else activity('call_observed_end',{state:'ready',payload:{callId:ended.callId,durationKnown:false}});
+  call=null;saveState();
+ }
+ function acceptState(payload){
+  sourceConnection=payload.connection||sourceConnection;
+  if(sourceConnection!=='connected'){sourceStateKnown=false;outageIdleConfirmed=false;sourceWaitingOrHeld=false;reportPresence();return}
+  sourceStateKnown=true;
+  sourceWaitingOrHeld=!!payload.waitingcall||!!payload.onhold;
+  outageIdleConfirmed=Object.prototype.hasOwnProperty.call(payload,'callid')&&!payload.callid&&!payload.waitingcall&&!payload.onhold&&payload.break_id==null;
+  if(payload.break_id!=null){if(!breakActive){breakActive=true;breakStarted=null;breakAllowedSeconds=900;breakGraceSeconds=0;activity('break_observed',{state:'break',payload:{breakId:payload.break_id,durationKnown:false,breakPolicyEstimated:true}})}}
+  else if(breakActive){activity(breakStarted?'break_end':'break_end_unknown',{state:'ready',durationSeconds:breakStarted?Math.round((clock.now()-Date.parse(breakStarted))/1000):0,payload:{durationKnown:!!breakStarted}});breakActive=false;breakStarted=null}
+  const id=canonicalId(payload.callid);
+  if(id&&call&&id!==call.callId){activity('call_observed_end',{state:'unknown',payload:{callId:call.callId,durationKnown:false,sourceCallChanged:true,nextCallId:id}});call=null;}
+  if(id&&!call){call={...callData({callid:id,calltype:payload.calltype}),startedAt:null,elapsed:null,observed:true};activity('call_observed',{state:'on_call',payload:{callId:id,startedBeforeObservation:true}})}
+  else if(!id&&call&&!sourceWaitingOrHeld)endCall({callid:call.callId});
+  saveState();reportPresence();
+ }
+ function scan(){
+  if(!employee||!sessionToken)return;
+  const current=ext(),bound=boundExtension();
+  if(current)identityStartedHere=false;
+  // This signature comes from the supplied native login HTML. A recovered
+  // identity can outlive its local extension metadata, so the actual login
+  // form must end it without relying on a cached "previously authenticated"
+  // flag. A password entered anew in this document is allowed until Arabicss
+  // is entered, preserving the initial identity gate and shift handoff.
+  const mainForm=document.querySelector('.login-form form');
+  const nativeMainLogin=!!mainForm?.querySelector('input[name="input_user"]')&&!!mainForm?.querySelector('input[name="input_pass"][type="password"]')&&!!mainForm?.querySelector('button[name="submit_login"][type="submit"]');
+  const graceIdentity=!current&&freshIdentity();
+  if(!current&&nativeMainLogin&&!identityStartedHere&&!graceIdentity){finishSession('arabicss_login_page');return}
+  const authenticatedPage=!!current||!!document.querySelector('a[href*="logout=yes"]')||!!document.querySelector('#issabel_framework_module_id');
+  const checkHandoff=!current&&(!!bound||arabicssAuthenticated);
+  const loginText=checkHandoff?String(document.body?.textContent||''):'';
+  const nativeControl=control=>!control.closest?.('#kpi-session-box,[data-kpi-ui]');
+  const inputs=checkHandoff?Array.from(document.querySelectorAll('input')).filter(nativeControl):[];
+  const hasPassword=inputs.some(input=>String(input.type||'').toLowerCase()==='password');
+  const hasExtensionInput=inputs.some(input=>!['password','button','submit','hidden'].includes(String(input.type||'').toLowerCase()));
+  const hasLoginButton=checkHandoff&&Array.from(document.querySelectorAll('button,input[type="submit"],input[type="button"]')).filter(nativeControl).some(button=>/^\s*log\s*in\s*$/i.test(button.textContent||button.value||''));
+  const hasUsernameInput=inputs.some(input=>!['password','button','submit','hidden'].includes(String(input.type||'').toLowerCase())&&/user(?:name)?|login|اسم\s*المستخدم/i.test([input.name,input.id,input.placeholder,input.autocomplete].filter(Boolean).join(' ')));
+  // Arabicss Agent Console uses this full login form on some routes instead of
+  // /login.php. Its specific labels plus both fields and the submit button are
+  // strong evidence of a shift handoff, unlike a generic password dialog.
+  const agentConsoleLogin=/agent\s+console/i.test(loginText)&&/callback\s+extension/i.test(loginText)&&hasPassword&&hasExtensionInput&&hasLoginButton;
+  // The main Arabicss login also appears on /index.php or / after logout.
+  // Require its native username/password/Login controls, not a route guess or
+  // our own PIN field. Initial pre-Arabicss identities remain allowed.
+  const mainLoginForm=!authenticatedPage&&hasUsernameInput&&hasPassword&&hasLoginButton;
+  if(!graceIdentity&&(agentConsoleLogin||mainLoginForm||(bound&&!current&&arabicssAuthenticated&&!authenticatedPage&&/\/login\.php$/i.test(location.pathname)))){finishSession('arabicss_login_page');return}
+  if(authenticatedPage&&!arabicssAuthenticated){arabicssAuthenticated=true;saveState()}
+  if(bound&&current&&bound!==current){finishSession('extension_changed');return}
+  if(current&&!bound){identityStartedAt=0;saveState();activity('session_login',{state:'bound'})}
+  if(call&&!call.observed&&sourceConnection==='connected'){const duration=seconds(document.querySelector('#issabel-callcenter-cronometro')?.textContent);if(duration!==null){call.elapsed=Math.max(call.elapsed||0,duration);saveState()}}
+ }
+ function scheduleScan(){if(scanTimer)return;scanTimer=setTimeout(()=>{scanTimer=null;scan()},500)}
+ function isConnectorMutation(m){
+  const own=n=>{const el=n?.nodeType===1?n:n?.parentElement;return !!el?.closest?.('#kpi-session-box,[data-kpi-ui]')};
+  if(own(m.target))return true;
+  const changed=[...Array.from(m.addedNodes||[]),...Array.from(m.removedNodes||[])];
+  return changed.length>0&&changed.every(own);
+ }
+ window.addEventListener('message',e=>{
+  if(e.origin!==location.origin||e.data?.source!=='ARABICSS_KPI_SSE')return;
+  let payload;try{payload=JSON.parse(e.data.data||'{}')}catch{return}
+  const type=String(e.data.type||'').toLowerCase();
+  // Keep current source observations during async identity/clock startup,
+  // but do not persist or attribute anonymous events to an employee.
+  if(type==='source_connection')sourceConnection=payload.state;
+  if(type==='arabicss_state'){latestSourceSnapshot={payload,at:clock.monotonic()};sourceConnection=payload.connection||sourceConnection}
+  if(type==='source_connection'&&payload.state!=='connected')outageIdleConfirmed=false;
+  else if(type==='agentlinked')outageIdleConfirmed=false;
+  else if(type==='agentunlinked')outageIdleConfirmed=false; // Wait for the source's idle snapshot.
+  else if(type==='arabicss_state')outageIdleConfirmed=payload.connection==='connected'&&Object.prototype.hasOwnProperty.call(payload,'callid')&&!payload.callid&&!payload.waitingcall&&!payload.onhold;
+  renderAvailability();
+  if(!employee||!sessionToken)return;
+  if(type==='native_break_attempt'){status(payload.action==='unbreak'?'جارٍ تأكيد إنهاء البريك في أرابيكس…':'جارٍ تأكيد بدء البريك في أرابيكس…');return}
+  if(type==='native_break_result'){status(payload.failed?'لم يتأكد تنفيذ إجراء البريك؛ راجع رسالة أرابيكس. لم نُغيّر حالة العمل دون رصد فعلي.':'وصل رد إجراء البريك؛ ننتظر تأكيد الحالة الفعلية من أرابيكس.');return}
+  if(type==='logout_attempt'){document.getElementById('kpi-session-box')?.classList?.remove('kpi-break-fullscreen');const panel=document.getElementById('kpi-break-request');if(panel)panel.open=false;status('جارٍ تأكيد الخروج من أرابيكس — لم تنتهِ جلسة العمل بعد');return}
+  if(type==='logout_result'){if(!payload.confirmed)status(payload.failed?'لم يتأكد الخروج من أرابيكس؛ الجلسة ما زالت مفتوحة. راجع رسالة أرابيكس.':'وصل رد أرابيكس؛ ننتظر تأكيد الخروج أو ظهور صفحة تسجيل الدخول.');return}
+  if(type==='source_connection'){sourceConnection=payload.state;if(sourceConnection!=='connected')sourceStateKnown=false;reportPresence();return}
+  if(type==='arabicss_state'){captureArabicssStateEvidence(payload);acceptState(payload);return}
+  if(type==='logged-out'||type==='agentloggedout'){finishSession('arabicss_logout');return}
+  sourceConnection='connected';sourceStateKnown=true;
+  if(!['breakenter','breakexit','agentlinked','agentunlinked'].includes(type))captureSourceEvidence(type,payload);
+  if(type==='breakenter'){if(!breakActive){const permit=globalThis.kpiBreakPermit,valid=!!permit&&permit.until>clock.now()&&permit.extension===ext();breakStarted=valid&&payload._previousBreakId==null?clock.iso():null;breakAllowedSeconds=valid?permit.allowedSeconds:900;breakGraceSeconds=valid?permit.graceSeconds:0;activity(breakStarted?'break_start':'break_observed',{state:'break',payload:{...payload,durationKnown:!!breakStarted,breakPolicyEstimated:!breakStarted}});if(valid)globalThis.kpiBreakPermit=null}breakActive=true;saveState()}
+  else if(type==='breakexit'){if(breakActive)activity(breakStarted?'break_end':'break_end_unknown',{state:'ready',durationSeconds:breakStarted?Math.round((clock.now()-Date.parse(breakStarted))/1000):0,payload:{...payload,durationKnown:!!breakStarted}});breakActive=false;breakStarted=null;saveState()}
+  else if(type==='agentlinked')startCall(payload);
+  else if(type==='agentunlinked')endCall(payload);
+  reportPresence();
+ });
+ function mount(){
+  const existing=document.getElementById('kpi-session-box');
+  if(existing){existing._kpiRender?.();return}
+  if(refreshTimer)clearInterval(refreshTimer);if(focusRefresh)window.removeEventListener('focus',focusRefresh);
+  const box=document.createElement('div');box.id='kpi-session-box';box.dir='rtl';
+  box.innerHTML='<div style="font-weight:700;margin-bottom:9px">جلسة الموظف — KPI · '+VERSION+'</div><div id="kpi-active"><div>الموظف: <b id="kpi-name"></b></div><div id="kpi-status" style="margin-top:8px">بانتظار تأكيد مصدر أرابيكس</div><div id="kpi-review-note" style="margin-top:8px;font-size:13px"></div><div style="margin-top:8px;font-size:14px">الخروج مرتبط بالخروج من أرابيكس أو إغلاق المتصفح</div></div><div id="kpi-form"><button id="kpi-refresh">إعادة الاتصال</button><input id="kpi-pin" type="password" inputmode="numeric" autocomplete="current-password" placeholder="باسورد الموظف"><button id="kpi-start">بدء الشيفت</button><div id="kpi-logout-note" role="status" aria-live="polite"></div><div id="kpi-error" role="status"></div></div>';
+  document.body.appendChild(box);
+  const render=()=>{
+   const bypass=availability.state().outage&&!employee;
+   box.querySelector('#kpi-active').hidden=!employee&&!bypass;box.querySelector('#kpi-form').hidden=!!employee||bypass;box.querySelector('#kpi-name').textContent=employee?.name||'غير مسجل — لا تُنسب المكالمات لموظف';
+   if(bypass)box.querySelector('#kpi-status').textContent=availability.state().recovered?'عاد اتصال KPI — سيُطلب التسجيل بعد انتهاء المكالمة وتأكيد الحالة':'تعذر الوصول إلى KPI — أرابيكس متاح مؤقتًا والبيانات قد تكون ناقصة';
+    box.style.cssText='position:fixed;z-index:2147483647;color:white;padding:18px;border:1px solid #2dd4bf;font:17px Arial;'+(employee||bypass?'left:16px;bottom:16px;width:min(360px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:auto;border-radius:12px;background:#142033':'inset:0;display:grid;place-content:center;text-align:center;background:#101b2bee');
+    box.querySelector('#kpi-logout-note').textContent=logoutNotice;
+  };
+  const refresh=async()=>{if(employee)return;try{const d=await probeAvailability();if(!d)throw Error();box.querySelector('#kpi-error').textContent=d.employees.length?'':'لا يوجد موظفون نشطون'}catch{box.querySelector('#kpi-error').textContent='تعذر الاتصال؛ أعد المحاولة'}};
+  box.querySelector('#kpi-refresh').onclick=refresh;focusRefresh=refresh;window.addEventListener('focus',refresh);refreshTimer=setInterval(refresh,15000);refresh();
+  box.querySelector('#kpi-start').onclick=async()=>{
+   if(!initialized)return;
+   const pin=box.querySelector('#kpi-pin').value,button=box.querySelector('#kpi-start');
+   if(button.disabled)return;
+   if(!/^\d+$/.test(pin)){box.querySelector('#kpi-error').textContent='أدخل باسوردك بالأرقام';return}
+   const extension=ext();
+   button.disabled=true;
+   box.querySelector('#kpi-error').textContent='جارٍ التحقق من كلمة المرور…';
+    try{logoutNotice='';box.querySelector('#kpi-logout-note').textContent='';const r=await apiFetch('/api/session/start',{method:'POST',headers:{'content-type':'application/json','x-device-token':TOKEN},body:JSON.stringify({pin,extension})}),d=r.json();
+    if(!r.ok){box.querySelector('#kpi-error').textContent=d.error==='device'?'تعذر التحقق من ربط الإضافة؛ راجع الإدارة':d.error==='invalid_fields'?'تعذر بدء الجلسة: بيانات الدخول أو التحويلة غير صالحة':d.error==='password_not_unique'?'الباسورد مشترك بين أكثر من موظف؛ اطلب من الإدارة تغييره':d.error==='password_migration_required'?'تعذر تحديد الموظف؛ راجع الإدارة':r.status===429?'محاولات كثيرة؛ انتظر 15 دقيقة':r.status===409?'توجد جلسة أخرى نشطة للموظف أو الاكستنشن':r.status===401?'الباسورد غير صحيح':'تعذر بدء الجلسة؛ الخادم لم يقبل الطلب';return}
+    employee=d.employee;sessionToken=d.token;identityStartedHere=true;identityStartedAt=extension?0:clock.now();sessionStorage.setItem(SESSION,JSON.stringify(employee));sessionStorage.setItem(SESSION+'_token',sessionToken);sessionStorage.setItem(SESSION+'_version',VERSION);sessionStorage.setItem(EPOCH,runtimeEpoch);call=null;breakStarted=null;breakActive=false;saveState();box.querySelector('#kpi-pin').value='';await registerSession();render();if(ext())activity('session_login',{state:'verified'});scan();replaySourceSnapshot();flush();
+   }catch{box.querySelector('#kpi-error').textContent='تعذر الاتصال؛ لم تبدأ الجلسة'}finally{button.disabled=false}
+  };
+  box._kpiRender=render;render();if(employee)registerSession();
+ }
+ const inject=()=>{const root=document.documentElement;if(!root)return false;const script=document.createElement('script');script.src=browser.runtime.getURL('page-hook.js');script.onload=()=>script.remove();root.appendChild(script);return true};
+ if(!inject())document.addEventListener('readystatechange',inject,{once:true});
+ async function initialize(){
+  identityStartedHere=false;
+  await ensureClock();
+  try{
+   const runtime=await browser.runtime.sendMessage({type:'EMPLOYEE_RUNTIME_EPOCH'});runtimeEpoch=runtime.epoch;
+   // Same-tab navigation can change HTTP/HTTPS origin and lose sessionStorage.
+   // Recover only this tab's identity, never a device-wide or another tab's session.
+   if(runtime.session?.employee&&runtime.session.token){
+    sessionStorage.setItem(SESSION,JSON.stringify(runtime.session.employee));sessionStorage.setItem(SESSION+'_token',runtime.session.token);sessionStorage.setItem(SESSION+'_version',VERSION);sessionStorage.setItem(EPOCH,runtimeEpoch);
+    if(runtime.session.state)sessionStorage.setItem(STATE,JSON.stringify(runtime.session.state));
+   }
+   const savedToken=sessionStorage.getItem(SESSION+'_token');
+   if(savedToken){const body=savedToken.split('.')[0],claims=JSON.parse(atob(body.replace(/-/g,'+').replace(/_/g,'/')));if(claims.exp>clock.now()){employee=JSON.parse(sessionStorage.getItem(SESSION)||'null');if(employee){sessionToken=savedToken;sessionStorage.setItem(SESSION+'_version',VERSION);sessionStorage.setItem(EPOCH,runtimeEpoch);restoreState()}}}
+   if(!employee){if(savedToken)apiFetch('/api/session/end',{method:'POST',headers:{'content-type':'application/json','x-device-token':TOKEN,'x-employee-session':savedToken},body:'{}'}).catch(()=>{});resetLocal()}
+  }catch{
+   // If the extension background is briefly unavailable after navigation or a
+   // break transition, retain this tab's still-valid signed session token.
+   // The API remains the authority and will reject an expired/revoked token.
+   const savedToken=sessionStorage.getItem(SESSION+'_token');let claims=null;
+   try{claims=JSON.parse(atob(savedToken.split('.')[0].replace(/-/g,'+').replace(/_/g,'/')))}catch{}
+   if(savedToken&&claims?.exp>clock.now()){try{employee=JSON.parse(sessionStorage.getItem(SESSION)||'null')}catch{employee=null}if(employee){sessionToken=savedToken;runtimeEpoch=sessionStorage.getItem(EPOCH)||'';sessionStorage.setItem(SESSION+'_version',VERSION);restoreState()}else resetLocal()}
+   else resetLocal();
+  }
+  if(sessionToken)await registerSession();
+  initialized=true;mount();scan();if(employee)replaySourceSnapshot();flush();
+ }
+ function boot(){
+  const style=document.createElement('style');style.textContent='#kpi-session-box select,#kpi-session-box input{box-sizing:border-box;width:100%;padding:12px;margin:7px 0;border-radius:7px;background:#fff!important;color:#111827!important;opacity:1!important;font:700 17px Arial!important}#kpi-session-box option{background:#fff;color:#111827}#kpi-session-box button{width:100%;padding:10px;margin:6px 0;border-radius:7px;border:1px solid #64748b;background:#2dd4bf;color:#06251e;font:700 17px Arial;cursor:pointer}#kpi-session-box [hidden]{display:none!important}#kpi-error{color:#ffb4b4;margin-top:8px}';document.documentElement.appendChild(style);
+  // Gate before initialization completes; never briefly expose the login form.
+  mount();new MutationObserver(mutations=>{if(mutations.some(m=>!isConnectorMutation(m)))scheduleScan()}).observe(document.body,{childList:true,subtree:true});initialize();
+ }
+ window.addEventListener('online',flush);setInterval(flush,10000);
+ setInterval(async()=>{
+  if(!employee||!sessionToken)return;
+  try{const runtime=await browser.runtime.sendMessage({type:'EMPLOYEE_RUNTIME_EPOCH'});if(runtime.epoch!==runtimeEpoch){runtimeEpoch=runtime.epoch;sessionStorage.setItem(EPOCH,runtimeEpoch);if(runtime.session?.token===sessionToken&&runtime.session.employee)employee=runtime.session.employee;await registerSession();status('تمت استعادة الاتصال بالإضافة دون إنهاء جلسة الموظف')}}catch{status('تعذر الاتصال المؤقت بخلفية الإضافة — ستستمر المحاولة دون طلب كلمة السر');return}
+  registerSession();
+  reportPresence(true,'transport_check');
+ },30000);
+ window.addEventListener('pagehide',()=>{if(employee){saveState();activity('page_closed',{state:'navigation_or_closed'})}});
+ if(document.body)boot();else document.addEventListener('DOMContentLoaded',boot,{once:true});
+})();
+

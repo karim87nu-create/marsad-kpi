@@ -6,6 +6,8 @@ const { dashboardEvent, historyCall } = require('./old-shape');
 const { dayWindow, iso } = require('./time');
 
 const DAY = 86400000;
+// A day that ended more than 12 hours ago no longer changes with the clock, only with new data.
+const settled = (date, now) => now >= dayWindow(date).end + 12 * 3600000;
 const CALL_TYPES = "('agentlinked','agentunlinked')";
 
 function setup(app) {
@@ -43,7 +45,7 @@ function setup(app) {
 
   app.oldDay = function oldDay(date, { employee = '', extension = '' } = {}, now = app.now()) {
     const w = dayWindow(date), start = w.start, finish = w.end, operatingEnd = w.operatingEnd;
-    const key = [date, employee, extension, db.prepare('SELECT MAX(id) m FROM events').get().m, db.prepare('SELECT MAX(imported_at) m FROM history_reports').get().m, Math.floor(now / 15000)].join('|');
+    const key = [date, employee, extension, db.prepare('SELECT MAX(id) m FROM events').get().m, db.prepare('SELECT MAX(imported_at) m FROM history_reports').get().m, settled(date, now) ? 'settled' : Math.floor(now / 15000)].join('|');
     if (cache.has(key)) return cache.get(key);
     const names = new Map(db.prepare('SELECT id, name FROM employees').all().map(e => [e.id, e]));
     const inScope = e => (!extension || e.extension === String(extension)) && (!employee || e.employee_id === Number(employee));
@@ -119,4 +121,4 @@ function setup(app) {
   };
 }
 
-module.exports = { setup };
+module.exports = { setup, settled };

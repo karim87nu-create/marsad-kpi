@@ -1,0 +1,71 @@
+#kpi-session-box.kpi-break-fullscreen {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  height: 100dvh !important;
+  max-width: none !important;
+  max-height: none !important;
+  overflow: auto !important;
+  box-sizing: border-box !important;
+  padding: clamp(16px, 5vw, 48px) !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  display: block !important;
+  background: #0d1b2c !important;
+  color: #fff !important;
+  font: clamp(18px, 2.5vw, 22px) Arial, sans-serif !important;
+  animation: kpi-panel-open 160ms ease-out;
+}
+
+#kpi-session-box.kpi-break-fullscreen #kpi-break-request {
+  width: min(100%, 960px);
+  margin: 20px auto;
+  padding: clamp(16px, 3vw, 30px);
+  border: 1px solid #294b63;
+  border-radius: 16px;
+  background: #11243a;
+  box-shadow: 0 16px 48px #0005;
+}
+
+#kpi-session-box.kpi-break-fullscreen #kpi-break-request summary {
+  padding: 8px 0 18px;
+  font-size: clamp(22px, 3vw, 30px);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+#kpi-session-box.kpi-break-fullscreen #kpi-break-request p,
+#kpi-session-box.kpi-break-fullscreen #kpi-break-request label {
+  font-size: clamp(18px, 2.2vw, 21px);
+  line-height: 1.9;
+}
+
+#kpi-session-box.kpi-break-fullscreen #kpi-break-request label {
+  display: block;
+  margin: 18px 0;
+}
+
+#kpi-session-box.kpi-break-fullscreen #kpi-break-request [data-close] {
+  width: auto;
+  min-width: 120px;
+  float: left;
+  background: #20384e;
+  color: #fff;
+  border-color: #42617a;
+}
+
+#kpi-session-box.kpi-break-fullscreen #kpi-break-request button,
+#kpi-session-box.kpi-break-fullscreen #kpi-break-request select {
+  min-height: 52px;
+  font-size: inherit;
+}
+
+@keyframes kpi-panel-open {
+  from { opacity: 0; transform: scale(.985); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #kpi-session-box.kpi-break-fullscreen { animation: none; }
+}

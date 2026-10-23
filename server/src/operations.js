@@ -6,12 +6,14 @@ const { businessDay, dayWindow, validDate, addDays, iso } = require('./time');
 const { operationsInsights, historyMetrics, operatingCalls } = require('./legacy-logic/attendance-logic');
 const { cairoClockWindow } = require('./legacy-logic/missed-context');
 const { historyCall, parse } = require('./old-shape');
+const { settled } = require('./legacy-dashboard');
 
 const STATUSES = ['new', 'working', 'resolved', 'reviewed'];
 const IDENTITY_NOTE = 'الدخول الإداري الحالي بكلمة مرور مشتركة؛ سجل التغييرات يثبت حساب الإدارة، وليس هوية مشرف منفرد.';
 
 function setup(app) {
   const { db, fail } = app;
+  const insightsCache = new Map();
 
   const reviews = date => db.prepare('SELECT * FROM reviews WHERE date = ? ORDER BY updated_at DESC LIMIT 501').all(date)
     .map(r => ({ id: r.id, reference: r.reference, title: r.title, employeeId: r.employee_id, status: r.status, owner: r.owner, note: r.note, updatedAt: iso(r.updated_at) }));
@@ -54,9 +56,11 @@ function setup(app) {
     const d = app.oldDashboard(date, { attendance: true, all: true }, now), h = history(date, now, queueFilter), w = dayWindow(date);
     const staff = db.prepare('SELECT id, name, employee_code FROM employees').all().map(e => ({ id: e.id, name: e.name, employeeCode: e.employee_code }));
     for (const p of d.performance || []) if (!staff.some(s => s.id === p.employeeId)) staff.push({ id: p.employeeId, name: p.employee, employeeCode: 'حساب سابق' });
-    const insights = operationsInsights({ date, now, staff, sessions: d.attendance?.sessions || [], states: d.attendance?.states || [], calls: d.calls || [], events: d.timeline || [],
+    const key = [date, profileExtension, queueFilter, db.prepare('SELECT MAX(id) m FROM events').get().m, h.report?.importedAt, settled(date, now) ? 'settled' : Math.floor(now / 15000)].join('|');
+    const insights = insightsCache.get(key) || operationsInsights({ date, now, staff, sessions: d.attendance?.sessions || [], states: d.attendance?.states || [], calls: d.calls || [], events: d.timeline || [],
       history: h.records, hasHistory: !!h.report, historyVerified: !!h.report?.verifiedTotal, missingDates: h.report?.missingCalendarDates || [],
       breakTotals: profileExtension ? undefined : d.breakTotals }, profileExtension);
+    if (!insightsCache.has(key)) { if (insightsCache.size > 20) insightsCache.delete(insightsCache.keys().next().value); insightsCache.set(key, insights); }
     const c = connections(w), rv = reviews(date), au = audit(w), rp = reports(date), qs = queueSamples(w);
     return { date, profileExtension, queueFilter, generatedAt: iso(now), ...insights, historyReport: h.report, historyRecords: h.records, queues: h.queues, missed: h.missed,
       attribution: d.historyAttribution, calls: d.calls || [], timeline: d.timeline || [], sessions: d.attendance?.sessions || [], states: d.attendance?.states || [],
@@ -79,7 +83,7 @@ function setup(app) {
 
   app.operationsData = data;
 
-  app.route('GET', '/api/operations', ctx => {
+  app.route('GET', '/api/operations', async ctx => {
     app.requireAdmin(ctx);
     const q = ctx.query, date = q.date || businessDay(ctx.now);
     if (!validDate(date) || date > businessDay(ctx.now)) fail(400, 'invalid_date');
@@ -98,12 +102,12 @@ function setup(app) {
         customers: [], breakOverlaps: [], queueSamples: [], coverage: { unknownSeconds: null, missingDates: [] }, reviews: rv.slice(0, 500), reports: rp.slice(0, 50), audit: au.slice(0, 500),
         connections: c.rows, truncated: { reviews: rv.length > 500, reports: rp.length > 50, audit: au.length > 500, connections: c.truncated } };
     }
-    const result = { ...data(date, extension, queue, ctx.now), section };
+    const result = { ...await app.heavy('operationsData', date, extension, queue, ctx.now), section };
     if (q.compare === '1') result.comparison = comparison(date, queue, result, ctx.now);
     return result;
   });
 
-  app.route('POST', '/api/operations', ctx => {
+  app.route('POST', '/api/operations', async ctx => {
     const who = app.requireAdmin(ctx, 'write');
     const b = ctx.body;
     if (!validDate(b.date) || b.date > businessDay(ctx.now)) fail(400, 'invalid_date');
@@ -124,7 +128,7 @@ function setup(app) {
       if (b.employeeId != null && (!Number.isSafeInteger(b.employeeId) || b.employeeId < 1) || b.extension != null && (typeof b.extension !== 'string' || b.extension && !/^\d{1,10}$/.test(b.extension))) fail(400, 'invalid_fields');
       const queue = typeof b.queue === 'string' ? b.queue : '';
       if (queue && !/^\d{1,10}$/.test(queue)) fail(400, 'invalid_queue');
-      const result = data(b.date, b.extension || '', queue, ctx.now), id = crypto.randomUUID();
+      const result = await app.heavy('operationsData', b.date, b.extension || '', queue, ctx.now), id = crypto.randomUUID();
       const filters = { employeeId: b.employeeId ?? null, extension: b.extension || '', queue, source: 'operations', phoneMasked: !!b.phoneMasked, generalMetricsScope: queue ? 'request_type' : 'whole_service' };
       const payload = JSON.stringify({ date: result.date, generatedAt: result.generatedAt, historyReport: result.historyReport, coverage: result.coverage, rules: result.rules,
         profiles: result.profiles.filter(p => !b.employeeId || p.id === b.employeeId), buckets: result.buckets, wait: result.wait, attribution: result.attribution?.summary, reviews: result.reviews });

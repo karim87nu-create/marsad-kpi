@@ -6,7 +6,7 @@ const { open } = require('./db');
 const { createApp } = require('./app');
 const { hashPassword, randomToken } = require('./security');
 
-const MODULES = ['./admin', './employees', './sessions', './dashboard', './breaks', './messages', './shifts', './history', './missed', './legacy-dashboard', './legacy-attendance', './operations', './telegram'];
+const { MODULES } = require('./modules');
 
 function buildApp(config, { now } = {}) {
   const db = open(config.databasePath);
@@ -33,7 +33,11 @@ if (require.main === module) {
   const config = configFromEnv();
   const app = buildApp(config);
   const port = Number(process.env.PORT) || 8080;
-  http.createServer((req, res) => app.handle(req, res)).listen(port, () => console.log('marsad-kpi server on :' + port));
+  const server = http.createServer((req, res) => app.handle(req, res));
+  // Keep idle connections open longer than the hosting proxy does, so a reused connection is never closed mid-request.
+  server.keepAliveTimeout = 65000;
+  server.headersTimeout = 66000;
+  server.listen(port, () => console.log('marsad-kpi server on :' + port));
 }
 
 module.exports = { MODULES, buildApp, configFromEnv };
