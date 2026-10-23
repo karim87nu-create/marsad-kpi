@@ -112,6 +112,20 @@
         <p id="adminMessage" class="muted" role="status"></p>
         <div id="adminsTable"></div>
       </article>
+      <article class="panel" id="importPanel" hidden><h2>نقل بيانات النظام القديم</h2>
+        <p class="muted">مرة واحدة بس، على السيرفر الجديد وهو فاضي: ارفع ملف قاعدة البيانات اللي في نسخة شات جي بي تي (database/marsad-kpi-live.sqlite). الموظفين بباسورداتهم ومستخدمين الإدارة وكل الأيام هتتنقل. لازم تكون داخل بالباسورد الرئيسي.</p>
+        <div class="inline"><input type="file" id="importFile" accept=".sqlite,.db"><button type="button" id="importButton">رفع ونقل البيانات</button></div>
+        <p id="importNote" class="muted" role="status"></p>
+      </article>
+      <article class="panel" id="telegramPanel"><h2>تنبيهات تليجرام</h2>
+        <p class="muted">1) اعمل بوت من BotFather وانسخ التوكن. 2) ضيف البوت لجروب المشرفين وابعت فيه أي رسالة. 3) دوس «دور على الجروب» واختاره.</p>
+        <p id="tgStatus"></p>
+        <form id="tgToken" class="inline"><input name="token" placeholder="توكن البوت" autocomplete="off" required><button type="submit">ربط البوت</button></form>
+        <div class="inline" style="margin-top:8px"><button type="button" id="tgDiscover" class="ghost">دور على الجروب</button><select id="tgChats" hidden></select><button type="button" id="tgChoose" hidden>ربط الجروب ده</button><button type="button" id="tgTest" class="ghost">رسالة تجربة</button></div>
+        <form id="tgSettings" class="stack" style="margin-top:10px"><label><input type="checkbox" name="enabled"> التنبيهات شغالة</label><div id="tgRules" class="stack"></div><button type="submit">حفظ</button></form>
+        <p id="tgNote" class="muted" role="status"></p>
+        <h3>تنبيهات النهارده</h3><div id="tgLog"></div>
+      </article>
       <article class="panel"><h2>موصل سجل أرابيكس</h2>
         <p class="muted">الموصل بيسحب سجل المكالمات والانتظار المباشر من جهاز واحد عليه الإضافة ومتسجل فيه دخول تقارير أرابيكس. افتح الصفحة دي على الجهاز ده واضغط ربط.</p>
         <button id="linkCollector">ربط الجهاز ده كموصل</button>

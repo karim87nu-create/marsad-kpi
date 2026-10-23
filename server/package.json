@@ -2,15 +2,14 @@
   "name": "marsad-kpi-server",
   "version": "1.0.0",
   "private": true,
-  "description": "Marsad KPI backend: employees, sessions, events, Arabicss history, dashboard",
+  "description": "مرصد الأداء — server",
   "main": "src/index.js",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "start": "node src/index.js",
     "test": "node --test --test-force-exit test/*.test.js",
-    "migrate": "node scripts/migrate-from-old.js",
     "import-old": "node scripts/import-old-db.js"
   },
   "dependencies": {

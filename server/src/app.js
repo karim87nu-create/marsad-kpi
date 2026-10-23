@@ -13,7 +13,7 @@ class HttpError extends Error {
 }
 const fail = (status, code, extra) => { throw new HttpError(status, code, extra); };
 
-const ALLOWED_HEADERS = 'content-type, x-admin-password, x-device-token, x-employee-session, x-history-token';
+const ALLOWED_HEADERS = 'content-type, x-admin-password, x-device-token, x-employee-session, x-history-token, x-compressed';
 
 function readBody(req, limit) {
   return new Promise((resolve, reject) => {
@@ -71,7 +71,7 @@ function createApp({ db, config, now = () => Date.now() }) {
     const route = routes.get(req.method + ' ' + url.pathname);
     if (!route) { send(404, { error: 'not_found' }); return; }
     try {
-      const raw = req.method === 'GET' ? Buffer.alloc(0) : await readBody(req, route.options.limit || 256 * 1024);
+      const raw = req.method === 'GET' || route.options.stream ? Buffer.alloc(0) : await readBody(req, route.options.limit || 256 * 1024);
       const type = String(req.headers['content-type'] || '');
       let body = {};
       if (route.options.raw) body = raw;

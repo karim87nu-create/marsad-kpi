@@ -6,10 +6,10 @@ const { cairoToUtc } = require('../src/time');
 
 const DEVICE = '7000865f1220458f86506b41a97cab7d';
 
-async function start({ at = cairoToUtc(2026, 10, 22, 12, 0, 0) } = {}) {
+async function start({ at = cairoToUtc(2026, 10, 22, 12, 0, 0), config = {} } = {}) {
   const clock = { now: at };
   const app = buildApp({ databasePath: ':memory:', secret: 'test-secret', adminPasswordHash: hashPassword('master-pass'),
-    deviceTokens: [DEVICE], allowedOrigins: ['https://karim87nu-create.github.io'] }, { now: () => clock.now });
+    deviceTokens: [DEVICE], allowedOrigins: ['https://karim87nu-create.github.io'], telegramTimer: false, ...config }, { now: () => clock.now });
   const server = http.createServer((req, res) => app.handle(req, res));
   await new Promise(r => server.listen(0, r));
   const base = 'http://127.0.0.1:' + server.address().port;

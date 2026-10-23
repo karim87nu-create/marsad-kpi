@@ -26,6 +26,7 @@ function configFromEnv(env = process.env) {
     adminPasswordHash: env.MARSAD_ADMIN_PASSWORD_HASH || (env.MARSAD_ADMIN_PASSWORD ? hashPassword(env.MARSAD_ADMIN_PASSWORD) : null),
     deviceTokens: list(env.DEVICE_TOKENS),
     allowedOrigins: list(env.ALLOWED_ORIGINS || 'https://karim87nu-create.github.io'),
+    telegramApi: env.TELEGRAM_API || undefined,
   };
 }
 

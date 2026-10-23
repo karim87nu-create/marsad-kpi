@@ -255,6 +255,9 @@
           btn(x.active ? 'إيقاف' : 'تفعيل', () => act('adminMessage', () => api('/api/admin-access', { method: 'PATCH', body: { id: x.id, active: !x.active } }), 'اتحفظ')),
           btn('حذف', () => confirm('حذف ' + x.name + '؟') && act('adminMessage', () => api('/api/admin-access', { method: 'DELETE', body: { id: x.id } }), 'اتحذف'), 'danger')) }], a.accounts || []);
     }
+    $('telegramPanel').hidden = !isAdmin();
+    if (isAdmin()) api('/api/import-old').then(r => { $('importPanel').hidden = !r.available; }).catch(() => {});
+    if (isAdmin()) renderTelegram().catch(e => say('tgNote', e.message));
     for (const f of ['addEmployee', 'addAdmin', 'messageForm']) $(f).hidden = f === 'messageForm' ? !canWrite() : !isAdmin();
     $('linkCollector').hidden = !canWrite();
   }
@@ -271,6 +274,46 @@
     e.preventDefault(); const f = e.target;
     try { const r = await api('/api/messages', { method: 'POST', body: { id: crypto.randomUUID(), title: f.elements.title.value.trim(), message: f.elements.message.value.trim(), priority: f.elements.priority.value, hours: Number(f.elements.hours.value), recipients: f.elements.to.value === 'all' ? 'all' : [Number(f.elements.to.value)] } }); say('messageNote', 'اتبعتت لـ ' + r.recipients + ' موظف'); f.reset(); renderManage(); } catch (x) { say('messageNote', x.message); }
   };
+  $('importButton').onclick = async () => {
+    const f = $('importFile').files[0];
+    if (!f) return say('importNote', 'اختار الملف الأول');
+    if (!confirm('نقل بيانات النظام القديم للسيرفر ده؟ العملية دي بتتعمل مرة واحدة.')) return;
+    $('importButton').disabled = true; say('importNote', 'جارٍ الرفع والنقل… ممكن ياخد دقيقة أو اتنين، متقفلش الصفحة.');
+    try {
+      say('importNote', 'جارٍ ضغط الملف…');
+      const packed = await new Response(f.stream().pipeThrough(new CompressionStream('gzip'))).blob();
+      say('importNote', 'جارٍ الرفع (' + Math.round(packed.size / 1048576) + ' ميجا) والنقل… ممكن ياخد كام دقيقة، متقفلش الصفحة.');
+      const r = await fetch(API + '/api/import-old', { method: 'POST', headers: { 'x-admin-password': token, 'content-type': 'application/octet-stream', 'x-compressed': 'gzip' }, body: packed });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw Error(d.error || 'تعذر النقل');
+      const x = d.report;
+      say('importNote', 'اتنقل: ' + x.employees + ' موظف، ' + x.adminAccounts + ' مستخدم إدارة، ' + x.sessions + ' جلسة، ' + x.events + ' حدث، ' + x.historyDays + ' يوم من سجل أرابيكس.');
+      $('importPanel').hidden = true; renderManage();
+    } catch (e) { say('importNote', e.message); } finally { $('importButton').disabled = false; }
+  };
+
+  // ---------- تليجرام ----------
+  async function renderTelegram() {
+    const t = await api('/api/telegram');
+    $('tgStatus').textContent = !t.configured ? 'البوت مش مربوط.' : 'البوت: @' + t.botName + ' · ' + (t.chat ? 'الجروب: ' + t.chat.title : 'لسه مفيش جروب') + ' · ' + (t.enabled ? 'التنبيهات شغالة' : 'التنبيهات متوقفة');
+    $('tgSettings').elements.enabled.checked = t.enabled;
+    $('tgRules').replaceChildren(...t.rules.map(r => h('label', {}, h('input', { type: 'checkbox', name: 'rule', value: r.key, checked: r.on }), ' ' + r.label)));
+    const log = (await api('/api/telegram?log=1&date=' + cairoToday())).log;
+    table('tgLog', [{ title: 'الوقت', get: x => x.createdAt, show: x => clock(x.createdAt), type: 'datetime' }, { title: 'النوع', get: x => x.label }, { title: 'الرسالة', get: x => x.text.split('\n')[0] },
+      { title: 'اتبعت', get: x => x.sentAt ? 'أيوه' : 'لأ' + (x.error ? ' — ' + x.error : '') }], log, { empty: 'مفيش تنبيهات النهارده', limit: 100 });
+  }
+  $('tgToken').onsubmit = async e => { e.preventDefault(); try { const r = await api('/api/telegram', { method: 'POST', body: { action: 'token', token: e.target.elements.token.value.trim() } }); e.target.reset(); say('tgNote', 'اتربط البوت @' + r.botName + '. ضيفه للجروب وابعت رسالة، وبعدين دوس «دور على الجروب».'); renderTelegram(); } catch (x) { say('tgNote', x.message); } };
+  $('tgDiscover').onclick = async () => {
+    try { const { chats } = await api('/api/telegram', { method: 'POST', body: { action: 'discover' } });
+      if (!chats.length) return say('tgNote', 'البوت مش شايف أي جروب لسه. ضيفه للجروب وابعت فيه رسالة وجرب تاني.');
+      $('tgChats').replaceChildren(...chats.map(c => h('option', { value: c.id, textContent: c.title }))); $('tgChats').hidden = $('tgChoose').hidden = false; say('tgNote', 'اختار الجروب ودوس ربط.');
+    } catch (x) { say('tgNote', x.message); }
+  };
+  $('tgChoose').onclick = async () => { const o = $('tgChats').selectedOptions[0]; try { await api('/api/telegram', { method: 'POST', body: { action: 'chat', chatId: o.value, title: o.textContent } }); say('tgNote', 'اتربط الجروب وجاتلكم رسالة تأكيد.'); $('tgChats').hidden = $('tgChoose').hidden = true; renderTelegram(); } catch (x) { say('tgNote', x.message); } };
+  $('tgTest').onclick = async () => { try { await api('/api/telegram', { method: 'POST', body: { action: 'test' } }); say('tgNote', 'اتبعتت رسالة تجربة.'); } catch (x) { say('tgNote', x.message); } };
+  $('tgSettings').onsubmit = async e => { e.preventDefault(); const f = e.target, rules = Object.fromEntries([...f.querySelectorAll('[name=rule]')].map(i => [i.value, i.checked]));
+    try { await api('/api/telegram', { method: 'POST', body: { action: 'settings', enabled: f.elements.enabled.checked, rules } }); say('tgNote', 'اتحفظ.'); renderTelegram(); } catch (x) { say('tgNote', x.message); } };
+
   // The extension on this PC (if installed) receives the collector credentials through the page.
   function extensionCall(message, ms = 4000) {
     return new Promise(resolve => {
