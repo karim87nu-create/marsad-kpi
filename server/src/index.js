@@ -1,61 +1,54 @@
-'use strict';
-const http = require('node:http');
-const fs = require('node:fs');
-const path = require('node:path');
-const { open } = require('./db');
-const { createApp } = require('./app');
-const { hashPassword, randomToken } = require('./security');
+// Node runner (local use and tests). Production runs on ChatGPT Sites through sites/route.ts.
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { open } from './node-db.js';
+import { buildCore } from './core.js';
+import * as importRoute from './import-route.js';
 
-const { MODULES } = require('./modules');
+const here = path.dirname(fileURLToPath(import.meta.url));
 
-function buildApp(config, { now } = {}) {
-  const db = open(config.databasePath);
-  const app = createApp({ db, config, now });
-  for (const m of MODULES) require(m).setup(app);
+async function buildApp(config, { now } = {}) {
+  const db = await open(config.databasePath);
+  const app = buildCore(db, config, { now });
+  importRoute.setup(app);
+  await app.init();
   return app;
 }
 
-// Without MARSAD_SECRET the server keeps its own secret next to the database, so sign-ins and the sealed Telegram token survive restarts.
-function storedSecret(databasePath) {
-  if (databasePath === ':memory:') return randomToken();
-  const file = path.join(path.dirname(databasePath), '.marsad-secret');
-  try { const s = fs.readFileSync(file, 'utf8').trim(); if (s.length >= 32) return s; } catch {}
-  const s = randomToken() + randomToken();
-  fs.writeFileSync(file, s, { mode: 0o600 });
-  return s;
-}
-
-// Master password hash written by scripts/set-password.js, for installs without environment variables.
-function adminHashFile(databasePath) { return path.join(path.dirname(databasePath), '.marsad-admin'); }
-function storedAdminHash(databasePath) {
-  if (databasePath === ':memory:') return null;
-  try { return fs.readFileSync(adminHashFile(databasePath), 'utf8').trim() || null; } catch { return null; }
-}
-
 function configFromEnv(env = process.env) {
-  const databasePath = env.DATABASE_PATH || path.join(__dirname, '..', 'data', 'marsad.db');
+  const databasePath = env.DATABASE_PATH || path.join(here, '..', 'data', 'marsad.db');
   if (databasePath !== ':memory:') fs.mkdirSync(path.dirname(databasePath), { recursive: true });
   const list = v => String(v || '').split(',').map(x => x.trim()).filter(Boolean);
   return {
     databasePath,
-    secret: env.MARSAD_SECRET || storedSecret(databasePath),
-    adminPasswordHash: env.MARSAD_ADMIN_PASSWORD_HASH || (env.MARSAD_ADMIN_PASSWORD ? hashPassword(env.MARSAD_ADMIN_PASSWORD) : storedAdminHash(databasePath)),
-    // The connector's device token ships inside the published extension, so it is not a secret; it can still be overridden.
-    deviceTokens: list(env.DEVICE_TOKENS || '7000865f1220458f86506b41a97cab7d'),
+    secret: env.MARSAD_SECRET || undefined,
+    adminPassword: env.MARSAD_ADMIN_PASSWORD || undefined,
+    adminPasswordHash: env.MARSAD_ADMIN_PASSWORD_HASH || undefined,
+    deviceTokens: list(env.DEVICE_TOKENS),
     allowedOrigins: list(env.ALLOWED_ORIGINS || 'https://karim87nu-create.github.io'),
     telegramApi: env.TELEGRAM_API || undefined,
   };
 }
 
-if (require.main === module) {
-  const config = configFromEnv();
-  const app = buildApp(config);
-  const port = Number(process.env.PORT) || 8080;
-  const server = http.createServer((req, res) => app.handle(req, res));
-  // Keep idle connections open longer than the hosting proxy does, so a reused connection is never closed mid-request.
-  server.keepAliveTimeout = 65000;
-  server.headersTimeout = 66000;
-  server.listen(port, process.env.HOST || undefined, () => console.log('marsad-kpi server on :' + port));
+// Node request → Fetch Request → app → Node response.
+function nodeHandler(app) {
+  return async (req, res) => {
+    try {
+      const url = 'http://' + (req.headers.host || 'localhost') + req.url;
+      const hasBody = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
+      const request = new Request(url, { method: req.method, headers: Object.entries(req.headers).flatMap(([k, v]) => (Array.isArray(v) ? v.map(x => [k, x]) : [[k, v]])),
+        body: hasBody ? req : undefined, duplex: hasBody ? 'half' : undefined });
+      const response = await app.fetch(request, { ip: req.socket.remoteAddress || '' });
+      res.writeHead(response.status, Object.fromEntries(response.headers));
+      res.end(Buffer.from(await response.arrayBuffer()));
+    } catch (e) {
+      console.error(e);
+      if (!res.headersSent) res.writeHead(500, { 'content-type': 'application/json' });
+      res.end('{"error":"server_error"}');
+    }
+  };
 }
 
-module.exports = { MODULES, buildApp, configFromEnv, adminHashFile };
+export { buildApp, configFromEnv, nodeHandler };

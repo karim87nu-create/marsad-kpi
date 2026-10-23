@@ -1,4 +1,3 @@
-'use strict';
 // Attendance rules for مرصد الأداء (our own, replacing the old server's lib/attendance-durations.ts):
 //
 // 1. Work starts at the first moment the employee is ready or on a call on a real extension.
@@ -118,4 +117,4 @@ function breakTotals(states) {
   return [...by.values()];
 }
 
-module.exports = { attendance, mergeBreaks, breakTotals, KNOWN_CLOSE };
+export { attendance, mergeBreaks, breakTotals, KNOWN_CLOSE };

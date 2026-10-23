@@ -1,4 +1,3 @@
-'use strict';
 // مرصد الأداء — calculation engine. Every number the admin page shows comes from here.
 //
 // Inputs: employee sessions and the events the connector sent for them, plus the Arabicss call
@@ -14,9 +13,9 @@
 // • A missed call is judged against everyone in their shift between the moment the customer entered
 //   the queue and the moment they hung up.
 // • Totals use operating hours (09:00 → 03:00); the data day runs 09:00 → 09:00.
-const { RULES, dayWindow, businessDay, iso } = require('./time');
-const { attendance, mergeBreaks, breakTotals, KNOWN_CLOSE } = require('./attendance-rules');
-const A = require('./arabicss');
+import { RULES, dayWindow, businessDay, iso } from './time.js';
+import { attendance, mergeBreaks, breakTotals, KNOWN_CLOSE } from './attendance-rules.js';
+import * as A from './arabicss.js';
 
 const GAP_MS = RULES.presenceStaleMs;
 const WORK = new Set(['ready', 'on_call', 'break']);
@@ -80,22 +79,25 @@ function callsOf(session, events) {
 function setup(app) {
   const { db } = app;
   const cache = new Map();
-  const names = () => new Map(db.prepare('SELECT id, name, employee_code, active, deleted_at FROM employees').all().map(e => [e.id, e]));
+  const names = async () => new Map((await db.prepare('SELECT id, name, employee_code, active, deleted_at FROM employees').all()).map(e => [e.id, e]));
+  // Events of many sessions in one query, grouped by session.
+  const bySession = rows => { const m = new Map(); for (const e of rows) { if (!m.has(e.session_id)) m.set(e.session_id, []); m.get(e.session_id).push(e); } return m; };
   const sessionRow = s => ({ id: String(s.id), employeeId: s.employee_id, extension: s.extension, issuedAt: s.issued_at, lastSeen: s.last_seen, expiresAt: s.expires_at,
     revokedAt: s.revoked_at ?? null, reason: s.revoke_reason || null, workStartedAt: s.work_started_at ?? null });
 
   // Everything for one data day.
-  function day(date, now = app.now()) {
-    const w = dayWindow(date);
-    const key = [date, db.prepare('SELECT MAX(id) m FROM events').get().m, db.prepare('SELECT MAX(COALESCE(revoked_at, 0)) m, COUNT(*) n FROM employee_sessions').get().n,
-      app.dayHistory(date, now).key, now >= w.end + 12 * 3600000 ? 'settled' : Math.floor(now / 5000)].join('|');
+  async function day(date, now = app.now()) {
+    const w = dayWindow(date), from = w.start - 12 * 3600000;
+    const [ev, ses, h] = await Promise.all([db.prepare('SELECT MAX(id) m FROM events').get(), db.prepare('SELECT MAX(COALESCE(revoked_at, 0)) m, COUNT(*) n FROM employee_sessions').get(), app.dayHistory(date, now)]);
+    const key = [date, ev.m, ses.m, ses.n, h.key, now >= w.end + 12 * 3600000 ? 'settled' : Math.floor(now / 5000)].join('|');
     if (cache.has(key)) return cache.get(key);
-    const people = names();
-    const rows = db.prepare('SELECT * FROM employee_sessions WHERE issued_at < ? AND COALESCE(revoked_at, expires_at) > ? ORDER BY issued_at').all(w.end, w.start - 12 * 3600000);
-    const eventsOf = db.prepare('SELECT * FROM events WHERE session_id = ? ORDER BY occurred_at, id');
+    const [people, rows, allEvents] = await Promise.all([names(),
+      db.prepare('SELECT * FROM employee_sessions WHERE issued_at < ? AND COALESCE(revoked_at, expires_at) > ? ORDER BY issued_at').all(w.end, from),
+      db.prepare(`SELECT * FROM events WHERE session_id IN (SELECT id FROM employee_sessions WHERE issued_at < ? AND COALESCE(revoked_at, expires_at) > ?) ORDER BY occurred_at, id`).all(w.end, from)]);
+    const grouped = bySession(allEvents);
     const sessions = [], spans = [], calls = [], breakEvents = [], logins = [];
     for (const s of rows) {
-      const events = eventsOf.all(s.id), sp = spansOf(s, events);
+      const events = grouped.get(s.id) || [], sp = spansOf(s, events);
       const firstWork = sp.find(p => WORK.has(p.state) && p.state !== 'break' && numeric(p.extension));
       sessions.push({ ...sessionRow(s), workStartedAt: firstWork ? firstWork.started : null, extension: firstWork?.extension || s.extension });
       spans.push(...sp);
@@ -111,7 +113,6 @@ function setup(app) {
 
     // ---- calls of the day (by start time), plus Arabicss history matching ----
     const dayCalls = calls.filter(c => c.startedAt >= w.start && c.startedAt < w.end);
-    const h = app.dayHistory(date, now);
     const matched = matchHistory(h.records, dayCalls, at.sessions, people);
     const allCalls = [...dayCalls, ...matched.recovered].map(c => ({ ...c, employee: people.get(c.employeeId)?.name || '', outsideHours: c.startedAt >= w.operatingEnd || A.purpose(c.queue) === '0',
       startedAt: iso(c.startedAt), endedAt: iso(c.endedAt) })).sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
@@ -184,12 +185,12 @@ function setup(app) {
   }
 
   // Who could have answered a missed call.
-  app.missedContext = function missedContext(date, index, now = app.now()) {
-    const d = day(date, now), r = d.raw.records[index];
+  app.missedContext = async function missedContext(date, index, now = app.now()) {
+    const d = await day(date, now), r = d.raw.records[index];
     if (!r || String(r.status).toLowerCase() !== 'abandoned') return null;
     const entry = r.startMs, exit = r.endMs ?? (r.startMs != null && r.waitSeconds != null ? r.startMs + r.waitSeconds * 1000 : null);
     if (entry == null) return { call: r, employees: [], note: 'وقت المكالمة غير موجود في السجل' };
-    const slack = r.precision === 'minute' ? 59000 : 0, people = names();
+    const slack = r.precision === 'minute' ? 59000 : 0, people = await names();
     const ids = [...new Set(d.sessions.filter(s => s.workStartedAt != null).map(s => s.employeeId))];
     const employees = ids.map(id => {
       const a = stateAt(d.states, d.sessions, id, entry), b = stateAt(d.states, d.sessions, id, exit ?? entry);
@@ -204,10 +205,19 @@ function setup(app) {
   };
 
   // Right now: each active employee's state, how long, and the current call.
-  app.live = function live(now = app.now()) {
-    const today = businessDay(now), w = dayWindow(today), people = names();
-    const latest = db.prepare(`SELECT s.* FROM employee_sessions s WHERE s.id = (SELECT id FROM employee_sessions x WHERE x.employee_id = s.employee_id ORDER BY issued_at DESC, id DESC LIMIT 1)`).all();
-    const recent = db.prepare('SELECT * FROM events WHERE session_id = ? AND occurred_at >= ? ORDER BY occurred_at, id');
+  // The last 4 hours of a session's events are enough to tell its current state (the admin page asks every second).
+  const LIVE_WINDOW_MS = 4 * 3600000;
+  app.live = async function live(now = app.now()) {
+    const today = businessDay(now), w = dayWindow(today);
+    const latestSql = 'SELECT s.* FROM employee_sessions s WHERE s.id = (SELECT id FROM employee_sessions x WHERE x.employee_id = s.employee_id ORDER BY issued_at DESC, id DESC LIMIT 1)';
+    const [people, latest] = await Promise.all([names(), db.prepare(latestSql).all()]);
+    // Recent events of today's latest sessions, through the (session_id, occurred_at) index, 40 sessions per query.
+    const wanted = latest.filter(s => (s.revoked_at ?? s.expires_at) >= w.start), from = new Map(wanted.map(s => [s.id, Math.max(s.issued_at, now - LIVE_WINDOW_MS)]));
+    const chunks = [];
+    for (let i = 0; i < wanted.length; i += 40) chunks.push(wanted.slice(i, i + 40));
+    const recentRows = (await Promise.all(chunks.map(part => db.prepare('SELECT * FROM events WHERE session_id IN (' + part.map(() => '?').join(',') + ') AND occurred_at >= ? ORDER BY occurred_at, id')
+      .all(...part.map(s => s.id), Math.min(...part.map(s => from.get(s.id))))))).flat().filter(e => e.occurred_at >= from.get(e.session_id));
+    const recent = bySession(recentRows);
     const out = [];
     for (const [id, e] of people) {
       if (!e.active || e.deleted_at) continue;
@@ -215,7 +225,7 @@ function setup(app) {
       const base = { employeeId: id, name: e.name, extension: s?.extension || '', state: 'no_session', since: null, phone: '', queue: '', callId: '', lastEvidence: null };
       if (!s || (s.revoked_at ?? s.expires_at) < w.start && s.issued_at < w.start) { out.push(base); continue; }
       const open = !s.revoked_at && s.expires_at > now;
-      const events = recent.all(s.id, Math.max(s.issued_at, now - 12 * 3600000)), sp = spansOf(s, events), last = sp.at(-1);
+      const events = recent.get(s.id) || [], sp = spansOf(s, events), last = sp.at(-1);
       const lastAt = events.length ? events.at(-1).occurred_at : s.issued_at;
       if (!open) { out.push({ ...base, state: KNOWN_CLOSE.has(s.revoke_reason || '') ? 'logged_out' : 'disconnected', since: iso(s.revoked_at ?? s.expires_at), lastEvidence: iso(lastAt) }); continue; }
       if (!numeric(s.extension)) { out.push({ ...base, state: 'logged_in', since: iso(s.issued_at), lastEvidence: iso(lastAt) }); continue; }
@@ -233,10 +243,12 @@ function setup(app) {
   // Break allowance for today (2 regular breaks, 30 minutes in total; the first up to 15 + 5 minutes,
   // the second gets what is left). A break seen without a permission counts at least 15 minutes;
   // a supervisor-approved extra break does not use the allowance. No regular break after 03:00.
-  app.breakPolicy = function breakPolicy(employeeId, now = app.now()) {
+  app.breakPolicy = async function breakPolicy(employeeId, now = app.now()) {
     const w = dayWindow(businessDay(now)), until = Math.min(now, w.operatingEnd);
-    const events = db.prepare(`SELECT * FROM events WHERE employee_id = ? AND event_type IN ('break_start','break_observed','break_end','break_end_unknown') AND occurred_at >= ? AND occurred_at <= ? ORDER BY occurred_at, id`).all(employeeId, w.start, until);
-    const approved = new Set(db.prepare('SELECT id FROM break_permissions WHERE employee_id = ? AND request_id IS NOT NULL').all(employeeId).map(p => p.id));
+    const [events, perms] = await Promise.all([
+      db.prepare(`SELECT * FROM events WHERE employee_id = ? AND event_type IN ('break_start','break_observed','break_end','break_end_unknown') AND occurred_at >= ? AND occurred_at <= ? ORDER BY occurred_at, id`).all(employeeId, w.start, until),
+      db.prepare('SELECT id FROM break_permissions WHERE employee_id = ? AND request_id IS NOT NULL AND created_at >= ?').all(employeeId, w.start - 3600000)]);
+    const approved = new Set(perms.map(p => p.id));
     const periods = [];
     let open = null;
     for (const e of events) {
@@ -256,12 +268,12 @@ function setup(app) {
   };
 
   // Is this session showing "available" right now (fresh evidence)?
-  app.sessionReady = function sessionReady(session, now = app.now()) {
-    const sp = spansOf(session, db.prepare('SELECT * FROM events WHERE session_id = ? AND occurred_at >= ? ORDER BY occurred_at, id').all(session.id, now - 3600000)), last = sp.at(-1);
+  app.sessionReady = async function sessionReady(session, now = app.now()) {
+    const sp = spansOf(session, await db.prepare('SELECT * FROM events WHERE session_id = ? AND occurred_at >= ? ORDER BY occurred_at, id').all(session.id, now - 3600000)), last = sp.at(-1);
     return !!last && last.state === 'ready' && now - last.lastEvidence <= 15000;
   };
 
   app.day = day;
 }
 
-module.exports = { setup, stateOf, spansOf, callsOf, canonical };
+export { setup, stateOf, spansOf, callsOf, canonical };

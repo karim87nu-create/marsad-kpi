@@ -393,15 +393,25 @@
     $('app').hidden = true; $('login').hidden = false; $('loginError').textContent = message;
   }
   $('logout').onclick = () => logout();
+  // A brand-new server has no main password yet: the first screen chooses it.
+  let setup = false;
+  const checkSetup = () => fetch(API + '/api/admin-access/setup').then(r => r.json()).then(d => {
+    setup = !!d.needed;
+    $('setupNote').hidden = $('confirmRow').hidden = !setup; $('confirmation').required = setup;
+    $('password').autocomplete = setup ? 'new-password' : 'current-password'; $('loginButton').textContent = setup ? 'حفظ ودخول' : 'دخول';
+  }).catch(() => {});
   $('loginForm').onsubmit = async e => {
     e.preventDefault(); $('loginError').textContent = '';
     try {
-      const r = await fetch(API + '/api/admin-access', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'login', password: $('password').value }) });
+      const body = setup ? { action: 'setup', password: $('password').value, confirmation: $('confirmation').value } : { action: 'login', password: $('password').value };
+      const r = await fetch(API + '/api/admin-access', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw Error(d.error || 'تعذر الدخول');
-      token = d.token; sessionStorage.setItem(TOKEN, token); $('password').value = '';
+      token = d.token; sessionStorage.setItem(TOKEN, token); $('password').value = $('confirmation').value = '';
+      if (setup) checkSetup();
       await enter();
     } catch (x) { $('loginError').textContent = x.message === 'Failed to fetch' ? 'السيرفر مش متاح' : x.message; }
   };
+  checkSetup();
   if (token) enter().catch(() => logout()); else $('login').hidden = false;
 })();

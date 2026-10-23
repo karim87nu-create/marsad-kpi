@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>مرصد الأداء — الإدارة</title>
+<link rel="stylesheet" href="style.css?v=1">
+</head>
+<body>
+<section id="login" hidden>
+  <form id="loginForm">
+    <div class="brand"><span class="mark">م</span><div><strong>مرصد الأداء</strong><small>إدارة الكول سنتر</small></div></div>
+    <p id="setupNote" hidden>السيرفر جديد: اختار كلمة المرور الرئيسية للإدارة (8 حروف أو أكثر).</p>
+    <label>باسورد الإدارة<input id="password" type="password" autocomplete="current-password" required></label>
+    <label id="confirmRow" hidden>اكتبها تاني<input id="confirmation" type="password" autocomplete="new-password"></label>
+    <button type="submit" id="loginButton">دخول</button>
+    <p id="loginError" class="error" role="alert"></p>
+  </form>
+</section>
+
+<div id="app" hidden>
+  <aside id="nav">
+    <div class="brand"><span class="mark">م</span><div><strong>مرصد الأداء</strong><small id="who"></small></div></div>
+    <nav>
+      <button data-view="now" class="active">الآن</button>
+      <button data-view="day">ملخص اليوم</button>
+      <button data-view="team">الموظفون</button>
+      <button data-view="calls">المكالمات</button>
+      <button data-view="missed">المكالمات الفائتة</button>
+      <button data-view="manage">الإدارة</button>
+    </nav>
+    <button id="logout" class="ghost">خروج</button>
+  </aside>
+
+  <main>
+    <header id="top">
+      <h1 id="title">الآن</h1>
+      <div class="tools">
+        <label id="dayPicker" hidden>اليوم <input id="day" type="date"></label>
+        <span id="sync" class="sync"></span>
+      </div>
+    </header>
+    <p id="error" class="banner error" hidden></p>
+
+    <section id="view-now" class="view">
+      <div id="nowCards" class="cards"></div>
+      <div id="breakRequests"></div>
+      <div class="split">
+        <article class="panel"><h2>الموظفون الآن</h2><div id="staffNow"></div></article>
+        <article class="panel"><h2>العملاء في الانتظار <small id="queueAge"></small></h2><div id="queueNow"></div></article>
+      </div>
+    </section>
+
+    <section id="view-day" class="view" hidden>
+      <p id="dayNote" class="muted"></p>
+      <div id="dayCards" class="cards"></div>
+      <article class="panel"><h2>حسب نوع الطلب <button class="ghost small" data-export="queues">تصدير Excel</button></h2><div id="queueTable"></div></article>
+    </section>
+
+    <section id="view-team" class="view" hidden>
+      <article class="panel"><h2>أداء الموظفين في اليوم <button class="ghost small" data-export="team">تصدير Excel</button></h2><div id="teamTable"></div></article>
+      <article class="panel" id="employeePanel" hidden><h2 id="employeeTitle"></h2><div id="employeeDetail"></div></article>
+    </section>
+
+    <section id="view-calls" class="view" hidden>
+      <div class="filters">
+        <input id="callSearch" type="search" placeholder="بحث بالموظف أو الرقم">
+        <select id="callEmployee"><option value="">كل الموظفين</option></select>
+        <select id="callStatus"><option value="">كل المكالمات</option><option value="complete">مكتملة</option><option value="open">بدون نهاية مسجلة</option></select>
+        <button class="ghost small" data-export="calls">تصدير Excel</button>
+      </div>
+      <p id="callsNote" class="muted"></p>
+      <div id="callsTable"></div>
+      <article class="panel"><h2>مكالمات من غير موظف مسجل</h2><p id="unattributedNote" class="muted"></p><div id="unattributedTable"></div></article>
+    </section>
+
+    <section id="view-missed" class="view" hidden>
+      <div class="filters">
+        <select id="missedClass"><option value="">كل الفائتة</option><option value="counted">محتسبة (أكثر من 7 ث)</option><option value="short_exempt">قصيرة — للتوضيح</option><option value="after_hours">خارج ساعات العمل</option></select>
+        <button class="ghost small" data-export="missed">تصدير Excel</button>
+      </div>
+      <div id="missedTable"></div>
+      <dialog id="contextDialog"><h2 id="contextTitle"></h2><p id="contextNote" class="muted"></p><div id="contextTable"></div><button class="ghost" data-close>إغلاق</button></dialog>
+    </section>
+
+    <section id="view-manage" class="view" hidden>
+      <article class="panel"><h2>الموظفون</h2>
+        <form id="addEmployee" class="inline">
+          <input name="name" placeholder="الاسم" required><input name="code" placeholder="الكود" required>
+          <input name="pin" type="password" inputmode="numeric" placeholder="الباسورد (أرقام)" required><input name="pin2" type="password" inputmode="numeric" placeholder="تأكيد الباسورد" required>
+          <button type="submit">إضافة موظف</button>
+        </form>
+        <p id="employeeMessage" class="muted" role="status"></p>
+        <div id="employeesTable"></div>
+      </article>
+      <article class="panel"><h2>رسالة للموظفين</h2>
+        <form id="messageForm" class="stack">
+          <div class="inline"><select name="to"><option value="all">كل الموظفين النشطين</option></select>
+          <select name="priority"><option value="normal">عادي</option><option value="urgent">عاجل</option></select>
+          <select name="hours"><option value="1">صلاحية ساعة</option><option value="4" selected>4 ساعات</option><option value="12">12 ساعة</option><option value="24">24 ساعة</option></select></div>
+          <input name="title" maxlength="80" placeholder="العنوان" required>
+          <textarea name="message" maxlength="1000" rows="3" placeholder="الرسالة" required></textarea>
+          <button type="submit">إرسال</button>
+        </form>
+        <p id="messageNote" class="muted" role="status"></p>
+        <div id="messagesTable"></div>
+      </article>
+      <article class="panel" id="adminUsersPanel"><h2>مستخدمو صفحة الإدارة</h2>
+        <form id="addAdmin" class="inline">
+          <input name="name" placeholder="الاسم" required>
+          <select name="role"><option value="supervisor">مشرف</option><option value="viewer">مشاهدة فقط</option><option value="admin">مدير</option></select>
+          <input name="password" type="password" placeholder="الباسورد (6 أو أكثر)" required><input name="password2" type="password" placeholder="تأكيد الباسورد" required>
+          <button type="submit">إضافة</button>
+        </form>
+        <p id="adminMessage" class="muted" role="status"></p>
+        <div id="adminsTable"></div>
+      </article>
+      <article class="panel" id="importPanel" hidden><h2>نقل بيانات النظام القديم</h2>
+        <p class="muted">مرة واحدة بس، على السيرفر الجديد وهو فاضي: ارفع ملف قاعدة البيانات اللي في نسخة شات جي بي تي (database/marsad-kpi-live.sqlite). الموظفين بباسورداتهم ومستخدمين الإدارة وكل الأيام هتتنقل. لازم تكون داخل بالباسورد الرئيسي.</p>
+        <div class="inline"><input type="file" id="importFile" accept=".sqlite,.db"><button type="button" id="importButton">رفع ونقل البيانات</button></div>
+        <p id="importNote" class="muted" role="status"></p>
+      </article>
+      <article class="panel" id="telegramPanel"><h2>تنبيهات تليجرام</h2>
+        <p class="muted">1) اعمل بوت من BotFather وانسخ التوكن. 2) ضيف البوت لجروب المشرفين وابعت فيه أي رسالة. 3) دوس «دور على الجروب» واختاره.</p>
+        <p id="tgStatus"></p>
+        <form id="tgToken" class="inline"><input name="token" placeholder="توكن البوت" autocomplete="off" required><button type="submit">ربط البوت</button></form>
+        <div class="inline" style="margin-top:8px"><button type="button" id="tgDiscover" class="ghost">دور على الجروب</button><select id="tgChats" hidden></select><button type="button" id="tgChoose" hidden>ربط الجروب ده</button><button type="button" id="tgTest" class="ghost">رسالة تجربة</button></div>
+        <form id="tgSettings" class="stack" style="margin-top:10px"><label><input type="checkbox" name="enabled"> التنبيهات شغالة</label><div id="tgRules" class="stack"></div><button type="submit">حفظ</button></form>
+        <p id="tgNote" class="muted" role="status"></p>
+        <h3>تنبيهات النهارده</h3><div id="tgLog"></div>
+      </article>
+      <article class="panel"><h2>موصل سجل أرابيكس</h2>
+        <p class="muted">الموصل بيسحب سجل المكالمات والانتظار المباشر من جهاز واحد عليه الإضافة ومتسجل فيه دخول تقارير أرابيكس. افتح الصفحة دي على الجهاز ده واضغط ربط.</p>
+        <button id="linkCollector">ربط الجهاز ده كموصل</button>
+        <p id="collectorNote" class="muted" role="status"></p>
+      </article>
+    </section>
+  </main>
+</div>
+<script src="config.js?v=1"></script>
+<script src="xlsx.js?v=1"></script>
+<script src="app.js?v=1"></script>
+</body>
+</html>

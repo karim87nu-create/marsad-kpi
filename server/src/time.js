@@ -1,4 +1,3 @@
-'use strict';
 // Cairo wall-clock helpers. The data day runs 09:00 → 09:00 next day (Cairo);
 // operating hours run 09:00 → 03:00. Egypt observes DST, so offsets come from Intl.
 
@@ -81,4 +80,4 @@ const validDate = date => {
 
 const iso = ms => (ms == null || !Number.isFinite(ms) ? null : new Date(ms).toISOString());
 
-module.exports = { RULES, ZONE, cairoParts, cairoToUtc, businessDay, dayWindow, isOperating, addDays, parseDate, validDate, isoDate, iso };
+export { RULES, ZONE, cairoParts, cairoToUtc, businessDay, dayWindow, isOperating, addDays, parseDate, validDate, isoDate, iso };

@@ -1,8 +1,8 @@
-'use strict';
 // Imports a full copy of the old server's SQLite database (marsad-kpi-live.sqlite).
 // The old file is opened read-only and never modified.
 // Passwords are copied as their original hashes; legacy.js verifies them on login.
-const Database = require('better-sqlite3');
+import Database from 'better-sqlite3';
+import { liveSummary } from './arabicss.js';
 
 const HEADER = ['Queue', 'Agent ID', 'Agent Name', 'Call Date', 'Start', 'End', 'Duration', 'Waiting', 'Phone', 'Status'];
 const hms = s => (s == null ? '' : [Math.floor(s / 3600), Math.floor((s % 3600) / 60), s % 60].map(n => String(n).padStart(2, '0')).join(':'));
@@ -101,7 +101,6 @@ function importOldDatabase(target, oldPath, { log = () => {}, now = Date.now() }
   log('history days ' + report.historyDays);
 
   // ---- live queue captures and samples ----
-  const { liveSummary } = require('./arabicss');
   target.transaction(() => {
     const add = target.prepare('INSERT OR IGNORE INTO live_snapshots (capture_id, observed_at, received_at, changed, rows, waiting, active, longest_wait) VALUES (?,?,?,?,?,?,?,?)');
     if (has(old, 'queue_captures')) for (const c of old.prepare('SELECT * FROM queue_captures WHERE observed_at IS NOT NULL').iterate()) {
@@ -143,4 +142,4 @@ function importOldDatabase(target, oldPath, { log = () => {}, now = Date.now() }
   return report;
 }
 
-module.exports = { importOldDatabase, HEADER };
+export { importOldDatabase, HEADER };

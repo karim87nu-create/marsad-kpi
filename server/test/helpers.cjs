@@ -1,16 +1,16 @@
 'use strict';
 const http = require('node:http');
-const { buildApp } = require('../src/index');
-const { hashPassword } = require('../src/security');
-const { cairoToUtc } = require('../src/time');
+const { buildApp, nodeHandler } = require('../src/index.js');
+const { hashPassword } = require('../src/security.js');
+const { cairoToUtc } = require('../src/time.js');
 
 const DEVICE = '7000865f1220458f86506b41a97cab7d';
 
 async function start({ at = cairoToUtc(2026, 10, 22, 12, 0, 0), config = {} } = {}) {
   const clock = { now: at };
-  const app = buildApp({ databasePath: ':memory:', secret: 'test-secret', adminPasswordHash: hashPassword('master-pass'),
+  const app = await buildApp({ databasePath: ':memory:', secret: 'test-secret', adminPasswordHash: await hashPassword('master-pass'),
     deviceTokens: [DEVICE], allowedOrigins: ['https://karim87nu-create.github.io'], telegramTimer: false, ...config }, { now: () => clock.now });
-  const server = http.createServer((req, res) => app.handle(req, res));
+  const server = http.createServer(nodeHandler(app));
   await new Promise(r => server.listen(0, r));
   const base = 'http://127.0.0.1:' + server.address().port;
   async function call(method, path, { body, headers = {}, raw } = {}) {

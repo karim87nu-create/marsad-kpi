@@ -2,8 +2,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
-const { start } = require('./helpers');
-const { cairoToUtc } = require('../src/time');
+const { start } = require('./helpers.cjs');
+const { cairoToUtc } = require('../src/time.js');
 
 test('telegram: link the bot and the group, then each alert is sent once', async () => {
   const sent = [], fake = http.createServer((req, res) => {
@@ -27,7 +27,7 @@ test('telegram: link the bot and the group, then each alert is sent once', async
     assert.equal(cfg.enabled, true);
     assert.ok(cfg.rules.every(r => r.on));
     // A token stored in the database is not readable.
-    assert.ok(!t.app.db.prepare('SELECT bot_token FROM telegram_config').get().bot_token.includes('aaaa'));
+    assert.ok(!t.app.db.raw.prepare('SELECT bot_token FROM telegram_config').get().bot_token.includes('aaaa'));
 
     const e = await t.employee(admin);
     const s = await t.session('1234');

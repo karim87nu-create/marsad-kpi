@@ -2,8 +2,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const { start } = require('./helpers');
-const { cairoToUtc } = require('../src/time');
+const { start } = require('./helpers.cjs');
+const { cairoToUtc } = require('../src/time.js');
 
 // Same shape the collector posts: header row + 10-column rows from 0002_inbound_calls.php.
 const HEADER = ['Queue', 'Agent', 'Call Date', 'Start Time', 'End Time', 'Duration', 'Wait Time', 'Caller ID', 'Status', 'Trunk'];
@@ -76,7 +76,7 @@ test('missed call: who was in the shift and who was available while the customer
     await t.employee(admin, { name: 'Absent', code: 'E3', pin: '4321' });
     const a = await t.session('1234');
     await t.event(a.token, 'heartbeat', { state: 'ready' });
-    const m = await t.call('POST', '/api/session/start', { body: { pin: '5678', extension: '102' }, headers: { 'x-device-token': require('./helpers').DEVICE } });
+    const m = await t.call('POST', '/api/session/start', { body: { pin: '5678', extension: '102' }, headers: { 'x-device-token': require('./helpers.cjs').DEVICE } });
     const mt = m.body.token;
     const ev102 = (type, extra) => t.event(mt, type, { extension: '102', eventKey: '102:' + type + ':' + t.clock.now + Math.random(), ...extra });
     await ev102('heartbeat', { state: 'ready' });

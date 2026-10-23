@@ -3,8 +3,8 @@
 // lib/admin-access.ts do, then checked by this server.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { start, DEVICE } = require('./helpers');
-const { createLegacy } = require('../src/legacy');
+const { start, DEVICE } = require('./helpers.cjs');
+const { createLegacy } = require('../src/legacy.js');
 
 const enc = new TextEncoder();
 const hex = a => [...new Uint8Array(a)].map(x => x.toString(16).padStart(2, '0')).join('');
@@ -20,18 +20,18 @@ const oldestPinHash = async pin => hex(await crypto.subtle.digest('SHA-256', enc
 
 test('old password formats verify', async () => {
   const l = createLegacy({ deviceTokens: [DEVICE] });
-  assert.equal(l.verify('1234', await oldPinHash('1234')), true);
-  assert.equal(l.verify('1235', await oldPinHash('1234')), false);
-  assert.equal(l.verify('77', await oldestPinHash('77')), true);
-  assert.equal(l.verify('78', await oldestPinHash('77')), false);
-  assert.equal(l.verifyAdmin('Sup#2026', await oldAdminHash('Sup#2026')), true);
-  assert.equal(l.verifyAdmin('Sup#2027', await oldAdminHash('Sup#2026')), false);
+  assert.equal(await l.verify('1234', await oldPinHash('1234')), true);
+  assert.equal(await l.verify('1235', await oldPinHash('1234')), false);
+  assert.equal(await l.verify('77', await oldestPinHash('77')), true);
+  assert.equal(await l.verify('78', await oldestPinHash('77')), false);
+  assert.equal(await l.verifyAdmin('Sup#2026', await oldAdminHash('Sup#2026')), true);
+  assert.equal(await l.verifyAdmin('Sup#2027', await oldAdminHash('Sup#2026')), false);
 });
 
 test('imported employees and admin users log in with their old passwords', async () => {
   const t = await start();
   try {
-    const db = t.app.db;
+    const db = t.app.db.raw;
     db.prepare("INSERT INTO employees (id, name, employee_code, legacy_pin_hash, active, created_at) VALUES (5, 'Old Emp', 'E5', ?, 1, 0)").run(await oldPinHash('4455'));
     db.prepare("INSERT INTO employees (id, name, employee_code, legacy_pin_hash, active, created_at) VALUES (6, 'Older Emp', 'E6', ?, 1, 0)").run(await oldestPinHash('9911'));
     db.prepare("INSERT INTO admin_accounts (name, role, password_hash, active, created_at) VALUES ('Old Sup', 'supervisor', ?, 1, 0)").run(await oldAdminHash('OldSup!1'));
@@ -42,7 +42,7 @@ test('imported employees and admin users log in with their old passwords', async
     assert.equal((await t.session('4456')).status, 401);
     // Upgraded to the new format on first login; old hash cleared; still works.
     const row = db.prepare('SELECT pin_hash, legacy_pin_hash FROM employees WHERE id = 5').get();
-    assert.match(row.pin_hash, /^scrypt\$/);
+    assert.match(row.pin_hash, /^pbkdf2\$/);
     assert.equal(row.legacy_pin_hash, null);
     // A new employee cannot reuse an imported, not-yet-upgraded password.
     const admin = await t.admin();
@@ -50,7 +50,7 @@ test('imported employees and admin users log in with their old passwords', async
     const sup = await t.call('POST', '/api/admin-access', { body: { action: 'login', password: 'OldSup!1' } });
     assert.equal(sup.status, 200);
     assert.equal(sup.body.identity.role, 'supervisor');
-    assert.match(db.prepare("SELECT password_hash FROM admin_accounts WHERE name = 'Old Sup'").get().password_hash, /^scrypt\$/);
+    assert.match(db.prepare("SELECT password_hash FROM admin_accounts WHERE name = 'Old Sup'").get().password_hash, /^pbkdf2\$/);
     assert.equal((await t.call('POST', '/api/admin-access', { body: { action: 'login', password: 'OldSup!1' } })).status, 200);
   } finally { await t.close(); }
 });

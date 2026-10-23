@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { start } = require('./helpers');
+const { start } = require('./helpers.cjs');
 
 let JSDOM, VirtualConsole;
 try { ({ JSDOM, VirtualConsole } = require('jsdom')); } catch {}
@@ -66,8 +66,8 @@ test('extension 3: one password through the Arabicss logins, calls, breaks, mess
   try {
     const admin = await t.admin();
     const emp = await t.employee(admin);
-    const sessions = () => t.app.db.prepare('SELECT * FROM employee_sessions ORDER BY id').all();
-    const events = () => t.app.db.prepare('SELECT event_type, state, phone, duration_seconds FROM events ORDER BY id').all();
+    const sessions = () => t.app.db.raw.prepare('SELECT * FROM employee_sessions ORDER BY id').all();
+    const events = () => t.app.db.raw.prepare('SELECT event_type, state, phone, duration_seconds FROM events ORDER BY id').all();
 
     // Password on the Arabicss sign-in page, submitted with Enter (form submit).
     let w = await h.open('mainLogin');
@@ -98,7 +98,7 @@ test('extension 3: one password through the Arabicss logins, calls, breaks, mess
     box.querySelector('button').click();
     await settle(800);
     assert.equal(w.document.getElementById('marsad-messages'), null);
-    assert.ok(t.app.db.prepare('SELECT acknowledged_at FROM message_recipients').get().acknowledged_at);
+    assert.ok(t.app.db.raw.prepare('SELECT acknowledged_at FROM message_recipients').get().acknowledged_at);
 
     // A call.
     w.estadoCliente.callid = '555';
@@ -110,7 +110,7 @@ test('extension 3: one password through the Arabicss logins, calls, breaks, mess
     w.estadoCliente.callid = null;
     h.sse({ event: 'agentunlinked', callid: '555' });
     await settle(2500);
-    const day = require('../src/time').businessDay(Date.now());
+    const day = require('../src/time.js').businessDay(Date.now());
     const d = (await admin('GET', '/api/day?date=' + day)).body;
     assert.equal(d.calls.length, 1);
     assert.equal(d.calls[0].complete, true);
@@ -137,7 +137,7 @@ test('extension 3: one password through the Arabicss logins, calls, breaks, mess
     await settle(2500);
     const types = events().map(e => e.event_type);
     assert.ok(types.includes('break_start') && types.includes('break_end'), types.join(','));
-    assert.equal(t.app.db.prepare('SELECT COUNT(*) n FROM break_permissions WHERE used_at IS NOT NULL').get().n, 1);
+    assert.equal(t.app.db.raw.prepare('SELECT COUNT(*) n FROM break_permissions WHERE used_at IS NOT NULL').get().n, 1);
 
     // Arabicss logout ends the shift.
     h.sse({ event: 'agentloggedout' });
@@ -177,13 +177,13 @@ test('extension 3 collector: linked from the admin page, sends the day history a
     const send = async (m, url) => { for (const f of listeners) { const r = await f(m, { url }); if (r !== undefined) return r; } };
     assert.equal((await send({ type: 'COLLECTOR_LINK', ...tok }, 'https://karim87nu-create.github.io/marsad-kpi/v2/')).ok, true);
     await settle(4000);
-    const h = (await admin('GET', '/api/history?date=' + require('../src/time').businessDay(Date.now()))).body;
+    const h = (await admin('GET', '/api/history?date=' + require('../src/time.js').businessDay(Date.now()))).body;
     assert.equal(h.live.records.length, 1);
     assert.equal(h.live.stale, false);
     const status = await send({ type: 'COLLECTOR_STATUS' }, 'moz-extension://x/collector.html');
     assert.equal(status.linked, true, JSON.stringify(status));
     assert.ok(status.lastHistory, JSON.stringify(status));
-    assert.ok(t.app.db.prepare('SELECT COUNT(*) n FROM history_reports').get().n >= 1);
+    assert.ok(t.app.db.raw.prepare('SELECT COUNT(*) n FROM history_reports').get().n >= 1);
     // Another site cannot link a collector.
     await assert.rejects(send({ type: 'COLLECTOR_LINK', ...tok }, 'https://evil.example/'));
   } finally { reports.close(); await t.close(); }

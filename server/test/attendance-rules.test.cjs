@@ -1,8 +1,8 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { attendance, mergeBreaks, breakTotals } = require('../src/attendance-rules');
-const { cairoToUtc, dayWindow } = require('../src/time');
+const { attendance, mergeBreaks, breakTotals } = require('../src/attendance-rules.js');
+const { cairoToUtc, dayWindow } = require('../src/time.js');
 
 const w = dayWindow('2026-10-22'), at = (h, m = 0) => cairoToUtc(2026, 10, h < 9 ? 23 : 22, h, m, 0);
 const opts = { start: w.start, operatingEnd: w.operatingEnd, end: w.end, now: w.end + 3600000 };

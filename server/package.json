@@ -3,20 +3,21 @@
   "version": "1.0.0",
   "private": true,
   "description": "مرصد الأداء — server",
-  "main": "src/index.js",
+  "main": "src/core.js",
   "engines": {
     "node": ">=22"
   },
   "scripts": {
-    "start": "node src/index.js",
-    "test": "node --test --test-force-exit test/*.test.js",
+    "start": "node src/main.js",
+    "test": "node --test --test-force-exit test/*.test.cjs",
     "import-old": "node scripts/import-old-db.js"
   },
   "dependencies": {
-    "better-sqlite3": "^12.4.1",
-    "exceljs": "^4.4.0"
+    "better-sqlite3": "^12.4.1"
   },
   "devDependencies": {
-    "jsdom": "^29.1.1"
-  }
+    "jsdom": "^29.1.1",
+    "exceljs": "^4.4.0"
+  },
+  "type": "module"
 }

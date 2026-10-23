@@ -1,8 +1,8 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { start } = require('./helpers');
-const { cairoToUtc, businessDay, dayWindow, isOperating } = require('../src/time');
+const { start } = require('./helpers.cjs');
+const { cairoToUtc, businessDay, dayWindow, isOperating } = require('../src/time.js');
 
 test('time rules: data day 09:00→09:00, operating 09:00→03:00, DST-safe', () => {
   assert.equal(businessDay(cairoToUtc(2026, 10, 23, 2, 30)), '2026-10-22');

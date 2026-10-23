@@ -9,8 +9,10 @@
 <section id="login" hidden>
   <form id="loginForm">
     <div class="brand"><span class="mark">م</span><div><strong>مرصد الأداء</strong><small>إدارة الكول سنتر</small></div></div>
+    <p id="setupNote" hidden>السيرفر جديد: اختار كلمة المرور الرئيسية للإدارة (8 حروف أو أكثر).</p>
     <label>باسورد الإدارة<input id="password" type="password" autocomplete="current-password" required></label>
-    <button type="submit">دخول</button>
+    <label id="confirmRow" hidden>اكتبها تاني<input id="confirmation" type="password" autocomplete="new-password"></label>
+    <button type="submit" id="loginButton">دخول</button>
     <p id="loginError" class="error" role="alert"></p>
   </form>
 </section>

@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { start, DEVICE } = require('./helpers');
+const { start, DEVICE } = require('./helpers.cjs');
 
 test('admin login, roles and unique passwords', async () => {
   const t = await start();
@@ -119,5 +119,20 @@ test('events: binding, duplicates, mismatches, clock and break rules', async () 
     assert.equal((await t.event(s.token, 'page_closed', { occurredAt: before })).status, 200);
     t.advance(60000);
     assert.equal((await t.event(s.token, 'heartbeat', { state: 'ready' })).body.error, 'invalid_employee_session');
+  } finally { await t.close(); }
+});
+
+test('a new server without a main password: chosen once on first use', async () => {
+  const t = await start({ config: { adminPasswordHash: undefined } });
+  try {
+    assert.equal((await t.call('GET', '/api/admin-access/setup')).body.needed, true);
+    assert.equal((await t.call('POST', '/api/admin-access', { body: { action: 'login', password: 'anything-1' } })).status, 401);
+    assert.equal((await t.call('POST', '/api/admin-access', { body: { action: 'setup', password: 'short', confirmation: 'short' } })).status, 400);
+    const r = await t.call('POST', '/api/admin-access', { body: { action: 'setup', password: 'Main-pass-1', confirmation: 'Main-pass-1' } });
+    assert.equal(r.status, 200);
+    assert.equal((await t.call('GET', '/api/admin-access', { headers: { 'x-admin-password': r.body.token } })).body.identity.role, 'admin');
+    assert.equal((await t.call('GET', '/api/admin-access/setup')).body.needed, false);
+    assert.equal((await t.call('POST', '/api/admin-access', { body: { action: 'setup', password: 'Other-pass-1', confirmation: 'Other-pass-1' } })).status, 409);
+    assert.equal((await t.call('POST', '/api/admin-access', { body: { action: 'login', password: 'Main-pass-1' } })).status, 200);
   } finally { await t.close(); }
 });

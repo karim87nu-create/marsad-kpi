@@ -1,5 +1,7 @@
-'use strict';
-const Database = require('better-sqlite3');
+// Database: one schema, two engines with the same async interface.
+//   Node (tests, local runs): better-sqlite3 — see node-db.js
+//   ChatGPT Sites / Cloudflare: D1 — see d1Adapter below
+// Interface: db.prepare(sql).all(...p) / .get(...p) / .run(...p) → Promise; .bind(...p) for db.batch([...]) (atomic).
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -202,14 +204,39 @@ CREATE TABLE IF NOT EXISTS audit (
 CREATE INDEX IF NOT EXISTS audit_time ON audit(occurred_at);
 `;
 
-function open(file) {
-  const db = new Database(file);
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
-  db.pragma('busy_timeout = 5000');
-  db.exec(SCHEMA);
-  if (!db.prepare('PRAGMA table_info(events)').all().some(c => c.name === 'extra')) db.exec('ALTER TABLE events ADD COLUMN extra TEXT');
-  return db;
+
+// Telegram tables live here too so a fresh database has everything.
+const EXTRA_SCHEMA = `
+CREATE TABLE IF NOT EXISTS telegram_config (id INTEGER PRIMARY KEY CHECK (id = 1), bot_token TEXT, bot_name TEXT, chat_id TEXT, chat_title TEXT, enabled INTEGER NOT NULL DEFAULT 0, rules TEXT, updated_at INTEGER);
+CREATE TABLE IF NOT EXISTS telegram_log (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT UNIQUE NOT NULL, kind TEXT NOT NULL, employee_id INTEGER, text TEXT NOT NULL, created_at INTEGER NOT NULL, sent_at INTEGER, tries INTEGER NOT NULL DEFAULT 0, error TEXT);
+CREATE INDEX IF NOT EXISTS telegram_log_time ON telegram_log(created_at);
+CREATE INDEX IF NOT EXISTS events_employee_time ON events(employee_id, occurred_at);
+`;
+
+// Statements one by one (D1 runs one statement per call); comments removed.
+const statements = sql => sql.replace(/--[^\n]*/g, '').split(';').map(x => x.replace(/\s+/g, ' ').trim()).filter(Boolean);
+const SCHEMA_STATEMENTS = [...statements(SCHEMA), ...statements(EXTRA_SCHEMA)];
+
+const norm = p => p.map(v => (v === undefined ? null : typeof v === 'boolean' ? (v ? 1 : 0) : v));
+
+async function migrate(db) {
+  await db.batch(SCHEMA_STATEMENTS.map(s => db.prepare(s).bind()));
+  // Older local files: the events.extra column came later.
+  try { await db.prepare('SELECT extra FROM events LIMIT 0').all(); } catch { await db.prepare('ALTER TABLE events ADD COLUMN extra TEXT').run(); }
 }
 
-module.exports = { open };
+function d1Adapter(d1) {
+  const st = (sql, p) => d1.prepare(sql).bind(...norm(p));
+  return {
+    kind: 'd1',
+    prepare: sql => ({
+      all: async (...p) => (await st(sql, p).all()).results,
+      get: async (...p) => (await st(sql, p).first()) ?? undefined,
+      run: async (...p) => { const r = await st(sql, p).run(); return { changes: r.meta?.changes ?? 0, lastInsertRowid: Number(r.meta?.last_row_id ?? 0) }; },
+      bind: (...p) => ({ sql, params: norm(p) }),
+    }),
+    batch: async list => list.length ? (await d1.batch(list.map(b => st(b.sql, b.params)))).map(r => ({ rows: r.results, changes: r.meta?.changes ?? 0, lastInsertRowid: Number(r.meta?.last_row_id ?? 0) })) : [],
+  };
+}
+
+export { SCHEMA, SCHEMA_STATEMENTS, migrate, d1Adapter, norm };

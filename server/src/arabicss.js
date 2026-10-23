@@ -1,7 +1,6 @@
-'use strict';
 // Arabicss (Issabel call center) report parsing. Column positions are matched by
 // header name, so a reordered export still parses; unknown headers are kept raw.
-const { RULES, cairoToUtc, parseDate, isOperating, iso } = require('./time');
+import { RULES, cairoToUtc, parseDate, isOperating, iso } from './time.js';
 
 const FIELDS = {
   queue: /^queue$|queue\s*(?:no|number|id)?$|طابور|قائمة/i,
@@ -131,4 +130,4 @@ function liveSummary(rows) {
   return { waiting: waiting.length, active: active.length, longest: waits.length ? Math.max(...waits) : waiting.length ? null : 0 };
 }
 
-module.exports = { mapHeader, parseClock, parseDuration, normalizeDate, toRecord, classify, summarize, liveSummary, queueLabel, purpose, iso };
+export { mapHeader, parseClock, parseDuration, normalizeDate, toRecord, classify, summarize, liveSummary, queueLabel, purpose, iso };
