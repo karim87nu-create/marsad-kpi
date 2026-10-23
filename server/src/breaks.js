@@ -21,16 +21,23 @@ function setup(app) {
       (SELECT id FROM employee_sessions WHERE revoked_at IS NOT NULL OR expires_at <= ?)`).run(now);
   }
 
-  // Regular policy, computed by the old server's own lib/break-policy.ts: 2 breaks, 30 minutes in total,
-  // the first may run 15 + 5 minutes and anything over 15 comes out of the second; a break seen without a
-  // confirmed start counts at least 15 minutes; approved extra breaks do not use the regular allowance.
+  // Regular policy: 2 breaks, 30 minutes in total. The first may run 15 + 5 minutes; the second gets whatever
+  // is left of the 30 minutes (Karim's rule — a 10-minute first break leaves 20 for the second).
+  // Counting comes from the old server's lib/break-policy.ts: a break seen without a confirmed start counts
+  // at least 15 minutes, approved extra breaks do not use the allowance, no regular break after 03:00.
   async function policy(employeeId, now) {
     const w = dayWindow(businessDay(now)), end = Math.min(now, w.operatingEnd), names = new Map();
     const rows = db.prepare(`SELECT * FROM events WHERE employee_id = ? AND event_type IN ('break_start','break_end','break_observed','break_end_unknown')
       AND occurred_at >= ? AND occurred_at <= ? ORDER BY occurred_at, id`).all(employeeId, w.start, end)
       .map(e => { const x = dashboardEvent(e, names); return { eventType: x.eventType, extension: x.extension, occurredAt: x.occurredAt, durationSeconds: x.durationSeconds, payload: x.payload }; });
     const rowsDb = { prepare: () => ({ bind: () => ({ all: async () => ({ results: rows }) }) }) };
-    return breakPolicySnapshot(rowsDb, employeeId, now);
+    const p = await breakPolicySnapshot(rowsDb, employeeId, now);
+    if (p.startsUsed === 1 && p.remainingSeconds > 0) {
+      const open = now < w.operatingEnd;
+      return { ...p, secondRemainingSeconds: p.remainingSeconds, secondBlocked: false, nextAllowedSeconds: p.remainingSeconds,
+        regularAvailable: open, requiresApproval: !open };
+    }
+    return p;
   }
   app.breakPolicy = policy;
 
