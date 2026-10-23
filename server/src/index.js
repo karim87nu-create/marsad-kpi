@@ -25,6 +25,13 @@ function storedSecret(databasePath) {
   return s;
 }
 
+// Master password hash written by scripts/set-password.js, for installs without environment variables.
+function adminHashFile(databasePath) { return path.join(path.dirname(databasePath), '.marsad-admin'); }
+function storedAdminHash(databasePath) {
+  if (databasePath === ':memory:') return null;
+  try { return fs.readFileSync(adminHashFile(databasePath), 'utf8').trim() || null; } catch { return null; }
+}
+
 function configFromEnv(env = process.env) {
   const databasePath = env.DATABASE_PATH || path.join(__dirname, '..', 'data', 'marsad.db');
   if (databasePath !== ':memory:') fs.mkdirSync(path.dirname(databasePath), { recursive: true });
@@ -32,7 +39,7 @@ function configFromEnv(env = process.env) {
   return {
     databasePath,
     secret: env.MARSAD_SECRET || storedSecret(databasePath),
-    adminPasswordHash: env.MARSAD_ADMIN_PASSWORD_HASH || (env.MARSAD_ADMIN_PASSWORD ? hashPassword(env.MARSAD_ADMIN_PASSWORD) : null),
+    adminPasswordHash: env.MARSAD_ADMIN_PASSWORD_HASH || (env.MARSAD_ADMIN_PASSWORD ? hashPassword(env.MARSAD_ADMIN_PASSWORD) : storedAdminHash(databasePath)),
     // The connector's device token ships inside the published extension, so it is not a secret; it can still be overridden.
     deviceTokens: list(env.DEVICE_TOKENS || '7000865f1220458f86506b41a97cab7d'),
     allowedOrigins: list(env.ALLOWED_ORIGINS || 'https://karim87nu-create.github.io'),
@@ -48,7 +55,7 @@ if (require.main === module) {
   // Keep idle connections open longer than the hosting proxy does, so a reused connection is never closed mid-request.
   server.keepAliveTimeout = 65000;
   server.headersTimeout = 66000;
-  server.listen(port, () => console.log('marsad-kpi server on :' + port));
+  server.listen(port, process.env.HOST || undefined, () => console.log('marsad-kpi server on :' + port));
 }
 
-module.exports = { MODULES, buildApp, configFromEnv };
+module.exports = { MODULES, buildApp, configFromEnv, adminHashFile };
