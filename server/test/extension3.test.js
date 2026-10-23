@@ -88,7 +88,7 @@ test('extension 3: one password through the Arabicss logins, calls, breaks, mess
     await settle(2500);
     assert.equal(sessions().length, 1);
     assert.equal(sessions()[0].extension, '101');
-    let live = (await admin('GET', '/api/dashboard?live=1')).body.presence.find(p => p.employeeId === emp.id);
+    let live = (await admin('GET', '/api/live')).body.employees.find(p => p.employeeId === emp.id);
     assert.equal(live.state, 'ready');
 
     // Message shown once, acknowledged.
@@ -104,16 +104,17 @@ test('extension 3: one password through the Arabicss logins, calls, breaks, mess
     w.estadoCliente.callid = '555';
     h.sse({ event: 'agentlinked', callid: '555', calltype: 'incoming', txt_contacto_telefono: '01001234567', queue: '2001' });
     await settle(2500);
-    live = (await admin('GET', '/api/dashboard?live=1')).body.presence.find(p => p.employeeId === emp.id);
+    live = (await admin('GET', '/api/live')).body.employees.find(p => p.employeeId === emp.id);
     assert.equal(live.state, 'on_call');
     assert.equal(live.phone, '01001234567');
     w.estadoCliente.callid = null;
     h.sse({ event: 'agentunlinked', callid: '555' });
     await settle(2500);
     const day = require('../src/time').businessDay(Date.now());
-    const d = (await admin('GET', '/api/dashboard?date=' + day)).body;
+    const d = (await admin('GET', '/api/day?date=' + day)).body;
     assert.equal(d.calls.length, 1);
-    assert.equal(d.calls[0].eventType, 'agentunlinked');
+    assert.equal(d.calls[0].complete, true);
+    assert.equal(d.calls[0].phone, '01001234567');
 
     // Arabicss's own break button is held until the server gives a permission.
     let nativeClicks = 0;
@@ -129,7 +130,7 @@ test('extension 3: one password through the Arabicss logins, calls, breaks, mess
     w.estadoCliente.break_id = '2';
     h.sse({ event: 'breakenter', break_id: '2' });
     await settle(2500);
-    live = (await admin('GET', '/api/dashboard?live=1')).body.presence.find(p => p.employeeId === emp.id);
+    live = (await admin('GET', '/api/live')).body.employees.find(p => p.employeeId === emp.id);
     assert.equal(live.state, 'break');
     w.estadoCliente.break_id = null;
     h.sse({ event: 'breakexit' });

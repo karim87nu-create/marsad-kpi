@@ -16,83 +16,73 @@ test('time rules: data day 09:00→09:00, operating 09:00→03:00, DST-safe', ()
   assert.equal(new Date(cairoToUtc(2026, 12, 1, 9)).toISOString(), '2026-12-01T07:00:00.000Z');
 });
 
-test('live presence, calls, breaks and attendance from extension events', async () => {
+test('live state, calls, breaks and attendance from extension events', async () => {
   const t = await start({ at: cairoToUtc(2026, 10, 22, 12, 0, 0) });
   try {
     const admin = await t.admin();
     const e = await t.employee(admin);
-    await t.employee(admin, { name: 'Idle', code: 'E2', pin: '9999' });
+    const idle = await t.employee(admin, { name: 'Idle', code: 'E2', pin: '9999' });
     const s = await t.session('1234');
     await t.event(s.token, 'session_login', { state: 'bound' });
     t.advance(5000);
     await t.event(s.token, 'heartbeat', { state: 'ready' });
-    let d = (await admin('GET', '/api/dashboard?live=1')).body;
-    assert.equal(d.liveOnly, true);
-    const me = d.presence.find(p => p.employeeId === e.id);
+    const live = async () => (await admin('GET', '/api/live')).body.employees;
+    let me = (await live()).find(p => p.employeeId === e.id);
     assert.equal(me.state, 'ready');
     assert.equal(me.extension, '101');
-    assert.equal(d.presence.find(p => p.employeeId !== e.id).state, 'no_session');
+    assert.equal((await live()).find(p => p.employeeId === idle.id).state, 'no_session');
 
     t.advance(20000);
     await t.event(s.token, 'agentlinked', { callId: '555', phone: '01001234567', queue: '2001', callType: 'incoming', state: 'on_call', durationSeconds: 0 });
     await t.tick(s.token, 30000, 'on_call');
-    d = (await admin('GET', '/api/dashboard?live=1')).body;
-    const onCall = d.presence.find(p => p.employeeId === e.id);
-    assert.equal(onCall.state, 'on_call');
-    assert.equal(onCall.phone, '01001234567');
-    assert.equal(Date.parse(onCall.startedAt), t.clock.now - 30000);
+    me = (await live()).find(p => p.employeeId === e.id);
+    assert.equal(me.state, 'on_call');
+    assert.equal(me.phone, '01001234567');
+    assert.equal(Date.parse(me.since), t.clock.now - 30000);
     await t.tick(s.token, 60000, 'on_call');
     await t.event(s.token, 'agentunlinked', { callId: '555', durationSeconds: 90, state: 'ready' });
     await t.event(s.token, 'heartbeat', { state: 'ready' });
 
     // Regular break of 12 minutes.
     const p = await t.device(s.token, 'POST', '/api/break-requests', { action: 'regular_start' });
+    assert.equal(p.status, 200, JSON.stringify(p.body));
     await t.event(s.token, 'break_start', { state: 'break', permissionId: p.body.permissionId });
     await t.tick(s.token, 6 * 60000, 'break');
-    d = (await admin('GET', '/api/dashboard?live=1')).body;
-    assert.equal(d.presence.find(p => p.employeeId === e.id).state, 'break');
-    assert.equal(Date.parse(d.presence.find(p => p.employeeId === e.id).startedAt), t.clock.now - 360000);
-    const full = (await admin('GET', '/api/dashboard?date=2026-10-22')).body;     // break totals come with the day view (as before)
-    assert.equal(full.breakTotals.find(x => x.employeeId === e.id).ongoingBreakSeconds, 360);
+    me = (await live()).find(p => p.employeeId === e.id);
+    assert.equal(me.state, 'break');
+    assert.equal(Date.parse(me.since), t.clock.now - 360000);
+    let d = (await admin('GET', '/api/day?date=2026-10-22')).body;
+    assert.ok(Math.abs(d.employees.find(x => x.employeeId === e.id).ongoingBreakSeconds - 360) <= 90);
     await t.tick(s.token, 6 * 60000, 'break');
     await t.event(s.token, 'break_end', { state: 'ready', durationSeconds: 720 });
     await t.event(s.token, 'heartbeat', { state: 'ready' });
 
-    // Silence > 90s becomes "انقطاع رصد" on the live view and in the state spans.
+    // Silence > 90 s: «انقطاع رصد» on the live view; not counted in the day until activity resumes.
     t.advance(5 * 60000);
-    d = (await admin('GET', '/api/dashboard?date=2026-10-22&attendance=1')).body;
-    assert.equal(d.presence.find(p => p.employeeId === e.id).state, 'unknown');
-    const perf = d.performance.find(x => x.employeeId === e.id);
-    assert.equal(perf.calls, 1);
-    assert.equal(perf.answered, 1);
-    assert.equal(perf.avgHandleTime, 90);
-    assert.equal(perf.breakSeconds, 720);
+    assert.equal((await live()).find(p => p.employeeId === e.id).state, 'unknown');
+    d = (await admin('GET', '/api/day?date=2026-10-22')).body;
+    const me2 = d.employees.find(x => x.employeeId === e.id);
+    assert.equal(me2.calls, 1);
+    assert.equal(me2.answered, 1);
+    assert.equal(me2.averageCallSeconds, 90);
+    assert.equal(me2.breakSeconds, 720);
+    assert.equal(me2.breakCount, 1);
+    assert.equal(me2.gapSeconds, 0);
+    assert.equal(me2.workSeconds, me2.readySeconds + me2.callSeconds + me2.breakSeconds + me2.gapSeconds - 90);   // last state runs 90 s past the last signal
     assert.equal(d.calls[0].durationSeconds, 90);
-    assert.equal(d.calls[0].eventType, 'agentunlinked');
-    const states = d.attendance.states.filter(x => x.employeeId === e.id).map(x => x.state);
-    // Silence at the end of what we know is not counted as anything yet…
-    assert.ok(states.includes('on_call') && states.includes('ready') && !states.includes('unknown'));
-    assert.equal(d.completedBreaks.length, 1);
-    assert.equal(d.completedBreaks[0].durationSeconds, 720);
-    assert.equal(d.attendance.sessions[0].running, false);              // silent for 5 minutes: not counted as running
-    assert.equal(d.attendance.sessions[0].durationComplete, false);
-
-    // …once the same session shows activity again, the silence in between is a gap: «انقطاع رصد».
+    assert.equal(d.calls[0].complete, true);
     await t.event(s.token, 'heartbeat', { state: 'ready' });
-    const gap = (await admin('GET', '/api/dashboard?date=2026-10-22&attendance=1')).body.attendance.states.find(x => x.employeeId === e.id && x.state === 'unknown');
+    d = (await admin('GET', '/api/day?date=2026-10-22')).body;
+    const gap = d.states.find(x => x.employeeId === e.id && x.state === 'unknown');
     assert.ok(gap && gap.durationSeconds >= 5 * 60 - 90 && gap.durationSeconds <= 5 * 60, JSON.stringify(gap));
 
-    // Logout → offline (explicit logout = shift ended) and the shift list.
+    // Logout ends the shift.
     await t.device(s.token, 'POST', '/api/session/end', { reason: 'manual' });
-    d = (await admin('GET', '/api/dashboard?date=2026-10-22')).body;
-    assert.equal(d.presence.find(p => p.employeeId === e.id).state, 'shift_ended');
-    assert.equal(d.shifts.length, 1);
-    assert.equal(d.shifts[0].excluded, true);
-    // Admin re-includes the closed shift.
-    await admin('POST', '/api/shifts', { employeeId: e.id, sessionId: d.shifts[0].id, action: 'include', note: 'كان لسه شغال', requestId: 'r1' });
-    d = (await admin('GET', '/api/dashboard?date=2026-10-22')).body;
-    assert.equal(d.shifts[0].excluded, false);
-    assert.equal(d.presence.find(p => p.employeeId === e.id).state, 'offline');
+    me = (await live()).find(p => p.employeeId === e.id);
+    assert.equal(me.state, 'logged_out');
+    d = (await admin('GET', '/api/day?date=2026-10-22')).body;
+    assert.equal(d.sessions.find(x => x.employeeId === e.id).closureKnown, true);
+    assert.ok(d.employees.find(x => x.employeeId === e.id).lastLogout);
   } finally { await t.close(); }
 });
 

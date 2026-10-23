@@ -63,11 +63,12 @@
       <div class="filters">
         <input id="callSearch" type="search" placeholder="بحث بالموظف أو الرقم">
         <select id="callEmployee"><option value="">كل الموظفين</option></select>
-        <select id="callStatus"><option value="">كل المكالمات</option><option value="agentunlinked">مكتملة</option><option value="agentlinked">بدون نهاية مسجلة</option></select>
+        <select id="callStatus"><option value="">كل المكالمات</option><option value="complete">مكتملة</option><option value="open">بدون نهاية مسجلة</option></select>
         <button class="ghost small" data-export="calls">تصدير Excel</button>
       </div>
       <p id="callsNote" class="muted"></p>
       <div id="callsTable"></div>
+      <article class="panel"><h2>مكالمات من غير موظف مسجل</h2><p id="unattributedNote" class="muted"></p><div id="unattributedTable"></div></article>
     </section>
 
     <section id="view-missed" class="view" hidden>

@@ -189,16 +189,6 @@ function setup(app) {
       live,
     };
     if (q.reportId && h.report && q.reportId !== h.report.id) fail(409, 'وصل سجل أحدث؛ أعد فتح التفاصيل');
-    if (q.missedIndex !== undefined) {
-      const rec = h.records[Number(q.missedIndex)];
-      if (!rec || String(rec.status).toLowerCase() !== 'abandoned') fail(400, 'invalid_missed_call');
-      return app.heavy('missedOne', date, Number(q.missedIndex), ctx.now);
-    }
-    if (q.contexts === '1') {
-      const all = await app.heavy('missedAll', date, ctx.now);
-      if (h.report && all.reportId !== h.report.id) fail(409, 'وصل سجل أحدث؛ أعد فتح التفاصيل');
-      return { contexts: all.contexts };
-    }
     if (q.all === '1') out.records = h.records.map(r => ({ queue: r.queue, accountName: r.accountName, date: r.date, start: r.start, end: r.end,
       durationSeconds: r.durationSeconds, waitSeconds: r.waitSeconds, phone: r.phone, status: r.status, outsideHours: A.classify(r).outside }));
     return out;

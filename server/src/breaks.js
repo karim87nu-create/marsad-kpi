@@ -1,9 +1,6 @@
 'use strict';
 const crypto = require('node:crypto');
 const { businessDay, dayWindow, iso } = require('./time');
-const { analyzeSession } = require('./state');
-const { breakPolicySnapshot } = require('./legacy-logic/break-policy');
-const { dashboardEvent } = require('./old-shape');
 
 const PERMISSION_MS = 60000;
 const PENDING_MS = 30 * 60000;
@@ -21,25 +18,8 @@ function setup(app) {
       (SELECT id FROM employee_sessions WHERE revoked_at IS NOT NULL OR expires_at <= ?)`).run(now);
   }
 
-  // Regular policy: 2 breaks, 30 minutes in total. The first may run 15 + 5 minutes; the second gets whatever
-  // is left of the 30 minutes (Karim's rule — a 10-minute first break leaves 20 for the second).
-  // Counting comes from the old server's lib/break-policy.ts: a break seen without a confirmed start counts
-  // at least 15 minutes, approved extra breaks do not use the allowance, no regular break after 03:00.
-  async function policy(employeeId, now) {
-    const w = dayWindow(businessDay(now)), end = Math.min(now, w.operatingEnd), names = new Map();
-    const rows = db.prepare(`SELECT * FROM events WHERE employee_id = ? AND event_type IN ('break_start','break_end','break_observed','break_end_unknown')
-      AND occurred_at >= ? AND occurred_at <= ? ORDER BY occurred_at, id`).all(employeeId, w.start, end)
-      .map(e => { const x = dashboardEvent(e, names); return { eventType: x.eventType, extension: x.extension, occurredAt: x.occurredAt, durationSeconds: x.durationSeconds, payload: x.payload }; });
-    const rowsDb = { prepare: () => ({ bind: () => ({ all: async () => ({ results: rows }) }) }) };
-    const p = await breakPolicySnapshot(rowsDb, employeeId, now);
-    if (p.startsUsed === 1 && p.remainingSeconds > 0) {
-      const open = now < w.operatingEnd;
-      return { ...p, secondRemainingSeconds: p.remainingSeconds, secondBlocked: false, nextAllowedSeconds: p.remainingSeconds,
-        regularAvailable: open, requiresApproval: !open };
-    }
-    return p;
-  }
-  app.breakPolicy = policy;
+  const policy = (employeeId, now) => app.breakPolicy(employeeId, now);   // engine.js
+
 
   const shapeForEmployee = r => ({ id: r.id, status: r.status, reasonId: r.reason_id, reason: r.reason, requestKind: r.request_kind, requestedMinutes: r.requested_minutes, createdAt: iso(r.created_at), decidedAt: iso(r.decided_at) });
 
@@ -52,8 +32,7 @@ function setup(app) {
 
   function requireReady(session, now) {
     if (!session.extension) fail(409, 'extension_required');
-    const a = analyzeSession(session, eventsFor.all(session.id), now);
-    if (a.state !== 'ready' || now - a.lastEvidence > 15000) fail(409, 'not_ready');
+    if (!app.sessionReady(session, now)) fail(409, 'not_ready');
     if (db.prepare('SELECT 1 FROM break_permissions WHERE session_id = ? AND used_at IS NULL AND expires_at > ?').get(session.id, now)) fail(409, 'permission_pending');
   }
 
@@ -63,7 +42,7 @@ function setup(app) {
       const { session } = app.requireSession(ctx);
       const w = dayWindow(businessDay(ctx.now));
       const requests = db.prepare('SELECT * FROM break_requests WHERE employee_id = ? AND created_at >= ? ORDER BY created_at DESC').all(session.employee_id, w.start);
-      return { breakPolicy: await policy(session.employee_id, ctx.now), requests: requests.map(shapeForEmployee) };
+      return { breakPolicy: policy(session.employee_id, ctx.now), requests: requests.map(shapeForEmployee) };
     }
     const who = app.requireAdmin(ctx);
     const w = dayWindow(businessDay(ctx.now));
@@ -89,7 +68,7 @@ function setup(app) {
       return { ok: true };
     }
     const { session } = app.requireSession(ctx);
-    const p = await policy(session.employee_id, ctx.now);
+    const p = policy(session.employee_id, ctx.now);
     if (b.action === 'regular_start') {
       requireReady(session, ctx.now);
       if (!p.regularAvailable) fail(409, 'approval_required');

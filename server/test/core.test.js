@@ -18,7 +18,7 @@ test('admin login, roles and unique passwords', async () => {
     assert.equal((await viewer('GET', '/api/admin-access')).body.identity.role, 'viewer');
     assert.equal((await viewer('GET', '/api/admin-access')).body.accounts, undefined);
     assert.equal((await viewer('POST', '/api/employees', { name: 'x', employeeCode: 'x', pin: '1', pinConfirmation: '1' })).status, 403);
-    assert.equal((await viewer('GET', '/api/dashboard?live=1')).status, 200);
+    assert.equal((await viewer('GET', '/api/live')).status, 200);
     // Raw password in the header still works for older pages.
     assert.equal((await t.call('GET', '/api/admin-access', { headers: { 'x-admin-password': 'master-pass' } })).status, 200);
     await t.call('POST', '/api/admin-access', { body: { action: 'logout' }, headers: { 'x-admin-password': viewerToken } });
@@ -29,11 +29,11 @@ test('admin login, roles and unique passwords', async () => {
 test('CORS preflight for the admin page origin only', async () => {
   const t = await start();
   try {
-    const ok = await t.call('OPTIONS', '/api/dashboard', { headers: { origin: 'https://karim87nu-create.github.io', 'access-control-request-method': 'GET' } });
+    const ok = await t.call('OPTIONS', '/api/live', { headers: { origin: 'https://karim87nu-create.github.io', 'access-control-request-method': 'GET' } });
     assert.equal(ok.status, 204);
     assert.equal(ok.headers.get('access-control-allow-origin'), 'https://karim87nu-create.github.io');
     assert.match(ok.headers.get('access-control-allow-headers'), /x-admin-password/);
-    const other = await t.call('OPTIONS', '/api/dashboard', { headers: { origin: 'https://evil.example' } });
+    const other = await t.call('OPTIONS', '/api/live', { headers: { origin: 'https://evil.example' } });
     assert.equal(other.headers.get('access-control-allow-origin'), null);
   } finally { await t.close(); }
 });

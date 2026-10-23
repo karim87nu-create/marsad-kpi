@@ -1,24 +1,36 @@
 'use strict';
-// GET /api/dashboard — the computations live in legacy-dashboard.js and legacy-attendance.js,
-// which run the old server's own logic (src/legacy-logic) on this server's tables.
+// Admin read endpoints. All numbers come from engine.js.
 const { businessDay, validDate, iso } = require('./time');
 
 function setup(app) {
-  const { fail } = app;
+  const { db, fail } = app;
+  const date = ctx => { const today = businessDay(ctx.now), d = ctx.query.date || today; if (!validDate(d) || d > today) fail(400, 'تاريخ غير صحيح'); return d; };
 
-  // Same request handling and response as the old app/api/dashboard/route.ts.
-  app.route('GET', '/api/dashboard', ctx => {
+  // Now: employees' states and the customers waiting. Cheap; the admin page asks every second.
+  app.route('GET', '/api/live', ctx => {
     app.requireAdmin(ctx);
-    const q = ctx.query, today = businessDay(ctx.now), date = q.date || today;
-    if (!validDate(date) || date > today) fail(400, 'invalid_date');
-    const employee = q.employee || '', extension = q.extension || '';
-    if (employee && !/^\d+$/.test(employee) || extension && !/^\d{1,10}$/.test(extension)) fail(400, 'invalid_filter');
-    if (q.live === '1' && q.all !== '1') {
-      const { presence, liveQueue } = app.oldLivePresence(date, ctx.now);
-      return { presence, liveQueue, summary: {}, performance: [], calls: [], timeline: [], shifts: [], attendance: null, durations: [], completedBreaks: [], breakTotals: [],
-        date, today, serverNow: iso(ctx.now), liveOnly: true, dataComplete: true };
-    }
-    return app.heavy('oldDashboard', date, { employee, extension, attendance: q.attendance === '1', all: q.all === '1' }, ctx.now);
+    const snap = app.latestLive();
+    const records = snap ? JSON.parse(snap.rows) : [];
+    return {
+      serverNow: iso(ctx.now), employees: app.live(ctx.now),
+      queue: snap ? { observedAt: iso(snap.observed_at), stale: ctx.now - snap.observed_at > 30000, waiting: records.filter(r => /^(on wait|waiting)$/i.test(String(r[10]).trim())).map(r => ({ queue: r[0], phone: r[9], wait: r[8] })),
+        active: records.filter(r => /^live call$/i.test(String(r[10]).trim())).length } : null,
+      pendingBreaks: db.prepare("SELECT COUNT(*) n FROM break_requests WHERE status = 'pending'").get().n,
+    };
+  });
+
+  // One data day: KPIs, employees, calls, missed calls, states.
+  app.route('GET', '/api/day', async ctx => {
+    app.requireAdmin(ctx);
+    return app.heavy('day', date(ctx), ctx.now);
+  });
+
+  // Who could have answered one missed call.
+  app.route('GET', '/api/missed', async ctx => {
+    app.requireAdmin(ctx);
+    const r = await app.heavy('missedContext', date(ctx), Number(ctx.query.index), ctx.now);
+    if (!r) fail(404, 'المكالمة غير موجودة');
+    return r;
   });
 }
 
