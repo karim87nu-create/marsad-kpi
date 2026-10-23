@@ -9,7 +9,7 @@ assert.match(
   /setInterval\(\(\)=>\{if\(selectedTab==='live'\)renderLive\(\);if\(selectedTab==='attendance'\)renderAttendanceDurations\(\)\},1000\)/,
   'per-second live table rendering must be limited to the visible live page',
 );
-assert.match(admin, /selectedTab==='live'\)refresh\(\)/, 'the live API refresh loop must remain active');
+assert.match(admin, /selectedTab==='live'(?:&&!document\.hidden)?\)refresh\(\)\},1000\)/, 'the live API refresh loop must remain active every second');
 assert.match(layout, /@media\s*\(max-width:\s*820px\)/, 'mobile drawer layout must remain present');
 assert.match(layout, /@media\s*\(max-width:\s*640px\)/, 'mobile table layout must remain present');
 

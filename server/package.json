@@ -1,0 +1,22 @@
+{
+  "name": "marsad-kpi-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Marsad KPI backend: employees, sessions, events, Arabicss history, dashboard",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test --test-force-exit test/*.test.js",
+    "migrate": "node scripts/migrate-from-old.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.4.1",
+    "exceljs": "^4.4.0"
+  },
+  "devDependencies": {
+    "jsdom": "^29.1.1"
+  }
+}
