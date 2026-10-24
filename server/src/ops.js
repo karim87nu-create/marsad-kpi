@@ -71,17 +71,19 @@ function setup(app) {
   app.route('GET', '/api/system', async ctx => {
     await app.requireAdmin(ctx);
     const now = ctx.now;
-    const [history, live, collectors, devices, audit] = await Promise.all([
+    const [history, live, collectors, devices, audit, status] = await Promise.all([
       db.prepare('SELECT date, imported_at, source, verified_total FROM history_reports ORDER BY imported_at DESC LIMIT 1').get(),
       db.prepare('SELECT observed_at, received_at FROM live_snapshots ORDER BY observed_at DESC LIMIT 1').get(),
       db.prepare('SELECT COUNT(*) n, MAX(created_at) last FROM collector_tokens WHERE revoked_at IS NULL AND refresh_expires_at > ?').get(now),
       db.prepare(`SELECT s.id, s.employee_id, e.name, s.extension, s.client_version, s.last_seen, s.issued_at, s.revoked_at FROM employee_sessions s LEFT JOIN employees e ON e.id = s.employee_id
         WHERE s.last_seen > ? AND s.device NOT LIKE 'legacy:%' ORDER BY s.last_seen DESC LIMIT 200`).all(now - 24 * 3600000),
       db.prepare('SELECT a.occurred_at, a.action, a.employee_id, a.details, e.name FROM audit a LEFT JOIN employees e ON e.id = a.employee_id ORDER BY a.id DESC LIMIT 300').all(),
+      db.prepare("SELECT value FROM settings WHERE key = 'collector_status'").get(),
     ]);
+    let report = null; try { report = status ? JSON.parse(status.value) : null; } catch {}
     return {
       serverNow: iso(now),
-      collector: { linked: collectors.n, linkedAt: iso(collectors.last), lastHistory: history ? { date: history.date, at: iso(history.imported_at), verified: !!history.verified_total } : null, lastLive: live ? iso(live.observed_at) : null },
+      collector: { linked: collectors.n, linkedAt: iso(collectors.last), lastHistory: history ? { date: history.date, at: iso(history.imported_at), verified: !!history.verified_total } : null, lastLive: live ? iso(live.observed_at) : null, report },
       devices: devices.map(d => ({ sessionId: d.id, employeeId: d.employee_id, name: d.name || 'حساب محذوف', extension: d.extension, version: d.client_version, lastSeen: iso(d.last_seen), startedAt: iso(d.issued_at), open: d.revoked_at == null })),
       audit: audit.map(a => { let x = {}; try { x = JSON.parse(a.details); } catch {} return { at: iso(a.occurred_at), action: a.action, employee: a.name || null, actor: x.actor || null, details: x }; }),
     };

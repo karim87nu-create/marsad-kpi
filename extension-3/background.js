@@ -165,51 +165,95 @@ browser.runtime.onMessage.addListener(async (m, sender) => {
 });
 
 // ---------- collector: Arabicss history and live queue (supervisor's PC only) ----------
-let collectorState = { message: 'الموصل غير مربوط', lastHistory: null, lastLive: null, error: null };
+let collectorState = { message: '', lastHistory: null, lastLive: null, historyError: null, liveError: null, historyDays: [] };
+const setState = patch => { collectorState = { ...collectorState, ...patch }; };
 async function collectorPost(body) {
   let c = await store.get(COLLECTOR, null);
   if (!c) throw Error('الموصل غير مربوط');
   if (Number(String(c.token).split('.')[0]) < Date.now() + 3600000) c = await refreshCollector(c);
-  let r = await api('/api/history', { method: 'POST', headers: { 'content-type': 'application/json', 'x-history-token': c.token }, body: JSON.stringify(body) });
-  if (r.status === 401) { c = await refreshCollector(c); r = await api('/api/history', { method: 'POST', headers: { 'content-type': 'application/json', 'x-history-token': c.token }, body: JSON.stringify(body) }); }
-  if (!r.ok) { const e = Error(r.json().error || 'رفض الخادم السجل'); e.status = r.status; throw e; }
+  const send = () => api('/api/history', { method: 'POST', headers: { 'content-type': 'application/json', 'x-history-token': c.token }, body: JSON.stringify(body), timeout: body.rows && !body.action ? 90000 : 20000 });
+  let r = await send();
+  if (r.status === 401) { c = await refreshCollector(c); r = await send(); }
+  if (!r.ok) { const e = Error('الخادم رفض: ' + (r.json().error || ('HTTP ' + r.status))); e.status = r.status; throw e; }
   return r.json();
 }
 async function refreshCollector(c) {
   const r = await api('/api/history', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'refresh', refreshToken: c.refreshToken }) });
-  if (!r.ok) { await store.set(COLLECTOR, null); collectorState.message = 'انتهى ربط الموصل؛ اربطه من صفحة الإدارة'; throw Error(collectorState.message); }
+  if (!r.ok) { await store.set(COLLECTOR, null); setState({ message: 'انتهى ربط الموصل؛ اربطه من صفحة الإدارة' }); throw Error(collectorState.message); }
   const next = { ...c, ...r.json() };
   await store.set(COLLECTOR, next);
   return next;
 }
-async function reports(path, options = {}) {
-  const r = await request(REPORTS_ROOT + path, { ...options, credentials: 'include' });
-  if (!r.ok || /login\.php/i.test(r.url) || /<input[^>]+type=["']password/i.test(r.text)) throw Error('سجّل دخول تقارير أرابيكس على هذا الجهاز مرة واحدة');
-  return r.text;
+// Arabicss keeps one PHP session per login: our own report requests go one at a time.
+let reportsFlight = Promise.resolve();
+function reports(path, options = {}) {
+  const run = reportsFlight.catch(() => {}).then(async () => {
+    let r;
+    try { r = await request(REPORTS_ROOT + path, { ...options, credentials: 'include' }); }
+    catch (e) { throw Error(e.name === 'AbortError' ? 'أرابيكس ما ردش في الوقت (' + Math.round((options.timeout || 20000) / 1000) + ' ث)' : 'تعذر الاتصال بأرابيكس: ' + e.message); }
+    if (!r.ok) throw Error('أرابيكس رد بخطأ HTTP ' + r.status);
+    if (/login\.php/i.test(r.url) || /<input[^>]+type=["']password/i.test(r.text)) throw Error('سجّل دخول تقارير أرابيكس على هذا الجهاز مرة واحدة');
+    return r.text;
+  });
+  reportsFlight = run;
+  return run;
 }
 const cairoDate = (ms = Date.now()) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Cairo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
-let historyBusy = false, liveBusy = false;
+const nextDate = d => new Date(Date.parse(d + 'T12:00:00Z') + 86400000).toISOString().slice(0, 10);
+const HISTORY_NEXT = 'historyNext';
+function parseHistory(html, date) {
+  const doc = new DOMParser().parseFromString(html, 'text/html'), table = doc.querySelector('#example23');
+  if (!table) throw Error('لم يتم التعرف على جدول السجل في رد أرابيكس');
+  let header = [...table.querySelectorAll('thead th')].map(c => c.textContent.trim());
+  const all = [...table.querySelectorAll('tbody tr')].map(r => [...r.querySelectorAll('td')].map(c => c.textContent.trim()));
+  let rows = all.filter(r => r.length === header.length);
+  // An extra header cell (a numbering column, say) must not drop the whole day: rows are matched on their own width.
+  if (!rows.length && all.length) {
+    const width = all.map(r => r.length).sort((a, b) => all.filter(r => r.length === b).length - all.filter(r => r.length === a).length)[0];
+    const di = all.find(r => r.length === width).indexOf(date), at = header.indexOf('Call Date') - di;
+    if (di >= 0 && at >= 0 && header.length >= at + width) { header = header.slice(at, at + width); rows = all.filter(r => r.length === width); }
+  }
+  const label = [...doc.querySelectorAll('h5')].find(e => e.textContent.trim() === 'All Inbound Calls'), count = Number(label?.previousElementSibling?.textContent.trim());
+  const info = ' (أعمدة ' + header.length + '، صفوف ' + rows.length + ' من ' + all.length + '، العدد المعلن ' + (label ? count : 'غير موجود') + ')';
+  if (!Number.isInteger(count) || count !== rows.length) throw Error('السجل ناقص؛ ستُعاد المحاولة' + info);
+  const di = header.indexOf('Call Date');
+  if (di < 0 || rows.some(r => r[di] !== date)) throw Error('تاريخ السجل لا يطابق المطلوب' + info);
+  return { header, rows, count };
+}
+let historyBusy = false, liveBusy = false, lastHistoryRun = 0, historyRetry = false;
 async function collectHistory() {
   if (historyBusy || !(await store.get(COLLECTOR, null))) return;
-  historyBusy = true;
+  historyBusy = true; lastHistoryRun = Date.now();
+  setState({ message: 'جارٍ سحب سجل أرابيكس…' });
   try {
-    // Yesterday's calendar date stays in the data day until 09:00, so it is fetched again until then.
-    const dates = [...new Set([cairoDate(Date.now() - 9 * 3600000), cairoDate()])];
+    // Every calendar date since the last one fully read (up to a week), plus yesterday until 09:00 (it is still in the data day).
+    const today = cairoDate(), yesterday = cairoDate(Date.now() - 9 * 3600000);
+    let from = await store.get(HISTORY_NEXT, null);
+    if (!from || from > yesterday) from = yesterday;
+    const weekAgo = cairoDate(Date.now() - 7 * 86400000); if (from < weekAgo) from = weekAgo;
+    const dates = []; for (let d = from; d <= today; d = nextDate(d)) dates.push(d);
+    const done = [];
     for (const date of dates) {
       const [y, m, d] = date.split('-'), v = m + '/' + d + '/' + y;
-      const html = await reports('0002_inbound_calls.php', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ start_date: v, end_date: v }).toString() });
-      const doc = new DOMParser().parseFromString(html, 'text/html'), table = doc.querySelector('#example23');
-      if (!table) throw Error('لم يتم التعرف على جدول السجل');
-      const header = [...table.querySelectorAll('thead th')].map(c => c.textContent.trim());
-      const rows = [...table.querySelectorAll('tbody tr')].map(r => [...r.querySelectorAll('td')].map(c => c.textContent.trim())).filter(r => r.length === header.length);
-      const label = [...doc.querySelectorAll('h5')].find(e => e.textContent.trim() === 'All Inbound Calls'), count = Number(label?.previousElementSibling?.textContent.trim());
-      if (!Number.isInteger(count) || count !== rows.length) throw Error('السجل ناقص؛ ستُعاد المحاولة');
-      const di = header.indexOf('Call Date');
-      if (di < 0 || rows.some(r => r[di] !== date)) throw Error('تاريخ السجل لا يطابق المطلوب');
+      const html = await reports('0002_inbound_calls.php', { method: 'POST', timeout: 90000, headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ start_date: v, end_date: v }).toString() });
+      const { header, rows, count } = parseHistory(html, date);
       await collectorPost({ rows: [header, ...rows], expectedCount: count, reportDate: date });
-      collectorState = { ...collectorState, message: 'السجل محدث: ' + date + ' (' + rows.length + ' مكالمة)', lastHistory: new Date().toISOString(), error: null };
+      done.push(date + ': ' + rows.length);
+      if (date < today) await store.set(HISTORY_NEXT, nextDate(date));
+      setState({ lastHistory: new Date().toISOString(), historyError: null, historyDays: done, message: 'السجل محدث — ' + done.join(' · ') + ' مكالمة' });
     }
-  } catch (e) { collectorState = { ...collectorState, error: e.message }; } finally { historyBusy = false; }
+    historyRetry = false;
+  } catch (e) {
+    setState({ historyError: e.message || String(e), message: '' });
+    historyRetry = true;   // tried again in 3 minutes instead of waiting for the next 15-minute round
+  } finally { historyBusy = false; reportStatus(); }
+}
+let lastStatusSent = 0;
+async function reportStatus() {
+  if (Date.now() - lastStatusSent < 60000) return;
+  lastStatusSent = Date.now();
+  const s = collectorState;
+  collectorPost({ action: 'status', state: { version: VERSION, at: new Date().toISOString(), lastHistory: s.lastHistory, historyError: s.historyError, liveError: s.liveError, historyDays: s.historyDays } }).catch(() => {});
 }
 let lastLiveSignature = '', lastLiveSent = 0, lastNative = 0;
 // The live queue is taken from the report page's own refreshes when it is open on this PC (no extra request
@@ -223,27 +267,31 @@ async function sendLive(html, observedAt) {
   if (signature === lastLiveSignature && Date.now() - lastLiveSent < 10000) return;
   lastLiveSignature = signature; lastLiveSent = Date.now();
   const reply = await collectorPost({ action: 'live', rows, capture: { id: crypto.randomUUID(), kind: 'native_report_snapshot', changed: true, observedAt: new Date(observedAt).toISOString(), timeBasis: 'server-clock-v1' } });
-  collectorState = { ...collectorState, lastLive: reply.observedAt, error: null };
+  setState({ lastLive: reply.observedAt, liveError: null });
 }
 async function collectLive() {
-  if (liveBusy || Date.now() - lastNative < 8000 || !(await store.get(COLLECTOR, null)) || !(await clock.ensure())) return;
+  // While the day's log is being read, the 3-second reader waits (the report page's own refreshes still arrive).
+  if (liveBusy || historyBusy || Date.now() - lastNative < 8000 || !(await store.get(COLLECTOR, null)) || !(await clock.ensure())) return;
   liveBusy = true;
   try { const html = await reports('get_inbound_calls_real_time.php'); await sendLive(html, clock.now()); }
-  catch (e) { collectorState = { ...collectorState, error: e.message }; } finally { liveBusy = false; }
+  catch (e) { setState({ liveError: e.message }); } finally { liveBusy = false; }
 }
 async function nativeLive(html) {
   if (!(await store.get(COLLECTOR, null)) || !(await clock.ensure())) return { ok: false };
   lastNative = Date.now();
-  try { await sendLive(html, clock.now()); } catch (e) { collectorState = { ...collectorState, error: e.message }; }
+  try { await sendLive(html, clock.now()); } catch (e) { setState({ liveError: e.message }); }
   return { ok: true };
 }
 // The day's call log is a heavy report: it is read every 15 minutes during operating hours, hourly at night.
 const cairoHour = () => Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Africa/Cairo', hour: '2-digit', hourCycle: 'h23' }).format(new Date()));
 const operating = () => { const h = cairoHour(); return h >= 9 || h < 3; };
-let lastHistoryRun = 0;
-setInterval(() => { if (Date.now() - lastHistoryRun >= (operating() ? 900000 : 3600000)) { lastHistoryRun = Date.now(); collectHistory(); } }, 60000);
+setInterval(() => {
+  const every = historyRetry ? 180000 : operating() ? 900000 : 3600000;
+  if (Date.now() - lastHistoryRun >= every) collectHistory();
+  reportStatus();
+}, 60000);
 setInterval(() => { if (operating()) collectLive(); }, 3000);
-lastHistoryRun = Date.now(); collectHistory(); collectLive();
+collectHistory(); collectLive();
 
 async function collectorMessage(m, sender) {
   const page = browser.runtime.getURL('collector.html');
@@ -252,7 +300,7 @@ async function collectorMessage(m, sender) {
   if (m.type === 'COLLECTOR_LINK' && adminPage) {
     if (typeof m.token !== 'string' || typeof m.refreshToken !== 'string') throw Error('invalid_link');
     await store.set(COLLECTOR, { token: m.token, refreshToken: m.refreshToken, linkedAt: new Date().toISOString() });
-    collectorState = { ...collectorState, message: 'تم ربط الموصل على هذا الجهاز', error: null };
+    setState({ message: 'تم ربط الموصل على هذا الجهاز', historyError: null, liveError: null });
     collectHistory(); collectLive();
     return { ok: true };
   }
@@ -261,7 +309,7 @@ async function collectorMessage(m, sender) {
     const c = await store.get(COLLECTOR, null);
     if (c) api('/api/history', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'revoke', refreshToken: c.refreshToken }) }).catch(() => {});
     await store.set(COLLECTOR, null);
-    collectorState = { message: 'الموصل متوقف على هذا الجهاز', lastHistory: null, lastLive: null, error: null };
+    collectorState = { message: 'الموصل متوقف على هذا الجهاز', lastHistory: null, lastLive: null, historyError: null, liveError: null, historyDays: [] };
     return { ok: true };
   }
   if (m.type === 'COLLECTOR_SYNC' && sender.url === page) { await collectHistory(); await collectLive(); return { ok: true }; }

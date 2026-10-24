@@ -132,6 +132,15 @@ function setup(app) {
     }
     await requireCollector(ctx);
     if (b.action === 'live') return ingestLive(b, ctx.now);
+    if (b.action === 'status') {
+      // What the collector PC last saw (its own errors included), for the system page.
+      const st = b.state && typeof b.state === 'object' ? b.state : {};
+      const clip = v => v == null ? null : String(v).slice(0, 400);
+      const value = { receivedAt: iso(ctx.now), version: clip(st.version), lastHistory: clip(st.lastHistory), historyError: clip(st.historyError), liveError: clip(st.liveError),
+        historyDays: Array.isArray(st.historyDays) ? st.historyDays.slice(0, 10).map(clip) : [] };
+      await db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run('collector_status', JSON.stringify(value));
+      return { ok: true };
+    }
     if (!Array.isArray(b.rows) || b.rows.length < 1 || !validDate(b.reportDate)) fail(400, 'invalid_report');
     const [header, ...rows] = b.rows;
     if (!Array.isArray(header) || rows.some(r => !Array.isArray(r) || r.length !== header.length)) fail(400, 'invalid_report');

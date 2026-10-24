@@ -166,7 +166,7 @@ test('extension 3 collector: linked from the admin page, sends the day history a
     const requested = new URLSearchParams(await new Promise(resolve => { let b = ''; req.on('data', c => b += c); req.on('end', () => resolve(b)); })).get('start_date');
     const parts = requested?.split('/'); const reportDate = parts ? parts[2] + '-' + parts[0] + '-' + parts[1] : date;
     const rows = [['2001', 'SIP/101', reportDate, '10:00:00', '10:02:00', '00:02:00', '00:00:04', '0111', 'Success', 'T']];
-    res.end('<h6>1</h6><h5>All Inbound Calls</h5><table id="example23"><thead><tr>' + ['Queue', 'Agent', 'Call Date', 'Start Time', 'End Time', 'Duration', 'Wait Time', 'Caller ID', 'Status', 'Trunk'].map(v => '<th>' + v + '</th>').join('') + '</tr></thead><tbody>'
+    res.end('<h6>1</h6><h5>All Inbound Calls</h5><table id="example23"><thead><tr>' + ['Queue', 'Agent', 'Call Date', 'Start Time', 'End Time', 'Duration', 'Wait Time', 'Caller ID', 'Status', 'Trunk', 'Recording'].map(v => '<th>' + v + '</th>').join('') + '</tr></thead><tbody>'
       + rows.map(r => '<tr>' + r.map(v => '<td>' + v + '</td>').join('') + '</tr>').join('') + '</tbody></table>');
   });
   await new Promise(r => reports.listen(0, r));
@@ -192,7 +192,11 @@ test('extension 3 collector: linked from the admin page, sends the day history a
     const status = await send({ type: 'COLLECTOR_STATUS' }, 'moz-extension://x/collector.html');
     assert.equal(status.linked, true, JSON.stringify(status));
     assert.ok(status.lastHistory, JSON.stringify(status));
-    assert.ok(t.app.db.raw.prepare('SELECT COUNT(*) n FROM history_reports').get().n >= 1);
+    assert.ok(t.app.db.raw.prepare('SELECT COUNT(*) n FROM history_reports').get().n >= 1, 'an extra header cell does not drop the day');
+    for (let i = 0; i < 50 && !t.app.db.raw.prepare("SELECT 1 FROM settings WHERE key = 'collector_status'").get(); i++) await settle(100);
+    const reported = JSON.parse(t.app.db.raw.prepare("SELECT value FROM settings WHERE key = 'collector_status'").get().value);
+    assert.equal(reported.historyError, null);
+    assert.equal((await admin('GET', '/api/system')).body.collector.report.version, reported.version);
     // Another site cannot link a collector.
     await assert.rejects(send({ type: 'COLLECTOR_LINK', ...tok }, 'https://evil.example/'));
   } finally { reports.close(); await t.close(); }

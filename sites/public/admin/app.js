@@ -478,7 +478,9 @@
     $('systemCards').replaceChildren(kpi('الموصل', c.linked ? 'مربوط' : 'مش مربوط', c.linked ? 'good' : 'bad', c.linkedAt ? 'اتربط ' + stamp(c.linkedAt) : 'اربطه من «الإدارة» على جهاز المشرف'),
       kpi('آخر سحب لسجل أرابيكس', since(hAge), hAge != null && hAge < 900 ? 'good' : 'warn', c.lastHistory ? 'سجل يوم ' + c.lastHistory.date : ''),
       kpi('آخر لقطة انتظار مباشر', since(lAge), lAge != null && lAge < 30 ? 'good' : 'warn'),
-      kpi('أجهزة شغالة دلوقتي', d.devices.filter(x => x.open && ago(x.lastSeen) < 120).length, 'info', d.devices.length + ' جهاز آخر 24 ساعة'));
+      kpi('أجهزة شغالة دلوقتي', d.devices.filter(x => x.open && ago(x.lastSeen) < 120).length, 'info', d.devices.length + ' جهاز آخر 24 ساعة'),
+      ...(c.report ? [kpi('جهاز المشرف بيقول', c.report.historyError || c.report.liveError ? 'فيه مشكلة' : 'تمام', c.report.historyError || c.report.liveError ? 'bad' : 'good',
+        [c.report.historyError ? 'السجل: ' + c.report.historyError : '', c.report.liveError ? 'الانتظار: ' + c.report.liveError : '', (c.report.historyDays || []).join(' · '), 'نسخة ' + (c.report.version || '—') + ' · ' + since(ago(c.report.receivedAt))].filter(Boolean).join(' — '))] : []));
     table('deviceTable', [{ title: 'الموظف', get: x => x.name }, { title: 'التحويلة', get: x => x.extension || '—' }, { title: 'نسخة الإضافة', get: x => x.version || '—' },
       { title: 'آخر إشارة', get: x => x.lastSeen, show: x => { const a = ago(x.lastSeen); return pill(since(a), x.open && a < 120 ? 'ok' : x.open ? 'warn' : ''); }, type: 'datetime' },
       { title: 'الجلسة', get: x => x.open ? 'مفتوحة' : 'مقفولة' }, { title: 'بدأت', get: x => x.startedAt, show: x => stamp(x.startedAt), type: 'datetime' }], d.devices, { empty: 'مفيش أجهزة اشتغلت على السيستم الجديد آخر 24 ساعة' });
@@ -606,7 +608,7 @@
       const t = await api('/api/history', { method: 'POST', body: { action: 'token' } });
       const r = await extensionCall({ type: 'LINK_COLLECTOR', token: t.token, refreshToken: t.refreshToken });
       if (!r?.ok) { await api('/api/history', { method: 'POST', body: { action: 'revoke', refreshToken: t.refreshToken } }).catch(() => {}); return say('collectorNote', 'الإضافة رفضت الربط: ' + (r?.error || 'بدون رد')); }
-      say('collectorNote', 'اتربط. الجهاز ده هيسحب سجل أرابيكس كل 5 دقايق والانتظار كل 3 ثواني، طول ما تقارير أرابيكس متسجل فيها دخول.');
+      say('collectorNote', 'اتربط. الجهاز ده هيسحب سجل أرابيكس كل 15 دقيقة والانتظار لايف، طول ما تقارير أرابيكس متسجل فيها دخول.');
     } catch (e) { say('collectorNote', e.message); }
   };
 
