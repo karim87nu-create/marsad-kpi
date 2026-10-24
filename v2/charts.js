@@ -44,6 +44,35 @@
     box.append(legend, wrap);
   }
 
+  // Stacked bars, one per item (right to left). items: [{ label, values: { key: n }, tip }]; series: [{ key, label, color }].
+  function bars(box, items, series) {
+    box.replaceChildren();
+    if (!items.some(it => series.some(x => it.values[x.key]))) { box.textContent = 'مفيش بيانات'; return; }
+    const W = 560, H = 230, L = 6, R = 26, T = 10, B = 24, n = items.length, bw = (W - L - R) / n;   // drawn half width: these sit in half-width panels
+    const max = Math.max(1, ...items.map(it => series.reduce((m, x) => m + (it.values[x.key] || 0), 0)));
+    const y = v => T + (H - T - B) * (1 - v / max), x = i => W - R - (i + 0.5) * bw;
+    const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img' });
+    for (let k = 0; k <= 4; k++) { const v = Math.round(max * k / 4), yy = y(v); svg.append(el('line', { x1: L, x2: W - R, y1: yy, y2: yy, class: 'grid' }), el('text', { x: W - R + 6, y: yy + 4 }, String(v))); }
+    const wrap = div('chartbox'), tip = div('tip'); tip.hidden = true;
+    items.forEach((it, i) => {
+      const g = el('g', { 'data-i': i }), w = Math.max(2, bw * 0.62);
+      g.append(el('rect', { x: x(i) - bw / 2, y: T, width: bw, height: H - T - B, fill: 'transparent' }));
+      let base = 0;
+      for (const sr of series) { const v = it.values[sr.key] || 0; if (!v) continue; g.append(el('rect', { x: x(i) - w / 2, y: y(base + v), width: w, height: y(base) - y(base + v), rx: 2, fill: css(sr.color) || sr.color })); base += v; }
+      svg.append(g);
+      if (n <= 26 || i % 2 === 0) svg.append(el('text', { x: x(i), y: H - 8, 'text-anchor': 'middle' }, it.label));
+    });
+    svg.addEventListener('mousemove', e => {
+      const g = e.target.closest('g[data-i]'); if (!g) { tip.hidden = true; return; }
+      const it = items[g.dataset.i], r = wrap.getBoundingClientRect();
+      tip.hidden = false; tip.style.left = (e.clientX - r.left) + 'px'; tip.style.top = (e.clientY - r.top) + 'px';
+      tip.innerHTML = '<b>' + it.label + '</b><br>' + (it.tip || series.map(sr => sr.label + ' ' + (it.values[sr.key] || 0)).join(' · '));
+    });
+    svg.addEventListener('mouseleave', () => { tip.hidden = true; });
+    const legend = div('legend'); legend.innerHTML = series.map(sr => '<span><i style="background:' + (sr.color.startsWith('--') ? 'var(' + sr.color + ')' : sr.color) + '"></i>' + sr.label + '</span>').join('');
+    wrap.append(svg, tip); box.append(legend, wrap);
+  }
+
   // One row per employee: coloured state segments between from and to (epoch ms).
   function timeline(box, rows, from, to, { onName } = {}) {
     box.replaceChildren();
@@ -82,5 +111,5 @@
     m.append(s); return m;
   }
 
-  window.MarsadCharts = { slots, timeline, usage, meter };
+  window.MarsadCharts = { slots, bars, timeline, usage, meter };
 })();

@@ -74,10 +74,12 @@
 
     <section id="view-hours" class="view" hidden>
       <p class="note">كل صف نص ساعة. المكالمات والانتظار من سجل أرابيكس حسب وقت بداية المكالمة؛ المتاحين والبريك متوسط عدد الموظفين في الحالة دي خلال النص ساعة؛ أقصى منتظرين من لقطات الانتظار المباشر.</p>
+      <div id="hoursCards" class="cards"></div>
       <article class="panel"><h2>الضغط على مدار اليوم <span class="actions"><label class="inline"><input type="checkbox" id="hoursAll"> عرض بعد 3 الفجر</label><button class="ghost small" data-export="hours">تصدير Excel</button></span></h2><div id="hoursChart"></div><div id="hoursTable"></div></article>
     </section>
 
     <section id="view-team" class="view" hidden>
+      <div id="teamViewCards" class="cards"></div>
       <article class="panel"><h2>أداء الموظفين في اليوم <button class="ghost small" data-export="team">تصدير Excel</button></h2>
         <div class="legend"><span><i class="s-ready"></i>متاح</span><span><i class="s-on_call"></i>في مكالمة</span><span><i class="s-break"></i>بريك</span><span><i class="s-unknown"></i>انقطاع رصد</span></div>
         <div id="teamTable"></div></article>
@@ -89,9 +91,11 @@
     </section>
 
     <section id="view-requests" class="view" hidden>
+      <div id="requestCards" class="cards"></div>
       <article class="panel"><h2>طلبات البريك الإضافي اليوم</h2><p class="muted">المدير والمشرف يقدروا يقبلوا أو يرفضوا الطلب هنا. بعد القبول الموظف يبدأ البريك من زرار «بدء البريك الموافق عليه» في الإضافة.</p><div id="breakRequestHistory"></div></article>
     </section>
     <section id="view-attendance" class="view" hidden>
+      <div id="attendanceCards" class="cards"></div>
       <article class="panel"><h2>خط اليوم لكل موظف</h2>
         <div class="legend"><span><i class="s-ready"></i>متاح</span><span><i class="s-on_call"></i>في مكالمة</span><span><i class="s-break"></i>بريك</span><span><i class="s-unknown"></i>انقطاع رصد</span><span><i class="s-logged_in"></i>سجّل ولسه مدخلش الكونسول</span></div>
         <div id="dayTimeline"></div></article>
@@ -105,6 +109,7 @@
 
     <section id="view-shifts" class="view" hidden>
       <p class="note">الخروج المسجل بينهي الشيفت. الجلسة اللي خلصت من غير خروج مسجل (انقطاع أو قفل المتصفح) بتفضل مفتوحة الحكم: تقدر تأكد إن الشيفت خلص، أو تحسبه عليه لو خرج قبل ميعاده. القرار بيظهر في «مين كان متاح؟» للمكالمات الفائتة بعد خروجه.</p>
+      <div id="shiftCards" class="cards"></div>
       <article class="panel"><h2>نهاية كل جلسة <button class="ghost small" data-export="shifts">تصدير Excel</button></h2><div id="shiftTable"></div></article>
       <article class="panel"><h2>تبديل الموظفين على نفس التحويلة</h2><div id="handoverTable"></div></article>
     </section>
@@ -116,8 +121,12 @@
         <select id="callStatus"><option value="">كل المكالمات</option><option value="complete">مكتملة</option><option value="open">بدون نهاية مسجلة</option></select>
         <button class="ghost small" data-export="calls">تصدير Excel</button>
       </div>
-      <p id="callsNote" class="muted"></p>
-      <div id="callsTable"></div>
+      <div id="callsCards" class="cards four"></div>
+      <div class="two">
+        <article class="panel"><h2>المكالمات على مدار اليوم</h2><div id="callsChart"></div></article>
+        <article class="panel"><h2>أكتر الموظفين مكالمات</h2><div id="callsRanks"></div></article>
+      </div>
+      <article class="panel"><h2>كل المكالمات</h2><p id="callsNote" class="muted"></p><div id="callsTable"></div></article>
       <article class="panel"><h2>مكالمات من غير موظف مسجل</h2><p id="unattributedNote" class="muted"></p><div id="unattributedTable"></div></article>
     </section>
 
@@ -126,11 +135,17 @@
         <select id="missedClass"><option value="">كل الفائتة</option><option value="counted">محتسبة (أكثر من 7 ث)</option><option value="short_exempt">قصيرة — للتوضيح</option><option value="after_hours">خارج ساعات العمل</option></select>
         <button class="ghost small" data-export="missed">تصدير Excel</button>
       </div>
-      <div id="missedTable"></div>
+      <div id="missedCards" class="cards"></div>
+      <div class="two">
+        <article class="panel"><h2>الفائتة على مدار اليوم</h2><div id="missedChart"></div></article>
+        <article class="panel"><h2>حسب نوع الطلب</h2><div id="missedQueues"></div></article>
+      </div>
+      <article class="panel"><h2>كل المكالمات الفائتة</h2><div id="missedTable"></div></article>
       <dialog id="contextDialog"><h2 id="contextTitle"></h2><p id="contextNote" class="muted"></p><div id="contextTable"></div><button class="ghost" data-close>إغلاق</button></dialog>
     </section>
 
     <section id="view-followup" class="view" hidden>
+      <div id="followupCards" class="cards"></div>
       <article class="panel"><h2>إضافة متابعة</h2>
         <form id="reviewForm" class="inline">
           <input name="title" placeholder="الموضوع" maxlength="200" required style="flex:2">
@@ -172,6 +187,7 @@
     </section>
 
     <section id="view-manage" class="view" hidden>
+      <div id="manageCards" class="cards"></div>
       <article class="panel"><h2>الموظفون</h2>
         <form id="addEmployee" class="inline">
           <input name="name" placeholder="الاسم" required><input name="code" placeholder="الكود" required>
@@ -227,7 +243,7 @@
 </div>
 <script src="config.js?v=1"></script>
 <script src="xlsx.js?v=2"></script>
-<script src="charts.js?v=1"></script>
-<script src="app.js?v=5"></script>
+<script src="charts.js?v=3"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>

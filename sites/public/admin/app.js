@@ -64,6 +64,19 @@
   const toneHigh = (v, good, warn) => v == null ? '' : v >= good ? 'good' : v >= warn ? 'warn' : 'bad';   // higher is better
   const toneLow = (v, good, warn) => v == null ? '' : v <= good ? 'good' : v <= warn ? 'warn' : 'bad';    // lower is better
   const ms = v => v == null ? null : Date.parse(v);
+  // Hours of the data day in order (9 ص … 8 ص) and the Cairo hour of a moment / of an Arabicss "11:52 PM" time.
+  const DAY_HOURS = [...Array(24)].map((_, i) => (i + 9) % 24);
+  const hourLabel = hr => (hr % 12 || 12) + (hr < 12 ? 'ص' : 'م');
+  const cairoHour = v => Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Africa/Cairo', hour: '2-digit', hourCycle: 'h23' }).format(new Date(v)));
+  const textHour = t => { const m = String(t || '').match(/(\d{1,2}):\d{2}(?::\d{2})?\s*([AP]M)?/i); if (!m) return null; let hr = +m[1] % 12; if (!m[2]) hr = +m[1]; else if (/p/i.test(m[2])) hr += 12; return hr % 24; };
+  // Per-hour buckets for a bar chart; hours after 3 الفجر only when something happened in them.
+  function hourly(list, hourOf, valuesOf, tipOf) {
+    const by = new Map(DAY_HOURS.map(hr => [hr, []]));
+    for (const x of list) { const hr = hourOf(x); if (hr != null && by.has(hr)) by.get(hr).push(x); }
+    return DAY_HOURS.filter(hr => by.get(hr).length || (hr >= 9 || hr < 3)).map(hr => ({ label: hourLabel(hr), values: valuesOf(by.get(hr)), tip: tipOf ? tipOf(by.get(hr), hr) : null }));
+  }
+  const avg = list => list.length ? list.reduce((n, v) => n + v, 0) / list.length : null;
+  const rankList = (list, value, show, color) => { const max = Math.max(1, ...list.map(value)); return h('div', { className: 'ranks' }, ...list.map(x => h('div', { className: 'r' }, h('span', { textContent: x.name }), h('b', { textContent: show(x) }), C.meter(value(x), max, color)))); };
 
   // ---------- state ----------
   const state = { view: 'now', day: cairoToday(), to: cairoToday(), employees: [], names: new Map(), live: null, queue: null, day_: {}, requests: null };
@@ -159,6 +172,9 @@
     $('reqBadge').hidden = !pending.length; $('reqBadge').textContent = pending.length;
     $('breakRequests').replaceChildren(...(pending.length && state.view !== 'requests' ? [h('div', { className: 'requests' }, h('h2', { textContent: 'طلبات بريك مستنية موافقة — ' + pending.length }),
       ...pending.map(r => h('div', { className: 'row' }, h('span', { textContent: r.employee + ' · تحويلة ' + (r.extension || '—') + ' · ' + r.requestedMinutes + ' دقيقة · من ' + clock(r.createdAt) }), requestActions(r))))] : []));
+    const cnt = st => rows.filter(r => st.includes(r.status)).length;
+    $('requestCards').replaceChildren(kpi('مستنية موافقة', pending.length, pending.length ? 'warn' : 'good'), kpi('اتوافق عليها', cnt(['approved', 'starting', 'completed']), 'good'),
+      kpi('اترفضت', cnt(['rejected']), cnt(['rejected']) ? 'bad' : ''), kpi('انتهت أو اتلغت', cnt(['expired', 'cancelled'])), kpi('إجمالي الطلبات', rows.length, 'info'));
     table('breakRequestHistory', [{ title: 'الموظف', get: r => r.employee }, { title: 'التحويلة', get: r => r.extension }, { title: 'المدة المطلوبة', get: r => r.requestedMinutes, show: r => r.requestedMinutes + ' دقيقة' },
       { title: 'وقت الطلب', get: r => r.createdAt, show: r => stamp(r.createdAt) }, { title: 'الحالة', get: r => BREAK_REQUEST_STATUS[r.status] || r.status }, { title: 'القرار', get: requestActions }, { title: 'اتخذ القرار', get: r => r.decidedBy || '—' }], rows, { empty: 'مفيش طلبات بريك إضافي اليوم' });
   }
@@ -197,6 +213,11 @@
   async function renderHours() {
     const d = await dayData(), list = hourRows(d);
     C.slots($('hoursChart'), list);
+    const op = list.filter(x => x.operating && x.calls), peak = [...op].sort((a, b) => b.calls - a.calls)[0], worst = [...op].filter(x => x.sla != null).sort((a, b) => a.sla - b.sla)[0];
+    const thin = op.filter(x => x.ready < 1).length, missedSlots = op.filter(x => x.abandoned).length, slot = x => x ? clock(x.start).slice(0, 5) : '—';
+    $('hoursCards').replaceChildren(kpi('أعلى نص ساعة ضغط', peak ? peak.calls + ' مكالمة' : '—', 'info', peak ? 'من ' + slot(peak) : ''), kpi('أقل رد خلال 10 ث', worst ? pct(worst.sla) : '—', worst ? toneHigh(worst.sla, 80, 60) : '', worst ? 'من ' + slot(worst) : ''),
+      kpi('نص ساعات فيها فائتة', missedSlots, missedSlots ? 'warn' : 'good'), kpi('نص ساعات المتاحين فيها أقل من واحد', thin, thin ? 'bad' : 'good', 'في وقت فيه مكالمات'),
+      kpi('أقصى متوسط في بريك مع بعض', op.length ? Math.max(...op.map(x => x.onBreak)) : '—', op.some(x => x.onBreak >= 2) ? 'warn' : ''));
     table('hoursTable', slotColumns, list);
   }
   $('hoursAll').onchange = () => renderHours().catch(showError);
@@ -220,8 +241,13 @@
     { title: 'البريك', get: r => r.breakSeconds, show: r => (r.overBreakDays ?? (r.breakSeconds > 1800 ? 1 : 0)) > 0 ? pill(dur(r.breakSeconds), 'warn') : dur(r.breakSeconds), type: 'duration' }, { title: 'عدد البريكات', get: r => r.breakCount, type: 'number' },
     { title: 'أول دخول', get: r => r.firstLogin, show: r => clock(r.firstLogin), type: 'datetime' }, { title: 'آخر خروج', get: r => r.lastLogout, show: r => clock(r.lastLogout), type: 'datetime' }];
   async function renderTeam() {
-    const d = await dayData();
-    table('teamTable', teamColumns, teamRows(d), { onRow: r => { state.profile = r.id; show('profile'); } });
+    const d = await dayData(), rows = teamRows(d);
+    const busy = rows.filter(r => r.onCall + r.ready > 0).map(r => r.onCall / (r.onCall + r.ready) * 100), ahts = rows.filter(r => r.aht).map(r => r.aht);
+    const topCalls = [...rows].sort((a, b) => b.calls - a.calls)[0], overBreak = rows.filter(r => (r.overBreakDays ?? (r.breakSeconds > 1800 ? 1 : 0)) > 0).length, gaps = rows.filter(r => r.unknown > 900).length;
+    $('teamViewCards').replaceChildren(kpi('موظفين اشتغلوا', rows.length, 'info'), kpi('متوسط نسبة الانشغال', busy.length ? Math.round(avg(busy)) + '%' : '—', '', 'وقت المكالمات ÷ (المكالمات + المتاح)'),
+      kpi('متوسط مدة المكالمة', dur(avg(ahts))), kpi('أكتر واحد مكالمات', topCalls ? topCalls.calls : '—', 'on_call', topCalls?.name || ''),
+      kpi('عدّوا الـ 30 دقيقة بريك', overBreak, overBreak ? 'bad' : 'good'), kpi('انقطاع رصد أكتر من 15 د', gaps, gaps ? 'warn' : 'good'));
+    table('teamTable', teamColumns, rows, { onRow: r => { state.profile = r.id; show('profile'); } });
   }
 
   // ---------- ملف الموظف ----------
@@ -276,6 +302,11 @@
     C.timeline($('dayTimeline'), rows, ms(w.start), Math.max(ms(w.operatingEnd), ...rows.flatMap(r => r.segments.map(x => Math.min(x.to, ms(w.end))))), { onName: r => { state.profile = r.id; show('profile'); } });
     const breaks = d.states.filter(s => s.state === 'break').sort((a, b) => ms(a.startedAt) - ms(b.startedAt));
     att.totals = d.employees.filter(e => e.breakSeconds || e.breakCount).map(e => { const mine = breaks.filter(b => b.employeeId === e.employeeId); return { name: e.name, count: e.breakCount, total: e.breakSeconds, over: e.overBreakDays ?? (e.breakSeconds > 1800 ? 1 : 0), allowance: 1800 * (e.daysWorked || 1), longest: Math.max(0, ...mine.map(b => b.durationSeconds)), running: e.ongoingBreakSeconds }; }).sort((a, b) => b.total - a.total);
+    const brk = breaks.filter(b => !b.outsideHours), longest = brk.reduce((m, b) => b.durationSeconds > (m?.durationSeconds || 0) ? b : m, null);
+    const unknownLogout = d.sessions.filter(s => s.workStartedAt != null && !s.running && !s.closureKnown).length;
+    $('attendanceCards').replaceChildren(kpi('موظفين حضروا', rows.length, 'info'), kpi('عدد البريكات', brk.length, 'break'), kpi('إجمالي البريك', dur(brk.reduce((n, b) => n + b.durationSeconds, 0)), 'break'),
+      kpi('عدّوا الـ 30 دقيقة', att.totals.filter(x => x.total > 1800).length, att.totals.some(x => x.total > 1800) ? 'bad' : 'good'), kpi('أطول بريك', longest ? dur(longest.durationSeconds) : '—', longest && longest.durationSeconds > 1200 ? 'warn' : '', longest ? name(longest.employeeId) : ''),
+      kpi('جلسات خلصت من غير خروج مسجل', unknownLogout, unknownLogout ? 'warn' : 'good'));
     table('breakTotals', att.totalColumns = [{ title: 'الموظف', get: x => x.name }, { title: 'عدد البريكات', get: x => x.count, type: 'number' }, { title: 'الإجمالي', get: x => x.total, show: x => x.over > 0 ? pill(dur(x.total), 'bad') : dur(x.total), type: 'duration' },
       { title: 'أطول بريك', get: x => x.longest, show: x => x.longest > 1200 ? pill(dur(x.longest), 'warn') : dur(x.longest), type: 'duration' }, { title: 'من المسموح في الفترة', get: x => Math.round(x.total / x.allowance * 100) , show: x => C.meter(x.total, x.allowance, x.over > 0 ? 'var(--bad)' : 'var(--break)') }], att.totals, { empty: 'مفيش بريك' });
     // Moments with two or more on break at once, and how many were available then.
@@ -309,6 +340,7 @@
     shiftRows = d.sessions.filter(s => s.workStartedAt != null).sort((a, b) => (a.workStartedAt ?? 0) - (b.workStartedAt ?? 0));
     const cols = canWrite() ? [...shiftColumns, { title: '', get: () => '', show: s => s.running ? '' : h('span', { className: 'inline' }, btn('محسوب عليه', () => decide(s, 'include')), btn('الشيفت خلص', () => decide(s, 'exclude'))) }] : shiftColumns;
     table('shiftTable', cols, shiftRows);
+    const ended = shiftRows.filter(s => !s.running), open = ended.filter(s => !s.closureKnown && !s.decision);
     // Same extension, one employee after another.
     const byExt = new Map();
     for (const s of shiftRows) if (s.extension) { if (!byExt.has(s.extension)) byExt.set(s.extension, []); byExt.get(s.extension).push(s); }
@@ -322,6 +354,10 @@
     table('handoverTable', [{ title: 'التحويلة', get: x => x.ext }, { title: 'الموظف السابق', get: x => x.prev }, { title: 'خرج', get: x => x.end, show: x => x.open ? 'لسه شغال' : clock(new Date(x.end).toISOString()), type: 'datetime' },
       { title: 'الموظف التالي', get: x => x.next }, { title: 'دخل', get: x => x.start, show: x => clock(new Date(x.start).toISOString()), type: 'datetime' },
       { title: 'الفرق', get: x => x.gap, show: x => x.open || x.gap < 0 ? pill('اتنين على نفس التحويلة في نفس الوقت', 'bad') : dur(x.gap), type: 'duration' }], hand, { empty: 'مفيش تبديل على نفس التحويلة' });
+    const clash = hand.filter(x => x.open || x.gap < 0).length;
+    $('shiftCards').replaceChildren(kpi('جلسات', shiftRows.length, 'info', shiftRows.filter(s => s.running).length + ' شغالة دلوقتي'), kpi('خلصت بخروج مسجل', ended.filter(s => s.closureKnown).length, 'good'),
+      kpi('مستنية قرار', open.length, open.length ? 'warn' : 'good', 'خلصت من غير خروج مسجل'), kpi('قرارات اتاخدت', ended.filter(s => s.decision).length),
+      kpi('اتنين على تحويلة واحدة', clash, clash ? 'bad' : 'good'), kpi('تبديل على نفس التحويلة', hand.length));
   }
   async function decide(s, action) {
     const note = prompt((action === 'include' ? 'الجلسة دي هتتحسب عليه (خرج قبل ميعاده).' : 'تأكيد إن الشيفت خلص.') + ' اكتب السبب:');
@@ -347,6 +383,16 @@
       + (a ? ' · ' + a.recovered + ' اتضافت من سجل أرابيكس' : '');
     table('callsTable', callColumns, list);
     const u = d.history.unattributed || [];
+    const filtered = $('callSearch').value.trim() || $('callEmployee').value || $('callStatus').value;
+    const longCalls = done.filter(c => c.durationSeconds > 240).length, open = list.filter(c => !c.complete).length, people = new Set(list.map(c => c.employeeId)).size;
+    $('callsCards').replaceChildren(kpi('المكالمات', list.length, 'info', filtered ? 'حسب الفلتر' : people + ' موظف'), kpi('مكتملة', done.length, 'good'), kpi('من غير نهاية مسجلة', open, open ? 'warn' : 'good'),
+      kpi('متوسط المدة', dur(avg(done.map(c => c.durationSeconds)))), kpi('أطول من 4 دقايق', longCalls, longCalls ? 'warn' : ''),
+      kpi('واردة', list.filter(c => c.callType !== 'outgoing').length, '', list.filter(c => c.callType === 'outgoing').length + ' صادرة'),
+      kpi('اتضافت من سجل أرابيكس', list.filter(c => c.source === 'history').length, '', 'الإضافة مشافتهاش'), kpi('من غير موظف مسجل', u.length, u.length ? 'bad' : 'good'));
+    C.bars($('callsChart'), hourly(list, c => cairoHour(c.startedAt), g => ({ ext: g.filter(c => c.source !== 'history').length, hist: g.filter(c => c.source === 'history').length })),
+      [{ key: 'ext', label: 'من الإضافة', color: '--call' }, { key: 'hist', label: 'من سجل أرابيكس', color: '--accent' }]);
+    const per = new Map(); for (const c of list) { const k = c.employeeId; const x = per.get(k) || { name: c.employee || name(k), calls: 0, talk: 0 }; x.calls++; if (c.complete) x.talk += c.durationSeconds; per.set(k, x); }
+    $('callsRanks').replaceChildren(rankList([...per.values()].sort((a, b) => b.calls - a.calls).slice(0, 8), x => x.calls, x => x.calls + ' · ' + dur(x.talk), 'var(--call)'));
     $('unattributedNote').textContent = u.length ? u.length + ' مكالمة اترد عليها في أرابيكس وقت ما مكانش فيه موظف مسجل في المرصد على التحويلة — يعني حد شغال من غير ما يكتب الباسورد.' : 'كل المكالمات المردود عليها في سجل أرابيكس معروف مين ردّ عليها.';
     table('unattributedTable', [{ title: 'الوقت', get: x => ampm(x.time) }, { title: 'الرقم', get: x => x.phone }, { title: 'التحويلة في أرابيكس', get: x => x.extension || '—' }, { title: 'نوع الطلب', get: x => QUEUE(x.queue) },
       { title: 'السبب', get: x => ({ nobody_on_extension: 'مفيش موظف مسجل على التحويلة وقتها', several_employees: 'أكتر من موظف على نفس التحويلة', no_extension: 'السجل من غير تحويلة' })[x.reason] || x.reason }], u, { empty: '' });
@@ -358,8 +404,16 @@
     { title: 'الانتظار', get: m => m.waitSeconds, show: m => dur(m.waitSeconds), type: 'duration' }, { title: 'التصنيف', get: m => MISSED[m.classification] || m.classification, show: m => pill(MISSED[m.classification] || m.classification, m.classification === 'counted' ? 'bad' : '') },
     { title: '', get: () => '', show: m => { const b = h('button', { className: 'ghost small', textContent: 'مين كان متاح؟' }); b.onclick = e => { e.stopPropagation(); showContext(m); }; return b; } }];
   async function renderMissed() {
-    const hd = await dayHistory(), f = $('missedClass').value;
-    table('missedTable', missedColumns, (hd.missed || []).filter(m => !f || m.classification === f), { empty: hd.report ? 'مفيش مكالمات فائتة' : 'مفيش سجل أرابيكس لليوم ده' });
+    const hd = await dayHistory(), f = $('missedClass').value, all = hd.missed || [], r = hd.report;
+    table('missedTable', missedColumns, all.filter(m => !f || m.classification === f), { empty: hd.report ? 'مفيش مكالمات فائتة' : 'مفيش سجل أرابيكس لليوم ده' });
+    const by = k => all.filter(m => m.classification === k), counted = by('counted'), waits = counted.map(m => m.waitSeconds).filter(v => v != null);
+    $('missedCards').replaceChildren(kpi('فائتة محتسبة', counted.length, counted.length ? toneLow(r?.abandonmentRate, 5, 10) : 'good', 'العميل استنى أكتر من 7 ث'), kpi('نسبة الفائتة', pct(r?.abandonmentRate), toneLow(r?.abandonmentRate, 5, 10)),
+      kpi('قصيرة ≤7 ث', by('short_exempt').length, '', 'مش محسوبة'), kpi('خارج ساعات العمل', by('after_hours').length), kpi('متوسط انتظار اللي قفلوا', waits.length ? secs(avg(waits)) : '—', waits.length ? toneLow(avg(waits), 20, 40) : ''),
+      kpi('أطول انتظار قبل ما يقفل', waits.length ? dur(Math.max(...waits)) : '—', waits.length && Math.max(...waits) > 60 ? 'bad' : ''));
+    C.bars($('missedChart'), hourly(all.filter(m => m.classification !== 'after_hours'), m => textHour(m.end || m.start), g => ({ counted: g.filter(m => m.classification === 'counted').length, short: g.filter(m => m.classification === 'short_exempt').length })),
+      [{ key: 'counted', label: 'محتسبة', color: '--bad' }, { key: 'short', label: 'قصيرة ≤7ث', color: '--muted' }]);
+    const qs = new Map(); for (const m of counted) { const x = qs.get(m.queueLabel) || { name: m.queueLabel, n: 0 }; x.n++; qs.set(m.queueLabel, x); }
+    $('missedQueues').replaceChildren(qs.size ? rankList([...qs.values()].sort((a, b) => b.n - a.n), x => x.n, x => x.n + ' فائتة', 'var(--bad)') : h('p', { className: 'muted', textContent: 'مفيش فائتة محتسبة' }));
   }
   async function showContext(m) {
     const dlg = $('contextDialog');
@@ -387,6 +441,9 @@
     $('reviewForm').hidden = !canWrite(); $('saveReport').hidden = !canWrite();
     const [day, open, saved] = await Promise.all([api('/api/reviews?' + periodQuery()), api('/api/reviews?open=1'), api('/api/saved-reports?' + periodQuery())]);
     reviewRows = day.reviews;
+    const st = (list, k) => list.filter(r => r.status === k).length;
+    $('followupCards').replaceChildren(kpi('متابعات الفترة', day.reviews.length, 'info'), kpi('جديدة', st(day.reviews, 'new'), st(day.reviews, 'new') ? 'warn' : ''), kpi('جاري المتابعة', st(day.reviews, 'in_progress')),
+      kpi('اتحلت', st(day.reviews, 'resolved') + st(day.reviews, 'reviewed'), 'good'), kpi('مفتوحة من أيام تانية', open.reviews.filter(r => r.date !== state.day).length, open.reviews.some(r => r.date !== state.day) ? 'warn' : 'good'), kpi('تقارير محفوظة', saved.reports.length));
     table('reviewTable', reviewColumns(), day.reviews, { empty: 'مفيش متابعات لليوم ده' });
     table('openReviews', reviewColumns(), open.reviews.filter(r => r.date !== state.day), { empty: 'مفيش متابعات مفتوحة' });
     table('savedReports', [{ title: 'وقت الحفظ', get: r => r.createdAt, show: r => stamp(r.createdAt), type: 'datetime' }, { title: 'حفظه', get: r => r.filters?.by || '—' },
@@ -444,6 +501,8 @@
   const ERR = { password_in_use: 'الباسورد مستخدم لموظف تاني', password_confirmation_mismatch: 'التأكيد مش مطابق', employee_code_exists: 'الكود موجود قبل كده' };
   async function renderManage() {
     await loadEmployees();
+    const act_ = state.employees.filter(e => e.active).length;
+    $('manageCards').replaceChildren(kpi('موظفين نشطين', act_, 'good'), kpi('موقوفين', state.employees.length - act_, state.employees.length - act_ ? 'warn' : ''), kpi('دورك', ROLE[who?.role] || '—', 'info', who?.name || ''));
     table('employeesTable', [{ title: 'الاسم', get: e => e.name }, { title: 'الكود', get: e => e.employeeCode }, { title: 'الحالة', get: e => e.active ? 'نشط' : 'موقوف', show: e => pill(e.active ? 'نشط' : 'موقوف', e.active ? 'ok' : 'warn') },
       { title: '', get: () => '', show: e => !isAdmin() ? '' : h('span', { className: 'inline' },
         btn('الباسورد', async () => { const pin = await askPasswords('باسورد جديد لـ ' + e.name); if (pin == null) return; await act('employeeMessage', () => api('/api/employees', { method: 'PATCH', body: { id: e.id, pin, pinConfirmation: pin } }), 'اتغير الباسورد وانتهت جلسته الحالية'); }),
