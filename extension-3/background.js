@@ -119,6 +119,10 @@ function notifyTabs(message) {
 // ---------- messages from the Arabicss page ----------
 browser.runtime.onMessage.addListener(async (m, sender) => {
   if (m?.type?.startsWith('COLLECTOR_')) return collectorMessage(m, sender);
+  if (m?.type === 'NATIVE_LIVE') {
+    if (!fromArabicss(sender) || !/^\/themes\/arabicssReportsInclude\//i.test(new URL(sender.url).pathname) || typeof m.html !== 'string' || m.html.length > 1000000) throw Error('invalid_sender');
+    return nativeLive(m.html);
+  }
   if (!fromArabicss(sender)) throw Error('invalid_sender');
   const tabId = String(sender.tab.id);
   await startup;
@@ -207,31 +211,38 @@ async function collectHistory() {
     }
   } catch (e) { collectorState = { ...collectorState, error: e.message }; } finally { historyBusy = false; }
 }
-let lastLiveSignature = '', lastLiveSent = 0;
-async function collectLive() {
-  if (liveBusy || !(await store.get(COLLECTOR, null)) || !(await clock.ensure())) return;
-  liveBusy = true;
-  try {
-    const html = await reports('get_inbound_calls_real_time.php'), observedAt = clock.now();
-    const doc = new DOMParser().parseFromString('<table><tbody>' + html + '</tbody></table>', 'text/html');
-    const rows = [...doc.querySelectorAll('tr')].map(r => [...r.querySelectorAll('td')].map(c => c.textContent.trim())).filter(r => r.length === 11);
-    if (html.trim() && !rows.length) throw Error('رد اللايف غير معروف');
-    // Waiting times tick every second; resend an unchanged queue every 10 s only.
-    const signature = JSON.stringify(rows.map(r => r.filter((_, i) => i !== 6 && i !== 8)));
-    if (signature === lastLiveSignature && Date.now() - lastLiveSent < 10000) return;
-    const reply = await collectorPost({ action: 'live', rows, capture: { id: crypto.randomUUID(), kind: 'native_report_snapshot', changed: signature !== lastLiveSignature, observedAt: new Date(observedAt).toISOString(), timeBasis: 'server-clock-v1' } });
-    lastLiveSignature = signature; lastLiveSent = Date.now();
-    collectorState = { ...collectorState, lastLive: reply.observedAt, error: null };
-  } catch (e) { collectorState = { ...collectorState, error: e.message }; } finally { liveBusy = false; }
+let lastLiveSignature = '', lastLiveSent = 0, lastNative = 0;
+// The live queue is taken from the report page's own refreshes when it is open on this PC (no extra request
+// to Arabicss, and as live as the report itself); otherwise the collector reads it every 3 seconds.
+async function sendLive(html, observedAt) {
+  const doc = new DOMParser().parseFromString('<table><tbody>' + html + '</tbody></table>', 'text/html');
+  const rows = [...doc.querySelectorAll('tr')].map(r => [...r.querySelectorAll('td')].map(c => c.textContent.trim())).filter(r => r.length === 11);
+  if (html.trim() && !rows.length) throw Error('رد اللايف غير معروف');
+  // Waiting times tick every second; an unchanged queue is resent every 10 s only.
+  const signature = JSON.stringify(rows.map(r => r.filter((_, i) => i !== 6 && i !== 8)));
+  if (signature === lastLiveSignature && Date.now() - lastLiveSent < 10000) return;
+  lastLiveSignature = signature; lastLiveSent = Date.now();
+  const reply = await collectorPost({ action: 'live', rows, capture: { id: crypto.randomUUID(), kind: 'native_report_snapshot', changed: true, observedAt: new Date(observedAt).toISOString(), timeBasis: 'server-clock-v1' } });
+  collectorState = { ...collectorState, lastLive: reply.observedAt, error: null };
 }
-// Each read of the Arabicss reports runs queries on the Arabicss server that the agents' consoles also wait on,
-// so the collector reads gently: the live queue every 10 seconds and the day's call log every 15 minutes,
-// and only during operating hours (09:00 → 03:00 Cairo, plus the 03:00–09:00 log refresh once an hour).
+async function collectLive() {
+  if (liveBusy || Date.now() - lastNative < 8000 || !(await store.get(COLLECTOR, null)) || !(await clock.ensure())) return;
+  liveBusy = true;
+  try { const html = await reports('get_inbound_calls_real_time.php'); await sendLive(html, clock.now()); }
+  catch (e) { collectorState = { ...collectorState, error: e.message }; } finally { liveBusy = false; }
+}
+async function nativeLive(html) {
+  if (!(await store.get(COLLECTOR, null)) || !(await clock.ensure())) return { ok: false };
+  lastNative = Date.now();
+  try { await sendLive(html, clock.now()); } catch (e) { collectorState = { ...collectorState, error: e.message }; }
+  return { ok: true };
+}
+// The day's call log is a heavy report: it is read every 15 minutes during operating hours, hourly at night.
 const cairoHour = () => Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Africa/Cairo', hour: '2-digit', hourCycle: 'h23' }).format(new Date()));
 const operating = () => { const h = cairoHour(); return h >= 9 || h < 3; };
 let lastHistoryRun = 0;
 setInterval(() => { if (Date.now() - lastHistoryRun >= (operating() ? 900000 : 3600000)) { lastHistoryRun = Date.now(); collectHistory(); } }, 60000);
-setInterval(() => { if (operating()) collectLive(); }, 10000);
+setInterval(() => { if (operating()) collectLive(); }, 3000);
 lastHistoryRun = Date.now(); collectHistory(); collectLive();
 
 async function collectorMessage(m, sender) {
