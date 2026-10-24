@@ -5,8 +5,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const CORE = ['admin', 'app', 'arabicss', 'attendance-rules', 'breaks', 'core', 'dashboard', 'db', 'employees', 'engine', 'history', 'import-convert', 'import-rows', 'legacy', 'messages', 'modules', 'ops',
-  'security', 'sessions', 'shifts', 'telegram', 'time', 'xlsx-read'];
+// Every server file except the Node-only ones (the build below fails if a copied file needs Node).
+const NODE_ONLY = new Set(['index', 'main', 'node-db', 'import-old-db', 'import-route']);
+const CORE = fs.readdirSync(path.join(root, 'server', 'src')).filter(f => f.endsWith('.js')).map(f => f.slice(0, -3)).filter(f => !NODE_ONLY.has(f)).sort();
 const lib = path.join(root, 'sites', 'lib', 'marsad');
 fs.rmSync(lib, { recursive: true, force: true });
 fs.mkdirSync(lib, { recursive: true });
