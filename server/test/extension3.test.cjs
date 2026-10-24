@@ -25,7 +25,7 @@ async function harness(t) {
   let current = '', w = null;
   const browser = {
     storage: { local: { get: async k => ({ [k]: structuredClone(store[k]) }), set: async o => { Object.assign(store, structuredClone(o)); } } },
-    runtime: { onMessage: { addListener: f => listeners.push(f) }, getURL: x => 'moz-extension://x/' + x },
+    runtime: { onMessage: { addListener: f => listeners.push(f) }, onInstalled: { addListener: () => {} }, getURL: x => 'moz-extension://x/' + x },
     tabs: { query: async () => [{ id: 7 }], onRemoved: { addListener() {} }, sendMessage: async (id, m) => { for (const f of pageListeners) f(structuredClone(m)); }, create() {} },
     browserAction: { onClicked: { addListener() {} } }, notifications: { create: async () => {} },
   };
@@ -176,7 +176,7 @@ test('extension 3 collector: linked from the admin page, sends the day history a
     const read = f => fs.readFileSync(path.join(EXT, f), 'utf8').replace("API: 'https://marsad-v2.karim87nu.chatgpt.site'", "API: '" + t.base + "'").replace("REPORTS_ROOT: 'https://41.38.207.218:11594/themes/arabicssReportsInclude/dark/'", "REPORTS_ROOT: '" + root + "'");
     const store = {}, listeners = [];
     const browser = { storage: { local: { get: async k => ({ [k]: structuredClone(store[k]) }), set: async o => { Object.assign(store, structuredClone(o)); } } },
-      runtime: { onMessage: { addListener: f => listeners.push(f) }, getURL: x => 'moz-extension://x/' + x },
+      runtime: { onMessage: { addListener: f => listeners.push(f) }, onInstalled: { addListener: () => {} }, getURL: x => 'moz-extension://x/' + x },
       tabs: { query: async () => [], onRemoved: { addListener() {} }, sendMessage: async () => {} }, browserAction: { onClicked: { addListener() {} } }, notifications: { create: async () => {} } };
     const { JSDOM: J } = require('jsdom'), parser = new J('').window.DOMParser;
     const bg = { console, URL, URLSearchParams, AbortController, setTimeout, clearTimeout, setInterval, performance, crypto: globalThis.crypto, Intl, Date, JSON, Math, Promise, Error, Number, String, Array, Object, Map, Set, structuredClone, DOMParser: parser, fetch, browser };
