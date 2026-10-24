@@ -56,7 +56,7 @@ async function harness(t) {
     return w;
   }
   const sse = record => { for (const f of es.listeners.message || []) f({ data: JSON.stringify(record) }); };
-  return { open, sse, store, get w() { return w; }, close: () => w?.close() };
+  return { open, sse, store, toBackground, get w() { return w; }, close: () => w?.close() };
 }
 
 test('extension 3: one password through the Arabicss logins, calls, breaks, messages, logout', { skip: !JSDOM && 'jsdom not installed' }, async () => {
@@ -146,11 +146,15 @@ test('extension 3: one password through the Arabicss logins, calls, breaks, mess
     assert.ok(types.includes('break_start') && types.includes('break_end'), types.join(','));
     assert.equal(t.app.db.raw.prepare('SELECT COUNT(*) n FROM break_permissions WHERE used_at IS NOT NULL').get().n, 1);
 
-    // Arabicss logout ends the shift.
+    // Logging out of the extension ends the shift; the password is asked again.
     h.sse({ event: 'agentloggedout' });
     await settle(2500);
-    assert.equal(sessions()[0].revoke_reason, 'arabicss_logout');
+    assert.equal(sessions()[0].revoke_reason, 'extension_logout');
     assert.ok(w.document.getElementById('marsad-gate'), 'gate back after logout');
+    // A tab Firefox restores with the old page state (browser closed and reopened) cannot bring the ended session back.
+    const old = h.store.endedTokens?.[0];
+    assert.ok(old, 'ended session remembered');
+    assert.deepEqual(await h.toBackground({ type: 'REGISTER', token: old, identity: {} }), { ok: false, closed: true });
     assert.equal(h.store.outbox.length, 0, 'outbox empty');
     assert.deepEqual(h.store.rejected || [], []);
   } finally { h.close(); await t.close(); }

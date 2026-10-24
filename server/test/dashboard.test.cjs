@@ -68,7 +68,7 @@ test('live state, calls, breaks and attendance from extension events', async () 
     assert.equal(me2.breakSeconds, 720);
     assert.equal(me2.breakCount, 1);
     assert.equal(me2.gapSeconds, 0);
-    assert.equal(me2.workSeconds, me2.readySeconds + me2.callSeconds + me2.breakSeconds + me2.gapSeconds - 90);   // last state runs 90 s past the last signal
+    assert.equal(me2.workSeconds, me2.readySeconds + me2.callSeconds + me2.breakSeconds);   // time outside the extension is never work time
     assert.equal(d.calls[0].durationSeconds, 90);
     assert.equal(d.calls[0].complete, true);
     await t.event(s.token, 'heartbeat', { state: 'ready' });

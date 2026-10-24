@@ -5,7 +5,7 @@
 // - which tab holds which employee session, so a closed tab or browser ends it properly
 // - notifications, and the history / live-queue collector on the supervisor's PC
 const { API, VERSION, REPORTS_ROOT } = globalThis.MARSAD;
-const OUTBOX = 'outbox', REJECTED = 'rejected', TABS = 'tabs', COLLECTOR = 'collector';
+const OUTBOX = 'outbox', REJECTED = 'rejected', TABS = 'tabs', COLLECTOR = 'collector', ENDED = 'endedTokens';
 
 // ---------- small helpers ----------
 const store = {
@@ -94,9 +94,13 @@ async function endSession(entry, reason) {
     return r.ok || [401, 403].includes(r.status);
   } catch { return false; }
 }
+// A session that ended (tab or browser closed, logout) never comes back, even when Firefox restores the tab
+// with its saved page state: the employee enters the password again.
+const markEnded = token => token && locked(async () => { const list = await store.get(ENDED, []); if (!list.includes(token)) await store.set(ENDED, [...list, token].slice(-300)); });
 async function closeTab(tabId, reason) {
   const entry = await locked(async () => { const tabs = await store.get(TABS, {}); const e = tabs[tabId]; if (e) { e.closing = reason; await store.set(TABS, tabs); } return e; });
   if (!entry) return;
+  await markEnded(entry.token);
   await flush().catch(() => {});
   if (await endSession(entry, reason)) await locked(async () => { const tabs = await store.get(TABS, {}); if (tabs[tabId]?.token === entry.token) delete tabs[tabId]; await store.set(TABS, tabs); });
 }
@@ -136,6 +140,7 @@ browser.runtime.onMessage.addListener(async (m, sender) => {
     case 'EVENT': { const pending = await enqueue(m.event, m.token); flush().catch(() => {}); return { ok: true, pending }; }
     case 'REGISTER': return locked(async () => {
       const tabs = await store.get(TABS, {});
+      if ((await store.get(ENDED, [])).includes(m.token) || Object.values(tabs).some(e => e.token === m.token && e.closing)) return { ok: false, closed: true };
       const other = Object.entries(tabs).find(([id, e]) => id !== tabId && e.token === m.token && !e.closing);
       if (other) return { ok: false, otherTab: true };
       if (tabs[tabId]?.closing && tabs[tabId].token === m.token) return { ok: false, closed: true };
@@ -149,7 +154,7 @@ browser.runtime.onMessage.addListener(async (m, sender) => {
     case 'RECOVER': { const e = (await store.get(TABS, {}))[tabId]; return e && !e.closing ? { token: e.token, identity: e.identity } : null; }
     case 'END': {
       const tabs = await store.get(TABS, {});
-      if (tabs[tabId]?.token !== m.token) { if (m.token) await endSession({ token: m.token }, m.reason); return { ok: true }; }
+      if (tabs[tabId]?.token !== m.token) { if (m.token) { await markEnded(m.token); await endSession({ token: m.token }, m.reason); } return { ok: true }; }
       await closeTab(tabId, m.reason);
       return { ok: true };
     }

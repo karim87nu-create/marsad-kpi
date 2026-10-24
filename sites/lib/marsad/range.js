@@ -10,7 +10,7 @@ export function setup(app) {
     const days = [], records = [];
     for (const date of dates) { const d = await app.day(date, now); days.push(d); records.push(...d.raw.records); }
     const sum = summarize(records), reports = days.map(d => d.history.report).filter(Boolean), employees = new Map();
-    const fields = ['calls','inbound','outbound','answered','fromHistory','talkSeconds','longCalls','workSeconds','readySeconds','callSeconds','breakSeconds','breakCount','ongoingBreakSeconds','gapSeconds'];
+    const fields = ['calls','inbound','outbound','answered','fromHistory','talkSeconds','longCalls','workSeconds','readySeconds','callSeconds','breakSeconds','breakCount','ongoingBreakSeconds','gapSeconds','outArabicssSeconds','outExtensionSeconds','outBrowserSeconds'];
     for (const d of days) for (const e of d.employees) {
       let out = employees.get(e.employeeId);
       if (!out) { out = { employeeId: e.employeeId, name: e.name, firstLogin: null, lastLogout: null, overBreakDays: 0, daysWorked: 0, ...Object.fromEntries(fields.map(k => [k, 0])) }; employees.set(e.employeeId, out); }

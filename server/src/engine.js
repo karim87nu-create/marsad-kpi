@@ -14,7 +14,7 @@
 //   the queue and the moment they hung up.
 // • Totals use operating hours (09:00 → 03:00); the data day runs 09:00 → 09:00.
 import { RULES, dayWindow, businessDay, iso } from './time.js';
-import { attendance, mergeBreaks, breakTotals, KNOWN_CLOSE } from './attendance-rules.js';
+import { attendance, mergeBreaks, breakTotals, KNOWN_CLOSE, outKind } from './attendance-rules.js';
 import * as A from './arabicss.js';
 
 const GAP_MS = RULES.presenceStaleMs;
@@ -152,11 +152,14 @@ function setup(app) {
       const ses = daySessions.filter(s => s.employeeId === id && s.workStartedAt != null);
       const t = totals.find(x => x.employeeId === id) || {};
       const logouts = ses.filter(s => s.revokedAt != null && KNOWN_CLOSE.has(s.reason || '')).map(s => s.revokedAt);
+      // Outside the extension: shown for explanation, never part of work time or any other total.
+      const out = k => st.filter(s => (s.state === 'offline' || s.state === 'unknown') && (s.outKind || 'gap') === k).reduce((n, s) => n + s.durationSeconds, 0);
+      const ready = sum('ready'), onCall = sum('on_call'), brk = t.totalBreakSeconds || 0;
       return { employeeId: id, name: people.get(id)?.name || 'حساب محذوف', calls: mine.length, inbound: mine.filter(c => c.callType === 'incoming').length, outbound: mine.filter(c => c.callType === 'outgoing').length,
         answered: done.length, fromHistory: mine.filter(c => c.source === 'history').length, talkSeconds: done.reduce((n, c) => n + c.durationSeconds, 0),
         averageCallSeconds: done.length ? Math.round(done.reduce((n, c) => n + c.durationSeconds, 0) / done.length) : null, longCalls: done.filter(c => c.durationSeconds > RULES.callAlertSeconds).length,
-        workSeconds: ses.reduce((n, s) => n + s.daySeconds, 0), readySeconds: sum('ready'), callSeconds: sum('on_call'), breakSeconds: t.totalBreakSeconds || 0, breakCount: t.breakCount || 0,
-        ongoingBreakSeconds: t.ongoingBreakSeconds || 0, gapSeconds: sum('unknown'),
+        workSeconds: ready + onCall + brk, readySeconds: ready, callSeconds: onCall, breakSeconds: brk, breakCount: t.breakCount || 0,
+        ongoingBreakSeconds: t.ongoingBreakSeconds || 0, gapSeconds: out('gap'), outArabicssSeconds: out('arabicss'), outExtensionSeconds: out('extension'), outBrowserSeconds: out('browser'),
         firstLogin: ses.length ? iso(Math.min(...ses.map(s => s.workStartedAt))) : null, lastLogout: logouts.length ? iso(Math.max(...logouts)) : null };
     }).sort((a, b) => a.name.localeCompare(b.name, 'ar'));
 
@@ -207,7 +210,7 @@ function setup(app) {
     if (inShift) return { state: 'unknown', since: null, extension: inShift.extension };
     const left = sessions.filter(x => x.employeeId === employeeId && x.workStartedAt != null && Date.parse(x.observedThrough) < t).sort((a, b) => Date.parse(b.observedThrough) - Date.parse(a.observedThrough))[0];
     // A supervisor's decision on the end of that shift: still responsible (left early), or the shift really ended.
-    if (left) return { state: left.decision?.action === 'include' ? 'left_responsible' : left.decision?.action === 'exclude' ? 'shift_ended' : left.closureKnown ? 'logged_out' : 'disconnected', since: left.observedThrough, extension: left.extension };
+    if (left) { const kind = outKind(left.reason); return { state: left.decision?.action === 'include' ? 'left_responsible' : left.decision?.action === 'exclude' ? 'shift_ended' : kind === 'gap' ? 'disconnected' : 'out_' + kind, since: left.observedThrough, extension: left.extension }; }
     return { state: 'not_started', since: null, extension: '' };
   }
 
@@ -254,7 +257,7 @@ function setup(app) {
       const open = !s.revoked_at && s.expires_at > now;
       const events = recent.get(s.id) || [], sp = spansOf(s, events), last = sp.at(-1);
       const lastAt = events.length ? events.at(-1).occurred_at : s.issued_at;
-      if (!open) { out.push({ ...base, state: KNOWN_CLOSE.has(s.revoke_reason || '') ? 'logged_out' : 'disconnected', since: iso(s.revoked_at ?? s.expires_at), lastEvidence: iso(lastAt) }); continue; }
+      if (!open) { const kind = outKind(s.revoke_reason); out.push({ ...base, state: kind === 'gap' ? 'disconnected' : 'logged_out', outKind: kind, reason: s.revoke_reason || null, since: iso(s.revoked_at ?? s.expires_at), lastEvidence: iso(lastAt) }); continue; }
       if (!numeric(s.extension)) { out.push({ ...base, state: 'logged_in', since: iso(s.issued_at), lastEvidence: iso(lastAt) }); continue; }
       if (!last || now - last.lastEvidence >= GAP_MS) { out.push({ ...base, state: 'unknown', since: iso(last ? last.lastEvidence : s.issued_at), lastEvidence: iso(lastAt) }); continue; }
       // Since when: the start of the uninterrupted run of this state (a break or call keeps its start across short silences).

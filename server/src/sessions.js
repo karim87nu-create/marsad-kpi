@@ -3,7 +3,7 @@ import { RULES } from './time.js';
 const SESSION_MS = 18 * 3600000;
 const CLOSE_GRACE_MS = 5000;
 // Closure reasons use the old server's vocabulary (app/api/session/end, app/api/events) so stored history reads the same.
-const CLIENT_REASONS = ['arabicss_logout', 'arabicss_login_page', 'extension_changed', 'extension_restarted', 'tab_closed', 'browser_restarted'];
+const CLIENT_REASONS = ['arabicss_logout', 'arabicss_login_page', 'extension_logout', 'extension_changed', 'extension_restarted', 'tab_closed', 'browser_restarted'];
 const CLIENT_CLOSE = new Set([...CLIENT_REASONS, 'explicit_logout', 'session_logout', 'session_rejected']);
 const EVENT_TYPE = /^[a-z_]{2,40}$/;
 const DIGITS = /^\d{1,10}$/;

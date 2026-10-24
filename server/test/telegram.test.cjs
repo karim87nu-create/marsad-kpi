@@ -86,3 +86,57 @@ test('telegram: link the bot and the group, then each alert is sent once', async
     void e;
   } finally { await t.close(); fake.close(); }
 });
+
+test('telegram: waiting customers, missed calls with who was available, and how the employee left', async () => {
+  const sent = [], fake = http.createServer((req, res) => {
+    let body = ''; req.on('data', c => body += c); req.on('end', () => {
+      const method = req.url.split('/').pop(), b = JSON.parse(body || '{}');
+      const result = method === 'getMe' ? { username: 'marsad_bot' } : (sent.push(b.text), { message_id: sent.length });
+      res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ ok: true, result }));
+    });
+  });
+  await new Promise(r => fake.listen(0, r));
+  const t = await start({ at: cairoToUtc(2026, 10, 22, 14, 0, 0), config: { telegramApi: 'http://127.0.0.1:' + fake.address().port } });
+  try {
+    const admin = await t.admin();
+    await admin('POST', '/api/telegram', { action: 'token', token: '123456:' + 'a'.repeat(35) });
+    await admin('POST', '/api/telegram', { action: 'chat', chatId: '-100123', title: 'g' });
+    sent.length = 0;
+    const e = await t.employee(admin);
+    const s = await t.session('1234');
+    await t.event(s.token, 'heartbeat', { state: 'ready' });
+    // A caller waiting: an early warning at 5 s, then one alert past 10 s; never repeated for the same caller.
+    const row = wait => ['7671', '', '', '', '', '', '', '', '0:00:' + String(wait).padStart(2, '0'), '01001234567', 'On Wait'];
+    const real = t.app.latestLive;
+    t.app.latestLive = async () => ({ observed_at: t.clock.now, rows: JSON.stringify([row(6)]) });
+    await t.app.telegramTick();
+    assert.match(sent.at(-1), /إنذار مبكر: عميل منتظر/);
+    assert.match(sent.at(-1), /••••4567/);
+    assert.match(sent.at(-1), /⏳ منتظرين: 1/);
+    assert.match(sent.at(-1), /المتاحين: Ahmed/);
+    t.advance(6000);
+    t.app.latestLive = async () => ({ observed_at: t.clock.now, rows: JSON.stringify([row(12)]) });
+    await t.app.telegramTick();
+    assert.match(sent.at(-1), /عدّى 10 ثواني انتظار/);
+    const n = sent.length; t.advance(6000); await t.app.telegramTick(); assert.equal(sent.length, n, 'one alert per caller');
+    t.advance(6000);
+    t.app.latestLive = async () => ({ observed_at: t.clock.now, rows: '[]' });
+    await t.app.telegramTick();
+    assert.match(sent.at(-1), /خرج من الانتظار/);
+    t.app.latestLive = real;
+    // A missed call in the Arabicss log: who was available while the customer waited.
+    const tok = (await admin('POST', '/api/history', { action: 'token' })).body;
+    const header = ['Queue', 'Agent', 'Call Date', 'Start Time', 'End Time', 'Duration', 'Wait Time', 'Caller ID', 'Status', 'Trunk'];
+    const r = await t.call('POST', '/api/history', { headers: { 'x-history-token': tok.token }, body: { rows: [header, ['7671', '', '2026-10-22', '14:00:10', '14:00:40', '00:00:00', '00:00:30', '0111222333', 'Abandoned', 'T']], expectedCount: 1, reportDate: '2026-10-22' } });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    await t.app.telegramTick();
+    const missed = sent.find(x => x.includes('مكالمة فائتة'));
+    assert.ok(missed, sent.join('\n---\n'));
+    assert.match(missed, /كانوا متاحين أثناء انتظاره: Ahmed/);
+    // Logging out of the extension says so.
+    await t.device(s.token, 'POST', '/api/session/end', { reason: 'extension_logout' });
+    await t.app.telegramTick();
+    assert.match(sent.at(-1), /سجّل خروج من التحويلة/);
+    void e;
+  } finally { await t.close(); fake.close(); }
+});

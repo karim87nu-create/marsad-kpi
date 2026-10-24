@@ -8,10 +8,19 @@
 // 3. «انقطاع رصد» is only a gap inside the shift: no evidence for more than 90 seconds while the
 //    session is still going, or a lost connection followed by a new login within 2 hours.
 // 4. Totals count operating hours only (09:00 → 03:00). Rows after 03:00 are kept and marked.
+// 5. Time outside the extension is never counted in any total: it is shown for explanation only, split into
+//    left Arabicss / logged out of the extension / closed the browser or tab / a real monitoring gap.
 const GAP_MS = 90000, RECONNECT_MS = 2 * 3600000;
 const KNOWN_CLOSE = new Set(['explicit_logout', 'session_logout', 'arabicss_logout', 'arabicss_login_page', 'extension_changed', 'tab_closed',
   'password_changed', 'employee_disabled', 'employee_deleted', 'manual']);
 const numeric = x => /^\d{1,10}$/.test(String(x || ''));
+const OUT_KINDS = {
+  arabicss: ['arabicss_logout', 'arabicss_login_page'],
+  extension: ['extension_logout', 'extension_changed', 'explicit_logout', 'session_logout', 'manual', 'password_changed', 'employee_disabled', 'employee_deleted'],
+  browser: ['tab_closed', 'browser_restarted', 'extension_restarted'],
+};
+// Why a session ended, as one of: arabicss | extension | browser | gap (no recorded reason: connection lost, PC off…).
+const outKind = reason => Object.keys(OUT_KINDS).find(k => OUT_KINDS[k].includes(reason || '')) || 'gap';
 
 function attendance(sessions, spans, { start, operatingEnd, end, now }) {
   const bySession = new Map();
@@ -54,12 +63,12 @@ function attendance(sessions, spans, { start, operatingEnd, end, now }) {
       // The same break or call on both sides of a short silence is one continuous break or call.
       const linked = next && next.state === p.state && ['break', 'on_call'].includes(p.state);
       const b = Math.min(next ? (linked ? next.started : Math.min(next.started, p.lastEvidence + GAP_MS)) : p.lastEvidence + GAP_MS, close);
-      if (a > cursor) push(s, 'unknown', cursor, a);
+      if (a > cursor) push(s, 'unknown', cursor, a, { outKind: 'gap' });
       if (b > a && p.state !== 'logged_in') push(s, p.state === 'post_call' ? 'ready' : p.state, a, b);
       cursor = Math.max(cursor, b);
     }
-    if (running && cursor < now) push(s, 'unknown', cursor, now);
-    else if (known && cursor < close) push(s, 'unknown', cursor, close);   // silent, then logged out: a gap inside the shift
+    if (running && cursor < now) push(s, 'unknown', cursor, now, { outKind: 'gap' });
+    else if (known && cursor < close) push(s, 'unknown', cursor, close, { outKind: 'gap' });   // silent, then logged out: a gap inside the shift
   }
   // Between two sessions of the same employee.
   for (let i = 0; i < ordered.length; i++) {
@@ -67,8 +76,11 @@ function attendance(sessions, spans, { start, operatingEnd, end, now }) {
     if (e.workStart === null || s.revokedAt === null && e.close === now) continue;
     const next = ordered.slice(i + 1).find(x => x.employeeId === s.employeeId && effective.get(x.id).workStart !== null);
     const nextStart = next ? effective.get(next.id).workStart : null;
-    if (nextStart !== null && !e.known && nextStart - e.close <= RECONNECT_MS) push(s, 'unknown', e.close, nextStart, { reconnect: true });
-    else if (e.known) push(s, 'offline', e.close, nextStart ?? Math.min(operatingEnd, now));
+    // Only the time until the employee came back: after the last session of the day the shift is simply over.
+    if (nextStart === null) continue;
+    const kind = outKind(s.reason);
+    if (kind !== 'gap') push(s, 'offline', e.close, nextStart, { outKind: kind, reason: s.reason });
+    else if (nextStart - e.close <= RECONNECT_MS) push(s, 'unknown', e.close, nextStart, { reconnect: true, outKind: 'gap' });
   }
   for (const r of rows) if (r.state !== 'offline') r.running = !!outSessions.find(x => x.running && x.employeeId === r.employeeId && x.extension === r.extension) && Date.parse(r.endedAt) >= now - 1000;
   return { sessions: outSessions, states: rows.sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt)) };
@@ -117,4 +129,4 @@ function breakTotals(states) {
   return [...by.values()];
 }
 
-export { attendance, mergeBreaks, breakTotals, KNOWN_CLOSE };
+export { attendance, mergeBreaks, breakTotals, KNOWN_CLOSE, outKind };

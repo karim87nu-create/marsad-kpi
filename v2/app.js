@@ -15,8 +15,12 @@
   const secs = v => v == null ? 'غير متاح' : Number(v).toFixed(1) + ' ث';
   const ampm = v => String(v || '').replace(/\bAM\b/i, 'ص').replace(/\bPM\b/i, 'م');
   const cairoToday = () => { const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Cairo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' }).formatToParts(new Date()).map(x => [x.type, x.value])); const d = p.year + '-' + p.month + '-' + p.day; return +p.hour < 9 ? new Date(Date.parse(d + 'T12:00:00Z') - 864e5).toISOString().slice(0, 10) : d; };
-  const REASON = { arabicss_logout: 'خروج من أرابيكس', arabicss_login_page: 'رجع لصفحة الدخول', tab_closed: 'قفل الصفحة', browser_restarted: 'المتصفح اتقفل', expired_or_disconnected: 'انقطاع', work_resumed: 'دخل تاني', explicit_logout: 'خروج', session_logout: 'خروج', extension_changed: 'غيّر التحويلة', password_changed: 'اتغير الباسورد', employee_disabled: 'اتوقف من الإدارة' };
-  const STATE = { ready_night: 'متاح (بعد 3 الفجر)', on_call_night: 'في مكالمة (بعد 3 الفجر)', break_night: 'بريك (بعد 3 الفجر)', unknown_night: 'انقطاع رصد (بعد 3 الفجر)', ready: 'متاح', on_call: 'في مكالمة', break: 'بريك', unknown: 'انقطاع رصد', logged_in: 'سجّل ولسه مدخلش الكونسول', offline: 'خرج', logged_out: 'خرج', disconnected: 'انقطع الاتصال', not_started: 'مبدأش', no_session: 'لم يسجل', shift_ended: 'خلص الشيفت', post_call: 'أنهى مكالمة', break_unconfirmed: 'بريك بلا طرفين مؤكدين' };
+  const REASON = { arabicss_logout: 'خرج من أرابيكس', arabicss_login_page: 'خرج من أرابيكس', extension_logout: 'خرج من التحويلة', tab_closed: 'قفل صفحة أرابيكس', browser_restarted: 'قفل المتصفح', expired_or_disconnected: 'انقطاع', work_resumed: 'دخل تاني', explicit_logout: 'خروج', session_logout: 'خروج', extension_changed: 'غيّر التحويلة', password_changed: 'اتغير الباسورد', employee_disabled: 'اتوقف من الإدارة' };
+  // Time outside the extension is explanation only (never counted): why the employee was out.
+  const OUT = { arabicss: 'خرج من أرابيكس', extension: 'خرج من التحويلة', browser: 'قفل المتصفح أو الصفحة', gap: 'انقطاع رصد' };
+  const outTotal = x => (x.gapSeconds || 0) + (x.outArabicssSeconds || 0) + (x.outExtensionSeconds || 0) + (x.outBrowserSeconds || 0);
+  const outDetail = x => [['outArabicssSeconds', 'arabicss'], ['outExtensionSeconds', 'extension'], ['outBrowserSeconds', 'browser'], ['gapSeconds', 'gap']].filter(([k]) => x[k] > 0).map(([k, o]) => OUT[o] + ' ' + dur(x[k])).join(' · ');
+  const STATE = { ready_night: 'متاح (بعد 3 الفجر)', on_call_night: 'في مكالمة (بعد 3 الفجر)', break_night: 'بريك (بعد 3 الفجر)', unknown_night: 'انقطاع رصد (بعد 3 الفجر)', ready: 'متاح', on_call: 'في مكالمة', break: 'بريك', unknown: 'انقطاع رصد', logged_in: 'سجّل ولسه مدخلش الكونسول', offline: 'برّه التحويلة', logged_out: 'خرج', out_arabicss: 'خرج من أرابيكس', out_extension: 'خرج من التحويلة', out_browser: 'قفل المتصفح', out_gap: 'انقطاع رصد', disconnected: 'انقطع الاتصال', not_started: 'مبدأش', no_session: 'لم يسجل', shift_ended: 'خلص الشيفت', post_call: 'أنهى مكالمة', break_unconfirmed: 'بريك بلا طرفين مؤكدين' };
   const QUEUE = q => ({ 0: 'خارج ساعات العمل', 1: 'طلب أوردر', 2: 'متابعة أوردر', 3: 'شكاوى' })[String(q || '').slice(-1)] || 'غير معروف';
   const MISSED = { counted: 'محتسبة', short_exempt: 'قصيرة ≤7ث — للتوضيح', after_hours: 'خارج ساعات العمل', unknown_wait: 'انتظار غير معروف', unknown_queue: 'نوع طلب غير معروف' };
   const ROLE = { admin: 'مدير', supervisor: 'مشرف', viewer: 'مشاهدة فقط' };
@@ -130,7 +134,7 @@
     const groups = order.map(s => [s, people.filter(p => p.s === s).sort((a, b) => (b.elapsed || 0) - (a.elapsed || 0))]).filter(([, list]) => list.length);
     // People who are not working right now only take one line each group.
     $('staffNow').replaceChildren(...groups.map(([s, list]) => ['no_session', 'logged_out'].includes(s) ? h('div', { className: 'group' }, h('h3', { textContent: (STATE[s] || s) + ' — ' + list.length }),
-      h('div', { className: 'inline' }, ...list.map(p => pill(p.name + (s === 'logged_out' && p.since ? ' · ' + clock(p.since).slice(0, 5) : ''))))) : h('div', { className: 'group' }, h('h3', { textContent: (STATE[s] || s) + ' — ' + list.length }),
+      h('div', { className: 'inline' }, ...list.map(p => pill(p.name + (s === 'logged_out' ? (p.outKind ? ' · ' + OUT[p.outKind] : '') + (p.since ? ' ' + clock(p.since).slice(0, 5) : '') : ''))))) : h('div', { className: 'group' }, h('h3', { textContent: (STATE[s] || s) + ' — ' + list.length }),
       h('div', { className: 'tiles' }, ...list.map(p => {
         const over = (s === 'break' && p.elapsed > 900) || (s === 'on_call' && p.elapsed > 240);
         return h('div', { className: 'tile ' + s + (over ? ' over' : ''), title: 'آخر إشارة ' + stamp(p.lastEvidence) },
@@ -189,7 +193,7 @@
     const e = d.employees, sum = k => e.reduce((n, x) => n + (x[k] || 0), 0);
     const overBreak = e.filter(x => (x.overBreakDays ?? (x.breakSeconds > 1800 ? 1 : 0)) > 0).length;
     $('teamCards').replaceChildren(kpi('موظفين اشتغلوا', e.length, 'info'), kpi('إجمالي ساعات العمل', dur(sum('workSeconds'))), kpi('وقت المكالمات', dur(sum('callSeconds')), 'on_call'), kpi('وقت المتاح', dur(sum('readySeconds')), 'ready'),
-      kpi('إجمالي البريك', dur(sum('breakSeconds')), 'break', overBreak ? overBreak + ' موظف عدّى 30 دقيقة في يوم واحد على الأقل' : ''), kpi('انقطاع الرصد', dur(sum('gapSeconds')), sum('gapSeconds') > 1800 ? 'warn' : ''),
+      kpi('إجمالي البريك', dur(sum('breakSeconds')), 'break', overBreak ? overBreak + ' موظف عدّى 30 دقيقة في يوم واحد على الأقل' : ''), kpi('برّه التحويلة — للتوضيح بس', dur(e.reduce((n, x) => n + outTotal(x), 0)), 'unknown', outDetail({ gapSeconds: sum('gapSeconds'), outArabicssSeconds: sum('outArabicssSeconds'), outExtensionSeconds: sum('outExtensionSeconds'), outBrowserSeconds: sum('outBrowserSeconds') }) || 'مش داخل في أي حساب'),
       kpi('مكالمات من غير موظف مسجل', (hd.unattributed || []).length, (hd.unattributed || []).length ? 'bad' : 'good'));
     C.slots($('dayChart'), d.slots.filter(x => x.operating));
     const qs = (hd.queues || []).filter(q => q.calls), maxQ = Math.max(1, ...qs.map(q => q.calls));
@@ -198,7 +202,7 @@
     const rank = (title, list, value, show, color) => { const max = Math.max(1, ...list.map(value)); return [h('h3', { textContent: title }), h('div', { className: 'ranks' }, ...list.map(x => h('div', { className: 'r' }, h('span', { textContent: x.name }), h('b', { textContent: show(x) }), C.meter(value(x), max, color))))]; };
     const top = (k, n = 5) => [...e].filter(x => x[k] > 0).sort((a, b) => b[k] - a[k]).slice(0, n);
     $('dayRanks').replaceChildren(...rank('أكتر مكالمات', top('calls'), x => x.calls, x => x.calls, 'var(--call)'), ...rank('أطول بريك', top('breakSeconds'), x => x.breakSeconds, x => dur(x.breakSeconds), 'var(--break)'),
-      ...rank('أكتر انقطاع رصد', top('gapSeconds'), x => x.gapSeconds, x => dur(x.gapSeconds), 'var(--unknown)'));
+      ...rank('أكتر وقت برّه التحويلة (للتوضيح)', [...e].filter(x => outTotal(x) > 0).sort((a, b) => outTotal(b) - outTotal(a)).slice(0, 5), outTotal, x => dur(outTotal(x)), 'var(--unknown)'));
   }
 
   // ---------- على مدار اليوم ----------
@@ -230,14 +234,14 @@
 
   // ---------- الموظفون ----------
   const teamRows = d => d.employees.map(e => ({ id: e.employeeId, name: e.name, calls: e.calls, answered: e.answered, aht: e.averageCallSeconds, work: e.workSeconds, ready: e.readySeconds,
-    onCall: e.callSeconds, unknown: e.gapSeconds, breakSeconds: e.breakSeconds, breakCount: e.breakCount, overBreakDays: e.overBreakDays, fromHistory: e.fromHistory, firstLogin: e.firstLogin, lastLogout: e.lastLogout }));
+    onCall: e.callSeconds, unknown: outTotal(e), outDetail: outDetail(e), breakSeconds: e.breakSeconds, breakCount: e.breakCount, overBreakDays: e.overBreakDays, fromHistory: e.fromHistory, firstLogin: e.firstLogin, lastLogout: e.lastLogout }));
   const teamColumns = [
-    { title: 'الموظف', get: r => r.name }, { title: 'توزيع الوقت', get: r => r.onCall + r.ready ? Math.round(r.onCall / (r.onCall + r.ready) * 100) : null, show: r => C.usage([{ state: 'ready', value: r.ready, label: 'متاح ' + dur(r.ready) }, { state: 'on_call', value: r.onCall, label: 'في مكالمة ' + dur(r.onCall) }, { state: 'break', value: r.breakSeconds, label: 'بريك ' + dur(r.breakSeconds) }, { state: 'unknown', value: r.unknown, label: 'انقطاع ' + dur(r.unknown) }]) },
+    { title: 'الموظف', get: r => r.name }, { title: 'توزيع الوقت', get: r => r.onCall + r.ready ? Math.round(r.onCall / (r.onCall + r.ready) * 100) : null, show: r => C.usage([{ state: 'ready', value: r.ready, label: 'متاح ' + dur(r.ready) }, { state: 'on_call', value: r.onCall, label: 'في مكالمة ' + dur(r.onCall) }, { state: 'break', value: r.breakSeconds, label: 'بريك ' + dur(r.breakSeconds) }]) },
     { title: 'نسبة الانشغال', get: r => r.onCall + r.ready ? Math.round(r.onCall / (r.onCall + r.ready) * 100) : null, show: r => r.onCall + r.ready ? Math.round(r.onCall / (r.onCall + r.ready) * 100) + '%' : '—', type: 'percent' },
     { title: 'مكالمات', get: r => r.calls, type: 'number' }, { title: 'تم الرد', get: r => r.answered, type: 'number' }, { title: 'منها من سجل أرابيكس', get: r => r.fromHistory, type: 'number' },
     { title: 'متوسط مدة المكالمة', get: r => r.aht, show: r => dur(r.aht), type: 'duration' }, { title: 'مدة العمل', get: r => r.work, show: r => dur(r.work), type: 'duration' },
     { title: 'متاح', get: r => r.ready, show: r => dur(r.ready), type: 'duration' }, { title: 'في مكالمة', get: r => r.onCall, show: r => dur(r.onCall), type: 'duration' },
-    { title: 'انقطاع رصد', get: r => r.unknown, show: r => dur(r.unknown), type: 'duration' },
+    { title: 'برّه التحويلة (للتوضيح — مش محسوب)', get: r => r.unknown, show: r => r.unknown ? h('span', { title: r.outDetail }, dur(r.unknown), h('small', { className: 'muted', textContent: ' ' + r.outDetail })) : '—', type: 'duration' },
     { title: 'البريك', get: r => r.breakSeconds, show: r => (r.overBreakDays ?? (r.breakSeconds > 1800 ? 1 : 0)) > 0 ? pill(dur(r.breakSeconds), 'warn') : dur(r.breakSeconds), type: 'duration' }, { title: 'عدد البريكات', get: r => r.breakCount, type: 'number' },
     { title: 'أول دخول', get: r => r.firstLogin, show: r => clock(r.firstLogin), type: 'datetime' }, { title: 'آخر خروج', get: r => r.lastLogout, show: r => clock(r.lastLogout), type: 'datetime' }];
   async function renderTeam() {
@@ -246,12 +250,13 @@
     const topCalls = [...rows].sort((a, b) => b.calls - a.calls)[0], overBreak = rows.filter(r => (r.overBreakDays ?? (r.breakSeconds > 1800 ? 1 : 0)) > 0).length, gaps = rows.filter(r => r.unknown > 900).length;
     $('teamViewCards').replaceChildren(kpi('موظفين اشتغلوا', rows.length, 'info'), kpi('متوسط نسبة الانشغال', busy.length ? Math.round(avg(busy)) + '%' : '—', '', 'وقت المكالمات ÷ (المكالمات + المتاح)'),
       kpi('متوسط مدة المكالمة', dur(avg(ahts))), kpi('أكتر واحد مكالمات', topCalls ? topCalls.calls : '—', 'on_call', topCalls?.name || ''),
-      kpi('عدّوا الـ 30 دقيقة بريك', overBreak, overBreak ? 'bad' : 'good'), kpi('انقطاع رصد أكتر من 15 د', gaps, gaps ? 'warn' : 'good'));
+      kpi('عدّوا الـ 30 دقيقة بريك', overBreak, overBreak ? 'bad' : 'good'), kpi('برّه التحويلة أكتر من 15 د', gaps, gaps ? 'warn' : 'good', 'للتوضيح بس'));
     table('teamTable', teamColumns, rows, { onRow: r => { state.profile = r.id; show('profile'); } });
   }
 
   // ---------- ملف الموظف ----------
-  const segmentsOf = (d, id) => d.states.filter(s => s.employeeId === id && s.state !== 'offline').map(s => ({ from: ms(s.startedAt), to: ms(s.endedAt), state: s.state, label: STATE[s.state] || s.state }));
+  const stateLabel = s => ['offline', 'unknown'].includes(s.state) && s.outKind ? OUT[s.outKind] : STATE[s.state] || s.state;
+  const segmentsOf = (d, id) => d.states.filter(s => s.employeeId === id).map(s => ({ from: ms(s.startedAt), to: ms(s.endedAt), state: s.state === 'offline' ? 'unknown' : s.state, label: stateLabel(s) }));
   const profileTables = {};
   async function renderProfile() {
     const d = await dayData();
@@ -263,13 +268,13 @@
     if (!e) { body.replaceChildren(h('p', { className: 'muted', textContent: 'مفيش موظفين اشتغلوا في اليوم ده.' })); return; }
     const busy = e.callSeconds + e.readySeconds ? Math.round(e.callSeconds / (e.callSeconds + e.readySeconds) * 100) : null;
     const ses = d.sessions.filter(s => s.employeeId === e.employeeId && s.workStartedAt != null);
-    const states = d.states.filter(s => s.employeeId === e.employeeId && s.state !== 'offline' && s.durationSeconds >= 1).map(s => s.outsideHours ? { ...s, state: s.state + '_night' } : s).sort((a, b) => ms(a.startedAt) - ms(b.startedAt));
+    const states = d.states.filter(s => s.employeeId === e.employeeId && s.durationSeconds >= 1).map(s => s.outsideHours ? { ...s, state: s.state + '_night' } : s).sort((a, b) => ms(a.startedAt) - ms(b.startedAt));
     const breaks = d.states.filter(b => b.employeeId === e.employeeId && b.state === 'break').sort((a, b) => ms(a.startedAt) - ms(b.startedAt));
     const calls = d.calls.filter(c => c.employeeId === e.employeeId);
     const parts = { cards: h('div', { className: 'cards' }), line: h('div'), sessions: h('div'), breaks: h('div'), states: h('div'), calls: h('div') };
     parts.cards.append(kpi('مكالمات', e.calls, 'info', e.fromHistory ? e.fromHistory + ' منها من سجل أرابيكس' : ''), kpi('متوسط مدة المكالمة', dur(e.averageCallSeconds), '', e.longCalls ? e.longCalls + ' مكالمة أطول من 4 دقايق' : ''), kpi('مدة العمل', dur(e.workSeconds)),
       kpi('متاح', dur(e.readySeconds), 'ready'), kpi('في مكالمة', dur(e.callSeconds), 'on_call'), kpi('نسبة الانشغال', busy == null ? '—' : busy + '%', '', 'وقت المكالمات ÷ (المكالمات + المتاح)'),
-      kpi('البريك', dur(e.breakSeconds), (e.overBreakDays ?? (e.breakSeconds > 1800 ? 1 : 0)) > 0 ? 'bad' : 'break', e.breakCount + ' بريك'), kpi('انقطاع رصد', dur(e.gapSeconds), e.gapSeconds > 900 ? 'warn' : ''), kpi('أول دخول', clock(e.firstLogin)), kpi('آخر خروج', clock(e.lastLogout)));
+      kpi('البريك', dur(e.breakSeconds), (e.overBreakDays ?? (e.breakSeconds > 1800 ? 1 : 0)) > 0 ? 'bad' : 'break', e.breakCount + ' بريك'), kpi('برّه التحويلة — للتوضيح', dur(outTotal(e)), outTotal(e) > 900 ? 'warn' : '', outDetail(e) || 'مش داخل في أي حساب'), kpi('أول دخول', clock(e.firstLogin)), kpi('آخر خروج', clock(e.lastLogout)));
     const w = d.window;
     // Zoomed to this employee's own hours, on the half hour.
     const segs = segmentsOf(d, e.employeeId), H = 1800000;
@@ -286,7 +291,8 @@
     table(parts.states, stateColumns, states);
   }
   $('profileEmployee').onchange = () => { state.profile = Number($('profileEmployee').value); renderProfile().catch(showError); };
-  const stateColumns = [{ title: 'الحالة', get: s => STATE[s.state] || s.state }, { title: 'من', get: s => s.startedAt, show: s => clock(s.startedAt), type: 'datetime' }, { title: 'إلى', get: s => s.endedAt, show: s => clock(s.endedAt), type: 'datetime' }, { title: 'المدة', get: s => s.durationSeconds, show: s => dur(s.durationSeconds), type: 'duration' }];
+  const stateColumns = [{ title: 'الحالة', get: s => { const night = /_night$/.test(s.state), base = { ...s, state: s.state.replace(/_night$/, '') };
+    return (night ? stateLabel(base) + ' (بعد 3 الفجر)' : stateLabel(base)) + (['offline', 'unknown'].includes(base.state) ? ' — للتوضيح، مش محسوب' : ''); } }, { title: 'من', get: s => s.startedAt, show: s => clock(s.startedAt), type: 'datetime' }, { title: 'إلى', get: s => s.endedAt, show: s => clock(s.endedAt), type: 'datetime' }, { title: 'المدة', get: s => s.durationSeconds, show: s => dur(s.durationSeconds), type: 'duration' }];
   const sessionColumns = [{ title: 'الموظف', get: s => name(s.employeeId) }, { title: 'التحويلة', get: s => s.extension }, { title: 'البداية', get: s => s.workStartedAt ?? s.startedAt, show: s => stamp(s.workStartedAt ?? s.startedAt), type: 'datetime' },
     { title: 'النهاية', get: s => s.endedAt || s.observedThrough, show: s => s.running ? 'شغالة' : stamp(s.endedAt || s.observedThrough), type: 'datetime' },
     { title: 'المدة في اليوم', get: s => s.daySeconds, show: s => dur(s.daySeconds), type: 'duration' }, { title: 'انتهت إزاي', get: s => s.running ? 'شغالة' : s.closureKnown ? REASON[s.reason] || s.reason : 'من غير خروج مسجل — محسوبة لحد آخر حالة' }];

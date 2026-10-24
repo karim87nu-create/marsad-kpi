@@ -21,7 +21,7 @@ test('a session left open after the employee stopped is not counted as a gap', (
 });
 
 test('silence inside the shift, and a lost connection followed by a new login, are gaps', () => {
-  const a = session('1', at(10), { lastSeen: at(12), revokedAt: at(12, 25), reason: 'browser_restarted' });
+  const a = session('1', at(10), { lastSeen: at(12), revokedAt: at(12, 25), reason: 'expired_or_disconnected' });
   const b = session('2', at(12, 20), { lastSeen: at(13) });
   const r = attendance([a, b], [span('1', 'ready', at(10), at(11)), span('1', 'ready', at(11, 30), at(12)), span('2', 'ready', at(12, 20), at(13))], opts);
   const gaps = r.states.filter(s => s.state === 'unknown').map(s => s.durationSeconds).sort((x, y) => x - y);
@@ -35,11 +35,16 @@ test('a PC left on with Arabicss disconnected does not stretch the shift', () =>
   assert.equal(r.sessions[0].daySeconds, 4 * 3600);
 });
 
-test('after a known logout the time is "offline", not a gap', () => {
-  const s = session('1', at(10), { lastSeen: at(13), revokedAt: at(13), reason: 'arabicss_logout' });
-  const r = attendance([s], [span('1', 'ready', at(10), at(13))], opts);
+test('time outside the extension is kept for explanation by kind: left Arabicss, logged out of the extension, closed the browser', () => {
+  const a = session('1', at(10), { lastSeen: at(11), revokedAt: at(11), reason: 'arabicss_login_page' });
+  const b = session('2', at(11, 10), { lastSeen: at(12), revokedAt: at(12), reason: 'extension_logout' });
+  const c = session('3', at(12, 20), { lastSeen: at(13), revokedAt: at(13, 30), reason: 'browser_restarted' });
+  const d = session('4', at(13, 45), { lastSeen: at(15), revokedAt: at(15), reason: 'extension_logout' });
+  const r = attendance([a, b, c, d], [span('1', 'ready', at(10), at(11)), span('2', 'ready', at(11, 10), at(12)), span('3', 'ready', at(12, 20), at(13)), span('4', 'ready', at(13, 45), at(15))], opts);
+  const out = Object.fromEntries(r.states.filter(x => x.state === 'offline').map(x => [x.outKind, x.durationSeconds]));
+  assert.deepEqual(out, { arabicss: 600, extension: 1200, browser: 45 * 60 - 90 });   // browser closed: from the last signal + 90 s
   assert.equal(sum(r.states, 'unknown'), 0);
-  assert.ok(r.states.some(x => x.state === 'offline'));
+  assert.ok(!r.states.some(x => x.state === 'offline' && Date.parse(x.startedAt) >= at(15)), 'after the last logout the shift is over, not "out"');
 });
 
 test('a break Arabicss kept showing with no recorded end still counts as break time', () => {

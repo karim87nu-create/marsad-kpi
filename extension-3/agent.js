@@ -6,7 +6,7 @@
   if (location.hostname !== M.ARABICSS_HOST || /^\/themes\/arabicssReportsInclude/i.test(location.pathname) || window.__marsadAgent) return;
   window.__marsadAgent = true;
 
-  const IDENTITY_GRACE_MS = 5 * 60000, BEAT_MS = 30000, LONG_CALL_S = 240;
+  const IDENTITY_GRACE_MS = 20 * 60000, BEAT_MS = 30000, LONG_CALL_S = 240;
   const KEY = 'marsad_identity';
   const bg = message => browser.runtime.sendMessage(message);
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -136,7 +136,8 @@
   }
   function onEvent(r) {
     if (!id || passive) return;
-    if (r.event === 'agentloggedout' || r.event === 'logged-out') return finish('arabicss_logout', 'تم الخروج من أرابيكس، وانتهت جلسة العمل.');
+    if (r.event === 'agentloggedout') return finish('extension_logout', 'سجّلت خروج من التحويلة، فانتهت جلسة العمل. أدخل الباسورد تاني لما ترجع.');
+    if (r.event === 'logged-out') return finish('arabicss_logout', 'خرجت من أرابيكس، فانتهت جلسة العمل. أدخل الباسورد تاني لما ترجع.');
     if (r.event === 'breakenter') startBreak();
     else if (r.event === 'breakexit') endBreak();
     else if (r.event === 'agentlinked') startCall(r);
@@ -150,19 +151,23 @@
   });
 
   // ---------- Arabicss sign-in pages ----------
-  // A password entered before signing in to Arabicss stays valid for 5 minutes while the employee goes through
-  // the main login and the agent console login. Once the console has opened, a login page means the shift ended.
+  // At the start of a shift the password is entered once: it stays valid (up to 20 minutes) while the employee goes
+  // through the Arabicss login and the agent console login. Once the console has opened on an extension, any login
+  // page means the work ended: back to the Arabicss login = left Arabicss; the agent console login = logged out of the extension.
   function loginPage() {
     const f = $('.login-form form');
-    if (f && $('input[name="input_user"]', f) && $('input[name="input_pass"][type="password"]', f)) return true;
+    if (f && $('input[name="input_user"]', f) && $('input[name="input_pass"][type="password"]', f)) return 'arabicss';
     const mine = n => n.closest('#marsad-box,#marsad-gate,#marsad-messages');
     const text = document.body?.innerText || '';
     return /agent\s+console/i.test(text) && /callback\s+extension/i.test(text) && [...document.querySelectorAll('input[type="password"]')].some(i => !mine(i))
-      && [...document.querySelectorAll('button,input[type="submit"]')].some(b => !mine(b) && /^\s*log\s*in\s*$/i.test(b.textContent || b.value || ''));
+      && [...document.querySelectorAll('button,input[type="submit"]')].some(b => !mine(b) && /^\s*log\s*in\s*$/i.test(b.textContent || b.value || '')) ? 'extension' : '';
   }
   setInterval(() => {
     if (!id || passive || ext()) return;
-    if (loginPage() && (id.extension || now() - id.identityAt > IDENTITY_GRACE_MS)) finish('arabicss_login_page', 'رجعت لصفحة دخول أرابيكس، فانتهت جلسة العمل. أدخل الباسورد لبدء جلسة جديدة.');
+    const page = loginPage();
+    if (!page || !(id.extension || now() - id.identityAt > IDENTITY_GRACE_MS)) return;
+    if (page === 'extension') finish('extension_logout', 'سجّلت خروج من التحويلة، فانتهت جلسة العمل. أدخل الباسورد تاني لما ترجع.');
+    else finish('arabicss_login_page', 'خرجت من أرابيكس، فانتهت جلسة العمل. أدخل الباسورد تاني لما ترجع.');
   }, 1000);
 
   // ---------- start / end ----------
@@ -386,7 +391,11 @@
     await syncClock();
     try { id = JSON.parse(sessionStorage.getItem(KEY) || 'null'); } catch { id = null; }
     if (!id) id = (await bg({ type: 'RECOVER' }).catch(() => null))?.identity || null;   // same tab, after a cross-origin navigation
-    if (id) { const reg = await bg({ type: 'REGISTER', token: id.token, identity: id }).catch(() => null); if (reg?.closed) id = null; else passive = !reg?.ok; save(); }
+    if (id) {
+      const reg = await bg({ type: 'REGISTER', token: id.token, identity: id }).catch(() => null);
+      if (reg?.closed) { id = null; notice = 'الجلسة دي انتهت (اتقفل المتصفح أو الصفحة أو سجّلت خروج). أدخل الباسورد تاني.'; try { sessionStorage.removeItem(KEY); } catch {} }
+      else { passive = !reg?.ok; save(); }
+    }
     const ready = () => { render(); loadBreaks(); loadMessages(); };
     if (document.body) ready(); else document.addEventListener('DOMContentLoaded', ready, { once: true });
   })();
