@@ -10,9 +10,14 @@ function setup(app) {
   const { db, fail } = app;
 
   const expireRequests = now => db.batch([
+    db.prepare(`UPDATE break_requests SET status = 'completed' WHERE status = 'starting' AND EXISTS
+      (SELECT 1 FROM break_permissions p WHERE p.id = break_requests.permission_id AND p.used_at IS NOT NULL AND EXISTS
+        (SELECT 1 FROM events b JOIN events e ON e.session_id = b.session_id AND e.id > b.id
+          WHERE b.session_id = p.session_id AND b.event_type = 'break_start' AND json_extract(COALESCE(b.extra, '{}'), '$.breakPermissionId') = p.id
+          AND e.event_type IN ('break_end','break_end_unknown') AND e.occurred_at >= b.occurred_at))`).bind(),
     db.prepare("UPDATE break_requests SET status = 'expired' WHERE status = 'pending' AND created_at < ?").bind(now - PENDING_MS),
     db.prepare("UPDATE break_requests SET status = 'expired' WHERE status = 'approved' AND decided_at < ?").bind(now - APPROVED_MS),
-    db.prepare(`UPDATE break_requests SET status = 'cancelled' WHERE status IN ('pending','approved') AND session_id IN
+    db.prepare(`UPDATE break_requests SET status = 'cancelled' WHERE status IN ('pending','approved','starting') AND session_id IN
       (SELECT id FROM employee_sessions WHERE revoked_at IS NOT NULL OR expires_at <= ?)`).bind(now),
   ]);
 
@@ -22,15 +27,16 @@ function setup(app) {
 
   async function issuePermission(session, now, allowed, grace, requestId = null) {
     const id = randomUUID();
-    await db.prepare('INSERT INTO break_permissions (id, session_id, employee_id, extension, request_id, allowed_seconds, grace_seconds, created_at, expires_at) VALUES (?,?,?,?,?,?,?,?,?)')
-      .run(id, session.id, session.employee_id, session.extension, requestId, allowed, grace, now, now + PERMISSION_MS);
-    return { permissionId: id, expiresAt: now + PERMISSION_MS, allowedSeconds: allowed, graceSeconds: grace };
+    await db.prepare('INSERT INTO break_permissions (id, session_id, employee_id, extension, request_id, allowed_seconds, grace_seconds, created_at, expires_at) SELECT ?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM break_permissions WHERE session_id = ? AND used_at IS NULL AND expires_at > ?)')
+      .run(id, session.id, session.employee_id, session.extension, requestId, allowed, grace, now, now + PERMISSION_MS, session.id, now);
+    const p = await db.prepare('SELECT * FROM break_permissions WHERE session_id = ? AND used_at IS NULL AND expires_at > ? ORDER BY created_at DESC LIMIT 1').get(session.id, now);
+    if (!p || (p.request_id || null) !== requestId) fail(409, 'permission_pending');
+    return { permissionId: p.id, expiresAt: p.expires_at, allowedSeconds: p.allowed_seconds, graceSeconds: p.grace_seconds };
   }
 
   async function requireReady(session, now) {
     if (!session.extension) fail(409, 'extension_required');
     if (!await app.sessionReady(session, now)) fail(409, 'not_ready');
-    if (await db.prepare('SELECT 1 FROM break_permissions WHERE session_id = ? AND used_at IS NULL AND expires_at > ?').get(session.id, now)) fail(409, 'permission_pending');
   }
 
   app.route('GET', '/api/break-requests', async ctx => {
@@ -66,6 +72,13 @@ function setup(app) {
       return { ok: true };
     }
     const { session } = await app.requireSession(ctx);
+    if (b.action === 'cancel_permission') {
+      const p = await db.prepare('SELECT * FROM break_permissions WHERE id = ? AND session_id = ?').get(String(b.permissionId || ''), session.id);
+      if (!p) fail(404, 'permission_not_found');
+      const result = await db.prepare('UPDATE break_permissions SET expires_at = 0 WHERE id = ? AND session_id = ? AND used_at IS NULL').run(p.id, session.id);
+      if (!result.changes) fail(409, 'permission_already_used');
+      return { ok: true };
+    }
     const p = await policy(session.employee_id, ctx.now);
     if (b.action === 'regular_start') {
       await requireReady(session, ctx.now);

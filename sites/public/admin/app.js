@@ -136,15 +136,31 @@
   // Wait shown by Arabicss at the snapshot, plus the seconds since then.
   function waitNow(v, age) { const m = String(v).match(/^(\d+):(\d\d):(\d\d)$/); return m ? +m[1] * 3600 + +m[2] * 60 + +m[3] + Math.max(0, Math.round(age || 0)) : null; }
 
-  // ---------- طلبات البريك (every page) ----------
+  // Requests are visible in every view, with a permanent inbox in the navigation.
+  const BREAK_REQUEST_STATUS = { pending: 'مستني موافقة', approved: 'موافق عليه — مستني الموظف يبدأ', starting: 'البريك بدأ', completed: 'البريك انتهى', rejected: 'مرفوض', expired: 'انتهت الصلاحية', cancelled: 'اتلغى' };
+  function requestActions(r) {
+    if (r.status !== 'pending') return pill(BREAK_REQUEST_STATUS[r.status] || r.status);
+    if (!state.requests.canDecide) return pill('للعرض فقط — القبول للمدير والمشرف');
+    const box = h('span', { className: 'inline' });
+    for (const [action, label, cls] of [['approve', 'قبول البريك', ''], ['reject', 'رفض', 'danger']]) {
+      const b = h('button', { textContent: label, className: cls });
+      b.onclick = async () => {
+        for (const x of box.querySelectorAll('button')) x.disabled = true;
+        try { await api('/api/break-requests', { method: 'POST', body: { action, id: r.id } }); }
+        catch (e) { showError(e); }
+        await refreshRequests();
+      }; box.append(b);
+    } return box;
+  }
   async function refreshRequests() {
-    try { state.requests = await api('/api/break-requests'); } catch { return; }
-    const pending = state.requests.requests.filter(r => r.status === 'pending');
+    try { state.requests = await api('/api/break-requests'); } catch (e) { if (state.view === 'requests') showError(e); return; }
+    const rows = state.requests.requests, pending = rows.filter(r => r.status === 'pending');
     document.title = (pending.length ? '(' + pending.length + ') ' : '') + 'مرصد الأداء — الإدارة';
     $('reqBadge').hidden = !pending.length; $('reqBadge').textContent = pending.length;
-    $('breakRequests').replaceChildren(...(pending.length ? [h('div', { className: 'requests' }, h('h2', { textContent: 'طلبات بريك مستنية موافقة — ' + pending.length }),
-      ...pending.map(r => h('div', { className: 'row' }, h('span', { textContent: r.employee + ' · تحويلة ' + (r.extension || '—') + ' · ' + r.requestedMinutes + ' دقيقة · من ' + clock(r.createdAt) }),
-        state.requests.canDecide ? h('span', { className: 'inline' }, ...[['approve', 'موافقة', ''], ['reject', 'رفض', 'danger']].map(([action, label, cls]) => { const b = h('button', { textContent: label, className: cls }); b.onclick = async () => { b.disabled = true; try { await api('/api/break-requests', { method: 'POST', body: { action, id: r.id } }); } catch (e) { alert(e.message); } refreshRequests(); }; return b; })) : pill('للعرض فقط')))) ] : []));
+    $('breakRequests').replaceChildren(...(pending.length && state.view !== 'requests' ? [h('div', { className: 'requests' }, h('h2', { textContent: 'طلبات بريك مستنية موافقة — ' + pending.length }),
+      ...pending.map(r => h('div', { className: 'row' }, h('span', { textContent: r.employee + ' · تحويلة ' + (r.extension || '—') + ' · ' + r.requestedMinutes + ' دقيقة · من ' + clock(r.createdAt) }), requestActions(r))))] : []));
+    table('breakRequestHistory', [{ title: 'الموظف', get: r => r.employee }, { title: 'التحويلة', get: r => r.extension }, { title: 'المدة المطلوبة', get: r => r.requestedMinutes, show: r => r.requestedMinutes + ' دقيقة' },
+      { title: 'وقت الطلب', get: r => r.createdAt, show: r => stamp(r.createdAt) }, { title: 'الحالة', get: r => BREAK_REQUEST_STATUS[r.status] || r.status }, { title: 'القرار', get: requestActions }, { title: 'اتخذ القرار', get: r => r.decidedBy || '—' }], rows, { empty: 'مفيش طلبات بريك إضافي اليوم' });
   }
 
   // ---------- ملخص اليوم ----------
@@ -548,7 +564,7 @@
   });
 
   // ---------- navigation ----------
-  const VIEWS = { now: ['الآن', null], day: ['ملخص اليوم', renderDay], hours: ['على مدار اليوم', renderHours], team: ['أداء الموظفين', renderTeam], profile: ['ملف الموظف', renderProfile], attendance: ['الحضور والبريك', renderAttendance],
+  const VIEWS = { now: ['الآن', null], day: ['ملخص اليوم', renderDay], hours: ['على مدار اليوم', renderHours], team: ['أداء الموظفين', renderTeam], profile: ['ملف الموظف', renderProfile], requests: ['طلبات البريك', refreshRequests], attendance: ['الحضور والبريك', renderAttendance],
     shifts: ['نهاية الشيفت والرجوع للشغل', renderShifts], calls: ['المكالمات', renderCalls], missed: ['المكالمات الفائتة', renderMissed], followup: ['المتابعة والتقارير', renderFollowup], system: ['حالة النظام', renderSystem], manage: ['الإدارة', renderManage], guide: ['طريقة حساب الأرقام', async () => {}] };
   const DAY_VIEWS = ['day', 'hours', 'team', 'profile', 'attendance', 'shifts', 'calls', 'missed', 'followup'];
   async function show(view, force = false) {
@@ -558,6 +574,7 @@
     $('title').textContent = VIEWS[view][0];
     $('dayPicker').hidden = !DAY_VIEWS.includes(view);
     showError(null);
+    refreshRequests();
     if (view === 'now') return tick();
     try { syncStatus(true, 'جارٍ التحميل…'); if (force) cache.delete(rangeKey()); await VIEWS[view][1](); syncStatus(true); } catch (e) { syncStatus(false); showError(e); }
   }

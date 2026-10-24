@@ -22,12 +22,13 @@
     <div class="brand"><span class="mark">م</span><div><strong>مرصد الأداء</strong><small id="who"></small></div></div>
     <nav>
       <div class="navgroup">مباشر</div>
-      <button data-view="now" class="active"><i>●</i>الآن<span class="badge" id="reqBadge" hidden></span></button>
+      <button data-view="now" class="active"><i>●</i>الآن</button>
       <div class="navgroup">اليوم</div>
       <button data-view="day"><i>▦</i>ملخص اليوم</button>
       <button data-view="hours"><i>▁▃</i>على مدار اليوم</button>
       <button data-view="team"><i>☰</i>أداء الموظفين</button>
       <button data-view="profile"><i>◉</i>ملف الموظف</button>
+      <button data-view="requests"><i>✓</i>طلبات البريك<span class="badge" id="reqBadge" hidden></span></button>
       <button data-view="attendance"><i>◷</i>الحضور والبريك</button>
       <button data-view="shifts"><i>⇄</i>نهاية الشيفت</button>
       <button data-view="calls"><i>☎</i>المكالمات</button>
@@ -50,10 +51,10 @@
       </div>
     </header>
     <p id="error" class="banner error" hidden></p>
+    <div id="breakRequests" aria-live="polite"></div>
 
     <section id="view-now" class="view">
       <div id="nowCards" class="cards big"></div>
-      <div id="breakRequests"></div>
       <div class="split">
         <article class="panel"><h2>الموظفون الآن</h2><div id="staffNow"></div></article>
         <article class="panel"><h2>العملاء في الانتظار <small id="queueAge"></small></h2><div id="queueNow"></div></article>
@@ -87,6 +88,9 @@
       <div id="profileBody"></div>
     </section>
 
+    <section id="view-requests" class="view" hidden>
+      <article class="panel"><h2>طلبات البريك الإضافي اليوم</h2><p class="muted">المدير والمشرف يقدروا يقبلوا أو يرفضوا الطلب هنا. بعد القبول الموظف يبدأ البريك من زرار «بدء البريك الموافق عليه» في الإضافة.</p><div id="breakRequestHistory"></div></article>
+    </section>
     <section id="view-attendance" class="view" hidden>
       <article class="panel"><h2>خط اليوم لكل موظف</h2>
         <div class="legend"><span><i class="s-ready"></i>متاح</span><span><i class="s-on_call"></i>في مكالمة</span><span><i class="s-break"></i>بريك</span><span><i class="s-unknown"></i>انقطاع رصد</span><span><i class="s-logged_in"></i>سجّل ولسه مدخلش الكونسول</span></div>

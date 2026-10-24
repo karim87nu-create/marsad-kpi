@@ -127,6 +127,13 @@ test('extension 3: one password through the Arabicss logins, calls, breaks, mess
     startBtn.click();
     await settle(3000);
     assert.equal(nativeClicks, 1, 'native break opened with permission: ' + w.document.querySelector('[data-break-note]').textContent);
+    const resume = [...w.document.querySelectorAll('#marsad-box [data-actions] button')].find(b => b.textContent === 'تأكيد بدء البريك');
+    assert.ok(resume); resume.click(); await settle(1500); assert.equal(nativeClicks, 2, 'unused permission reopens native dialog');
+    const cancel = [...w.document.querySelectorAll('#marsad-box [data-actions] button')].find(b => b.textContent === 'إلغاء السماح');
+    assert.ok(cancel); cancel.click(); await settle(1500);
+    assert.equal(t.app.db.raw.prepare('SELECT COUNT(*) n FROM break_permissions WHERE used_at IS NOT NULL').get().n, 0, 'unused reservation never consumes a break');
+    const retry = [...w.document.querySelectorAll('#marsad-box [data-actions] button')].find(b => b.textContent === 'بدء البريك');
+    assert.ok(retry); retry.click(); await settle(1500); assert.equal(nativeClicks, 3, 'new permission after cancel');
     w.estadoCliente.break_id = '2';
     h.sse({ event: 'breakenter', break_id: '2' });
     await settle(2500);

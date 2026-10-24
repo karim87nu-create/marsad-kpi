@@ -1,0 +1,17 @@
+const test=require('node:test'),assert=require('node:assert/strict');const {start}=require('./helpers.cjs');
+test('unused regular permission retries and cancellation never consume allowance; used permission cannot cancel',async()=>{
+const t=await start();try{const admin=await t.admin();const e=await t.employee(admin);const s=await t.session();await t.event(s.token,'heartbeat',{state:'ready'});const post=b=>t.device(s.token,'POST','/api/break-requests',b);
+const a=await post({action:'regular_start'});assert.equal(a.status,200);for(const b of await Promise.all(Array.from({length:4},()=>post({action:'regular_start'}))))assert.equal(b.body.permissionId,a.body.permissionId);
+assert.equal(t.app.db.raw.prepare('SELECT COUNT(*) n FROM break_permissions').get().n,1);assert.equal((await t.app.breakPolicy(e.id)).startsUsed,0);
+assert.equal((await post({action:'cancel_permission',permissionId:a.body.permissionId})).status,200);assert.equal((await t.event(s.token,'break_start',{permissionId:a.body.permissionId,state:'break'})).status,409);
+const b=await post({action:'regular_start'});assert.equal(b.status,200);assert.notEqual(b.body.permissionId,a.body.permissionId);await t.event(s.token,'break_start',{permissionId:b.body.permissionId,state:'break'});assert.equal((await post({action:'cancel_permission',permissionId:b.body.permissionId})).status,409);
+t.advance(1000);await t.event(s.token,'break_end',{state:'ready',durationSeconds:1});assert.equal((await t.app.breakPolicy(e.id)).startsUsed,1);
+const c=await post({action:'regular_start'});t.advance(61000);await t.event(s.token,'heartbeat',{state:'ready'});const d=await post({action:'regular_start'});assert.equal(d.status,200);assert.notEqual(c.body.permissionId,d.body.permissionId);assert.equal((await t.app.breakPolicy(e.id)).startsUsed,1);
+}finally{await t.close();}});
+test('approved extra permission retries after cancel and completed request does not block the next request',async()=>{
+const t=await start();try{const admin=await t.admin();const e=await t.employee(admin);const s=await t.session();await t.event(s.token,'heartbeat',{state:'ready'});const post=b=>t.device(s.token,'POST','/api/break-requests',b);
+for(let i=0;i<2;i++){const p=await post({action:'regular_start'});await t.event(s.token,'break_start',{permissionId:p.body.permissionId,state:'break'});t.advance(1000);await t.event(s.token,'break_end',{state:'ready',durationSeconds:1});}
+const id='break-request:'+crypto.randomUUID();assert.equal((await post({action:'request',id,requestedMinutes:15})).status,200);assert.equal((await admin('POST','/api/break-requests',{action:'approve',id})).status,200);
+const a=await post({action:'start',id}),b=await post({action:'start',id});assert.equal(a.body.permissionId,b.body.permissionId);await post({action:'cancel_permission',permissionId:a.body.permissionId});const c=await post({action:'start',id});assert.equal(c.status,200);assert.notEqual(c.body.permissionId,a.body.permissionId);
+await t.event(s.token,'break_start',{permissionId:c.body.permissionId,state:'break'});t.advance(1000);await t.event(s.token,'break_end',{state:'ready',durationSeconds:1});assert.equal((await admin('GET','/api/break-requests')).body.requests.find(r=>r.id===id).status,'completed');assert.equal((await t.app.breakPolicy(e.id)).startsUsed,2);assert.equal((await post({action:'request',id:'break-request:'+crypto.randomUUID(),requestedMinutes:15})).status,200);
+}finally{await t.close();}});

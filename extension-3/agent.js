@@ -198,6 +198,7 @@
   let policy = null, request = null, breakNote = '', busy = false, passNative = false;
   async function loadBreaks() {
     if (!id?.extension || passive) return;
+    if (permit && permit.until <= now()) { permit = null; breakNote = 'انتهى السماح غير المستخدم؛ تقدر تبدأ من جديد، ومتحسبش بريك.'; }
     try { const r = await api('/api/break-requests'); if (r.ok) { policy = r.data.breakPolicy; request = (r.data.requests || []).find(x => ['pending', 'approved', 'starting'].includes(x.status)) || null; } } catch {}
     render();
   }
@@ -218,12 +219,23 @@
     busy = true; breakNote = 'جارٍ التأكد من الرصيد والجاهزية…'; render();
     try {
       await confirmReady();
+      if (permit && permit.until > now()) { openNative(); breakNote = 'أكد بدء البريك من نافذة أرابيكس أو الغِ السماح من المرصد.'; return; }
       const r = await api('/api/break-requests', 'POST', kind === 'approved' ? { action: 'start', id: request.id } : { action: 'regular_start' });
       if (!r.ok) throw Error({ approval_required: 'خلص رصيد البريكين؛ اطلب بريك إضافي من المشرف', not_ready: 'السيرفر شايفك مش متاح دلوقتي', permission_pending: 'فيه سماح بريك لسه مستخدمش' }[r.data?.error] || 'تعذر بدء البريك');
       permit = { id: r.data.permissionId, until: Number(r.data.expiresAt), allowedSeconds: r.data.allowedSeconds, graceSeconds: r.data.graceSeconds, extension: id.extension, reasonId: kind === 'approved' ? String(request.reasonId || '2') : '2' };
       openNative();
       breakNote = 'أكد بدء البريك من نافذة أرابيكس. المتاح: ' + minutes(permit.allowedSeconds) + '.';
-    } catch (e) { breakNote = e.message; permit = null; } finally { busy = false; render(); }
+    } catch (e) { breakNote = e.message; } finally { busy = false; render(); }
+  }
+  async function cancelPermission() {
+    if (busy || !permit) return;
+    busy = true; render();
+    try {
+      const r = await api('/api/break-requests', 'POST', { action: 'cancel_permission', permissionId: permit.id });
+      if (!r.ok) throw Error(r.data?.error === 'permission_already_used' ? 'البريك بدأ بالفعل؛ انهيه من أرابيكس' : 'تعذر إلغاء السماح؛ حاول تاني');
+      permit = null; breakNote = 'اتلغى السماح غير المستخدم ومتحسبش بريك.';
+      await loadBreaks();
+    } catch (e) { breakNote = e.message; } finally { busy = false; render(); }
   }
   async function askExtra(mins) {
     if (busy) return;
@@ -348,9 +360,10 @@
     const p = policy;
     set('[data-policy]', !p ? 'جارٍ قراءة رصيد البريك…' : 'البريكات العادية: ' + Math.min(p.startsUsed, 2) + ' من 2 — المتبقي من 30 دقيقة: ' + minutes(p.remainingSeconds) + (p.regularAvailable ? ' — المتاح للبريك الجاي: ' + minutes(p.nextAllowedSeconds) : ''));
     set('[data-break-note]', breakNote);
-    const actions = $('[data-actions]', b), wanted = !id.extension || passive || brk ? 'none' : request?.status === 'approved' ? 'approved' : request?.status === 'pending' ? 'pending' : p?.regularAvailable ? 'regular' : p ? 'extra' : 'none';
+    const actions = $('[data-actions]', b), wanted = !id.extension || passive || brk ? 'none' : permit && permit.until > now() ? 'permission' : request?.status === 'approved' ? 'approved' : request?.status === 'pending' ? 'pending' : p?.regularAvailable ? 'regular' : p ? 'extra' : 'none';
     if (actions.dataset.mode !== wanted) {
       actions.dataset.mode = wanted; actions.replaceChildren();
+      if (wanted === 'permission') { const resume = el('button', { type: 'button', textContent: 'تأكيد بدء البريك' }), cancel = el('button', { type: 'button', textContent: 'إلغاء السماح' }); resume.onclick = () => takeBreak('regular'); cancel.onclick = cancelPermission; cancel.dataset.cancelPermission = '1'; actions.append(resume, cancel); }
       if (wanted === 'regular') { const go = el('button', { type: 'button', textContent: 'بدء البريك' }); go.onclick = () => takeBreak('regular'); actions.append(go); }
       if (wanted === 'approved') { const go = el('button', { type: 'button', textContent: 'بدء البريك الموافق عليه (' + request.requestedMinutes + ' دقيقة)' }); go.onclick = () => takeBreak('approved'); actions.append(go); }
       if (wanted === 'pending') actions.append(el('p', { textContent: 'طلب البريك الإضافي مستني موافقة المشرف.' }));
@@ -360,7 +373,7 @@
         actions.append(sel, go);
       }
     }
-    for (const x of actions.querySelectorAll('button')) x.disabled = busy || !readyNow();
+    for (const x of actions.querySelectorAll('button')) x.disabled = busy || (!x.dataset.cancelPermission && !readyNow());
   }
   setInterval(render, 1000);
 

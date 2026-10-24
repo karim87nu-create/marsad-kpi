@@ -1,10 +1,6 @@
 name: Sign and publish Firefox connector (v2 admin) 3.0.0
 
 on:
-  push:
-    paths:
-      - 'extension-3/**'
-      - '.github/workflows/sign-extension-3.0.0.yml'
   workflow_dispatch: {}
 
 permissions:
