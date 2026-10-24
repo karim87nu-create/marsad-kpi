@@ -5,14 +5,12 @@ import { outKind } from './attendance-rules.js';
 import * as A from './arabicss.js';
 import { sha256Bytes, randomBytes, b64, fromB64 } from './security.js';
 
-const TICK_MS = 5000;
+const TICK_MS = 5000, WAIT_ALERT_S = 7;
 
 const RULE_LIST = {
-  waitEarly: 'عميل منتظر 5 ثواني (إنذار مبكر)',
-  waitSla: 'عميل عدّى 10 ثواني انتظار (حد الرد)',
+  waitSla: 'عميل عدّى 7 ثواني انتظار',
   queueNobody: 'عملاء منتظرين ومفيش حد متاح',
   missed: 'مكالمة فائتة — ومين كان متاح وقتها',
-  callWarn: 'مكالمة قربت من 3 دقايق',
   longCall: 'مكالمة عدّت 4 دقايق',
   breakStart: 'بداية بريك',
   breakWarn: 'باقي دقيقة على نهاية البريك',
@@ -252,15 +250,13 @@ function setup(app) {
       const ready = inState('ready'), who = ready.length ? '🟢 فيه ' + ready.length + ' متاح حسب الرصد (' + names(ready) + ') — راجع التوزيع على نوع الطلب' : '🔴 مفيش حد متاح حسب الرصد';
       const line = A.queueLabel(r[0]) + ' · ' + mask(phone) + ' · منتظر ' + Math.round(wait) + ' ث';
       const seen = kind => db.prepare("SELECT 1 FROM telegram_log WHERE kind = ? AND key LIKE ? AND created_at > ?").get(kind, kind + ':' + phone + ':%', now - 15 * 60000);
-      if (wait >= RULES.slaSeconds && on('waitSla')) { if (!await seen('waitSla')) addNew('waitSla:' + phone + ':' + entry, 'waitSla', null, '🔔 عميل عدّى ' + RULES.slaSeconds + ' ثواني انتظار\n' + line + '\n' + who); }
-      else if (wait >= 5 && on('waitEarly') && !await seen('waitEarly')) addNew('waitEarly:' + phone + ':' + entry, 'waitEarly', null, '🟡 إنذار مبكر: عميل منتظر\n' + line + '\n' + who);
+      // Only once the wait passed 7 seconds (no early warning).
+      if (wait > WAIT_ALERT_S && on('waitSla') && !await seen('waitSla')) addNew('waitSla:' + phone + ':' + entry, 'waitSla', null, '🔔 عميل عدّى ' + WAIT_ALERT_S + ' ثواني انتظار\n' + line + '\n' + who);
     }
     // ---- several on break while customers wait ----
     if (on('breakOverlap') && queueRows.length && inState('break').length >= 2)
       addNew('overlap:' + Math.floor(now / 600000), 'breakOverlap', null, '🔔 ' + inState('break').length + ' في بريك مع بعض وفيه ' + queueRows.length + ' عميل منتظر\nفي البريك: ' + names(inState('break'), 6));
     for (const p of live) {
-      if (p.state === 'on_call' && on('callWarn') && since(p) > 150 && since(p) <= RULES.callAlertSeconds)
-        addNew('callWarn:' + p.employeeId + ':' + (p.callId || p.since), 'callWarn', p.employeeId, '🟡 مكالمة قربت من 3 دقايق: ' + p.name + ' بقاله ' + fmt(since(p)) + ' — تحويلة ' + p.extension);
       if (p.state === 'break' && (on('breakWarn') || on('breakBudget'))) {
         const start = await latestBreakStart(p.employeeId, now), allowed = breakAllowance(start), left = allowed - since(p);
         if (on('breakWarn') && left > 0 && left <= 60) addNew('breakWarn:' + p.employeeId + ':' + p.since, 'breakWarn', p.employeeId, '🟡 باقي أقل من دقيقة على بريك ' + p.name + ' — بقاله ' + fmt(since(p)) + ' من ' + fmt(allowed), { replyTo: start ? 'break:' + start.id : null });

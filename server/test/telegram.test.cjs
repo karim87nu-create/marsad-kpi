@@ -105,19 +105,18 @@ test('telegram: waiting customers, missed calls with who was available, and how 
     const e = await t.employee(admin);
     const s = await t.session('1234');
     await t.event(s.token, 'heartbeat', { state: 'ready' });
-    // A caller waiting: an early warning at 5 s, then one alert past 10 s; never repeated for the same caller.
+    // A caller waiting: no early warning, one alert once the wait passes 7 s.
     const row = wait => ['7671', '', '', '', '', '', '', '', '0:00:' + String(wait).padStart(2, '0'), '01001234567', 'On Wait'];
     const real = t.app.latestLive;
     t.app.latestLive = async () => ({ observed_at: t.clock.now, rows: JSON.stringify([row(6)]) });
+    const quiet = sent.length; await t.app.telegramTick(); assert.equal(sent.length, quiet, 'no alert before 7 s');
+    t.advance(2000);
+    t.app.latestLive = async () => ({ observed_at: t.clock.now, rows: JSON.stringify([row(8)]) });
     await t.app.telegramTick();
-    assert.match(sent.at(-1), /إنذار مبكر: عميل منتظر/);
+    assert.match(sent.at(-1), /عدّى 7 ثواني انتظار/);
     assert.match(sent.at(-1), /••••4567/);
     assert.match(sent.at(-1), /⏳ منتظرين: 1/);
     assert.match(sent.at(-1), /المتاحين: Ahmed/);
-    t.advance(6000);
-    t.app.latestLive = async () => ({ observed_at: t.clock.now, rows: JSON.stringify([row(12)]) });
-    await t.app.telegramTick();
-    assert.match(sent.at(-1), /عدّى 10 ثواني انتظار/);
     const n = sent.length; t.advance(6000); await t.app.telegramTick(); assert.equal(sent.length, n, 'one alert per caller');
     t.advance(6000);
     t.app.latestLive = async () => ({ observed_at: t.clock.now, rows: '[]' });
