@@ -224,8 +224,15 @@ async function collectLive() {
     collectorState = { ...collectorState, lastLive: reply.observedAt, error: null };
   } catch (e) { collectorState = { ...collectorState, error: e.message }; } finally { liveBusy = false; }
 }
-setInterval(collectHistory, 300000); setInterval(collectLive, 3000);
-collectHistory(); collectLive();
+// Each read of the Arabicss reports runs queries on the Arabicss server that the agents' consoles also wait on,
+// so the collector reads gently: the live queue every 10 seconds and the day's call log every 15 minutes,
+// and only during operating hours (09:00 → 03:00 Cairo, plus the 03:00–09:00 log refresh once an hour).
+const cairoHour = () => Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Africa/Cairo', hour: '2-digit', hourCycle: 'h23' }).format(new Date()));
+const operating = () => { const h = cairoHour(); return h >= 9 || h < 3; };
+let lastHistoryRun = 0;
+setInterval(() => { if (Date.now() - lastHistoryRun >= (operating() ? 900000 : 3600000)) { lastHistoryRun = Date.now(); collectHistory(); } }, 60000);
+setInterval(() => { if (operating()) collectLive(); }, 10000);
+lastHistoryRun = Date.now(); collectHistory(); collectLive();
 
 async function collectorMessage(m, sender) {
   const page = browser.runtime.getURL('collector.html');

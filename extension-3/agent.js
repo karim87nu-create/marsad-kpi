@@ -146,8 +146,7 @@
   window.addEventListener('message', e => {
     if (e.source !== window || e.origin !== location.origin || e.data?.source !== 'MARSAD_HOOK') return;
     let data; try { data = JSON.parse(e.data.data); } catch { return; }
-    if (e.data.type === 'snapshot') onSnapshot(data); else if (e.data.type === 'event') onEvent(data);
-    render();
+    if (e.data.type === 'snapshot') onSnapshot(data); else { onEvent(data); render(); }   // snapshots are drawn by the 1 s render
   });
 
   // ---------- Arabicss sign-in pages ----------
@@ -264,6 +263,7 @@
   }, true);
 
   // ---------- alerts ----------
+  const notified = new Set();   // asked once per page; the background keeps the durable list
   function alerts() {
     const list = [];
     if (call?.startedAt && now() - call.startedAt > LONG_CALL_S * 1000) list.push(['call:' + id?.token + ':' + call.callId, 'مكالمة طويلة', 'مكالمتك عدت 4 دقايق']);
@@ -272,7 +272,7 @@
       if (age >= limit) list.push(['break-end:' + brk.startedAt, 'خلصت مدة البريك', 'ارجع لاستقبال المكالمات']);
       else if (age >= limit - 60) list.push(['break-warn:' + brk.startedAt, 'باقي دقيقة على نهاية البريك', 'المتاح لهذا البريك ' + minutes(limit)]);
     }
-    for (const [key, title, message] of list) bg({ type: 'NOTIFY', key, title, message }).catch(() => {});
+    for (const [key, title, message] of list) if (!notified.has(key)) { notified.add(key); bg({ type: 'NOTIFY', key, title, message }).catch(() => {}); }
     return list.map(x => x[2]);
   }
 
