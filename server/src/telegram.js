@@ -15,7 +15,7 @@ const RULE_LIST = {
   gap: 'انقطاع رصد أكتر من 3 دقايق أثناء الشيفت',
   queueNobody: 'عملاء منتظرين ومفيش حد متاح',
 };
-const RECOVERY_LABELS = { breakStart: 'انتهى البريك', breakOver: 'انتهى تجاوز البريك', longCall: 'انتهت المكالمة الطويلة', gap: 'تغيرت حالة انقطاع الرصد', breakRequest: 'تم الرد على طلب البريك', queueNobody: 'تغيرت حالة الانتظار', logout: 'رجع الموظف للعمل' };
+const RECOVERY_LABELS = { breakStart: 'رجع من البريك', breakOver: 'رجع من البريك', longCall: 'خلّص المكالمة الطويلة', gap: 'رجع الرصد', breakRequest: 'الرد على طلب البريك', queueNobody: 'انتهى الانتظار', logout: 'رجع للشغل' };
 const DEFAULT_RULES = Object.fromEntries(Object.keys(RULE_LIST).map(k => [k, true]));
 const fmt = s => { s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ' د' + (s % 60 ? ' ' + (s % 60) + ' ث' : ''); };
 const clock = ms => new Date(ms).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit' });
@@ -104,57 +104,87 @@ function setup(app) {
   };
   async function collect(c, now) {
     const on = k => c.rules[k], alerts = [];
-    const add = (key, kind, employeeId, text) => alerts.push({ key, kind, employeeId, text });
+    // replyTo: the alert this message follows up (sent as a Telegram reply to it). silent: logged, never sent.
+    const add = (key, kind, employeeId, text, { replyTo = null, silent = false } = {}) => alerts.push({ key, kind, employeeId, text, replyTo, silent });
     const live = await app.live(now), people = new Map(live.map(p => [p.employeeId, p]));
     const all = new Map((await db.prepare('SELECT id, name FROM employees').all()).map(e => [e.id, e.name]));
     const name = id => people.get(id)?.name || all.get(id) || 'موظف';
     const since = p => p.since ? (now - Date.parse(p.since)) / 1000 : 0;
-    // Resolve only notifications actually sent, using durable log keys across Worker restarts.
-    // Unknown/stale observations never prove that a break/call/queue problem ended.
+    const extraOf = e => { try { return JSON.parse(e?.extra || '{}'); } catch { return {}; } };
+    // What one break was allowed: the permission it started with, or 15 minutes for a break taken without one.
+    const breakAllowance = e => extraOf(e).breakAllowedSeconds || RULES.breakPeriodSeconds;   // the permission's allowance already includes the grace
+    const breakKind = e => { const x = extraOf(e); return e?.event_type === 'break_observed' ? 'من غير طلب من المرصد' : x.breakPolicyKind === 'approved' ? 'البريك الإضافي (' + (x.breakRequestedMinutes || 15) + ' د)' : 'بريك عادي'; };
+    const latestBreakStart = (employeeId, before) => db.prepare("SELECT * FROM events WHERE employee_id = ? AND event_type IN ('break_start','break_observed') AND occurred_at <= ? ORDER BY occurred_at DESC LIMIT 1").get(employeeId, before);
+    const statusLabel = { ready: 'متاح', on_call: 'في مكالمة', break: 'بريك', logged_in: 'سجّل دخول', logged_out: 'خرج', offline: 'خرج' };
+
+    // ---- follow-ups: each problem we alerted about gets one reply when it is over ----
+    // Only notifications actually sent are followed up; unknown/stale observations never prove a problem ended.
     const unresolved = await db.prepare(`SELECT l.* FROM telegram_log l WHERE l.sent_at IS NOT NULL AND l.kind IN ('breakStart','breakOver','longCall','gap','breakRequest','queueNobody','logout')
       AND NOT EXISTS (SELECT 1 FROM telegram_log r WHERE r.key = 'resolved:' || l.key) ORDER BY l.id LIMIT 500`).all();
-    const statusLabel = { ready: 'متاح', on_call: 'في مكالمة', break: 'بريك', logged_in: 'سجّل دخول', logged_out: 'خرج', offline: 'خرج' };
+    const closedBreaks = new Set();   // employee:breakStartTime already followed up in this check
     for (const old of unresolved) {
-      let text = null;
+      let text = null, silent = false;
       const person = people.get(old.employee_id), current = person?.state;
       if (old.kind === 'breakStart' || old.kind === 'breakOver') {
-        const ended = await db.prepare("SELECT * FROM events WHERE employee_id = ? AND event_type = 'break_end' AND occurred_at >= ? ORDER BY occurred_at LIMIT 1").get(old.employee_id, old.created_at);
-        if (ended) text = 'أنهى البريك' + (ended.duration_seconds ? ' — مدته ' + fmt(ended.duration_seconds) : '') + ' — ' + clock(ended.occurred_at);
-        else if (['ready','on_call'].includes(current) && person.since && Date.parse(person.since) > old.created_at) text = 'تغيّرت حالته بعد البريك إلى ' + statusLabel[current];
+        const start = old.kind === 'breakStart' ? await db.prepare('SELECT * FROM events WHERE id = ?').get(Number(old.key.slice(6))) : await latestBreakStart(old.employee_id, old.created_at);
+        const from = start?.occurred_at ?? old.created_at;
+        const ended = await db.prepare("SELECT * FROM events WHERE employee_id = ? AND event_type IN ('break_end','break_end_unknown') AND occurred_at >= ? ORDER BY occurred_at LIMIT 1").get(old.employee_id, from);
+        const back = !ended && ['ready', 'on_call'].includes(current) && person.since && Date.parse(person.since) > from ? Date.parse(person.since) : null;
+        if (ended || back) {
+          const at = ended ? ended.occurred_at : back, length = ended?.duration_seconds || Math.round((at - from) / 1000), allowed = breakAllowance(start), over = length - allowed;
+          const tag = old.employee_id + ':' + from;
+          // The break-start alert and the over-time alert of the same break are closed by one message.
+          silent = closedBreaks.has(tag); closedBreaks.add(tag);
+          text = '✅ ' + name(old.employee_id) + ' رجع من البريك — ' + clock(at) + '\nمدة البريك ' + fmt(length) + ' من ' + fmt(allowed) + ' مسموحة' + (over > 59 ? ' · زيادة ' + fmt(over) : '');
+        }
       } else if (old.kind === 'longCall') {
         const ended = await db.prepare("SELECT * FROM events WHERE employee_id = ? AND event_type = 'agentunlinked' AND occurred_at >= ? ORDER BY occurred_at LIMIT 1").get(old.employee_id, old.created_at);
-        if (ended) text = 'أنهى المكالمة الطويلة — مدتها ' + fmt(ended.duration_seconds || 0) + ' — ' + clock(ended.occurred_at);
-        else if (['ready','break'].includes(current) && person.since && Date.parse(person.since) > old.created_at) text = 'تغيّرت حالته بعد المكالمة إلى ' + statusLabel[current];
+        if (ended) text = '✅ ' + name(old.employee_id) + ' خلّص المكالمة — مدتها ' + fmt(ended.duration_seconds || 0) + ' — ' + clock(ended.occurred_at);
+        else if (['ready', 'break'].includes(current) && person.since && Date.parse(person.since) > old.created_at) text = '✅ ' + name(old.employee_id) + ' خلّص المكالمة — حالته دلوقتي ' + statusLabel[current];
       } else if (old.kind === 'gap') {
-        if (['ready','on_call','break'].includes(current)) text = 'رجع الرصد — الحالة الحالية: ' + statusLabel[current];
+        if (['ready', 'on_call', 'break'].includes(current)) text = '✅ ' + name(old.employee_id) + ' رجع الرصد — حالته دلوقتي ' + statusLabel[current];
       } else if (old.kind === 'breakRequest') {
         const req = await db.prepare('SELECT * FROM break_requests WHERE id = ?').get(old.key.slice(4));
-        if (req && req.status !== 'pending') text = 'طلب البريك: ' + ({ approved: 'تمت الموافقة', rejected: 'تم الرفض', expired: 'انتهت صلاحيته', cancelled: 'اتلغى' }[req.status] || req.status);
+        if (req && req.status !== 'pending') {
+          const by = req.decided_by ? ' — بواسطة ' + req.decided_by : '';
+          text = { approved: '✅ اتوافق على البريك الإضافي لـ ' + name(old.employee_id) + ' (' + req.requested_minutes + ' د)' + by, starting: '✅ اتوافق على البريك الإضافي لـ ' + name(old.employee_id) + by,
+            completed: '✅ اتوافق على البريك الإضافي لـ ' + name(old.employee_id) + by, rejected: '❌ اترفض طلب البريك الإضافي لـ ' + name(old.employee_id) + by,
+            expired: '⌛ طلب البريك الإضافي لـ ' + name(old.employee_id) + ' انتهت صلاحيته من غير رد', cancelled: '↩️ طلب البريك الإضافي لـ ' + name(old.employee_id) + ' اتلغى' }[req.status] || null;
+        }
       } else if (old.kind === 'queueNobody') {
         const snap = await app.latestLive();
         if (snap && now - snap.observed_at < 30000) {
           const waiting = JSON.parse(snap.rows).filter(r => /^(on wait|waiting)$/i.test(String(r[10]).trim())).length;
           const available = live.filter(p => p.state === 'ready').length;
-          if (!waiting || available) text = !waiting ? 'انتهى انتظار العملاء في الطابور' : 'بقى فيه ' + available + ' موظف متاح — المنتظرين ' + waiting;
+          if (!waiting || available) text = !waiting ? '✅ مفيش عملاء منتظرين دلوقتي' : '✅ بقى فيه ' + available + ' موظف متاح — المنتظرين ' + waiting;
         }
       } else if (old.kind === 'logout') {
         const returned = await db.prepare('SELECT * FROM employee_sessions WHERE employee_id = ? AND work_started_at >= ? AND id != ? ORDER BY work_started_at LIMIT 1').get(old.employee_id, old.created_at, old.key.slice(4));
-        if (returned) text = 'رجع للعمل — تحويلة ' + returned.extension + ' — ' + clock(returned.work_started_at);
+        if (returned) text = '↩️ ' + name(old.employee_id) + ' رجع للشغل — تحويلة ' + returned.extension + ' — ' + clock(returned.work_started_at);
       }
-      if (text) add('resolved:' + old.key, old.kind + ':resolved', old.employee_id, '✅ ' + (old.employee_id == null ? '' : name(old.employee_id) + ': ') + text + '\nمتابعة للتنبيه: ' + old.text.split('\n')[0]);
+      if (text) add('resolved:' + old.key, old.kind + ':resolved', old.employee_id, text, { replyTo: old.key, silent });
     }
+
+    // ---- new alerts ----
     // Breaks that started in the last 10 minutes.
     if (on('breakStart')) for (const e of await db.prepare("SELECT * FROM events WHERE event_type IN ('break_start','break_observed') AND occurred_at > ? ORDER BY occurred_at").all(now - 600000)) {
       if (await db.prepare('SELECT 1 FROM telegram_log WHERE key = ?').get('break:' + e.id)) continue;
-      const p = await app.breakPolicy(e.employee_id, now);
-      add('break:' + e.id, 'breakStart', e.employee_id, '☕ ' + name(e.employee_id) + ' بدأ بريك — تحويلة ' + e.extension + ' — ' + clock(e.occurred_at)
-        + '\nبريكات اليوم العادية: ' + Math.min(p.startsUsed, 2) + ' من 2 · المستخدم ' + fmt(p.usedSeconds) + ' من 30 د' + (e.event_type === 'break_observed' ? '\n⚠️ البريك بدأ من غير سماح من المرصد' : ''));
+      const x = extraOf(e), allowed = breakAllowance(e);
+      let detail;
+      if (e.event_type === 'break_observed') detail = '⚠️ دخل بريك في أرابيكس من غير ما يطلبه من المرصد — محسوب 15 د على الأقل';
+      else if (x.breakPolicyKind === 'approved') detail = 'البريك الإضافي اللي اتوافق عليه — مسموح ' + fmt(allowed);
+      else {
+        const p = await app.breakPolicy(e.employee_id, now);
+        const before = Math.max(0, p.usedSeconds - Math.max(0, (now - e.occurred_at) / 1000));   // regular break time used before this one
+        detail = 'البريك العادي رقم ' + Math.min(Math.max(p.startsUsed, 1), 2) + ' من 2 — مسموح ' + fmt(allowed) + (before >= 30 ? ' · استخدم قبله ' + fmt(before) + ' من 30 د' : '');
+      }
+      add('break:' + e.id, 'breakStart', e.employee_id, '☕ ' + name(e.employee_id) + ' بدأ بريك — ' + clock(e.occurred_at) + ' — تحويلة ' + e.extension + '\n' + detail);
     }
     for (const p of live) {
       if (p.state === 'break' && on('breakOver')) {
-        const perm = await db.prepare('SELECT allowed_seconds FROM break_permissions WHERE employee_id = ? AND used_at IS NOT NULL AND used_at <= ? ORDER BY used_at DESC LIMIT 1').get(p.employeeId, now);
-        const allowed = perm?.allowed_seconds || RULES.breakPeriodSeconds;
-        if (since(p) > allowed) add('over:' + p.employeeId + ':' + p.since, 'breakOver', p.employeeId, '⏰ ' + p.name + ' في بريك بقاله ' + fmt(since(p)) + ' والمسموح ' + fmt(allowed) + ' — تحويلة ' + p.extension);
+        const start = await latestBreakStart(p.employeeId, now), allowed = breakAllowance(start);
+        if (since(p) > allowed) add('over:' + p.employeeId + ':' + p.since, 'breakOver', p.employeeId, '⏰ ' + p.name + ' عدّى وقت البريك — بقاله ' + fmt(since(p)) + ' والمسموح ' + fmt(allowed) + ' (' + breakKind(start) + ') — تحويلة ' + p.extension,
+          { replyTo: start ? 'break:' + start.id : null });
       }
       if (p.state === 'on_call' && on('longCall') && since(p) > RULES.callAlertSeconds)
         add('call:' + p.employeeId + ':' + (p.callId || p.since), 'longCall', p.employeeId, '📞 مكالمة طويلة: ' + p.name + ' بقاله ' + fmt(since(p)) + (p.phone ? ' مع ' + p.phone : '') + ' — تحويلة ' + p.extension);
@@ -162,7 +192,7 @@ function setup(app) {
         add('gap:' + p.employeeId + ':' + p.since, 'gap', p.employeeId, '📡 انقطاع رصد: ' + p.name + ' مفيش إشارة من جهازه من ' + clock(Date.parse(p.since)) + ' (' + fmt(since(p)) + ') — تحويلة ' + p.extension);
     }
     if (on('breakRequest')) for (const r of await db.prepare("SELECT r.*, e.name FROM break_requests r JOIN employees e ON e.id = r.employee_id WHERE r.status = 'pending' AND r.created_at > ?").all(now - 1800000))
-      add('req:' + r.id, 'breakRequest', r.employee_id, '🙋 ' + r.name + ' طالب بريك إضافي ' + r.requested_minutes + ' دقيقة — وافق أو ارفض من صفحة الإدارة (الآن)');
+      add('req:' + r.id, 'breakRequest', r.employee_id, '🙋 ' + r.name + ' طالب بريك إضافي ' + r.requested_minutes + ' دقيقة' + (r.reason ? ' — ' + r.reason : '') + '\nالقبول أو الرفض من صفحة الإدارة');
     if (on('logout')) for (const s of await db.prepare('SELECT * FROM employee_sessions WHERE revoked_at > ? AND work_started_at IS NOT NULL').all(now - 600000)) {
       if (!KNOWN_CLOSE.has(s.revoke_reason || '') || await db.prepare('SELECT 1 FROM telegram_log WHERE key = ?').get('out:' + s.id)) continue;
       const w = dayWindow(businessDay(s.revoked_at));
@@ -192,12 +222,16 @@ function setup(app) {
       const c = await config();
       if (!c.enabled || !c.token || !c.chat_id) return 0;
       const alerts = await collect(c, now);
-      if (alerts.length) await db.batch(alerts.map(a => db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at) VALUES (?,?,?,?,?)').bind(a.key, a.kind, a.employeeId, a.text, now)));
+      if (alerts.length) await db.batch(alerts.map(a => db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, reply_to, sent_at) VALUES (?,?,?,?,?,?,?)').bind(a.key, a.kind, a.employeeId, a.text, now, a.replyTo, a.silent ? now : null)));
       for (const r of await db.prepare('SELECT * FROM telegram_log WHERE sent_at IS NULL AND tries < 5 AND created_at > ? ORDER BY id LIMIT 20').all(now - 3600000)) {
         // Claim the row before sending, so two instances never send the same alert.
         const claim = await db.prepare('UPDATE telegram_log SET sent_at = ?, tries = tries + 1 WHERE id = ? AND sent_at IS NULL').run(app.now(), r.id);
         if (!claim.changes) continue;
-        try { await call('sendMessage', { chat_id: c.chat_id, text: r.text }, c.token); await db.prepare('UPDATE telegram_log SET error = NULL WHERE id = ?').run(r.id); sent++; }
+        try {
+          const parent = r.reply_to ? await db.prepare('SELECT message_id FROM telegram_log WHERE key = ?').get(r.reply_to) : null;
+          const m = await call('sendMessage', { chat_id: c.chat_id, text: r.text, ...(parent?.message_id ? { reply_parameters: { message_id: parent.message_id, allow_sending_without_reply: true } } : {}) }, c.token);
+          await db.prepare('UPDATE telegram_log SET error = NULL, message_id = ? WHERE id = ?').run(m?.message_id ?? null, r.id); sent++;
+        }
         catch (e) { await db.prepare('UPDATE telegram_log SET sent_at = NULL, error = ? WHERE id = ?').run(String(e.message).slice(0, 300), r.id); }
       }
     } finally { busy = false; }

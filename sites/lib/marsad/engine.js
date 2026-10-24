@@ -273,18 +273,25 @@ function setup(app) {
   app.breakPolicy = async function breakPolicy(employeeId, now = app.now()) {
     const w = dayWindow(businessDay(now)), until = Math.min(now, w.operatingEnd);
     const [events, perms] = await Promise.all([
-      db.prepare(`SELECT * FROM events WHERE employee_id = ? AND event_type IN ('break_start','break_observed','break_end','break_end_unknown') AND occurred_at >= ? AND occurred_at <= ? ORDER BY occurred_at, id`).all(employeeId, w.start, until),
+      db.prepare(`SELECT * FROM events WHERE employee_id = ? AND occurred_at >= ? AND occurred_at <= ? ORDER BY occurred_at, id`).all(employeeId, w.start, until),
       db.prepare('SELECT id FROM break_permissions WHERE employee_id = ? AND request_id IS NOT NULL AND created_at >= ?').all(employeeId, w.start - 3600000)]);
     const approved = new Set(perms.map(p => p.id));
     const periods = [];
-    let open = null;
+    let open = null, lastBreakSign = null;
+    // A break ends at its recorded end, or at the first sign of work after it (available, a call, a logout),
+    // or when the next break starts: a break whose end was never recorded must not run on all day.
+    const close = at => { periods.push({ ...open, seconds: Math.max(0, Math.round((at - open.at) / 1000)) }); open = null; };
     for (const e of events) {
       if (e.event_type === 'break_start' || e.event_type === 'break_observed') {
-        if (open) continue;
+        if (open) close(lastBreakSign ?? e.occurred_at);
         let p = {}; try { p = JSON.parse(e.extra || e.payload || '{}'); } catch {}
         open = { at: e.occurred_at, estimated: e.event_type === 'break_observed', approved: p.breakPolicyKind === 'approved' || approved.has(p.breakPermissionId || p.permissionId) };
-      } else if (open) { periods.push({ ...open, seconds: Math.round((e.occurred_at - open.at) / 1000) }); open = null; }
+      } else if (open && (e.event_type === 'break_end' || e.event_type === 'break_end_unknown' || ['ready', 'on_call', 'logged_in'].includes(stateOf(e)) || KNOWN_CLOSE.has(e.event_type))) close(e.occurred_at);
+      else if (open && stateOf(e) === 'break') lastBreakSign = e.occurred_at;
+      if (open && (e.event_type === 'break_start' || e.event_type === 'break_observed')) lastBreakSign = e.occurred_at;
     }
+    // Still open: running while the connector keeps showing it, otherwise it ended 90 s after the last sign.
+    if (open && lastBreakSign != null && until - lastBreakSign > GAP_MS) close(lastBreakSign + GAP_MS);
     if (open) periods.push({ ...open, seconds: Math.round((until - open.at) / 1000), running: true });
     const regular = periods.filter(p => !p.approved).map(p => ({ ...p, seconds: p.estimated ? Math.max(p.seconds, RULES.breakPeriodSeconds) : p.seconds }));
     const used = regular.reduce((n, p) => n + p.seconds, 0), remaining = Math.max(0, RULES.breakBudgetSeconds - used), starts = regular.length;
