@@ -125,6 +125,49 @@ async function send(target, post, progress = () => {}, { bytes: chunkBytes = 150
   return total;
 }
 
+// After the switch to this server: only what is missing (see /api/import-old/backfill). post(path, body).
+async function backfill(target, post, progress = () => {}) {
+  const q = (sql, ...p) => { const s = target.prepare(sql); try { s.bind(p); const out = []; while (s.step()) out.push(s.get()); return out; } finally { s.free(); } };
+  const cols = table => target.exec('PRAGMA table_info(' + table + ')')[0].values.map(c => c[1]);
+  const { legacyThrough } = await post({ action: 'status' });
+  const cutoff = legacyThrough ? legacyThrough - 6 * 3600000 : 0;          // a margin before the last old event already here
+  const plan = [];
+  const add = (table, columns, rows) => plan.push({ table, columns, rows });
+  const plain = table => { const c = cols(table); add(table, c, q('SELECT ' + c.join(', ') + ' FROM ' + table)); };
+  plain('employees'); plain('admin_accounts');
+  const sc = cols('employee_sessions').filter(c => c !== 'id');
+  add('employee_sessions', sc, q('SELECT ' + sc.join(', ') + ' FROM employee_sessions WHERE COALESCE(last_seen, 0) >= ? OR issued_at >= ? OR COALESCE(revoked_at, 0) >= ? ORDER BY issued_at', cutoff, cutoff, cutoff));
+  for (const [table, time] of [['events', 'occurred_at'], ['shift_decisions', 'decided_at']]) {
+    const c = cols(table).filter(x => x !== 'id' && x !== 'session_id');
+    add(table, [...c, 'device'], q('SELECT ' + c.map(x => 't.' + x).join(', ') + ', s.device FROM ' + table + ' t JOIN employee_sessions s ON s.id = t.session_id WHERE t.' + time + ' >= ? ORDER BY t.' + time, cutoff));
+  }
+  const lc = cols('live_snapshots').filter(c => c !== 'id');
+  add('live_snapshots', lc, q('SELECT ' + lc.join(', ') + ' FROM live_snapshots WHERE observed_at >= ?', cutoff));
+  for (const t of ['messages', 'message_recipients', 'reviews', 'saved_reports']) plain(t);
+  const ac = cols('audit').filter(c => c !== 'id');
+  add('audit', ac, q('SELECT ' + ac.join(', ') + ' FROM audit WHERE occurred_at >= ?', cutoff));
+  const firstDay = cutoff ? new Date(cutoff - 864e5).toISOString().slice(0, 10) : '0000-00-00';
+  const days = q('SELECT id, date, imported_at, source, verified_total, expected_count, header, fingerprint FROM history_reports WHERE date >= ? ORDER BY date', firstDay);
+  const total = plan.reduce((n, p) => n + p.rows.length, 0) + days.length;
+  let done = 0;
+  for (const { table, columns, rows } of plan) {
+    // Requests stay within the server's limits: 20 sessions (two statements each), 100 sessions per events chunk.
+    const size = table === 'employee_sessions' ? 20 : Math.min(1000, 40 * Math.max(1, Math.floor(100 / columns.length)));
+    for (let i = 0; i < rows.length;) {
+      let part = rows.slice(i, i + size);
+      if (columns.includes('device')) { const at = columns.indexOf('device'), seen = new Set(); let k = 0; for (; k < part.length; k++) { seen.add(part[k][at]); if (seen.size > 100) break; } part = part.slice(0, k); }
+      await post({ action: 'rows', table, columns, rows: part.map(r => r.map(v => (v instanceof Uint8Array ? null : v))) });
+      i += part.length; done += part.length; progress(done, total);
+    }
+  }
+  for (const [id, date, imported_at, source, verified_total, expected_count, header, fingerprint] of days) {
+    const calls = q('SELECT raw FROM history_calls WHERE report_id = ? ORDER BY idx', id).map(r => r[0]);
+    await post({ action: 'history', date, report: { imported_at, source, verified_total, expected_count, header, fingerprint }, calls });
+    progress(++done, total);
+  }
+  return { sessions: plan.find(p => p.table === 'employee_sessions').rows.length, events: plan.find(p => p.table === 'events').rows.length, historyDays: days.length };
+}
+
 let sqlJs = null;
 function loadSqlJs(base) {
   sqlJs ??= new Promise((resolve, reject) => {
@@ -138,7 +181,7 @@ function loadSqlJs(base) {
 }
 
 // The whole move, as the admin page runs it.
-async function run({ file, post, say, base }) {
+async function run({ file, post, say, base, mode = 'full', postBackfill }) {
   say('جارٍ التجهيز…');
   const SQL = await loadSqlJs(base);
   let bytes = await unpack(file, say);
@@ -148,6 +191,11 @@ async function run({ file, post, say, base }) {
   const { target, report } = convert(SQL, bytes, m => console.log('[import]', m));
   bytes = null;
   try {
+    if (mode === 'backfill') {
+      const r = await backfill(target, postBackfill, (n, total) => say('جارٍ رفع الناقص: ' + n.toLocaleString('en') + ' من ' + total.toLocaleString('en') + ' (' + Math.floor(n * 100 / Math.max(1, total)) + '٪)… متقفلش الصفحة.'));
+      await postBackfill({ action: 'finish', report: r });
+      return { ...report, backfill: r };
+    }
     await post({ action: 'begin' });
     await send(target, post, (n, total) => say('جارٍ الرفع: ' + n.toLocaleString('en') + ' من ' + total.toLocaleString('en') + ' (' + Math.floor(n * 100 / total) + '٪)… متقفلش الصفحة.'));
     await post({ action: 'finish', report });
@@ -155,4 +203,4 @@ async function run({ file, post, say, base }) {
   return report;
 }
 
-export { shim, unpack, convert, send, run };
+export { shim, unpack, convert, send, backfill, run };
