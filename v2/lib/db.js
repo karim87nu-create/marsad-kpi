@@ -223,6 +223,10 @@ async function migrate(db) {
   await db.batch(SCHEMA_STATEMENTS.map(s => db.prepare(s).bind()));
   // Older local files: the events.extra column came later.
   try { await db.prepare('SELECT extra FROM events LIMIT 0').all(); } catch { await db.prepare('ALTER TABLE events ADD COLUMN extra TEXT').run(); }
+  // Telegram follow-ups are sent as replies to the alert they close.
+  try { await db.prepare('SELECT reply_to, message_id FROM telegram_log LIMIT 0').all(); } catch {
+    for (const c of ['reply_to TEXT', 'message_id INTEGER']) { try { await db.prepare('ALTER TABLE telegram_log ADD COLUMN ' + c).run(); } catch {} }
+  }
 }
 
 function d1Adapter(d1) {
