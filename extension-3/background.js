@@ -266,4 +266,18 @@ async function collectorMessage(m, sender) {
   }
   if (m.type === 'COLLECTOR_SYNC' && sender.url === page) { await collectHistory(); await collectLive(); return { ok: true }; }
 }
+// After an update Firefox stops the old version's scripts in pages that are already open, so an Arabicss tab
+// would stop reporting until it is reloaded. The new version puts its scripts back into those tabs itself
+// (the page and the agent's session are untouched; the panel picks up the same session).
+browser.runtime.onInstalled.addListener(async ({ reason }) => {
+  if (reason !== 'update') return;
+  for (const t of await browser.tabs.query({}).catch(() => [])) {
+    let u; try { u = new URL(t.url); } catch { continue; }
+    if (u.hostname !== globalThis.MARSAD.ARABICSS_HOST) continue;
+    try {
+      if (/^\/themes\/arabicssReportsInclude\//i.test(u.pathname)) await browser.tabs.executeScript(t.id, { file: 'report-bridge.js', allFrames: true });
+      else { await browser.tabs.insertCSS(t.id, { file: 'panel.css' }).catch(() => {}); await browser.tabs.executeScript(t.id, { file: 'config.js' }); await browser.tabs.executeScript(t.id, { file: 'agent.js' }); }
+    } catch {}
+  }
+});
 browser.browserAction?.onClicked.addListener(() => browser.tabs.create({ url: browser.runtime.getURL('collector.html') }));
