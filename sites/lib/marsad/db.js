@@ -212,6 +212,7 @@ CREATE TABLE IF NOT EXISTS telegram_log (id INTEGER PRIMARY KEY AUTOINCREMENT, k
 CREATE INDEX IF NOT EXISTS telegram_log_time ON telegram_log(created_at);
 CREATE INDEX IF NOT EXISTS events_employee_time ON events(employee_id, occurred_at);
 CREATE TABLE IF NOT EXISTS call_assignments (call_key TEXT PRIMARY KEY, employee_id INTEGER NOT NULL, decided_at INTEGER NOT NULL, decided_by TEXT, note TEXT);
+CREATE TABLE IF NOT EXISTS orders_days (day TEXT PRIMARY KEY, data TEXT NOT NULL, received_at INTEGER NOT NULL);
 `;
 
 // Statements one by one (D1 runs one statement per call); comments removed.
@@ -227,6 +228,11 @@ async function migrate(db) {
   // Telegram follow-ups are sent as replies to the alert they close.
   try { await db.prepare('SELECT reply_to, message_id FROM telegram_log LIMIT 0').all(); } catch {
     for (const c of ['reply_to TEXT', 'message_id INTEGER']) { try { await db.prepare('ALTER TABLE telegram_log ADD COLUMN ' + c).run(); } catch {} }
+  }
+  // Two groups: the call center's (default) and the branch managers' (target = 'branches').
+  try { await db.prepare('SELECT target FROM telegram_log LIMIT 0').all(); } catch { try { await db.prepare('ALTER TABLE telegram_log ADD COLUMN target TEXT').run(); } catch {} }
+  try { await db.prepare('SELECT branch_chat_id, branch_chat_title FROM telegram_config LIMIT 0').all(); } catch {
+    for (const c of ['branch_chat_id TEXT', 'branch_chat_title TEXT']) { try { await db.prepare('ALTER TABLE telegram_config ADD COLUMN ' + c).run(); } catch {} }
   }
 }
 

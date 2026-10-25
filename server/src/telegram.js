@@ -22,6 +22,11 @@ const RULE_LIST = {
   logout: 'خروج موظف: من التحويلة / من أرابيكس / قفل المتصفح (مع ملخص يومه)',
   gap: 'انقطاع رصد أكتر من 3 دقايق أثناء الشيفت',
   source: 'وقف أو رجوع قراءة الانتظار المباشر',
+  ordersLate: 'الأوردرات: أوردر ماخرجش من الفرع بعد 30 / 45 دقيقة',
+  ordersCancel: 'الأوردرات: إلغاء أوردر',
+  ordersDiscount: 'الأوردرات: خصم كبير على أوردر',
+  ordersEntry: 'الأوردرات: خطأ إدخال محتمل أو أوردر متكرر',
+  ordersStale: 'الأوردرات: مرصد الأوردرات واقف أو رجع',
 };
 const RECOVERY_LABELS = { breakStart: 'رجع من البريك', breakOver: 'رجع من البريك', longCall: 'خلّص المكالمة الطويلة', gap: 'رجع الرصد', breakRequest: 'الرد على طلب البريك', queueNobody: 'انتهى الانتظار', logout: 'رجع للشغل',
   waitSla: 'العميل خرج من الانتظار: اترد عليه أو لا', waitConfirm: 'تأكيد سجل أرابيكس', source: 'رجعت قراءة الانتظار', notBound: 'دخل التحويلة' };
@@ -67,9 +72,10 @@ function setup(app) {
     if (ctx.query.log === '1') {
       const w = dayWindow(ctx.query.date || businessDay(ctx.now));
       return { log: (await db.prepare('SELECT * FROM telegram_log WHERE created_at >= ? AND created_at < ? ORDER BY created_at DESC LIMIT 500').all(w.start, w.end))
-        .map(r => ({ kind: r.kind, label: RULE_LIST[r.kind] || RECOVERY_LABELS[r.kind.replace(':resolved', '')] || r.kind, text: r.text, createdAt: iso(r.created_at), sentAt: iso(r.sent_at), error: r.sent_at ? null : r.error })) };
+        .map(r => ({ kind: r.kind, group: r.target === 'branches' ? 'الفروع' : 'الكول سنتر', label: RULE_LIST[r.kind] || RECOVERY_LABELS[r.kind.replace(':resolved', '')] || r.kind, text: r.text, createdAt: iso(r.created_at), sentAt: iso(r.sent_at), error: r.sent_at ? null : r.error })) };
     }
-    return { configured: !!c.token, botName: c.bot_name || null, chat: c.chat_id ? { id: c.chat_id, title: c.chat_title } : null, enabled: !!c.enabled,
+    return { configured: !!c.token, botName: c.bot_name || null, chat: c.chat_id ? { id: c.chat_id, title: c.chat_title } : null,
+      branchChat: c.branch_chat_id ? { id: c.branch_chat_id, title: c.branch_chat_title } : null, enabled: !!c.enabled,
       rules: Object.entries(RULE_LIST).map(([key, label]) => ({ key, label, on: !!c.rules[key] })) };
   });
   app.route('POST', '/api/telegram', async ctx => {
@@ -92,8 +98,10 @@ function setup(app) {
     if (b.action === 'chat') {
       const chatId = String(b.chatId || '');
       if (!/^-?\d+$/.test(chatId)) fail(400, 'اختار الجروب');
-      try { await call('sendMessage', { chat_id: chatId, text: '✅ مرصد الأداء اتربط بالجروب ده. التنبيهات هتوصل هنا.' }); } catch (e) { fail(400, 'مقدرتش أبعت للجروب: ' + e.message); }
-      await save({ chat_id: chatId, chat_title: String(b.title || '').slice(0, 100), enabled: 1 });
+      const branches = b.target === 'branches';
+      try { await call('sendMessage', { chat_id: chatId, text: branches ? '✅ مرصد الدهان اتربط بالجروب ده كجروب إدارات الفروع: تأخير خروج الأوردرات ومشاكل الفروع هتوصل هنا.' : '✅ مرصد الدهان اتربط بالجروب ده. تنبيهات الكول سنتر هتوصل هنا.' }); } catch (e) { fail(400, 'مقدرتش أبعت للجروب: ' + e.message); }
+      if (branches) await save({ branch_chat_id: chatId, branch_chat_title: String(b.title || '').slice(0, 100) });
+      else await save({ chat_id: chatId, chat_title: String(b.title || '').slice(0, 100), enabled: 1 });
       await app.audit('telegram_group_linked', null, { actor: who.name, chat: b.title });
       return { ok: true };
     }
@@ -103,7 +111,12 @@ function setup(app) {
       await app.audit('telegram_settings', null, { actor: who.name, enabled: !!b.enabled, rules });
       return { ok: true };
     }
-    if (b.action === 'test') { await call('sendMessage', { chat_id: (await config()).chat_id, text: '🔔 رسالة تجربة من مرصد الأداء — ' + clock(ctx.now) }); return { ok: true }; }
+    if (b.action === 'test') {
+      const c = await config(), chat = b.target === 'branches' ? c.branch_chat_id : c.chat_id;
+      if (!chat) fail(400, 'اربط الجروب الأول');
+      await call('sendMessage', { chat_id: chat, text: '🔔 رسالة تجربة من مرصد الدهان — ' + clock(ctx.now) }); return { ok: true };
+    }
+    if (b.action === 'unlinkBranches') { await save({ branch_chat_id: null, branch_chat_title: null }); return { ok: true }; }
     fail(400, 'invalid_action');
   });
 
@@ -386,7 +399,8 @@ function setup(app) {
         if (!claim.changes) continue;
         try {
           const parent = r.reply_to ? await db.prepare('SELECT message_id FROM telegram_log WHERE key = ?').get(r.reply_to) : null;
-          const m = await call('sendMessage', { chat_id: c.chat_id, text: r.text, ...(parent?.message_id ? { reply_parameters: { message_id: parent.message_id, allow_sending_without_reply: true } } : {}) }, c.token);
+          // Branch alerts go to the branch managers' group; until that group is linked, to the main group.
+          const m = await call('sendMessage', { chat_id: r.target === 'branches' && c.branch_chat_id ? c.branch_chat_id : c.chat_id, text: r.text, ...(parent?.message_id ? { reply_parameters: { message_id: parent.message_id, allow_sending_without_reply: true } } : {}) }, c.token);
           await db.prepare('UPDATE telegram_log SET error = NULL, message_id = ? WHERE id = ?').run(m?.message_id ?? null, r.id); sent++;
         }
         catch (e) { await db.prepare('UPDATE telegram_log SET sent_at = NULL, error = ? WHERE id = ?').run(String(e.message).slice(0, 300), r.id); }
