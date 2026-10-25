@@ -5,7 +5,7 @@ import { outKind } from './attendance-rules.js';
 import * as A from './arabicss.js';
 import { sha256Bytes, randomBytes, b64, fromB64 } from './security.js';
 
-const TICK_MS = 5000, WAIT_ALERT_S = 7;
+const TICK_MS = 5000, WAIT_ALERT_S = 7, LATE_ANSWER_S = 10;   // a customer answered after more than 10 s also gets the team's state while they waited
 
 const RULE_LIST = {
   waitSla: 'عميل عدّى 7 ثواني انتظار',
@@ -150,6 +150,21 @@ function setup(app) {
       get: async k => Number((await db.prepare('SELECT value FROM settings WHERE key = ?').get('tg_gone:' + k))?.value) || null,
       set: (k, v) => db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run('tg_gone:' + k, String(v)),
     };
+    // How the team stood while one customer waited: who was available during the wait, and everyone's state when they came in.
+    const STATE_AR = { ready: 'متاح', on_call: 'في مكالمة', break: 'بريك', unknown: 'انقطاع رصد', disconnected: 'انقطع', out_extension: 'برّه التحويلة', out_arabicss: 'برّه أرابيكس', out_browser: 'قافل المتصفح', logged_in: 'لسه مدخلش التحويلة', not_started: 'لسه مبدأش' };
+    async function teamDuring(entry, exit) {
+      const list = await app.waitContext(entry, Math.max(exit, entry + 1000), now).catch(() => null);
+      if (!list) return '';
+      const at = st => list.filter(e => e.atEntry === st), ready = list.filter(e => e.readyDuringWait);
+      const who = (l, n = 6) => l.slice(0, n).map(e => e.name + (e.extension ? ' (' + e.extension + ')' : '')).join('، ') + (l.length > n ? ' +' + (l.length - n) : '');
+      const out = list.filter(e => !['ready', 'on_call', 'break'].includes(e.atEntry));
+      return '\n\n📊 حالة التشغيل وقت انتظاره (' + clock(entry) + ' ← ' + clock(exit) + '):'
+        + '\n' + (ready.length ? '🟢 كانوا متاحين أثناء انتظاره: ' + who(ready) : '⚪ مكانش فيه حد متاح طول انتظاره حسب الرصد')
+        + '\n👥 وقت دخوله: متاح ' + at('ready').length + ' · في مكالمة ' + at('on_call').length + ' · بريك ' + at('break').length + ' · مش شغالين ' + out.length
+        + (at('on_call').length ? '\n📞 في مكالمة: ' + who(at('on_call')) : '')
+        + (at('break').length ? '\n☕ في بريك: ' + who(at('break')) : '')
+        + (out.length ? '\n⚠️ مش شغالين: ' + out.slice(0, 6).map(e => e.name + ' (' + (STATE_AR[e.atEntry] || e.atEntry) + ')').join('، ') + (out.length > 6 ? ' +' + (out.length - 6) : '') : '');
+    }
     // The last time the caller was seen waiting in the stored live snapshots, and the wait shown then.
     async function lastSeenWaiting(phone, from) {
       for (const sn of await db.prepare('SELECT observed_at, rows FROM live_snapshots WHERE observed_at >= ? ORDER BY observed_at DESC LIMIT 200').all(from)) {
@@ -212,7 +227,8 @@ function setup(app) {
           .then(list => list.find(e => samePhone(e.phone, phone)));
         if (linked) {
           const waited = Math.max(0, Math.round((linked.occurred_at - entry) / 1000));
-          text = '✅ العميل ' + mask(phone) + ' اترد عليه بعد ' + fmt(waited) + ' انتظار — رد عليه ' + name(linked.employee_id) + ' (تحويلة ' + linked.extension + ') — ' + clock(linked.occurred_at);
+          text = '✅ العميل ' + mask(phone) + ' اترد عليه بعد ' + fmt(waited) + ' انتظار — رد عليه ' + name(linked.employee_id) + ' (تحويلة ' + linked.extension + ') — ' + clock(linked.occurred_at)
+            + (waited > LATE_ANSWER_S ? await teamDuring(entry, linked.occurred_at) : '');
         } else if (snapFresh && !stillWaiting) {
           const talking = JSON.parse(snap.rows).find(r => isTalking(r) && samePhone(r[9], phone));
           let first = await gone.get(old.key);
@@ -221,7 +237,8 @@ function setup(app) {
             // Answered in Arabicss by someone the monitor has no event for (not signed in, or the event is late).
             const ext = extOf(talking[2]), emp = await onExtension(ext, now), seen = await lastSeenWaiting(phone, entry);
             const waited = seen ? Math.round((seen.at - entry) / 1000 + (first - seen.at) / 2000) : Math.round((first - entry) / 1000);
-            text = '✅ العميل ' + mask(phone) + ' اترد عليه بعد حوالي ' + fmt(waited) + ' انتظار — ' + (emp ? 'رد عليه ' + name(emp.employee_id) + ' (تحويلة ' + ext + ')' : ext ? 'رد عليه تحويلة ' + ext + ' (مش مسجلة في المرصد وقتها)' : 'اللي رد مش ظاهر في المرصد') + ' — ' + clock(first);
+            text = '✅ العميل ' + mask(phone) + ' اترد عليه بعد حوالي ' + fmt(waited) + ' انتظار — ' + (emp ? 'رد عليه ' + name(emp.employee_id) + ' (تحويلة ' + ext + ')' : ext ? 'رد عليه تحويلة ' + ext + ' (مش مسجلة في المرصد وقتها)' : 'اللي رد مش ظاهر في المرصد') + ' — ' + clock(first)
+              + (waited > LATE_ANSWER_S ? await teamDuring(entry, entry + waited * 1000) : '');
           } else if (now - first >= 20000) {
             // Gone from the queue, no one picked it up for 20 s: most likely the caller hung up.
             const seen = await lastSeenWaiting(phone, entry);
@@ -229,7 +246,8 @@ function setup(app) {
             const left = seen ? seen.at : first;
             text = '🔴 العميل ' + mask(phone) + ' خرج من الانتظار من غير ما حد يرد عليه — انتظر حوالي ' + fmt(waited) + ' وخرج ' + clock(left)
               + '\nمحدش من المسجلين في المرصد استلم المكالمة، ومش ظاهرة كمكالمة شغالة في أرابيكس، فغالبًا قفل الخط.'
-              + '\nهتتأكد من سجل أرابيكس: لو اتسجلت فائتة هتوصل «مكالمة فائتة» ردًا على الرسالة دي.';
+              + '\nهتتأكد من سجل أرابيكس: لو اتسجلت فائتة هتوصل «مكالمة فائتة» ردًا على الرسالة دي.'
+              + await teamDuring(entry, left);
           }
         }
         if (text) await db.prepare('DELETE FROM settings WHERE key = ?').run('tg_gone:' + old.key);

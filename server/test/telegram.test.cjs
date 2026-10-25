@@ -105,6 +105,7 @@ test('telegram: waiting customers, missed calls with who was available, and how 
     const e = await t.employee(admin);
     const s = await t.session('1234');
     await t.event(s.token, 'heartbeat', { state: 'ready' });
+    t.advance(10000); await t.event(s.token, 'heartbeat', { state: 'ready' });
     // A caller waiting: no early warning, one alert once the wait passes 7 s.
     const row = wait => ['7671', '', '', '', '', '', '', '', '0:00:' + String(wait).padStart(2, '0'), '01001234567', 'On Wait'];
     const real = t.app.latestLive;
@@ -126,6 +127,9 @@ test('telegram: waiting customers, missed calls with who was available, and how 
     await t.app.telegramTick();
     assert.match(sent.at(-1), /خرج من الانتظار من غير ما حد يرد عليه/);
     assert.match(sent.at(-1), /انتظر حوالي/);
+    assert.match(sent.at(-1), /📊 حالة التشغيل وقت انتظاره/);
+    assert.match(sent.at(-1), /كانوا متاحين أثناء انتظاره: Ahmed \(101\)/);
+    assert.match(sent.at(-1), /وقت دخوله: متاح 1 · في مكالمة 0 · بريك 0/);
     // A second caller is answered by a signed-in employee: the reply says after how long and who.
     const row2 = wait => ['7671', '', '', '', '', '', '', '', '0:00:' + String(wait).padStart(2, '0'), '01009998887', 'On Wait'];
     t.advance(60000);
@@ -137,6 +141,7 @@ test('telegram: waiting customers, missed calls with who was available, and how 
     t.app.latestLive = async () => ({ observed_at: t.clock.now, rows: '[]' });
     await t.app.telegramTick();
     assert.match(sent.at(-1), /••••8887 اترد عليه بعد 0 د 15 ث انتظار — رد عليه Ahmed \(تحويلة 101\)/);
+    assert.match(sent.at(-1), /📊 حالة التشغيل وقت انتظاره/, 'answered after more than 10 s: the team while they waited');
     await t.event(s.token, 'agentunlinked', { callId: '901', state: 'ready', durationSeconds: 30 });
     // A third caller is answered in Arabicss by an extension nobody signed in on: the live report shows the call.
     const row3 = (wait, status, agent = '') => ['7671', '', agent, '', '', '', '', '', '0:00:' + String(wait).padStart(2, '0'), '01007776665', status];

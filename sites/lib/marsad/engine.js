@@ -303,6 +303,18 @@ function setup(app) {
       enteredAt: iso(entry), leftAt: iso(exit) }, employees, readyCount: employees.filter(e => e.readyDuringWait).length };
   };
 
+  // The team while one customer waited (from entering the queue to leaving it): each worker's state when the customer
+  // came in, and who was available at any moment of the wait. Used by the Telegram follow-ups.
+  app.waitContext = async function waitContext(entry, exit, now = app.now()) {
+    const d = await day(businessDay(entry), now), people = await names();
+    const ids = [...new Set(d.sessions.filter(s => s.workStartedAt != null).map(s => s.employeeId))];
+    return ids.map(id => {
+      const a = stateAt(d.states, d.sessions, id, entry);
+      const readyDuring = d.states.some(s => s.employeeId === id && s.state === 'ready' && Date.parse(s.startedAt) < exit && Date.parse(s.endedAt) > entry);
+      return { employeeId: id, name: people.get(id)?.name || '', atEntry: a.state, extension: a.extension, readyDuringWait: readyDuring };
+    }).filter(e => e.readyDuringWait || !['not_started', 'shift_ended'].includes(e.atEntry)).sort((x, y) => x.name.localeCompare(y.name, 'ar'));
+  };
+
   // Right now: each active employee's state, how long, and the current call.
   // The last 4 hours of a session's events are enough to tell its current state (the admin page asks every second).
   const LIVE_WINDOW_MS = 4 * 3600000;
