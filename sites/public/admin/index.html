@@ -4,7 +4,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>مرصد الدهان — الإدارة</title>
 <link rel="preload" href="fonts/plex-arabic-arabic-400.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="style.css?v=9">
+<link rel="stylesheet" href="style.css?v=10">
 </head>
 <body>
 <!-- Icons: drawn in one stroke style (after Lucide, ISC license). -->
@@ -252,6 +252,13 @@
         <p id="employeeMessage" class="muted" role="status"></p>
         <div id="employeesTable"></div>
       </article>
+      <article class="panel" id="desksPanel"><h2>طلبات والموقع وأسماء Apex</h2>
+        <p class="muted">كل موظف بيدخل على شاشة طلبات أو الموقع بباسورد خاص بالقسم ده. وقدام كل موظف اختار اسمه في Apex، عشان الأوردرات اللي ضربها تتحسب باسمه في كل التقارير.</p>
+        <div id="desksTable"></div>
+        <p id="desksNote" class="muted" role="status"></p>
+        <h3>مين داخل على طلبات والموقع</h3><div id="deskSessions"></div>
+        <h3>أسماء في Apex لسه مش متربطة بموظف</h3><div id="apexLeft"></div>
+      </article>
       <article class="panel"><h2>رسالة للموظفين</h2>
         <form id="messageForm" class="stack">
           <div class="inline"><select name="to" aria-label="مين يستلم الرسالة"><option value="all">كل الموظفين النشطين</option></select>
@@ -307,7 +314,7 @@
 <script src="xlsx.js?v=2"></script>
 <script src="charts.js?v=4"></script>
 <script src="now-arc.js?v=3"></script>
-<script src="orders.js?v=1"></script>
-<script src="app.js?v=18"></script>
+<script src="orders.js?v=2"></script>
+<script src="app.js?v=19"></script>
 </body>
 </html>

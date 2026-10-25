@@ -13,6 +13,7 @@ import * as importRows from './import-rows.js';
 import * as ops from './ops.js';
 import * as range from './range.js';
 import * as orders from './orders.js';
+import * as desks from './desks.js';
 
-const MODULES = [admin, employees, sessions, dashboard, breaks, messages, shifts, history, engine, telegram, importRows, ops, range, orders];
+const MODULES = [admin, employees, sessions, dashboard, breaks, messages, shifts, history, engine, telegram, importRows, ops, range, orders, desks];
 export { MODULES };

@@ -29,6 +29,20 @@ window.MarsadOrders = function MarsadOrders(ctx) {
     if (cache.size > 40) cache.delete(cache.keys().next().value);
     return value;
   }
+  // Apex user names shown as the employee's Marsad name (الإدارة ← توحيد الأسماء); staff rows of one person merge.
+  function named(d, map) {
+    const n = x => (x && map && map[x]) || x;
+    const staff = new Map();
+    for (const x of d.staff || []) {
+      const k = n(x.name), y = staff.get(k);
+      if (!y) { staff.set(k, { ...x, name: k, kinds: { ...(x.kinds || {}) } }); continue; }
+      for (const f of ['orders', 'sales', 'discounts', 'issues', 'cancels']) y[f] = (y[f] || 0) + (x[f] || 0);
+      for (const [kk, v] of Object.entries(x.kinds || {})) y.kinds[kk] = (y.kinds[kk] || 0) + v;
+      if (x.first && (!y.first || x.first < y.first)) y.first = x.first; if (x.last && (!y.last || x.last > y.last)) y.last = x.last;
+    }
+    return { ...d, staff: [...staff.values()], open: (d.open || []).map(o => ({ ...o, user: n(o.user) })), issues: (d.issues || []).map(o => ({ ...o, user: n(o.user) })),
+      cancels: (d.cancels || []).map(o => ({ ...o, user: n(o.user), by: n(o.by), pilot: n(o.pilot) })), lateOut: d.lateOut && d.lateOut.map(o => ({ ...o, user: n(o.user), pilot: n(o.pilot) })) };
+  }
   const dayList = (from, to) => { const out = []; for (let t = Date.parse(from + 'T12:00:00Z'); t <= Date.parse(to + 'T12:00:00Z'); t += 864e5) out.push(new Date(t).toISOString().slice(0, 10)); return out; };
   // The selected period, every day merged (sums; average leave time weighted by the orders that left).
   async function period(force = false) {
@@ -39,7 +53,7 @@ window.MarsadOrders = function MarsadOrders(ctx) {
       branches: new Map(), staff: new Map(), cancels: [], issues: [], lateOut: [], hours: new Map(), hasLateOut: false, settings: { late: 30, veryLate: 45 } };
     let outSum = 0;
     got.forEach((g, i) => {
-      const d = g.data, day = days[i];
+      const d = g.data ? named(g.data, g.apexNames) : null, day = days[i];
       if (!d) { m.missing.push(day); return; }
       if (!m.receivedAt || g.receivedAt > m.receivedAt) m.receivedAt = g.receivedAt;
       if (d.settings) m.settings = d.settings;
@@ -202,7 +216,7 @@ window.MarsadOrders = function MarsadOrders(ctx) {
 
   function drawBoard() {
     if (!B.root) skeleton();
-    const d = B.live, data = d?.data, s = data?.settings || { late: 30, veryLate: 45 };
+    const d = B.live, data = d?.data && named(d.data, d.apexNames), s = data?.settings || { late: 30, veryLate: 45 };
     if (!d || !d.linked || !data) {
       B.board.replaceChildren(h('div', { className: 'ob-empty' }, h('strong', { textContent: !d ? 'جارٍ التحميل…' : !d.linked ? 'مرصد الأوردرات مش متربط لسه' : 'لسه مفيش بيانات من جهاز الكاشير' }),
         d && h('p', { className: 'muted', textContent: !d.linked ? 'من «الإدارة» دوس «طلّع مفتاح مرصد الأوردرات»، وشغّل setup.bat على جهاز الكاشير والصق المفتاح.' : 'أول ما السكريبت على جهاز الكاشير يشتغل، الأوردرات اللي لسه ماخرجتش هتظهر هنا.' })));

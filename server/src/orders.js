@@ -77,7 +77,7 @@ function setup(app) {
     const last = Number(await setting('orders_last_push')) || null;
     let data = null; try { data = row ? JSON.parse(row.data) : null; } catch {}
     return { day, data, receivedAt: iso(row?.received_at), lastPush: iso(last), ageSeconds: last ? Math.round((ctx.now - last) / 1000) : null,
-      linked: !!await setting('orders_token_hash'), alerts, serverNow: iso(ctx.now) };
+      linked: !!await setting('orders_token_hash'), alerts, apexNames: app.apexNameMap ? await app.apexNameMap() : {}, serverNow: iso(ctx.now) };
   });
 
   // ---- the monitor stopped (someone closed it, the PC is off, the network is down) ----

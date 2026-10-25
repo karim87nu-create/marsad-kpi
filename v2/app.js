@@ -593,6 +593,7 @@
     if (isAdmin()) api('/api/import-old').then(r => { $('importPanel').hidden = !r.available && !r.backfill; $('importLast').textContent = r.lastImportAt ? 'آخر نقل: ' + new Date(r.lastImportAt).toLocaleString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo' }) : ''; }).catch(() => {});
     if (isAdmin()) renderTelegram().catch(e => say('tgNote', e.message));
     OR.renderKey(isAdmin()).catch(e => say('ordersKeyNote', e.message));
+    renderDesks().catch(e => say('desksNote', e.message));
     for (const f of ['addEmployee', 'addAdmin', 'messageForm']) $(f).hidden = f === 'messageForm' ? !canWrite() : !isAdmin();
     $('linkCollector').hidden = !canWrite();
   }
@@ -635,6 +636,35 @@
       renderManage();
     } catch (e) { say('importNote', (e.message || 'تعذر النقل') + ' — تقدر تعيد المحاولة بنفس الملف، اللي اتنقل مش هيتكرر.'); } finally { $('importButton').disabled = false; }
   };
+
+  // ---------- طلبات والموقع: باسورد لكل قسم، ومين داخل، وأسماء Apex ----------
+  const norm = x => String(x || '').toLowerCase().replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/[^\p{L}\p{N} ]/gu, ' ').trim();
+  async function renderDesks() {
+    const d = await api('/api/desks'), admin = isAdmin();
+    const has = (id, desk) => d.pins.some(p => p.employeeId === id && p.desk === desk);
+    const apexOf = id => d.apexNames.filter(a => a.employeeId === id).map(a => a.apexName);
+    const taken = new Set(d.apexNames.map(a => a.apexName));
+    const pinBtn = (e, desk) => !admin ? pill(has(e.id, desk) ? 'فيه باسورد' : '—', has(e.id, desk) ? 'ok' : '') : h('span', { className: 'inline' }, has(e.id, desk) ? pill('✓', 'ok') : null,
+      btn(has(e.id, desk) ? 'تغيير' : 'باسورد ' + d.desks[desk], async () => { const pin = await askPasswords('باسورد ' + d.desks[desk] + ' لـ ' + e.name); if (pin == null) return;
+        try { await api('/api/desks/pin', { method: 'PATCH', body: { employeeId: e.id, desk, pin, pinConfirmation: pin } }); say('desksNote', 'اتحفظ باسورد ' + d.desks[desk] + ' لـ ' + e.name); renderDesks(); } catch (x) { say('desksNote', ERR[x.message] || x.message); } }));
+    const apexSel = e => {
+      const mine = apexOf(e.id), first = norm(e.name).split(' ')[0];
+      if (!admin) return mine.join('، ') || '—';
+      const sel = h('select', { ariaLabel: 'اسمه في Apex' }, h('option', { value: '', textContent: mine.length ? '—' : 'اختار…' }));
+      // Suggested: Apex names not tied to anyone that start like this employee's name.
+      const free = d.apexSeen.filter(n => !taken.has(n)), sug = free.filter(n => first && norm(n).split(' ')[0] === first);
+      if (sug.length) sel.append(h('optgroup', { label: 'مقترح' }, ...sug.map(n => h('option', { value: n, textContent: n }))));
+      sel.append(h('optgroup', { label: 'كل الأسماء' }, ...free.filter(n => !sug.includes(n)).map(n => h('option', { value: n, textContent: n }))));
+      sel.onchange = async () => { if (!sel.value) return; try { await api('/api/apex-names', { method: 'PUT', body: { apexName: sel.value, employeeId: e.id } }); renderDesks(); } catch (x) { say('desksNote', x.message); } };
+      return h('span', { className: 'inline' }, ...mine.map(n => h('span', { className: 'pill ok chip' }, n + ' ', btn('×', async () => { await api('/api/apex-names', { method: 'PUT', body: { apexName: n, employeeId: null } }); renderDesks(); }, 'ghost small icon'))), sel);
+    };
+    table('desksTable', [{ title: 'الموظف', get: e => e.name }, { title: 'طلبات', get: e => has(e.id, 'talabat') ? 1 : 0, show: e => pinBtn(e, 'talabat') }, { title: 'الموقع', get: e => has(e.id, 'site') ? 1 : 0, show: e => pinBtn(e, 'site') },
+      { title: 'اسمه في Apex', get: e => apexOf(e.id).join('، '), show: apexSel }], state.employees.filter(e => e.active));
+    table('deskSessions', [{ title: 'الموظف', get: x => x.name }, { title: 'القسم', get: x => x.deskName }, { title: 'المكان', get: x => x.place || '—' }, { title: 'دخل', get: x => x.startedAt, show: x => clock(x.startedAt), type: 'datetime' },
+      { title: 'الحالة', get: x => x.live ? 'شغال' : x.endedAt ? 'خرج' : 'انقطع', show: x => pill(x.live ? 'شغال الآن' : x.endedAt ? 'خرج ' + hmNow(x.endedAt) : 'انقطع من ' + hmNow(x.lastSeen), x.live ? 'ok' : '') }], d.sessions, { empty: 'محدش دخل على طلبات أو الموقع في آخر 18 ساعة', limit: 100 });
+    const left = d.apexSeen.filter(n => !taken.has(n));
+    $('apexLeft').replaceChildren(left.length ? h('div', { className: 'inline' }, ...left.map(n => pill(n))) : h('p', { className: 'muted', textContent: d.apexSeen.length ? 'كل الأسماء متربطة' : 'الأسماء هتظهر هنا أول ما مرصد الأوردرات يبعت من جهاز الكاشير' }));
+  }
 
   // ---------- تليجرام ----------
   async function renderTelegram() {
