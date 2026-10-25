@@ -270,3 +270,8 @@ th[aria-sort=ascending]::after{border-bottom:6px solid var(--accent)}th[aria-sor
 }
 @media (prefers-reduced-motion:reduce){.arc *,.arc.alarm .arc-room{animation:none!important;transition:none!important}}
 .arc-mark:hover{background:transparent}
+.arc-out{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:-4px}
+.arc-out-t{font-size:13px;color:var(--muted);font-weight:600;margin-inline-end:4px}
+.arc-chip{display:inline-flex;align-items:baseline;gap:6px;padding:4px 12px;border-radius:var(--r-pill);border:1px dashed #2a3a58;background:#0a1222;font-size:13px;color:var(--muted)}
+.arc-chip strong{color:#c9d3e4;font-weight:600}
+.arc-room:not(.two) .arc-guides path:last-child{display:none}

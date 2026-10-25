@@ -41,7 +41,7 @@ window.MarsadArc = function MarsadArc(ctx) {
   const queueBox = el('div', 'arc-queue'), queueTitle = el('span', 'arc-qt', 'الطابور'), queueList = el('div', 'arc-qlist');
   queueBox.append(queueTitle, queueList);
   room.append(guides, beams, seatsBox, queueBox);
-  const away = el('p', 'arc-away muted');
+  const away = el('p', 'arc-away muted'), outRow = el('div', 'arc-out');
 
   const pulse = el('section', 'arc-pulse'); pulse.setAttribute('aria-label', 'النبض');
   const pHead = el('div', 'arc-phead');
@@ -57,7 +57,7 @@ window.MarsadArc = function MarsadArc(ctx) {
   const axis = el('div', 'arc-axis');
   const detail = el('div', 'arc-detail'); detail.hidden = true; detail.setAttribute('aria-live', 'polite');
   pulse.append(pHead, track, axis, detail);
-  root.append(tools, head, room, away, pulse);
+  root.append(tools, head, room, outRow, away, pulse);
 
   // ---------- seat order (shared) ----------
   api('/api/now-layout').then(d => { S.order = (d.order || []).map(String); draw(); }).catch(() => {});
@@ -80,9 +80,9 @@ window.MarsadArc = function MarsadArc(ctx) {
       return P.people.map(p => {
         const lp = live.find(x => x.employeeId === p.employeeId) || {};
         return { id: String(p.employeeId), name: p.name || lp.name || '', ext: lp.extension || '', kind: CODE[p.s[i]] || 'none', past: true };
-      }).filter(p => p.kind !== 'none' || live.some(x => x.employeeId == p.id && KIND[x.state]));
+      }).filter(p => ['ready', 'call', 'break', 'gap'].includes(p.kind));
     }
-    return live.filter(p => KIND[p.state]).map(p => ({ id: String(p.employeeId), name: p.name, ext: p.extension || '', kind: KIND[p.state],
+    return live.filter(p => KIND[p.state] && KIND[p.state] !== 'out').map(p => ({ id: String(p.employeeId), name: p.name, ext: p.extension || '', kind: KIND[p.state],
       elapsed: p.since ? (S.now - Date.parse(p.since)) / 1000 : null, since: p.since, queue: p.queue, phone: p.phone, outKind: p.outKind, lastEvidence: p.lastEvidence }));
   }
   function ordered(list) {
@@ -213,6 +213,12 @@ window.MarsadArc = function MarsadArc(ctx) {
     if (!past && late && cnt.ready && !S.arranging) list.forEach((p, i) => { if (p.kind === 'ready') beams.append(svg('line', { x1: 500, y1: 470, x2: (sl[i].x * 10).toFixed(1), y2: (sl[i].y * 5.2 + 52).toFixed(1), class: 'beam' })); });
 
     // Off the arc: not working today.
+    // Left the extension today: one small chip each, under the arc.
+    const outs = (S.live.employees || []).filter(p => KIND[p.state] === 'out').sort((a, b) => Date.parse(b.since || 0) - Date.parse(a.since || 0));
+    outRow.replaceChildren(...(outs.length ? [el('span', 'arc-out-t', 'خرجوا (' + outs.length + ')')] : []), ...outs.map(p => {
+      const c = el('span', 'arc-chip'); c.append(el('strong', '', p.name), el('span', '', (p.outKind ? OUT[p.outKind] : 'خرج') + (p.since ? ' · ' + hm(p.since) : '')));
+      c.title = p.name + (p.extension ? ' · تحويلة ' + p.extension : ''); return c; }));
+    outRow.hidden = !outs.length || past;
     const offToday = (S.live.employees || []).filter(p => !KIND[p.state]);
     away.textContent = offToday.length ? 'مش في الشيفت دلوقتي: ' + offToday.map(p => first(p.name)).join('، ') : '';
     away.hidden = !offToday.length || past;
