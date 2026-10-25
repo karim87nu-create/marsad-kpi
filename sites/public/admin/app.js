@@ -402,30 +402,24 @@
   }
   async function renderCalls() {
     const d = await dayData(), list = filteredCalls(d), done = list.filter(c => c.complete);
-    const a = d.history.attribution;
-    $('callsNote').textContent = list.length + ' مكالمة · ' + done.length + ' مكتملة · متوسط المدة ' + dur(done.length ? done.reduce((n, c) => n + c.durationSeconds, 0) / done.length : null)
-      + (a ? ' · ' + a.recovered + ' اتضافت من سجل أرابيكس' : '');
+    $('callsNote').textContent = list.length + ' مكالمة · متوسط المدة ' + dur(done.length ? done.reduce((n, c) => n + c.durationSeconds, 0) / done.length : null);
     table('callsTable', callColumns, list);
-    const u = d.history.unattributed || [];
     const filtered = $('callSearch').value.trim() || $('callEmployee').value || $('callStatus').value;
-    const longCalls = done.filter(c => c.durationSeconds > 240).length, open = list.filter(c => !c.complete).length, people = new Set(list.map(c => c.employeeId)).size;
-    $('callsCards').replaceChildren(kpi('المكالمات', list.length, 'info', filtered ? 'حسب الفلتر' : people + ' موظف'), kpi('مكتملة', done.length, 'good'), kpi('من غير نهاية مسجلة', open, open ? 'warn' : 'good'),
-      (() => { const r = d.history.report; return kpi('مكالمات فائتة', r ? r.abandoned : '—', r ? (r.abandoned ? toneLow(r.abandonmentRate, 5, 10) : 'good') : '', r ? 'نسبة الفائتة ' + pct(r.abandonmentRate) + ' · ' + r.shortAbandoned + ' قصيرة ≤7ث' : 'مفيش سجل أرابيكس'); })(),
-      kpi('متوسط المدة', dur(avg(done.map(c => c.durationSeconds)))), kpi('أطول من 4 دقايق', longCalls, longCalls ? 'warn' : ''),
-      kpi('واردة', list.filter(c => c.callType !== 'outgoing').length, '', list.filter(c => c.callType === 'outgoing').length + ' صادرة'),
-      kpi('اتضافت من سجل أرابيكس', list.filter(c => c.source === 'history').length, '', 'الإضافة مشافتهاش'), kpi('من غير موظف مسجل', u.length, u.length ? 'bad' : 'good', (d.history.assigned || []).length ? (d.history.assigned || []).length + ' اتنسبت يدوي' : ''));
-    C.bars($('callsChart'), hourly(list, c => cairoHour(c.startedAt), g => ({ ext: g.filter(c => c.source !== 'history' && c.source !== 'manual').length, hist: g.filter(c => c.source === 'history' || c.source === 'manual').length })),
-      [{ key: 'ext', label: 'من الإضافة', color: '--call' }, { key: 'hist', label: 'من سجل أرابيكس', color: '--accent' }]);
+    const r = d.history.report, longCalls = done.filter(c => c.durationSeconds > 240).length, outgoing = list.filter(c => c.callType === 'outgoing').length;
+    // The totals: the same numbers as the day summary (Arabicss record); with a filter, the filtered calls.
+    $('callsCards').replaceChildren(...(r && !filtered ? [
+      kpi('إجمالي المكالمات', r.calls, 'info', 'نفس رقم ملخص اليوم'), kpi('اترد عليها', r.answered, 'good'),
+      kpi('فائتة', r.abandoned, r.abandoned ? toneLow(r.abandonmentRate, 5, 10) : 'good', 'نسبة الفائتة ' + pct(r.abandonmentRate)),
+      kpi('صادرة', outgoing), kpi('متوسط مدة المكالمة', dur(r.meanCallSeconds)), kpi('أطول من 4 دقايق', longCalls, longCalls ? 'warn' : ''),
+      kpi('فائتة قصيرة ≤7 ث', r.shortAbandoned, '', 'مش محسوبة'), kpi('خارج ساعات العمل', r.afterHours)
+    ] : [
+      kpi('المكالمات', list.length, 'info', filtered ? 'حسب الفلتر' : ''), kpi('اترد عليها', done.length, 'good'), kpi('صادرة', outgoing),
+      kpi('متوسط المدة', dur(avg(done.map(c => c.durationSeconds)))), kpi('أطول من 4 دقايق', longCalls, longCalls ? 'warn' : '')
+    ]));
+    C.bars($('callsChart'), hourly(list, c => cairoHour(c.startedAt), g => ({ inc: g.filter(c => c.callType !== 'outgoing').length, out: g.filter(c => c.callType === 'outgoing').length })),
+      [{ key: 'inc', label: 'واردة', color: '--call' }, { key: 'out', label: 'صادرة', color: '--accent' }]);
     const per = new Map(); for (const c of list) { const k = c.employeeId; const x = per.get(k) || { name: c.employee || name(k), calls: 0, talk: 0 }; x.calls++; if (c.complete) x.talk += c.durationSeconds; per.set(k, x); }
     $('callsRanks').replaceChildren(rankList([...per.values()].sort((a, b) => b.calls - a.calls).slice(0, 8), x => x.calls, x => x.calls + ' · ' + dur(x.talk), 'var(--call)'));
-    // Why this count differs from the day summary: the summary counts customers' calls (Arabicss, working hours, answered or missed);
-    // this page counts the calls employees handled (incoming and outgoing), so missed calls are not here.
-    const r = d.history.report, all = d.calls, inc = all.filter(c => c.callType !== 'outgoing'), out = all.length - inc.length, late = inc.filter(c => c.outsideHours).length;
-    $('callsWhy').hidden = !r || !!filtered;
-    if (r) $('callsWhy').textContent = 'ليه الرقم هنا غير «مكالمات محتسبة» في ملخص اليوم؟ الملخص بيعد مكالمات العملاء من سجل أرابيكس في ساعات العمل: ' + r.calls + ' = ' + r.answered + ' اترد عليها + ' + r.abandoned + ' فائتة'
-      + (r.shortAbandoned ? ' (ومش بيعد ' + r.shortAbandoned + ' فائتة قصيرة ≤7 ث)' : '') + '. الصفحة دي بتعد المكالمات اللي الموظفين ردوا عليها أو عملوها: ' + all.length + ' = '
-      + (inc.length - late) + ' واردة في ساعات العمل' + (late ? ' + ' + late + ' بعد 3 الفجر أو خارج ساعات العمل' : '') + (out ? ' + ' + out + ' صادرة' : '')
-      + '. الفائتة مش هنا لأن محدش رد عليها' + (u.length ? '، و' + u.length + ' مكالمة اترد عليها من غير موظف مسجل مش محسوبة على حد (تحت في «من غير موظف مسجل»)' : '') + '.';
     renderUnattributed(d);
   }
 
