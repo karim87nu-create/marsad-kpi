@@ -315,6 +315,26 @@ function setup(app) {
     }).filter(e => e.readyDuringWait || !['not_started', 'shift_ended'].includes(e.atEntry)).sort((x, y) => x.name.localeCompare(y.name, 'ar'));
   };
 
+  // The last hours minute by minute, for the "now" screen's pulse bar and time travel: each worker's state per minute
+  // (r available, c on a call, b break, u unknown, o out, - not started / ended), the queue per minute, and the missed calls.
+  const PULSE_CODE = { ready: 'r', on_call: 'c', break: 'b', unknown: 'u', disconnected: 'u', not_started: '-', shift_ended: '-' };
+  app.pulse = async function pulse(now = app.now(), minutes = 180) {
+    const date = businessDay(now), w = dayWindow(date), step = 60000;
+    const to = Math.floor(Math.min(now, w.end) / step) * step, from = Math.max(w.start, to - (Math.max(10, Math.min(360, minutes)) - 1) * step);
+    const [d, people, samples] = await Promise.all([day(date, now), names(),
+      db.prepare('SELECT observed_at, waiting, longest_wait FROM live_snapshots WHERE observed_at >= ? AND observed_at <= ? ORDER BY observed_at').all(from, to + step)]);
+    const ids = [...new Set(d.sessions.filter(s => s.workStartedAt != null).map(s => s.employeeId))];
+    const times = []; for (let t = from; t <= to; t += step) times.push(t);
+    const people2 = ids.map(id => {
+      const st = d.states.filter(s => s.employeeId === id), ses = d.sessions.filter(s => s.employeeId === id);
+      return { employeeId: id, name: people.get(id)?.name || '', s: times.map(t => PULSE_CODE[stateAt(st, ses, id, t).state] || 'o').join('') };
+    }).filter(p => /[rcbu]/.test(p.s)).sort((x, y) => x.name.localeCompare(y.name, 'ar'));
+    const queue = times.map(t => { const q = samples.filter(x => x.observed_at >= t && x.observed_at < t + step); return q.length ? [Math.max(...q.map(x => x.waiting)), Math.max(...q.map(x => x.longest_wait ?? 0))] : null; });
+    const missed = d.history.missed.map(m => ({ ...m, at: d.raw.records[m.index]?.startMs ?? null })).filter(m => m.at != null && m.at >= from && m.at < to + step && m.classification === 'counted')
+      .map(m => ({ index: m.index, at: iso(m.at), phone: m.phone, queue: m.queueLabel, waitSeconds: m.waitSeconds }));
+    return { date, from: iso(from), step: 60, count: times.length, people: people2, queue, missed, serverNow: iso(now) };
+  };
+
   // Right now: each active employee's state, how long, and the current call.
   // The last 4 hours of a session's events are enough to tell its current state (the admin page asks every second).
   const LIVE_WINDOW_MS = 4 * 3600000;

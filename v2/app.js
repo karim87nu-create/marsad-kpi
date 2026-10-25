@@ -116,6 +116,9 @@
   function showError(e) { $('error').hidden = !e; $('error').textContent = e ? e.message || String(e) : ''; }
 
   // ---------- الآن ----------
+  let arc = null;
+  // Hour and minute only (no day), for the now screen.
+  const hmNow = v => v ? new Date(v).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit' }) : '—';
   async function refreshNow() {
     const d = await api('/api/live', { timeout: 4000 });
     state.live = d; state.queue = d.queue; state.liveAt = Date.now();
@@ -133,6 +136,8 @@
     const count = s => people.filter(p => p.s === s).length;
     const q = state.queue, qAge = q ? (now - Date.parse(q.observedAt)) / 1000 : null, qFresh = q && qAge < 30;
     const waiting = qFresh ? q.waiting : [];
+    if (!arc && window.MarsadArc) { arc = window.MarsadArc({ api, QUEUE, OUT, hm: hmNow, hms, canWrite, waitNow }); $('nowArc').replaceChildren(arc.root); }
+    if (arc) arc.update(d, now, qAge);
     const longestWait = waiting.reduce((m, r) => Math.max(m, waitNow(r.wait, qAge) || 0), 0);
     $('nowCards').replaceChildren(kpi('متاحين', count('ready'), count('ready') ? 'ready' : 'bad'), kpi('في مكالمة', count('on_call'), 'on_call'), kpi('في بريك', count('break'), 'break'),
       kpi('انقطاع رصد', count('unknown'), count('unknown') ? 'unknown' : ''), kpi('سجّلوا ولسه مدخلوش الكونسول', count('logged_in')),

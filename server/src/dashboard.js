@@ -24,6 +24,28 @@ function setup(app) {
     return ctx.query.to || ctx.query.from ? app.heavy('range', ctx.query.from || date(ctx), ctx.query.to || date(ctx), ctx.now) : app.heavy('day', date(ctx), ctx.now);
   });
 
+  // The last hours minute by minute (the "now" screen's pulse bar and time travel).
+  app.route('GET', '/api/pulse', async ctx => {
+    await app.requireAdmin(ctx);
+    return app.heavy('pulse', ctx.now, Number(ctx.query.minutes) || 180);
+  });
+
+  // The order of the seats on the "now" screen, shared by every admin.
+  app.route('GET', '/api/now-layout', async ctx => {
+    await app.requireAdmin(ctx);
+    const row = await db.prepare("SELECT value FROM settings WHERE key = 'now_layout'").get();
+    let order = []; try { order = JSON.parse(row?.value || '[]'); } catch {}
+    return { order: Array.isArray(order) ? order : [] };
+  });
+  app.route('POST', '/api/now-layout', async ctx => {
+    await app.requireAdmin(ctx, 'write');
+    const order = ctx.body?.order;
+    if (!Array.isArray(order) || order.length > 500 || order.some(x => typeof x !== 'string' && typeof x !== 'number' || String(x).length > 64)) fail(400, 'ترتيب غير صحيح');
+    const clean = [...new Set(order.map(String))];
+    await db.prepare("INSERT INTO settings (key, value) VALUES ('now_layout', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(JSON.stringify(clean));
+    return { order: clean };
+  });
+
   // Who could have answered one missed call.
   app.route('GET', '/api/missed', async ctx => {
     await app.requireAdmin(ctx);

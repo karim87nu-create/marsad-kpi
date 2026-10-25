@@ -4,7 +4,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>مرصد الأداء — الإدارة</title>
 <link rel="preload" href="fonts/plex-arabic-arabic-400.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="style.css?v=5">
+<link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
 <!-- Icons: drawn in one stroke style (after Lucide, ISC license). -->
@@ -58,11 +58,14 @@
 
     <section id="view-now" class="view">
       <p id="nowStale" class="stalebar" role="alert" hidden></p>
+      <div id="nowArc"></div>
+      <details class="now-list"><summary>القائمة التفصيلية</summary>
       <div id="nowCards" class="cards big"></div>
       <div class="split">
         <article class="panel"><h2>الموظفون الآن</h2><div id="staffNow"></div></article>
         <article class="panel"><h2>العملاء في الانتظار <small id="queueAge"></small></h2><div id="queueNow"></div></article>
       </div>
+      </details>
     </section>
 
     <section id="view-day" class="view" hidden>
@@ -248,6 +251,7 @@
 <script src="config.js?v=1"></script>
 <script src="xlsx.js?v=2"></script>
 <script src="charts.js?v=4"></script>
-<script src="app.js?v=14"></script>
+<script src="now-arc.js?v=1"></script>
+<script src="app.js?v=15"></script>
 </body>
 </html>
