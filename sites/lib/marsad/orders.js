@@ -67,7 +67,9 @@ function setup(app) {
   // ---- the admin page ----
   app.route('GET', '/api/orders/live', async ctx => {
     await app.requireAdmin(ctx);
-    const day = validDate(String(ctx.query.day || '')) ? ctx.query.day : businessDay(ctx.now);
+    // day=latest: the day the monitor pushed last (Apex closes its day on its own clock, not at 9 ص).
+    const latest = ctx.query.day === 'latest' ? (await db.prepare('SELECT day FROM orders_days ORDER BY received_at DESC LIMIT 1').get())?.day : null;
+    const day = latest || (validDate(String(ctx.query.day || '')) ? ctx.query.day : businessDay(ctx.now));
     const row = await db.prepare('SELECT data, received_at FROM orders_days WHERE day = ?').get(day);
     const w = dayWindow(day);
     const alerts = (await db.prepare("SELECT kind, text, created_at, sent_at, error FROM telegram_log WHERE kind LIKE 'orders%' AND created_at >= ? AND created_at < ? ORDER BY created_at DESC LIMIT 300").all(w.start, w.end))

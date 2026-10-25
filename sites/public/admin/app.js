@@ -1,5 +1,5 @@
 'use strict';
-// مرصد الأداء — admin page (v2). One file, no framework. Talks only to the new server.
+// مرصد الدهان — admin page (v2): الكول سنتر والفروع. One file, no framework. Talks only to the new server.
 (() => {
   const API = window.MARSAD_API;
   const BASE = new URL('.', document.currentScript?.src || location.href).href;
@@ -114,6 +114,8 @@
 
   function syncStatus(ok, text) { const s = $('sync'); s.textContent = text || (ok ? 'آخر تحديث ' + hms(Date.now()) : 'تعذر التحديث'); s.classList.toggle('bad', !ok); }
   function showError(e) { $('error').hidden = !e; $('error').textContent = e ? e.message || String(e) : ''; }
+  // الفروع وضرب الأوردرات (orders.js).
+  const OR = window.MarsadOrders({ api, h, $, table, kpi, pill, C, exportRows, serverNow, cairoToday, state, hm: v => hm(v), showError });
 
   // ---------- الآن ----------
   let arc = null;
@@ -190,7 +192,7 @@
   async function refreshRequests() {
     try { state.requests = await api('/api/break-requests'); } catch (e) { if (state.view === 'requests') showError(e); return; }
     const rows = state.requests.requests, pending = rows.filter(r => r.status === 'pending');
-    document.title = (pending.length ? '(' + pending.length + ') ' : '') + 'مرصد الأداء — الإدارة';
+    document.title = (pending.length ? '(' + pending.length + ') ' : '') + 'مرصد الدهان — الإدارة';
     $('reqBadge').hidden = !pending.length; $('reqBadge').textContent = pending.length;
     $('breakRequests').replaceChildren(...(pending.length && state.view !== 'requests' ? [h('div', { className: 'requests' }, h('h2', { textContent: 'طلبات بريك مستنية موافقة — ' + pending.length }),
       ...pending.map(r => h('div', { className: 'row' }, h('span', { textContent: r.employee + ' · تحويلة ' + (r.extension || '—') + ' · ' + r.requestedMinutes + ' دقيقة · من ' + clock(r.createdAt) }), requestActions(r))))] : []));
@@ -590,6 +592,7 @@
     $('telegramPanel').hidden = !isAdmin();
     if (isAdmin()) api('/api/import-old').then(r => { $('importPanel').hidden = !r.available && !r.backfill; $('importLast').textContent = r.lastImportAt ? 'آخر نقل: ' + new Date(r.lastImportAt).toLocaleString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo' }) : ''; }).catch(() => {});
     if (isAdmin()) renderTelegram().catch(e => say('tgNote', e.message));
+    OR.renderKey(isAdmin()).catch(e => say('ordersKeyNote', e.message));
     for (const f of ['addEmployee', 'addAdmin', 'messageForm']) $(f).hidden = f === 'messageForm' ? !canWrite() : !isAdmin();
     $('linkCollector').hidden = !canWrite();
   }
@@ -636,22 +639,29 @@
   // ---------- تليجرام ----------
   async function renderTelegram() {
     const t = await api('/api/telegram');
-    $('tgStatus').textContent = !t.configured ? 'البوت مش مربوط.' : 'البوت: @' + t.botName + ' · ' + (t.chat ? 'الجروب: ' + t.chat.title : 'لسه مفيش جروب') + ' · ' + (t.enabled ? 'التنبيهات شغالة' : 'التنبيهات متوقفة');
+    const group = (label, chat, target, note) => h('div', { className: 'tg-group' }, h('span', { className: 'muted', textContent: label }),
+      chat ? h('strong', { textContent: chat.title || chat.id }) : pill('مش مربوط', 'warn'), note ? h('small', { className: 'muted', textContent: note }) : null,
+      h('span', { className: 'inline' }, chat ? btn('رسالة تجربة', () => tgTest(target)) : null, chat && target === 'branches' ? btn('فك الربط', async () => { if (!confirm('فك ربط جروب الفروع؟ تنبيهات الفروع هتروح لجروب الكول سنتر.')) return; try { await api('/api/telegram', { method: 'POST', body: { action: 'unlinkBranches' } }); say('tgNote', 'اتفك ربط جروب الفروع.'); renderTelegram(); } catch (x) { say('tgNote', x.message); } }) : null));
+    $('tgStatus').replaceChildren(h('p', {}, !t.configured ? 'البوت مش مربوط.' : 'البوت: @' + t.botName + ' · ' + (t.enabled ? 'التنبيهات شغالة' : 'التنبيهات متوقفة')),
+      group('جروب الكول سنتر', t.chat, 'main', 'تنبيهات المكالمات والموظفين ومرصد الأوردرات لما يقف.'),
+      group('جروب إدارات الفروع', t.branchChat, 'branches', t.branchChat ? 'تأخير خروج الأوردرات والإلغاء بعد التحميل.' : 'لحد ما يتربط، تنبيهات الفروع بتروح لجروب الكول سنتر.'));
     $('tgSettings').elements.enabled.checked = t.enabled;
-    $('tgRules').replaceChildren(...t.rules.map(r => h('label', {}, h('input', { type: 'checkbox', name: 'rule', value: r.key, checked: r.on }), ' ' + r.label)));
+    const box = (title, list) => list.length ? [h('h3', { textContent: title }), ...list.map(r => h('label', {}, h('input', { type: 'checkbox', name: 'rule', value: r.key, checked: r.on }), ' ' + r.label.replace(/^الأوردرات: /, '')))] : [];
+    $('tgRules').replaceChildren(...box('الكول سنتر', t.rules.filter(r => !r.key.startsWith('orders'))), ...box('الأوردرات والفروع', t.rules.filter(r => r.key.startsWith('orders'))));
     const log = (await api('/api/telegram?log=1&date=' + cairoToday())).log;
-    table('tgLog', [{ title: 'الوقت', get: x => x.createdAt, show: x => clock(x.createdAt), type: 'datetime' }, { title: 'النوع', get: x => x.label }, { title: 'الرسالة', get: x => x.text.split('\n')[0] },
+    table('tgLog', [{ title: 'الوقت', get: x => x.createdAt, show: x => clock(x.createdAt), type: 'datetime' }, { title: 'الجروب', get: x => x.group || 'الكول سنتر' }, { title: 'النوع', get: x => x.label }, { title: 'الرسالة', get: x => x.text.split('\n')[0] },
       { title: 'اتبعت', get: x => x.sentAt ? 'أيوه' : 'لأ' + (x.error ? ' — ' + x.error : '') }], log, { empty: 'مفيش تنبيهات النهارده', limit: 100 });
   }
+  async function tgTest(target) { try { await api('/api/telegram', { method: 'POST', body: { action: 'test', target } }); say('tgNote', 'اتبعتت رسالة تجربة لجروب ' + (target === 'branches' ? 'الفروع' : 'الكول سنتر') + '.'); } catch (x) { say('tgNote', x.message); } }
   $('tgToken').onsubmit = async e => { e.preventDefault(); try { const r = await api('/api/telegram', { method: 'POST', body: { action: 'token', token: e.target.elements.token.value.trim() } }); e.target.reset(); say('tgNote', 'اتربط البوت @' + r.botName + '. ضيفه للجروب وابعت رسالة، وبعدين دوس «دور على الجروب».'); renderTelegram(); } catch (x) { say('tgNote', x.message); } };
   $('tgDiscover').onclick = async () => {
     try { const { chats } = await api('/api/telegram', { method: 'POST', body: { action: 'discover' } });
       if (!chats.length) return say('tgNote', 'البوت مش شايف أي جروب لسه. ضيفه للجروب وابعت فيه رسالة وجرب تاني.');
-      $('tgChats').replaceChildren(...chats.map(c => h('option', { value: c.id, textContent: c.title }))); $('tgChats').hidden = $('tgChoose').hidden = false; say('tgNote', 'اختار الجروب ودوس ربط.');
+      $('tgChats').replaceChildren(...chats.map(c => h('option', { value: c.id, textContent: c.title }))); $('tgChats').hidden = $('tgChoose').hidden = $('tgChooseBranches').hidden = false; say('tgNote', 'اختار الجروب واربطه كجروب الكول سنتر أو جروب الفروع.');
     } catch (x) { say('tgNote', x.message); }
   };
-  $('tgChoose').onclick = async () => { const o = $('tgChats').selectedOptions[0]; try { await api('/api/telegram', { method: 'POST', body: { action: 'chat', chatId: o.value, title: o.textContent } }); say('tgNote', 'اتربط الجروب وجاتلكم رسالة تأكيد.'); $('tgChats').hidden = $('tgChoose').hidden = true; renderTelegram(); } catch (x) { say('tgNote', x.message); } };
-  $('tgTest').onclick = async () => { try { await api('/api/telegram', { method: 'POST', body: { action: 'test' } }); say('tgNote', 'اتبعتت رسالة تجربة.'); } catch (x) { say('tgNote', x.message); } };
+  const tgChoose = target => async () => { const o = $('tgChats').selectedOptions[0]; if (!o) return; try { await api('/api/telegram', { method: 'POST', body: { action: 'chat', chatId: o.value, title: o.textContent, target } }); say('tgNote', 'اتربط «' + o.textContent + '» كجروب ' + (target === 'branches' ? 'إدارات الفروع' : 'الكول سنتر') + ' وجاتلكم رسالة تأكيد.'); $('tgChats').hidden = $('tgChoose').hidden = $('tgChooseBranches').hidden = true; renderTelegram(); } catch (x) { say('tgNote', x.message); } };
+  $('tgChoose').onclick = tgChoose('main'); $('tgChooseBranches').onclick = tgChoose('branches');
   $('tgSettings').onsubmit = async e => { e.preventDefault(); const f = e.target, rules = Object.fromEntries([...f.querySelectorAll('[name=rule]')].map(i => [i.value, i.checked]));
     try { await api('/api/telegram', { method: 'POST', body: { action: 'settings', enabled: f.elements.enabled.checked, rules } }); say('tgNote', 'اتحفظ.'); renderTelegram(); } catch (x) { say('tgNote', x.message); } };
 
@@ -680,6 +690,7 @@
     const kind = e.target.closest('[data-export]')?.dataset.export;
     if (!kind) return;
     try {
+      if (OR.exportKind(kind)) return;
       if (kind === 'queues') exportRows('انواع-الطلبات', queueColumns, (await dayHistory()).queues || []);
       if (kind === 'team') exportRows('اداء-الموظفين', teamColumns, teamRows(await dayData()));
       if (kind === 'calls') exportRows('المكالمات', callColumns, filteredCalls(await dayData()));
@@ -698,10 +709,22 @@
 
   // ---------- navigation ----------
   const VIEWS = { now: ['الآن', null], day: ['ملخص اليوم', renderDay], hours: ['على مدار اليوم', renderHours], team: ['أداء الموظفين', renderTeam], profile: ['ملف الموظف', renderProfile], requests: ['طلبات البريك', refreshRequests], attendance: ['الحضور والبريك', renderAttendance],
-    shifts: ['نهاية الشيفت والرجوع للشغل', renderShifts], calls: ['المكالمات', renderCalls], missed: ['المكالمات الفائتة', renderMissed], followup: ['المتابعة والتقارير', renderFollowup], system: ['حالة النظام', renderSystem], manage: ['الإدارة', renderManage], guide: ['طريقة حساب الأرقام', async () => {}] };
-  const DAY_VIEWS = ['day', 'hours', 'team', 'profile', 'attendance', 'shifts', 'calls', 'missed', 'followup'];
+    shifts: ['نهاية الشيفت والرجوع للشغل', renderShifts], calls: ['المكالمات', renderCalls], missed: ['المكالمات الفائتة', renderMissed], followup: ['المتابعة والتقارير', renderFollowup], system: ['حالة النظام', renderSystem], manage: ['الإدارة', renderManage], guide: ['طريقة حساب الأرقام', async () => {}],
+    entry: ['ضرب الأوردرات', () => OR.renderEntry()], branchesNow: ['الفروع الآن', null], branches: ['أداء الفروع', () => OR.renderBranches()], cancels: ['الإلغاءات بعد التحميل', () => OR.renderCancels()] };
+  const DAY_VIEWS = ['day', 'hours', 'team', 'profile', 'attendance', 'shifts', 'calls', 'missed', 'followup', 'entry', 'branches', 'cancels'];
+  // Two sections, each with its own views; the system views are shared and keep the section you came from.
+  const SECTION_OF = { branchesNow: 'branches', branches: 'branches', cancels: 'branches' };
+  const SHARED = ['followup', 'system', 'manage', 'guide'];
+  const lastIn = { calls: 'now', branches: 'branchesNow' };
+  function setSection(sec) {
+    state.section = sec;
+    for (const b of document.querySelectorAll('#sections [data-section]')) { const on = b.dataset.section === sec; b.classList.toggle('active', on); b.setAttribute('aria-selected', String(on)); }
+    for (const n of document.querySelectorAll('#nav .navsec')) n.hidden = n.dataset.sec !== sec;
+  }
+  $('sections').onclick = e => { const sec = e.target.closest('[data-section]')?.dataset.section; if (sec && sec !== state.section) show(lastIn[sec]); };
   async function show(view, force = false) {
     state.view = view;
+    if (!SHARED.includes(view)) { const sec = SECTION_OF[view] || 'calls'; lastIn[sec] = view; if (sec !== state.section) setSection(sec); }
     for (const b of document.querySelectorAll('#nav [data-view]')) b.classList.toggle('active', b.dataset.view === view);
     for (const s of document.querySelectorAll('.view')) s.hidden = s.id !== 'view-' + view;
     $('title').textContent = VIEWS[view][0];
@@ -709,6 +732,7 @@
     showError(null);
     refreshRequests();
     if (view === 'now') return tick();
+    if (view === 'branchesNow') { OR.drawBoard(); return OR.refreshBoard().then(() => syncStatus(true)).catch(e => { syncStatus(false); showError(e); }); }
     try { syncStatus(true, 'جارٍ التحميل…'); if (force) cache.delete(rangeKey()); await VIEWS[view][1](); syncStatus(true); } catch (e) { syncStatus(false); showError(e); }
   }
   document.querySelector('#nav nav').onclick = e => { const v = e.target.closest('[data-view]')?.dataset.view; if (v) { show(v); setMenu(false); } };
@@ -731,6 +755,16 @@
   // One draw per second: fetch, then draw (timers keep counting from the last good data).
   setInterval(() => { tick(); if (state.view === 'now' && Date.now() - (state.drawnAt || 0) > 900) { renderNow(); state.drawnAt = Date.now(); } }, 1000);
   setInterval(() => { if (token && !document.hidden) refreshRequests(); }, 2000);
+  // الفروع الآن: timers every second, the summary every 5 seconds; elsewhere only the late badge, every 30 seconds.
+  let boardBusy = false, boardAt = 0;
+  setInterval(() => {
+    if (!token || document.hidden) return;
+    if (state.view === 'branchesNow') OR.tickBoard();
+    const every = state.view === 'branchesNow' ? 5000 : 30000;
+    if (boardBusy || Date.now() - boardAt < every) return;
+    boardBusy = true; boardAt = Date.now();
+    OR.refreshBoard().then(() => { if (state.view === 'branchesNow') { syncStatus(true); showError(null); } }).catch(() => { if (state.view === 'branchesNow') syncStatus(false); }).finally(() => { boardBusy = false; });
+  }, 1000);
   // The day picker's latest day follows the 9am change.
   setInterval(() => { const t = cairoToday(); if ($('day').max !== t) { $('day').max = t; $('dayTo').max = t; $('dayNext').disabled = state.to >= t; } }, 60000);
   // Today's numbers on the open page refresh every minute.
@@ -747,6 +781,7 @@
     $('dayTo').value = state.to; $('dayTo').max = cairoToday(); $('day').value = state.day; $('day').max = cairoToday(); $('dayNext').disabled = true;
     await loadEmployees();
     refreshRequests();
+    setSection('calls');
     show('now');
   }
   function logout(message = '') {

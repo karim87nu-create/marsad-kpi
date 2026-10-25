@@ -11,7 +11,7 @@ test('admin from/to selection loads the selected period in summary and followup'
   dom=new JSDOM(fs.readFileSync(path.join(root,'index.html'),'utf8'),{url:'http://localhost/admin/',runScripts:'outside-only',pretendToBeVisual:true});
   const w=dom.window;w.sessionStorage.setItem('marsadAdminToken',token);w.MARSAD_API=t.base;w.fetch=(url,opts)=>{requests.push(String(url));return fetch(url,opts)};
   w.confirm=()=>false;w.alert=x=>{throw Error(x)};
-  for(const f of ['charts.js','xlsx.js','app.js'])w.eval(fs.readFileSync(path.join(root,f),'utf8'));
+  for(const f of ['charts.js','xlsx.js','orders.js','app.js'])w.eval(fs.readFileSync(path.join(root,f),'utf8'));
   const until=async f=>{for(let i=0;i<200;i++){if(f())return;await new Promise(r=>setTimeout(r,10));}throw Error('UI did not finish: '+w.document.getElementById('error').textContent)};
   await until(()=>!w.document.getElementById('app').hidden && requests.some(x=>x.endsWith('/api/live'))); await new Promise(r=>setTimeout(r,150));
   assert.equal(w.document.getElementById('breakRequests').closest('.view'),null,'pending banner is visible across sections');

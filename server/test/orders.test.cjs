@@ -34,6 +34,10 @@ test('orders: monitor key, push, live view and alerts into the Telegram log', as
     assert.equal(live.linked, true);
     assert.equal(live.alerts.length, 1);
     assert.equal(live.alerts[0].kind, 'ordersCancel');
+    // day=latest follows the day the monitor pushed last, whatever the 9 ص day is.
+    const latest = (await admin('GET', '/api/orders/live?day=latest')).body;
+    assert.equal(latest.day, '2026-10-22');
+    assert.equal(latest.data.totals.orders, 3);
     // A viewer can read; only the main admin can make a key.
     await admin('POST', '/api/admin-access', { name: 'V', role: 'viewer', password: 'viewer-pass', confirmation: 'viewer-pass' });
     const vt = await t.login('viewer-pass');
