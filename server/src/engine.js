@@ -217,6 +217,9 @@ function setup(app) {
 
   // Who most likely answered each unattributed call, from what the day shows. Calls on the same extension
   // less than 30 minutes apart form one stretch (usually one person working without signing in), ranked together.
+  const span = v => { const lo = Math.min(...v), hi = Math.max(...v); return lo === hi ? lo + ' د' : lo + '–' + hi + ' د'; };
+  const reasonText = ([k, v]) => ({ owner: 'كان مسجل على التحويلة دي وقتها', before: 'كان على التحويلة دي قبلها بـ ' + (v.length ? span(v) : ''), after: 'دخل التحويلة دي بعدها بـ ' + (v.length ? span(v) : ''),
+    sameDay: 'اشتغل على التحويلة دي النهارده', gap: 'كان عنده انقطاع رصد وقتها', out: 'كان برّه التحويلة في المرصد وقتها', past: 'اتنسبله ' + Math.max(0, ...v) + ' مكالمة قبل كده على التحويلة دي' })[k];
   function suggest(list, sessions, states, calls, assigned, people) {
     const worked = sessions.filter(s => s.workStartedAt != null);
     const ids = [...new Set(worked.map(s => s.employeeId))];
@@ -227,19 +230,19 @@ function setup(app) {
       const busy = states.find(x => x.employeeId === id && ['ready', 'on_call', 'break'].includes(x.state) && Date.parse(x.startedAt) <= t && t < Date.parse(x.endedAt) && x.extension !== u.extension);
       if (busy || calls.some(c => c.employeeId === id && c.extension !== u.extension && c.startedAt - 5000 <= t && t <= (c.endedAt ?? c.startedAt) + 5000)) return null;
       let score = 0;
-      if (u.owners.includes(id)) { score += 60; reasons.push('كان مسجل على التحويلة دي وقتها'); }
+      if (u.owners.includes(id)) { score += 60; reasons.push(['owner']); }
       const onExt = mine.filter(s => s.extension === u.extension);
       const before = onExt.filter(s => Date.parse(s.observedThrough) <= t).sort((a, b) => Date.parse(b.observedThrough) - Date.parse(a.observedThrough))[0];
       const after = onExt.filter(s => s.workStartedAt >= t).sort((a, b) => a.workStartedAt - b.workStartedAt)[0];
       const gb = before ? t - Date.parse(before.observedThrough) : null, ga = after ? after.workStartedAt - t : null;
-      if (gb != null && gb <= 7200000) { score += Math.max(10, 50 - min(gb) / 2); reasons.push('كان على التحويلة دي قبلها بـ ' + min(gb) + ' د'); }
-      if (ga != null && ga <= 7200000) { score += Math.max(8, 40 - min(ga) / 2); reasons.push('دخل التحويلة دي بعدها بـ ' + min(ga) + ' د'); }
+      if (gb != null && gb <= 7200000) { score += Math.max(10, 50 - min(gb) / 2); reasons.push(['before', min(gb)]); }
+      if (ga != null && ga <= 7200000) { score += Math.max(8, 40 - min(ga) / 2); reasons.push(['after', min(ga)]); }
       if (gb != null && ga != null && gb <= 7200000 && ga <= 7200000) score += 30;
-      if (!score && onExt.length) { score += 12; reasons.push('اشتغل على التحويلة دي النهارده'); }
+      if (!score && onExt.length) { score += 12; reasons.push(['sameDay']); }
       const out = states.find(x => x.employeeId === id && ['offline', 'unknown'].includes(x.state) && Date.parse(x.startedAt) <= t && t < Date.parse(x.endedAt));
-      if (out) { score += out.state === 'unknown' ? 15 : 20; reasons.push(out.state === 'unknown' ? 'كان عنده انقطاع رصد وقتها' : 'كان برّه التحويلة في المرصد وقتها'); }
+      if (out) { score += out.state === 'unknown' ? 15 : 20; reasons.push([out.state === 'unknown' ? 'gap' : 'out']); }
       const past = assigned.filter(a => a.employeeId === id && a.extension === u.extension).length;
-      if (past) { score += 25; reasons.push('اتنسبله ' + past + ' مكالمة قبل كده على التحويلة دي'); }
+      if (past) { score += 25; reasons.push(['past', past]); }
       return score > 0 ? { score, reasons } : null;
     };
     const sorted = [...list].sort((a, b) => a.at - b.at);
@@ -254,12 +257,13 @@ function setup(app) {
       const totals = new Map();
       for (const u of items) for (const id of ids) {
         const r = scoreOne(u, id);
-        if (r === null) { if (!totals.has(id)) totals.set(id, { score: 0, reasons: new Set(), blocked: 0 }); totals.get(id).blocked++; continue; }
-        if (!totals.has(id)) totals.set(id, { score: 0, reasons: new Set(), blocked: 0 });
-        const x = totals.get(id); x.score += r.score; r.reasons.forEach(z => x.reasons.add(z));
+        if (r === null) { if (!totals.has(id)) totals.set(id, { score: 0, reasons: new Map(), blocked: 0 }); totals.get(id).blocked++; continue; }
+        if (!totals.has(id)) totals.set(id, { score: 0, reasons: new Map(), blocked: 0 });
+        const x = totals.get(id); x.score += r.score;
+        for (const [k, v] of r.reasons) { if (!x.reasons.has(k)) x.reasons.set(k, []); if (v != null) x.reasons.get(k).push(v); }
       }
       const ranked = [...totals.entries()].filter(([, x]) => x.score > 0 && x.blocked < items.length)
-        .map(([id, x]) => ({ employeeId: id, name: people.get(id)?.name || '', score: Math.round(x.score / items.length), reasons: [...x.reasons].slice(0, 3), conflicts: x.blocked }))
+        .map(([id, x]) => ({ employeeId: id, name: people.get(id)?.name || '', score: Math.round(x.score / items.length), reasons: [...x.reasons].map(reasonText).slice(0, 3), conflicts: x.blocked }))
         .sort((a, b) => b.score - a.score).slice(0, 3);
       const top = ranked[0], second = ranked[1];
       const confidence = !top ? 'none' : top.score >= 60 && (!second || top.score >= second.score * 1.6) && !top.conflicts ? 'high' : top.score >= 30 ? 'medium' : 'low';

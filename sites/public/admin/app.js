@@ -419,7 +419,7 @@
     };
     const picker = sug => {
       const sel = h('select', {}, h('option', { value: '', textContent: 'اختار الموظف…' }));
-      if (sug.length) sel.append(h('optgroup', { label: 'المرشحين' }, ...sug.map(x => h('option', { value: x.employeeId, textContent: x.name + ' — ' + x.score + '%' }))));
+      if (sug.length) sel.append(h('optgroup', { label: 'المرشحين' }, ...sug.map(x => h('option', { value: x.employeeId, textContent: x.name }))));
       sel.append(h('optgroup', { label: 'كل الموظفين' }, ...state.employees.filter(e => e.active && !sug.some(x => x.employeeId === e.id)).map(e => h('option', { value: e.id, textContent: e.name }))));
       if (sug[0]) sel.value = String(sug[0].employeeId);
       return sel;
@@ -429,7 +429,7 @@
       const sel = picker(sug), all = h('button', { type: 'button', textContent: items.length > 1 ? 'انسب الـ ' + items.length + ' مكالمات' : 'انسب المكالمة' });
       all.onclick = () => assign(items.map(x => x.key), sel.value, all);
       const head = h('div', { className: 'inline' }, h('strong', { textContent: (g.extension ? 'تحويلة ' + g.extension : 'من غير تحويلة') + ' · ' + (items.length > 1 ? 'من ' + ampm(g.groupFrom) + ' لـ ' + ampm(g.groupTo) + ' · ' + items.length + ' مكالمات' : ampm(g.time)) + (g.businessDate ? ' · ' + g.businessDate : '') }), pill(cl, ck));
-      const why = sug.length ? h('div', { className: 'stack' }, ...sug.map((x, n) => h('small', { className: n ? 'muted' : '', textContent: (n ? '' : '⭐ ') + x.name + ' (' + x.score + '%): ' + x.reasons.join(' · ') + (x.conflicts ? ' — بس كان شغال على تحويلة تانية وقت ' + x.conflicts + ' منهم' : '') })))
+      const why = sug.length ? h('div', { className: 'stack' }, ...sug.map((x, n) => h('small', { className: n ? 'muted' : '', textContent: (n ? '' : '⭐ ') + x.name + ': ' + x.reasons.join(' · ') + (x.conflicts ? ' — بس كان شغال على تحويلة تانية وقت ' + x.conflicts + ' منهم' : '') })))
         : h('small', { className: 'muted', textContent: 'مفيش حد اشتغل على التحويلة دي ولا كان برّه وقتها؛ اختار يدوي.' });
       const list = h('details', {}, h('summary', { textContent: 'المكالمات (' + items.length + ') — تقدر تنسب كل واحدة لوحدها' }),
         ...items.map(x => { const one = picker(sug), b = h('button', { type: 'button', className: 'ghost', textContent: 'انسب' }); b.onclick = () => assign([x.key], one.value, b);
