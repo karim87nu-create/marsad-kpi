@@ -23,7 +23,7 @@
       const cx = x(i), w = Math.max(2, bw * 0.62), top = y1(s.answered), mid = y1(s.answered + s.abandoned);
       const g = el('g', { 'data-i': i });
       g.append(el('rect', { x: cx - bw / 2, y: T, width: bw, height: H - T - B, fill: 'transparent' }));
-      if (!s.operating) g.append(el('rect', { x: cx - bw / 2, y: T, width: bw, height: H - T - B, fill: '#ffffff08' }));
+      if (!s.operating) g.append(el('rect', { x: cx - bw / 2, y: T, width: bw, height: H - T - B, fill: css('--closed-hours') }));
       g.append(el('rect', { x: cx - w / 2, y: top, width: w, height: H - B - top, rx: 2, fill: css('--call') }));
       if (s.abandoned) g.append(el('rect', { x: cx - w / 2, y: mid, width: w, height: top - mid, rx: 2, fill: css('--bad') }));
       svg.append(g);
@@ -32,7 +32,7 @@
     const path = key => list.map((s, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y2(s[key]).toFixed(1)).join(' ');
     svg.append(el('path', { d: path('ready'), fill: 'none', stroke: css('--ready'), 'stroke-width': 2.5 }), el('path', { d: path('onBreak'), fill: 'none', stroke: css('--break'), 'stroke-width': 2, 'stroke-dasharray': '5 4' }));
     const wrap = div('chartbox'), tip = div('tip'); tip.hidden = true;
-    const legend = div('legend'); legend.innerHTML = '<span><i style="background:var(--call)"></i>مكالمات اترد عليها</span><span><i style="background:var(--bad)"></i>فائتة محتسبة</span><span><i style="background:var(--ready)"></i>متوسط المتاحين</span><span><i style="background:var(--break)"></i>متوسط اللي في بريك</span><span><i style="background:#ffffff18"></i>بعد 3 الفجر</span>';
+    const legend = div('legend'); legend.innerHTML = '<span><i style="background:var(--call)"></i>مكالمات اترد عليها</span><span><i style="background:var(--bad)"></i>فائتة محتسبة</span><span><i style="background:var(--ready)"></i>متوسط المتاحين</span><span><i style="background:var(--break)"></i>متوسط اللي في بريك</span><span><i style="background:var(--closed-swatch)"></i>بعد 3 الفجر</span>';
     svg.addEventListener('mousemove', e => {
       const g = e.target.closest('g[data-i]'); if (!g) { tip.hidden = true; return; }
       const s = list[g.dataset.i], r = wrap.getBoundingClientRect();

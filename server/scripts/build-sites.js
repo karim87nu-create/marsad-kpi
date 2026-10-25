@@ -22,7 +22,7 @@ const admin = path.join(root, 'sites', 'public', 'admin');
 fs.rmSync(admin, { recursive: true, force: true });
 fs.mkdirSync(admin, { recursive: true });
 for (const f of ['index.html', 'style.css', 'xlsx.js', 'charts.js', 'app.js', 'import-old.js']) fs.copyFileSync(path.join(root, 'v2', f), path.join(admin, f));
-for (const d of ['lib', 'vendor']) fs.cpSync(path.join(root, 'v2', d), path.join(admin, d), { recursive: true });
+for (const d of ['lib', 'vendor', 'fonts']) fs.cpSync(path.join(root, 'v2', d), path.join(admin, d), { recursive: true });
 // Served by the same site, so the API is the same origin.
 fs.writeFileSync(path.join(admin, 'config.js'), "window.MARSAD_API = '';\n");
 // Nothing in lib/marsad may need Node: check the imports.

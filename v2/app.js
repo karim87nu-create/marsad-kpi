@@ -48,7 +48,7 @@
     const state = box._sort || (box._sort = { col: -1, dir: 1 });
     let list = rows;
     if (state.col >= 0) { const c = columns[state.col]; list = [...rows].sort((a, b) => { const x = c.get(a), y = c.get(b); return (x == null) - (y == null) || (x < y ? -1 : x > y ? 1 : 0) * state.dir; }); }
-    const head = h('tr', {}, ...columns.map((c, i) => { const th = h('th', { textContent: c.title + (state.col === i ? (state.dir > 0 ? ' ▲' : ' ▼') : '') }); th.onclick = () => { state.dir = state.col === i ? -state.dir : 1; state.col = i; table(box, columns, rows, { onRow, limit, empty }); }; return th; }));
+    const head = h('tr', {}, ...columns.map((c, i) => { const th = h('th', { textContent: c.title, scope: 'col', tabIndex: 0 }); th.setAttribute('aria-sort', state.col === i ? (state.dir > 0 ? 'ascending' : 'descending') : 'none'); th.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); th.click(); } }; th.onclick = () => { state.dir = state.col === i ? -state.dir : 1; state.col = i; table(box, columns, rows, { onRow, limit, empty }); }; return th; }));
     const body = h('tbody');
     for (const r of list.slice(0, limit)) {
       const tr = h('tr', { className: onRow ? 'click' : '' }, ...columns.map(c => { const v = c.show ? c.show(r) : c.get(r); const td = h('td', { className: (c.type && c.type !== 'text' ? 'num ' : '') + (c.cls?.(r) || '') }); if (v instanceof Node) td.append(v); else td.textContent = v ?? '—'; return td; }));
@@ -140,16 +140,21 @@
     const order = ['on_call', 'break', 'ready', 'unknown', 'logged_in', 'logged_out', 'shift_ended', 'no_session'];
     const groups = order.map(s => [s, people.filter(p => p.s === s).sort((a, b) => (b.elapsed || 0) - (a.elapsed || 0))]).filter(([, list]) => list.length);
     // People who are not working right now only take one line each group.
-    if (!groups.length) $('staffNow').replaceChildren(h('p', { className: 'muted', textContent: 'مفيش موظفين مسجلين في المرصد دلوقتي' }));
+    // Same people in the same states: only the running timers change, so only they are redrawn (keeps hover and selection).
+    const staffKey = JSON.stringify(groups.map(([s, list]) => [s, list.map(p => [p.employeeId, p.name, p.extension, p.phone, p.queue, p.outKind, p.since, p.state, p.lastEvidence,
+      (s === 'break' && p.elapsed > 900) || (s === 'on_call' && p.elapsed > 240)])]));
+    if (staffKey === state.staffKey && $('staffNow').firstChild) { for (const t of $('staffNow').querySelectorAll('time[data-since]')) t.textContent = dur((now - Number(t.dataset.since)) / 1000); }
+    else if (!groups.length) $('staffNow').replaceChildren(h('p', { className: 'muted', textContent: 'مفيش موظفين مسجلين في المرصد دلوقتي' }));
     else $('staffNow').replaceChildren(...groups.map(([s, list]) => ['no_session', 'logged_out', 'shift_ended'].includes(s) ? h('div', { className: 'group' }, h('h3', { textContent: (STATE[s] || s) + ' — ' + list.length }),
       h('div', { className: 'inline' }, ...list.map(p => pill(p.name + (s === 'logged_out' ? (p.outKind ? ' · ' + OUT[p.outKind] : '') + (p.since ? ' ' + hm(p.since) : '') : ''))))) : h('div', { className: 'group' }, h('h3', { textContent: (STATE[s] || s) + ' — ' + list.length }),
       h('div', { className: 'tiles' }, ...list.map(p => {
         const over = (s === 'break' && p.elapsed > 900) || (s === 'on_call' && p.elapsed > 240);
         return h('div', { className: 'tile ' + s + (over ? ' over' : ''), title: 'آخر إشارة ' + stamp(p.lastEvidence) + (s === 'unknown' ? (p.state === 'disconnected' ? ' · جلسة انقطعت من غير خروج مسجل' : ' · الإشارة متوقفة والجلسة لم تُغلق') : '') },
-          ['on_call', 'break'].includes(s) && p.elapsed != null ? h('time', { textContent: dur(p.elapsed) }) : null,
+          ['on_call', 'break'].includes(s) && p.elapsed != null ? (t => { t.dataset.since = String(Date.parse(p.since)); return t; })(h('time', { textContent: dur(p.elapsed) })) : null,
           h('strong', { textContent: p.name }),
           h('small', { textContent: [p.extension && 'تحويلة ' + p.extension, s === 'on_call' && p.phone, s === 'on_call' && p.queue && QUEUE(p.queue)].filter(Boolean).join(' · ') || ' ' }));
       })))));
+    state.staffKey = staffKey;
     $('queueAge').textContent = q ? (qFresh ? 'تحديث منذ ' + Math.round(qAge) + ' ث' : 'آخر بيانات ' + clock(q.observedAt) + ' — قديمة') : 'الموصل مش شغال';
     table('queueNow', [
       { title: 'نوع الطلب', get: r => QUEUE(r.queue) },
@@ -207,7 +212,7 @@
     const qs = (hd.queues || []).filter(q => q.calls), maxQ = Math.max(1, ...qs.map(q => q.calls));
     $('queueBars').replaceChildren(h('div', { className: 'ranks' }, ...qs.sort((a, b) => b.calls - a.calls).map(q => h('div', { className: 'r' }, h('span', { textContent: q.label + ' · ' + q.calls + ' مكالمة' }), h('small', { className: 'muted', textContent: 'رد خلال 10ث ' + pct(q.sla) + ' · فائتة ' + q.abandoned }), C.meter(q.calls, maxQ)))));
     table('queueTable', queueColumns, hd.queues || []);
-    const rank = (title, list, value, show, color) => { const max = Math.max(1, ...list.map(value)); return [h('h3', { textContent: title }), h('div', { className: 'ranks' }, ...list.map(x => h('div', { className: 'r' }, h('span', { textContent: x.name }), h('b', { textContent: show(x) }), C.meter(value(x), max, color))))]; };
+    const rank = (title, list, value, show, color) => { const max = Math.max(1, ...list.map(value)); return [h('h3', { textContent: title }), !list.length ? h('p', { className: 'muted', textContent: 'مفيش لسه' }) : h('div', { className: 'ranks' }, ...list.map(x => h('div', { className: 'r' }, h('span', { textContent: x.name }), h('b', { textContent: show(x) }), C.meter(value(x), max, color))))]; };
     const top = (k, n = 5) => [...e].filter(x => x[k] > 0).sort((a, b) => b[k] - a[k]).slice(0, n);
     $('dayRanks').replaceChildren(...rank('أكتر مكالمات', top('calls'), x => x.calls, x => x.calls, 'var(--call)'), ...rank('أطول بريك', top('breakSeconds'), x => x.breakSeconds, x => dur(x.breakSeconds), 'var(--break)'),
       ...rank('أكتر وقت برّه التحويلة (للتوضيح)', [...e].filter(x => outTotal(x) > 0).sort((a, b) => outTotal(b) - outTotal(a)).slice(0, 5), outTotal, x => dur(outTotal(x)), 'var(--unknown)'));
@@ -699,7 +704,10 @@
     if (view === 'now') return tick();
     try { syncStatus(true, 'جارٍ التحميل…'); if (force) cache.delete(rangeKey()); await VIEWS[view][1](); syncStatus(true); } catch (e) { syncStatus(false); showError(e); }
   }
-  document.querySelector('#nav nav').onclick = e => { const v = e.target.closest('[data-view]')?.dataset.view; if (v) show(v); };
+  document.querySelector('#nav nav').onclick = e => { const v = e.target.closest('[data-view]')?.dataset.view; if (v) { show(v); setMenu(false); } };
+  // Narrow screens: the sections fold behind one button.
+  const setMenu = open => { $('nav').classList.toggle('open', open); $('menuToggle').setAttribute('aria-expanded', String(open)); };
+  $('menuToggle').onclick = () => setMenu(!$('nav').classList.contains('open'));
   const setDay = d => { const today = cairoToday(); state.day = !d || d > today ? today : d; state.to = state.day; $('dayTo').value = state.to; $('day').value = state.day; $('dayNext').disabled = state.day >= today; show(state.view); };
   const shiftDay = n => new Date(Date.parse(state.day + 'T12:00:00Z') + n * 864e5).toISOString().slice(0, 10);
   $('applyRange').onclick = () => { const from = $('day').value, to = $('dayTo').value; if (!from || !to || to < from || to > cairoToday()) return showError(Error('اختار فترة صحيحة من وإلى')); if ((Date.parse(to) - Date.parse(from)) / 864e5 >= 93) return showError(Error('اختار فترة لا تتجاوز 93 يوم')); state.day = from; state.to = to; $('dayNext').disabled = to >= cairoToday(); show(state.view); };

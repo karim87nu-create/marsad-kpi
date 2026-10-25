@@ -3,9 +3,12 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>مرصد الأداء — الإدارة</title>
-<link rel="stylesheet" href="style.css?v=3">
+<link rel="preload" href="fonts/plex-arabic-arabic-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="style.css?v=4">
 </head>
 <body>
+<!-- Icons: drawn in one stroke style (after Lucide, ISC license). -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="i-now" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></symbol><symbol id="i-day" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></symbol><symbol id="i-hours" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M8 17v-4"/><path d="M13 17V8"/><path d="M18 17v-7"/></symbol><symbol id="i-team" viewBox="0 0 24 24"><circle cx="9" cy="7" r="4"/><path d="M2 21v-2a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v2"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M22 21v-2a4 4 0 0 0-3-3.85"/></symbol><symbol id="i-profile" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/></symbol><symbol id="i-requests" viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></symbol><symbol id="i-attendance" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol><symbol id="i-shifts" viewBox="0 0 24 24"><path d="M17 3l4 4-4 4"/><path d="M3 7h18"/><path d="M7 21l-4-4 4-4"/><path d="M21 17H3"/></symbol><symbol id="i-calls" viewBox="0 0 24 24"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/></symbol><symbol id="i-missed" viewBox="0 0 24 24"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/><path d="M22 2l-6 6"/><path d="M16 2l6 6"/></symbol><symbol id="i-followup" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></symbol><symbol id="i-system" viewBox="0 0 24 24"><path d="M3.3 19a10 10 0 1 1 17.4 0"/><path d="M12 14l4-4"/><circle cx="12" cy="14" r="1.5"/></symbol><symbol id="i-manage" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol><symbol id="i-guide" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></symbol><symbol id="i-next" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></symbol><symbol id="i-prev" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></symbol><symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/></symbol><symbol id="i-logout" viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l-5-5 5-5"/><path d="M5 12h12"/></symbol></svg>
 <section id="login" hidden>
   <form id="loginForm">
     <div class="brand"><span class="mark">م</span><div><strong>مرصد الأداء</strong><small>إدارة الكول سنتر</small></div></div>
@@ -19,34 +22,34 @@
 
 <div id="app" hidden>
   <aside id="nav">
-    <div class="brand"><span class="mark">م</span><div><strong>مرصد الأداء</strong><small id="who"></small></div></div>
-    <nav>
+    <div class="brand"><span class="mark">م</span><div><strong>مرصد الأداء</strong><small id="who"></small></div><button type="button" id="menuToggle" class="ghost icon" aria-expanded="false" aria-controls="navList" aria-label="القايمة"><svg class="ic" aria-hidden="true"><use href="#i-menu"/></svg></button></div>
+    <nav id="navList" aria-label="أقسام المرصد">
       <div class="navgroup">مباشر</div>
-      <button data-view="now" class="active"><i>●</i>الآن</button>
+      <button data-view="now" class="active"><svg class="ic" aria-hidden="true"><use href="#i-now"/></svg>الآن</button>
       <div class="navgroup">اليوم</div>
-      <button data-view="day"><i>▦</i>ملخص اليوم</button>
-      <button data-view="hours"><i>▁▃</i>على مدار اليوم</button>
-      <button data-view="team"><i>☰</i>أداء الموظفين</button>
-      <button data-view="profile"><i>◉</i>ملف الموظف</button>
-      <button data-view="requests"><i>✓</i>طلبات البريك<span class="badge" id="reqBadge" hidden></span></button>
-      <button data-view="attendance"><i>◷</i>الحضور والبريك</button>
-      <button data-view="shifts"><i>⇄</i>نهاية الشيفت</button>
-      <button data-view="calls"><i>☎</i>المكالمات</button>
-      <button data-view="missed"><i>✕</i>المكالمات الفائتة</button>
+      <button data-view="day"><svg class="ic" aria-hidden="true"><use href="#i-day"/></svg>ملخص اليوم</button>
+      <button data-view="hours"><svg class="ic" aria-hidden="true"><use href="#i-hours"/></svg>على مدار اليوم</button>
+      <button data-view="team"><svg class="ic" aria-hidden="true"><use href="#i-team"/></svg>أداء الموظفين</button>
+      <button data-view="profile"><svg class="ic" aria-hidden="true"><use href="#i-profile"/></svg>ملف الموظف</button>
+      <button data-view="requests"><svg class="ic" aria-hidden="true"><use href="#i-requests"/></svg>طلبات البريك<span class="badge" id="reqBadge" hidden></span></button>
+      <button data-view="attendance"><svg class="ic" aria-hidden="true"><use href="#i-attendance"/></svg>الحضور والبريك</button>
+      <button data-view="shifts"><svg class="ic" aria-hidden="true"><use href="#i-shifts"/></svg>نهاية الشيفت</button>
+      <button data-view="calls"><svg class="ic" aria-hidden="true"><use href="#i-calls"/></svg>المكالمات</button>
+      <button data-view="missed"><svg class="ic" aria-hidden="true"><use href="#i-missed"/></svg>المكالمات الفائتة</button>
       <div class="navgroup">المتابعة والنظام</div>
-      <button data-view="followup"><i>✎</i>المتابعة والتقارير</button>
-      <button data-view="system"><i>⚙</i>حالة النظام</button>
-      <button data-view="manage"><i>⚑</i>الإدارة</button>
-      <button data-view="guide"><i>?</i>طريقة الحساب</button>
+      <button data-view="followup"><svg class="ic" aria-hidden="true"><use href="#i-followup"/></svg>المتابعة والتقارير</button>
+      <button data-view="system"><svg class="ic" aria-hidden="true"><use href="#i-system"/></svg>حالة النظام</button>
+      <button data-view="manage"><svg class="ic" aria-hidden="true"><use href="#i-manage"/></svg>الإدارة</button>
+      <button data-view="guide"><svg class="ic" aria-hidden="true"><use href="#i-guide"/></svg>طريقة الحساب</button>
     </nav>
-    <button id="logout" class="ghost">خروج</button>
+    <button id="logout" class="ghost"><svg class="ic" aria-hidden="true"><use href="#i-logout"/></svg>خروج</button>
   </aside>
 
   <main>
     <header id="top">
       <h1 id="title">الآن</h1>
       <div class="tools">
-        <span id="dayPicker" class="daynav" hidden><button class="ghost small" id="dayPrev" title="اليوم اللي قبله">→</button><label>من <input id="day" type="date"></label><label>إلى <input id="dayTo" type="date"></label><button class="ghost small" id="applyRange">عرض الفترة</button><button class="ghost small" id="dayNext" title="اليوم اللي بعده">←</button><button class="ghost small" id="dayToday">النهارده</button></span>
+        <span id="dayPicker" class="daynav" hidden><button class="ghost small icon" id="dayPrev" title="اليوم اللي قبله" aria-label="اليوم اللي قبله"><svg class="ic" aria-hidden="true"><use href="#i-prev"/></svg></button><label>من <input id="day" type="date"></label><label>إلى <input id="dayTo" type="date"></label><button class="ghost small" id="applyRange">عرض الفترة</button><button class="ghost small icon" id="dayNext" title="اليوم اللي بعده" aria-label="اليوم اللي بعده"><svg class="ic" aria-hidden="true"><use href="#i-next"/></svg></button><button class="ghost small" id="dayToday">النهارده</button></span>
         <span id="sync" class="sync"></span>
       </div>
     </header>
@@ -117,7 +120,7 @@
 
     <section id="view-calls" class="view" hidden>
       <div class="filters">
-        <input id="callSearch" type="search" placeholder="بحث بالموظف أو الرقم">
+        <input aria-label="بحث بالموظف أو الرقم" id="callSearch" type="search" placeholder="بحث بالموظف أو الرقم">
         <select id="callEmployee" aria-label="الموظف"><option value="">كل الموظفين</option></select>
         <select id="callStatus" aria-label="حالة المكالمة"><option value="">كل المكالمات</option><option value="complete">مكتملة</option><option value="open">بدون نهاية مسجلة</option></select>
         <button class="ghost small" data-export="calls">تصدير Excel</button>
@@ -149,11 +152,11 @@
       <div id="followupCards" class="cards"></div>
       <article class="panel"><h2>إضافة متابعة</h2>
         <form id="reviewForm" class="inline">
-          <input name="title" placeholder="الموضوع" maxlength="200" required style="flex:2">
+          <input aria-label="الموضوع" name="title" placeholder="الموضوع" maxlength="200" required style="flex:2">
           <select name="employeeId" aria-label="الموظف"><option value="">من غير موظف</option></select>
-          <input name="owner" placeholder="مسؤول المتابعة" maxlength="100">
+          <input aria-label="مسؤول المتابعة" name="owner" placeholder="مسؤول المتابعة" maxlength="100">
           <select name="status" aria-label="الحالة"><option value="new">جديدة</option><option value="in_progress">جاري المتابعة</option><option value="resolved">اتحلت</option><option value="reviewed">تمت المراجعة</option></select>
-          <input name="note" placeholder="ملاحظة" maxlength="2000" style="flex:2">
+          <input aria-label="ملاحظة" name="note" placeholder="ملاحظة" maxlength="2000" style="flex:2">
           <button type="submit">إضافة</button>
         </form>
         <p id="reviewNote" class="muted" role="status"></p></article>
@@ -191,8 +194,8 @@
       <div id="manageCards" class="cards"></div>
       <article class="panel"><h2>الموظفون</h2>
         <form id="addEmployee" class="inline">
-          <input name="name" placeholder="الاسم" required><input name="code" placeholder="الكود" required>
-          <input name="pin" type="password" inputmode="numeric" placeholder="الباسورد (أرقام)" required><input name="pin2" type="password" inputmode="numeric" placeholder="تأكيد الباسورد" required>
+          <input aria-label="الاسم" name="name" placeholder="الاسم" required><input aria-label="الكود" name="code" placeholder="الكود" required>
+          <input aria-label="الباسورد (أرقام)" name="pin" type="password" inputmode="numeric" placeholder="الباسورد (أرقام)" required><input aria-label="تأكيد الباسورد" name="pin2" type="password" inputmode="numeric" placeholder="تأكيد الباسورد" required>
           <button type="submit">إضافة موظف</button>
         </form>
         <p id="employeeMessage" class="muted" role="status"></p>
@@ -203,7 +206,7 @@
           <div class="inline"><select name="to" aria-label="مين يستلم الرسالة"><option value="all">كل الموظفين النشطين</option></select>
           <select name="priority" aria-label="أهمية الرسالة"><option value="normal">عادي</option><option value="urgent">عاجل</option></select>
           <select name="hours" aria-label="مدة ظهور الرسالة"><option value="1">صلاحية ساعة</option><option value="4" selected>4 ساعات</option><option value="12">12 ساعة</option><option value="24">24 ساعة</option></select></div>
-          <input name="title" maxlength="80" placeholder="العنوان" required>
+          <input aria-label="العنوان" name="title" maxlength="80" placeholder="العنوان" required>
           <textarea name="message" maxlength="1000" rows="3" placeholder="الرسالة" required></textarea>
           <button type="submit">إرسال</button>
         </form>
@@ -212,9 +215,9 @@
       </article>
       <article class="panel" id="adminUsersPanel"><h2>مستخدمو صفحة الإدارة</h2>
         <form id="addAdmin" class="inline">
-          <input name="name" placeholder="الاسم" required>
+          <input aria-label="الاسم" name="name" placeholder="الاسم" required>
           <select name="role" aria-label="الدور"><option value="supervisor">مشرف</option><option value="viewer">مشاهدة فقط</option><option value="admin">مدير</option></select>
-          <input name="password" type="password" placeholder="الباسورد (6 أو أكثر)" required><input name="password2" type="password" placeholder="تأكيد الباسورد" required>
+          <input aria-label="الباسورد (6 أو أكثر)" name="password" type="password" placeholder="الباسورد (6 أو أكثر)" required><input aria-label="تأكيد الباسورد" name="password2" type="password" placeholder="تأكيد الباسورد" required>
           <button type="submit">إضافة</button>
         </form>
         <p id="adminMessage" class="muted" role="status"></p>
@@ -228,7 +231,7 @@
       <article class="panel" id="telegramPanel"><h2>تنبيهات تليجرام</h2>
         <p class="muted">1) اعمل بوت من BotFather وانسخ التوكن. 2) ضيف البوت لجروب المشرفين وابعت فيه أي رسالة. 3) دوس «دور على الجروب» واختاره.</p>
         <p id="tgStatus"></p>
-        <form id="tgToken" class="inline"><input name="token" placeholder="توكن البوت" autocomplete="off" required><button type="submit">ربط البوت</button></form>
+        <form id="tgToken" class="inline"><input aria-label="توكن البوت" name="token" placeholder="توكن البوت" autocomplete="off" required><button type="submit">ربط البوت</button></form>
         <div class="inline" style="margin-top:8px"><button type="button" id="tgDiscover" class="ghost">دور على الجروب</button><select id="tgChats" aria-label="جروب تليجرام" hidden></select><button type="button" id="tgChoose" hidden>ربط الجروب ده</button><button type="button" id="tgTest" class="ghost">رسالة تجربة</button></div>
         <form id="tgSettings" class="stack" style="margin-top:10px"><label><input type="checkbox" name="enabled"> التنبيهات شغالة</label><div id="tgRules" class="stack"></div><button type="submit">حفظ</button></form>
         <p id="tgNote" class="muted" role="status"></p>
