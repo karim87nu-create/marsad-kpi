@@ -5,7 +5,7 @@ import { outKind } from './attendance-rules.js';
 import * as A from './arabicss.js';
 import { sha256Bytes, randomBytes, b64, fromB64 } from './security.js';
 
-const TICK_MS = 5000, WAIT_ALERT_S = 7, LATE_ANSWER_S = 10;   // a customer answered after more than 10 s also gets the team's state while they waited
+const TICK_MS = 5000, WAIT_ALERT_S = 7, LATE_ANSWER_S = 7;   // a customer answered after more than 7 s also gets the team's state while they waited
 
 const RULE_LIST = {
   waitSla: 'عميل عدّى 7 ثواني انتظار',
