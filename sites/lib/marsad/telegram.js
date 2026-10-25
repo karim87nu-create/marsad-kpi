@@ -24,7 +24,7 @@ const RULE_LIST = {
   source: 'وقف أو رجوع قراءة الانتظار المباشر',
 };
 const RECOVERY_LABELS = { breakStart: 'رجع من البريك', breakOver: 'رجع من البريك', longCall: 'خلّص المكالمة الطويلة', gap: 'رجع الرصد', breakRequest: 'الرد على طلب البريك', queueNobody: 'انتهى الانتظار', logout: 'رجع للشغل',
-  waitSla: 'العميل خرج من الانتظار', source: 'رجعت قراءة الانتظار', notBound: 'دخل التحويلة' };
+  waitSla: 'العميل خرج من الانتظار: اترد عليه أو لا', waitConfirm: 'تأكيد سجل أرابيكس', source: 'رجعت قراءة الانتظار', notBound: 'دخل التحويلة' };
 const OUT_TEXT = { arabicss: 'خرج من أرابيكس', extension: 'سجّل خروج من التحويلة', browser: 'قفل المتصفح أو صفحة أرابيكس' };
 const mask = phone => { const d = String(phone || '').replace(/\D/g, ''); return d.length > 4 ? '••••' + d.slice(-4) : d || 'رقم غير ظاهر'; };
 const DEFAULT_RULES = Object.fromEntries(Object.keys(RULE_LIST).map(k => [k, true]));
@@ -137,6 +137,28 @@ function setup(app) {
       + '\n👥 متاح ' + inState('ready').length + ' · مكالمة ' + inState('on_call').length + ' · بريك ' + inState('break').length + ' · انقطاع رصد ' + (inState('unknown').length + inState('disconnected').length)
       + (inState('ready').length ? '\n🟢 المتاحين: ' + names(inState('ready')) : '');
     const add0 = add;
+    // Same caller: the last 9 digits (the queue and the console may write the number with or without the leading 0 / country code).
+    const digits = v => String(v || '').replace(/\D/g, '');
+    const samePhone = (a, b) => { a = digits(a).slice(-9); b = digits(b).slice(-9); return a.length >= 6 && a === b; };
+    const isWaiting = r => /^(on wait|waiting)$/i.test(String(r[10]).trim()), isTalking = r => /^live call$/i.test(String(r[10]).trim());
+    const extOf = v => (String(v || '').match(/(\d{2,6})(?!.*\d)/) || [])[1] || '';
+    // Who worked on an extension at a moment (the session bound to it).
+    const onExtension = async (ext, at) => ext ? db.prepare('SELECT employee_id FROM employee_sessions WHERE extension = ? AND issued_at <= ? AND (revoked_at IS NULL OR revoked_at >= ?) ORDER BY issued_at DESC LIMIT 1').get(ext, at, at) : null;
+    // When a waiting caller entered the queue: kept in the alert key (ms), or the minute for alerts sent before this change.
+    const entryOf = key => { const v = Number(key.split(':')[2]); return v > 1e11 ? v : v * 60000; };
+    const gone = {
+      get: async k => Number((await db.prepare('SELECT value FROM settings WHERE key = ?').get('tg_gone:' + k))?.value) || null,
+      set: (k, v) => db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run('tg_gone:' + k, String(v)),
+    };
+    // The last time the caller was seen waiting in the stored live snapshots, and the wait shown then.
+    async function lastSeenWaiting(phone, from) {
+      for (const sn of await db.prepare('SELECT observed_at, rows FROM live_snapshots WHERE observed_at >= ? ORDER BY observed_at DESC LIMIT 200').all(from)) {
+        let rows; try { rows = JSON.parse(sn.rows); } catch { continue; }
+        const r = rows.find(x => isWaiting(x) && samePhone(x[9], phone));
+        if (r) return { at: sn.observed_at, wait: A.parseDuration(r[8]) };
+      }
+      return null;
+    }
     const addNew = (key, kind, employeeId, text, opts) => add0(key, kind, employeeId, text + footer(), opts);
 
     // ---- follow-ups: each problem we alerted about gets one reply when it is over ----
@@ -164,7 +186,8 @@ function setup(app) {
         if (ended) text = '✅ ' + name(old.employee_id) + ' خلّص المكالمة — مدتها ' + fmt(ended.duration_seconds || 0) + ' — ' + clock(ended.occurred_at);
         else if (['ready', 'break'].includes(current) && person.since && Date.parse(person.since) > old.created_at) text = '✅ ' + name(old.employee_id) + ' خلّص المكالمة — حالته دلوقتي ' + statusLabel[current];
       } else if (old.kind === 'gap') {
-        if (['ready', 'on_call', 'break'].includes(current)) text = '✅ ' + name(old.employee_id) + ' رجع الرصد — حالته دلوقتي ' + statusLabel[current];
+        const from = Date.parse(old.key.split(':').slice(2).join(':'));
+        if (['ready', 'on_call', 'break'].includes(current)) text = '✅ ' + name(old.employee_id) + ' رجع الرصد — ' + clock(now) + (Number.isFinite(from) ? ' — الانقطاع استمر ' + fmt((now - from) / 1000) : '') + ' — حالته دلوقتي ' + statusLabel[current];
       } else if (old.kind === 'breakRequest') {
         const req = await db.prepare('SELECT * FROM break_requests WHERE id = ?').get(old.key.slice(4));
         if (req && req.status !== 'pending') {
@@ -178,11 +201,38 @@ function setup(app) {
         if (snap && now - snap.observed_at < 30000) {
           const waiting = JSON.parse(snap.rows).filter(r => /^(on wait|waiting)$/i.test(String(r[10]).trim())).length;
           const available = live.filter(p => p.state === 'ready').length;
-          if (!waiting || available) text = !waiting ? '✅ مفيش عملاء منتظرين دلوقتي' : '✅ بقى فيه ' + available + ' موظف متاح — المنتظرين ' + waiting;
+          const lasted = ' — الوقت من غير حد متاح ' + fmt((now - Number(old.key.split(':')[1]) * 1000) / 1000);
+          if (!waiting || available) text = (!waiting ? '✅ مفيش عملاء منتظرين دلوقتي' : '✅ بقى فيه ' + available + ' موظف متاح — المنتظرين ' + waiting) + lasted;
         }
       } else if (old.kind === 'waitSla') {
-        const phone = old.key.split(':')[1];
-        if (snapFresh && !queueRows.some(r => String(r[9] || '').replace(/\D/g, '') === phone)) text = '✅ العميل ' + mask(phone) + ' خرج من الانتظار — ' + clock(now);
+        // One reply that says how it ended: answered (after how long, by whom) or left without an answer.
+        const phone = old.key.split(':')[1], entry = entryOf(old.key);
+        const stillWaiting = snapFresh && queueRows.some(r => samePhone(r[9], phone));
+        const linked = await db.prepare("SELECT * FROM events WHERE event_type IN ('agentlinked','call_observed') AND occurred_at >= ? AND occurred_at <= ? AND phone IS NOT NULL AND phone != '' ORDER BY occurred_at").all(entry - 5000, now)
+          .then(list => list.find(e => samePhone(e.phone, phone)));
+        if (linked) {
+          const waited = Math.max(0, Math.round((linked.occurred_at - entry) / 1000));
+          text = '✅ العميل ' + mask(phone) + ' اترد عليه بعد ' + fmt(waited) + ' انتظار — رد عليه ' + name(linked.employee_id) + ' (تحويلة ' + linked.extension + ') — ' + clock(linked.occurred_at);
+        } else if (snapFresh && !stillWaiting) {
+          const talking = JSON.parse(snap.rows).find(r => isTalking(r) && samePhone(r[9], phone));
+          let first = await gone.get(old.key);
+          if (!first) { first = now; await gone.set(old.key, now); }
+          if (talking) {
+            // Answered in Arabicss by someone the monitor has no event for (not signed in, or the event is late).
+            const ext = extOf(talking[2]), emp = await onExtension(ext, now), seen = await lastSeenWaiting(phone, entry);
+            const waited = seen ? Math.round((seen.at - entry) / 1000 + (first - seen.at) / 2000) : Math.round((first - entry) / 1000);
+            text = '✅ العميل ' + mask(phone) + ' اترد عليه بعد حوالي ' + fmt(waited) + ' انتظار — ' + (emp ? 'رد عليه ' + name(emp.employee_id) + ' (تحويلة ' + ext + ')' : ext ? 'رد عليه تحويلة ' + ext + ' (مش مسجلة في المرصد وقتها)' : 'اللي رد مش ظاهر في المرصد') + ' — ' + clock(first);
+          } else if (now - first >= 20000) {
+            // Gone from the queue, no one picked it up for 20 s: most likely the caller hung up.
+            const seen = await lastSeenWaiting(phone, entry);
+            const waited = seen ? Math.round((seen.at - entry) / 1000) : Math.round((first - entry) / 1000);
+            const left = seen ? seen.at : first;
+            text = '🔴 العميل ' + mask(phone) + ' خرج من الانتظار من غير ما حد يرد عليه — انتظر حوالي ' + fmt(waited) + ' وخرج ' + clock(left)
+              + '\nمحدش من المسجلين في المرصد استلم المكالمة، ومش ظاهرة كمكالمة شغالة في أرابيكس، فغالبًا قفل الخط.'
+              + '\nهتتأكد من سجل أرابيكس: لو اتسجلت فائتة هتوصل «مكالمة فائتة» ردًا على الرسالة دي.';
+          }
+        }
+        if (text) await db.prepare('DELETE FROM settings WHERE key = ?').run('tg_gone:' + old.key);
       } else if (old.kind === 'source') {
         if (snapFresh) text = '✅ رجعت قراءة الانتظار المباشر — ' + clock(snap.observed_at);
       } else if (old.kind === 'notBound') {
@@ -246,7 +296,7 @@ function setup(app) {
     for (const r of queueRows) {
       const wait = waitOf(r), phone = String(r[9] || '').replace(/\D/g, '');
       if (wait == null || !operatingNow) continue;
-      const entry = Math.round((now - wait * 1000) / 60000);   // the minute the caller entered: one alert per caller
+      const entry = Math.round((now - wait * 1000) / 1000) * 1000;   // when the caller entered (ms): one alert per caller, and the follow-up measures the wait from it
       const ready = inState('ready'), who = ready.length ? '🟢 فيه ' + ready.length + ' متاح حسب الرصد (' + names(ready) + ') — راجع التوزيع على نوع الطلب' : '🔴 مفيش حد متاح حسب الرصد';
       const line = A.queueLabel(r[0]) + ' · ' + mask(phone) + ' · منتظر ' + Math.round(wait) + ' ث';
       const seen = kind => db.prepare("SELECT 1 FROM telegram_log WHERE kind = ? AND key LIKE ? AND created_at > ?").get(kind, kind + ':' + phone + ':%', now - 15 * 60000);
@@ -280,9 +330,20 @@ function setup(app) {
         const readyDuring = ctx ? ctx.employees.filter(e => e.readyDuringWait) : [];
         const label = { ready: 'متاح', on_call: 'في مكالمة', break: 'بريك', unknown: 'انقطاع رصد', disconnected: 'انقطع', out_extension: 'برّه التحويلة', out_arabicss: 'برّه أرابيكس', out_browser: 'قافل المتصفح', logged_in: 'لسه مدخلش التحويلة' };
         const atEntry = ctx ? ctx.employees.filter(e => !['not_started', 'shift_ended'].includes(e.atEntry)).map(e => e.name + ' (' + (label[e.atEntry] || e.atEntry) + ')') : [];
+        const waitAlert = await db.prepare("SELECT key FROM telegram_log WHERE kind = 'waitSla' AND created_at >= ? AND created_at <= ? ORDER BY id DESC").all(rec.startMs - 120000, rec.startMs + 900000)
+          .then(list => list.find(x => samePhone(x.key.split(':')[1], m.phone)));
         addNew(key, 'missed', null, '🔴 مكالمة فائتة — ' + clock(rec.startMs) + '\n' + m.queueLabel + ' · ' + mask(m.phone) + ' · انتظر ' + (m.waitSeconds ?? '؟') + ' ث'
           + '\n' + (readyDuring.length ? '🟢 كانوا متاحين أثناء انتظاره: ' + readyDuring.map(e => e.name).join('، ') : '⚪ مكانش فيه حد متاح أثناء انتظاره حسب الرصد')
-          + (atEntry.length ? '\n👥 وقت دخوله الطابور: ' + atEntry.slice(0, 8).join('، ') + (atEntry.length > 8 ? ' +' + (atEntry.length - 8) : '') : ''));
+          + (atEntry.length ? '\n👥 وقت دخوله الطابور: ' + atEntry.slice(0, 8).join('، ') + (atEntry.length > 8 ? ' +' + (atEntry.length - 8) : '') : ''), { replyTo: waitAlert?.key || null });
+      }
+      // A waiting caller we said left unanswered, but the Arabicss log shows was answered: say so under the same thread.
+      for (const u of await db.prepare("SELECT l.key AS waitKey, r.text AS outcome FROM telegram_log l JOIN telegram_log r ON r.key = 'resolved:' || l.key WHERE l.kind = 'waitSla' AND l.created_at > ? AND r.text LIKE '🔴%'").all(now - 3 * 3600000)) {
+        if (await db.prepare('SELECT 1 FROM telegram_log WHERE key = ?').get('confirm:' + u.waitKey)) continue;
+        const phone = u.waitKey.split(':')[1], entry = entryOf(u.waitKey);
+        const rec = h.records.find(r => r.startMs && Math.abs(r.startMs - entry) < 180000 && samePhone(r.phone, phone) && /^(success|answered|completed)$/i.test(String(r.status).trim()));
+        if (!rec) continue;
+        const emp = await onExtension(rec.extension, rec.startMs);
+        add('confirm:' + u.waitKey, 'waitConfirm', emp?.employee_id ?? null, '↩️ تصحيح من سجل أرابيكس: العميل ' + mask(phone) + ' اترد عليه' + (rec.extension ? ' من تحويلة ' + rec.extension + (emp ? ' (' + name(emp.employee_id) + ')' : '') : '') + (rec.waitSeconds != null ? ' بعد ' + fmt(rec.waitSeconds) + ' انتظار' : ''), { replyTo: u.waitKey });
       }
     }
     // ---- the live queue reader stopped (during operating hours) ----

@@ -118,20 +118,47 @@ test('telegram: waiting customers, missed calls with who was available, and how 
     assert.match(sent.at(-1), /⏳ منتظرين: 1/);
     assert.match(sent.at(-1), /المتاحين: Ahmed/);
     const n = sent.length; t.advance(6000); await t.app.telegramTick(); assert.equal(sent.length, n, 'one alert per caller');
+    // The caller leaves the queue with nobody picking up: no guess for 20 s, then one clear reply with the wait.
     t.advance(6000);
     t.app.latestLive = async () => ({ observed_at: t.clock.now, rows: '[]' });
+    const before = sent.length; await t.app.telegramTick(); assert.equal(sent.length, before, 'no verdict in the first seconds after leaving the queue');
+    t.advance(21000); t.app.latestLive = async () => ({ observed_at: t.clock.now, rows: '[]' });
     await t.app.telegramTick();
-    assert.match(sent.at(-1), /خرج من الانتظار/);
+    assert.match(sent.at(-1), /خرج من الانتظار من غير ما حد يرد عليه/);
+    assert.match(sent.at(-1), /انتظر حوالي/);
+    // A second caller is answered by a signed-in employee: the reply says after how long and who.
+    const row2 = wait => ['7671', '', '', '', '', '', '', '', '0:00:' + String(wait).padStart(2, '0'), '01009998887', 'On Wait'];
+    t.advance(60000);
+    t.app.latestLive = async () => ({ observed_at: t.clock.now, rows: JSON.stringify([row2(9)]) });
+    await t.app.telegramTick();
+    assert.match(sent.at(-1), /••••8887/);
+    t.advance(6000);
+    await t.event(s.token, 'agentlinked', { callId: '901', phone: '01009998887', queue: '7671', callType: 'incoming', state: 'on_call' });
+    t.app.latestLive = async () => ({ observed_at: t.clock.now, rows: '[]' });
+    await t.app.telegramTick();
+    assert.match(sent.at(-1), /••••8887 اترد عليه بعد 0 د 15 ث انتظار — رد عليه Ahmed \(تحويلة 101\)/);
+    await t.event(s.token, 'agentunlinked', { callId: '901', state: 'ready', durationSeconds: 30 });
+    // A third caller is answered in Arabicss by an extension nobody signed in on: the live report shows the call.
+    const row3 = (wait, status, agent = '') => ['7671', '', agent, '', '', '', '', '', '0:00:' + String(wait).padStart(2, '0'), '01007776665', status];
+    t.advance(60000);
+    t.app.latestLive = async () => ({ observed_at: t.clock.now, rows: JSON.stringify([row3(10, 'On Wait')]) });
+    await t.app.telegramTick();
+    t.advance(4000);
+    t.app.latestLive = async () => ({ observed_at: t.clock.now, rows: JSON.stringify([row3(3, 'Live Call', 'SIP/109')]) });
+    await t.app.telegramTick();
+    assert.match(sent.at(-1), /••••6665 اترد عليه بعد حوالي .* رد عليه تحويلة 109 \(مش مسجلة في المرصد وقتها\)/);
     t.app.latestLive = real;
     // A missed call in the Arabicss log: who was available while the customer waited.
     const tok = (await admin('POST', '/api/history', { action: 'token' })).body;
     const header = ['Queue', 'Agent', 'Call Date', 'Start Time', 'End Time', 'Duration', 'Wait Time', 'Caller ID', 'Status', 'Trunk'];
-    const r = await t.call('POST', '/api/history', { headers: { 'x-history-token': tok.token }, body: { rows: [header, ['7671', '', '2026-10-22', '14:00:10', '14:00:40', '00:00:00', '00:00:30', '0111222333', 'Abandoned', 'T']], expectedCount: 1, reportDate: '2026-10-22' } });
+    const r = await t.call('POST', '/api/history', { headers: { 'x-history-token': tok.token }, body: { rows: [header, ['7671', '', '2026-10-22', '14:00:10', '14:00:40', '00:00:00', '00:00:30', '01001234567', 'Abandoned', 'T']], expectedCount: 1, reportDate: '2026-10-22' } });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     await t.app.telegramTick();
-    const missed = sent.find(x => x.includes('مكالمة فائتة'));
+    const missed = sent.find(x => x.startsWith('🔴 مكالمة فائتة'));
     assert.ok(missed, sent.join('\n---\n'));
     assert.match(missed, /كانوا متاحين أثناء انتظاره: Ahmed/);
+    // It is threaded under the waiting alert of the same caller.
+    assert.match(t.app.db.raw.prepare("SELECT reply_to FROM telegram_log WHERE kind = 'missed'").get().reply_to || '', /^waitSla:01001234567:/);
     // Logging out of the extension says so.
     await t.device(s.token, 'POST', '/api/session/end', { reason: 'extension_logout' });
     await t.app.telegramTick();
