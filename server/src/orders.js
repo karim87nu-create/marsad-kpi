@@ -6,8 +6,8 @@ import { sha256, randomToken } from './security.js';
 
 const KINDS = ['ordersLate', 'ordersCancel', 'ordersDiscount', 'ordersEntry', 'ordersEntryLate', 'ordersStale'];
 const STALE_MS = 3 * 60000, CHECK_MS = 60000;
-// Which group: delays leaving the branch and cancellations after the pilot took the order go to the branch managers.
-const BRANCH_KINDS = new Set(['ordersLate']);
+// Which group: delays leaving the branch and all cancellations go to the branch managers.
+const BRANCH_KINDS = new Set(['ordersLate', 'ordersCancel']);
 
 function setup(app) {
   const { db, fail } = app;
@@ -61,8 +61,7 @@ function setup(app) {
       if (!a || !KINDS.includes(a.kind) || a.kind === 'ordersStale' || !a.key || !a.text) continue;
       const key = 'orders:' + b.day + ':' + String(a.key).slice(0, 80), text = String(a.text).slice(0, 3500);
       const old = states[key], no = orderNo(a);
-      const cancellation = rows('cancels').find(o => String(o.no) === no);
-      const target = BRANCH_KINDS.has(a.kind) || a.kind === 'ordersCancel' && cancellation && (cancellation.out || cancellation.pilot) ? 'branches' : 'online';
+      const target = BRANCH_KINDS.has(a.kind) ? 'branches' : 'online';
       const status = String(a.status || 'active').slice(0,80);
       const version = sha256(JSON.stringify([status, text]));
       if (!old) {

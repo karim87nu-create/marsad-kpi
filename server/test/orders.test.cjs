@@ -144,9 +144,9 @@ test('orders: state replies stay in their original department, missing groups ne
     assert.equal(sent.filter(x=>x.text.includes('خرج مع الطيار')).length,1);
     assert.equal(sent.filter(x=>x.text.includes('مشكلة الضرب')).length,1);
     await push({alerts:[{key:'cancel:11',orderNo:11,kind:'ordersCancel',text:'cancel'}]});
-    await t.app.telegramTick();assert.equal(sent.find(x=>x.text==='cancel').chat_id,'-300');
+    await t.app.telegramTick();assert.equal(sent.find(x=>x.text==='cancel').chat_id,'-400');
     await push({alerts:[{key:'cancel:11',orderNo:11,kind:'ordersCancel',status:'resolved',text:'cancel changed'}]});
-    await t.app.telegramTick();assert.equal(sent.find(x=>x.text==='cancel changed').chat_id,'-300');
+    await t.app.telegramTick();assert.equal(sent.find(x=>x.text==='cancel changed').chat_id,'-400');
     assert.ok(sent.find(x=>x.text==='cancel changed').reply_parameters.message_id);
   } finally {await t.close();tg.close();}
 });
