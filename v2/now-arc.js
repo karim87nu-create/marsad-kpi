@@ -60,7 +60,6 @@ window.MarsadArc = function MarsadArc(ctx) {
   root.append(tools, head, room, outRow, away, pulse);
 
   // ---------- seat order (shared) ----------
-  api('/api/now-layout').then(d => { S.order = (d.order || []).map(String); draw(); }).catch(() => {});
   const saveOrder = order => { S.order = order; draw(); api('/api/now-layout', { method: 'POST', body: { order } }).catch(e => { pHint.textContent = 'الترتيب متحفظش: ' + (e.message || e); }); };
 
   // ---------- pulse data ----------
@@ -85,9 +84,10 @@ window.MarsadArc = function MarsadArc(ctx) {
     return live.filter(p => KIND[p.state] && KIND[p.state] !== 'out').map(p => ({ id: String(p.employeeId), name: p.name, ext: p.extension || '', kind: KIND[p.state],
       elapsed: p.since ? (S.now - Date.parse(p.since)) / 1000 : null, since: p.since, queue: p.queue, phone: p.phone, outKind: p.outKind, lastEvidence: p.lastEvidence }));
   }
+  // Grouped by state, from the right: free, on a call, on break, then the rest; by extension inside a group.
+  const GROUP = { ready: 0, call: 1, break: 2, gap: 3, idle: 4 };
   function ordered(list) {
-    const pos = new Map(S.order.map((id, i) => [id, i]));
-    return list.slice().sort((a, b) => (pos.has(a.id) ? pos.get(a.id) : 1e6) - (pos.has(b.id) ? pos.get(b.id) : 1e6) || (Number(a.ext) || 1e9) - (Number(b.ext) || 1e9) || a.name.localeCompare(b.name, 'ar'));
+    return list.slice().sort((a, b) => (GROUP[a.kind] ?? 9) - (GROUP[b.kind] ?? 9) || (Number(a.ext) || 1e9) - (Number(b.ext) || 1e9) || a.name.localeCompare(b.name, 'ar'));
   }
   // Up to 9 seats on one arc; more on two (outer then inner).
   function slots(n) {
@@ -224,7 +224,7 @@ window.MarsadArc = function MarsadArc(ctx) {
     away.hidden = !offToday.length || past;
 
     // Tools and the time bar.
-    arrangeBtn.hidden = !canWrite(); arrangeBtn.textContent = S.arranging ? 'خلصت' : 'رتّب الأماكن'; arrangeBtn.classList.toggle('on', S.arranging);
+    arrangeBtn.hidden = true; arrangeBtn.textContent = S.arranging ? 'خلصت' : 'رتّب الأماكن'; arrangeBtn.classList.toggle('on', S.arranging);
     resetBtn.hidden = !S.arranging;
     nowBtn.hidden = !past; playBtn.textContent = S.playing ? 'وقّف' : 'شغّل آخر 3 ساعات'; playBtn.disabled = !S.pulse;
     pHint.textContent = S.arranging ? 'اسحب أي موظف وسيبه في المكان اللي عايزه على القوس — الترتيب بيتحفظ لكل المشرفين'
