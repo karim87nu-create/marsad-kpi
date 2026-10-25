@@ -13,7 +13,7 @@
 // • A missed call is judged against everyone in their shift between the moment the customer entered
 //   the queue and the moment they hung up.
 // • Totals use operating hours (09:00 → 03:00); the data day runs 09:00 → 09:00.
-import { RULES, dayWindow, businessDay, iso } from './time.js';
+import { RULES, dayWindow, businessDay, iso, addDays } from './time.js';
 import { attendance, mergeBreaks, breakTotals, KNOWN_CLOSE, outKind } from './attendance-rules.js';
 import * as A from './arabicss.js';
 
@@ -110,9 +110,9 @@ function setup(app) {
   // Everything for one data day.
   async function day(date, now = app.now()) {
     const w = dayWindow(date), from = w.start - 12 * 3600000;
-    const [ev, ses, h, dec] = await Promise.all([db.prepare('SELECT MAX(id) m FROM events').get(), db.prepare('SELECT MAX(COALESCE(revoked_at, 0)) m, COUNT(*) n FROM employee_sessions').get(), app.dayHistory(date, now),
-      db.prepare('SELECT MAX(id) m FROM shift_decisions').get()]);
-    const key = [date, ev.m, ses.m, ses.n, h.key, dec.m, now >= w.end + 12 * 3600000 ? 'settled' : Math.floor(now / 5000)].join('|');
+    const [ev, ses, h, dec, asg] = await Promise.all([db.prepare('SELECT MAX(id) m FROM events').get(), db.prepare('SELECT MAX(COALESCE(revoked_at, 0)) m, COUNT(*) n FROM employee_sessions').get(), app.dayHistory(date, now),
+      db.prepare('SELECT MAX(id) m FROM shift_decisions').get(), db.prepare('SELECT MAX(decided_at) m, COUNT(*) n FROM call_assignments').get()]);
+    const key = [date, ev.m, ses.m, ses.n, h.key, dec.m, asg.m, asg.n, now >= w.end + 12 * 3600000 ? 'settled' : Math.floor(now / 5000)].join('|');
     if (cache.has(key)) return cache.get(key);
     const [people, rows, allEvents, decisions, samples] = await Promise.all([names(),
       db.prepare('SELECT * FROM employee_sessions WHERE issued_at < ? AND COALESCE(revoked_at, expires_at) > ? ORDER BY issued_at').all(w.end, from),
@@ -138,7 +138,8 @@ function setup(app) {
 
     // ---- calls of the day (by start time), plus Arabicss history matching ----
     const dayCalls = calls.filter(c => c.startedAt >= w.start && c.startedAt < w.end);
-    const matched = matchHistory(h.records, dayCalls, at.sessions, people);
+    const assignments = new Map((await db.prepare('SELECT * FROM call_assignments WHERE call_key >= ? AND call_key < ?').all(date, addDays(date, 2))).map(a => [a.call_key, a]));
+    const matched = matchHistory(h.records, dayCalls, at.sessions, people, states, assignments);
     const allCalls = [...dayCalls, ...matched.recovered].map(c => ({ ...c, employee: people.get(c.employeeId)?.name || '', outsideHours: c.startedAt >= w.operatingEnd || A.purpose(c.queue) === '0',
       startedAt: iso(c.startedAt), endedAt: iso(c.endedAt) })).sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
 
@@ -156,7 +157,7 @@ function setup(app) {
       const out = k => st.filter(s => (s.state === 'offline' || s.state === 'unknown') && (s.outKind || 'gap') === k).reduce((n, s) => n + s.durationSeconds, 0);
       const ready = sum('ready'), onCall = sum('on_call'), brk = t.totalBreakSeconds || 0;
       return { employeeId: id, name: people.get(id)?.name || 'حساب محذوف', calls: mine.length, inbound: mine.filter(c => c.callType === 'incoming').length, outbound: mine.filter(c => c.callType === 'outgoing').length,
-        answered: done.length, fromHistory: mine.filter(c => c.source === 'history').length, talkSeconds: done.reduce((n, c) => n + c.durationSeconds, 0),
+        answered: done.length, fromHistory: mine.filter(c => c.source === 'history').length, assignedCalls: mine.filter(c => c.source === 'manual').length, talkSeconds: done.reduce((n, c) => n + c.durationSeconds, 0),
         averageCallSeconds: done.length ? Math.round(done.reduce((n, c) => n + c.durationSeconds, 0) / done.length) : null, longCalls: done.filter(c => c.durationSeconds > RULES.callAlertSeconds).length,
         workSeconds: ready + onCall + brk, readySeconds: ready, callSeconds: onCall, breakSeconds: brk, breakCount: t.breakCount || 0,
         ongoingBreakSeconds: t.ongoingBreakSeconds || 0, gapSeconds: out('gap'), outArabicssSeconds: out('arabicss'), outExtensionSeconds: out('extension'), outBrowserSeconds: out('browser'),
@@ -164,7 +165,7 @@ function setup(app) {
     }).sort((a, b) => a.name.localeCompare(b.name, 'ar'));
 
     const out = { date, window: { start: iso(w.start), operatingEnd: iso(w.operatingEnd), end: iso(w.end) }, sessions: daySessions, states, calls: allCalls, employees,
-      history: { report: h.report, queues: h.queues, missed: h.missed, attribution: matched.summary, unattributed: matched.unattributed }, slots: slotsOf(w, h.records, states, samples), serverNow: iso(now) };
+      history: { report: h.report, queues: h.queues, missed: h.missed, attribution: matched.summary, unattributed: matched.unattributed, assigned: matched.assigned }, slots: slotsOf(w, h.records, states, samples), serverNow: iso(now) };
     Object.defineProperty(out, 'raw', { value: { sessions, states, records: h.records } });
     if (cache.size > 12) cache.delete(cache.keys().next().value);
     cache.set(key, out);
@@ -172,17 +173,30 @@ function setup(app) {
   }
 
   // Arabicss history ↔ connector calls. Answered history calls are matched by phone and time; an
-  // answered call the connector did not see goes to the one employee working on that extension then.
-  function matchHistory(records, calls, sessions, people) {
-    const used = new Set(), recovered = [], unattributed = [];
+  // answered call the connector did not see goes to the one employee working on that extension then,
+  // or to the employee the supervisor assigned it to. The rest are listed with ranked suggestions.
+  const callKey = r => [r.date, r.start || '', digits(r.phone), r.queue].join('|');
+  function matchHistory(records, calls, sessions, people, states = [], assignments = new Map()) {
+    const used = new Set(), recovered = [], unattributed = [], assigned = [];
     let already = 0;
+    const toCall = (r, employeeId, t, source) => {
+      const end = r.endMs ?? (t + (r.durationSeconds || 0) * 1000);
+      return { callId: 'history:' + r.index, employeeId, extension: r.extension, phone: r.phone, queue: r.queue, callType: 'incoming', startedAt: t, endedAt: end,
+        durationSeconds: r.durationSeconds ?? Math.round((end - t) / 1000), complete: true, source, startKnown: r.precision === 'second' };
+    };
     for (const r of records) {
       if (String(r.status).toLowerCase() !== 'success' || r.startMs == null) continue;
       const tolerance = (r.precision === 'minute' ? 60000 : 0) + ((r.waitSeconds || 0) + 120) * 1000;
       const phone = digits(r.phone);
       const hit = calls.find(c => !used.has(c) && phone && digits(c.phone) === phone && Math.abs(c.startedAt - r.startMs) <= tolerance);
       if (hit) { used.add(hit); already++; continue; }
-      const t = r.startMs + (r.waitSeconds || 0) * 1000;
+      const t = r.startMs + (r.waitSeconds || 0) * 1000, key = callKey(r);
+      const manual = assignments.get(key);
+      if (manual) {
+        recovered.push({ ...toCall(r, manual.employee_id, t, 'manual'), assignedBy: manual.decided_by || null });
+        assigned.push({ key, index: r.index, time: r.start, at: iso(t), phone: r.phone, extension: r.extension, queue: r.queue, employeeId: manual.employee_id, name: people.get(manual.employee_id)?.name || '', by: manual.decided_by || '', decidedAt: iso(manual.decided_at), note: manual.note || '' });
+        continue;
+      }
       const owners = r.extension ? sessions.filter(s => s.extension === r.extension && s.workStartedAt != null && s.workStartedAt - 60000 <= t
         && t <= (s.running ? Infinity : Date.parse(s.observedThrough) + GAP_MS)) : [];
       let who = [...new Set(owners.map(s => s.employeeId))];
@@ -193,13 +207,64 @@ function setup(app) {
         const after = on.filter(s => s.workStartedAt >= t && s.workStartedAt - t <= 1800000).sort((a, b) => a.workStartedAt - b.workStartedAt)[0];
         if (before && after && before.employeeId === after.employeeId) who = [before.employeeId];
       }
-      if (who.length === 1) {
-        const end = r.endMs ?? (t + (r.durationSeconds || 0) * 1000);
-        recovered.push({ callId: 'history:' + r.index, employeeId: who[0], extension: r.extension, phone: r.phone, queue: r.queue, callType: 'incoming', startedAt: t, endedAt: end,
-          durationSeconds: r.durationSeconds ?? Math.round((end - t) / 1000), complete: true, source: 'history', startKnown: r.precision === 'second' });
-      } else unattributed.push({ index: r.index, time: r.start, phone: r.phone, extension: r.extension, queue: r.queue, reason: !r.extension ? 'no_extension' : who.length ? 'several_employees' : 'nobody_on_extension' });
+      if (who.length === 1) recovered.push(toCall(r, who[0], t, 'history'));
+      else unattributed.push({ key, index: r.index, time: r.start, at: t, phone: r.phone, extension: r.extension, queue: r.queue, owners: who, reason: !r.extension ? 'no_extension' : who.length ? 'several_employees' : 'nobody_on_extension' });
     }
-    return { recovered, unattributed, summary: { alreadySeen: already, recovered: recovered.length, unattributed: unattributed.length } };
+    suggest(unattributed, sessions, states, [...calls, ...recovered], assigned, people);
+    for (const u of unattributed) { u.at = iso(u.at); delete u.owners; }
+    return { recovered, unattributed, assigned, summary: { alreadySeen: already, recovered: recovered.length, unattributed: unattributed.length, assigned: assigned.length } };
+  }
+
+  // Who most likely answered each unattributed call, from what the day shows. Calls on the same extension
+  // less than 30 minutes apart form one stretch (usually one person working without signing in), ranked together.
+  function suggest(list, sessions, states, calls, assigned, people) {
+    const worked = sessions.filter(s => s.workStartedAt != null);
+    const ids = [...new Set(worked.map(s => s.employeeId))];
+    const min = ms => Math.round(ms / 60000);
+    const scoreOne = (u, id) => {
+      const t = u.at, mine = worked.filter(s => s.employeeId === id), reasons = [];
+      // Working, on record, on another extension at that very moment, or on a call the connector saw: not them.
+      const busy = states.find(x => x.employeeId === id && ['ready', 'on_call', 'break'].includes(x.state) && Date.parse(x.startedAt) <= t && t < Date.parse(x.endedAt) && x.extension !== u.extension);
+      if (busy || calls.some(c => c.employeeId === id && c.extension !== u.extension && c.startedAt - 5000 <= t && t <= (c.endedAt ?? c.startedAt) + 5000)) return null;
+      let score = 0;
+      if (u.owners.includes(id)) { score += 60; reasons.push('كان مسجل على التحويلة دي وقتها'); }
+      const onExt = mine.filter(s => s.extension === u.extension);
+      const before = onExt.filter(s => Date.parse(s.observedThrough) <= t).sort((a, b) => Date.parse(b.observedThrough) - Date.parse(a.observedThrough))[0];
+      const after = onExt.filter(s => s.workStartedAt >= t).sort((a, b) => a.workStartedAt - b.workStartedAt)[0];
+      const gb = before ? t - Date.parse(before.observedThrough) : null, ga = after ? after.workStartedAt - t : null;
+      if (gb != null && gb <= 7200000) { score += Math.max(10, 50 - min(gb) / 2); reasons.push('كان على التحويلة دي قبلها بـ ' + min(gb) + ' د'); }
+      if (ga != null && ga <= 7200000) { score += Math.max(8, 40 - min(ga) / 2); reasons.push('دخل التحويلة دي بعدها بـ ' + min(ga) + ' د'); }
+      if (gb != null && ga != null && gb <= 7200000 && ga <= 7200000) score += 30;
+      if (!score && onExt.length) { score += 12; reasons.push('اشتغل على التحويلة دي النهارده'); }
+      const out = states.find(x => x.employeeId === id && ['offline', 'unknown'].includes(x.state) && Date.parse(x.startedAt) <= t && t < Date.parse(x.endedAt));
+      if (out) { score += out.state === 'unknown' ? 15 : 20; reasons.push(out.state === 'unknown' ? 'كان عنده انقطاع رصد وقتها' : 'كان برّه التحويلة في المرصد وقتها'); }
+      const past = assigned.filter(a => a.employeeId === id && a.extension === u.extension).length;
+      if (past) { score += 25; reasons.push('اتنسبله ' + past + ' مكالمة قبل كده على التحويلة دي'); }
+      return score > 0 ? { score, reasons } : null;
+    };
+    const sorted = [...list].sort((a, b) => a.at - b.at);
+    let group = 0;
+    for (let i = 0; i < sorted.length; i++) {
+      const u = sorted[i], prev = sorted[i - 1];
+      u.group = prev && prev.extension && prev.extension === u.extension && u.at - prev.at <= 1800000 ? prev.group : ++group;
+    }
+    const groups = new Map();
+    for (const u of sorted) { if (!groups.has(u.group)) groups.set(u.group, []); groups.get(u.group).push(u); }
+    for (const items of groups.values()) {
+      const totals = new Map();
+      for (const u of items) for (const id of ids) {
+        const r = scoreOne(u, id);
+        if (r === null) { if (!totals.has(id)) totals.set(id, { score: 0, reasons: new Set(), blocked: 0 }); totals.get(id).blocked++; continue; }
+        if (!totals.has(id)) totals.set(id, { score: 0, reasons: new Set(), blocked: 0 });
+        const x = totals.get(id); x.score += r.score; r.reasons.forEach(z => x.reasons.add(z));
+      }
+      const ranked = [...totals.entries()].filter(([, x]) => x.score > 0 && x.blocked < items.length)
+        .map(([id, x]) => ({ employeeId: id, name: people.get(id)?.name || '', score: Math.round(x.score / items.length), reasons: [...x.reasons].slice(0, 3), conflicts: x.blocked }))
+        .sort((a, b) => b.score - a.score).slice(0, 3);
+      const top = ranked[0], second = ranked[1];
+      const confidence = !top ? 'none' : top.score >= 60 && (!second || top.score >= second.score * 1.6) && !top.conflicts ? 'high' : top.score >= 30 ? 'medium' : 'low';
+      for (const u of items) Object.assign(u, { groupSize: items.length, groupKeys: items.map(x => x.key), groupFrom: items[0].time, groupTo: items.at(-1).time, suggestions: ranked, confidence });
+    }
   }
 
   // State of one employee at a moment, from the day's states.

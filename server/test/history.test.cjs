@@ -122,12 +122,30 @@ test('answered history calls: matched to the connector call, or added to the one
       ['2001', '101', '2026-10-22', '15:05:00', '15:07:00', '00:02:00', '00:00:03', '0122', 'Success', 'T'],          // the connector missed it
       ['2001', '150', '2026-10-22', '15:06:00', '15:07:00', '00:01:00', '00:00:03', '0133', 'Success', 'T']], expectedCount: 3, reportDate: '2026-10-22' });   // nobody on 150
     const d = (await admin('GET', '/api/day?date=2026-10-22')).body;
-    assert.deepEqual(d.history.attribution, { alreadySeen: 1, recovered: 1, unattributed: 1 });
+    assert.deepEqual(d.history.attribution, { alreadySeen: 1, recovered: 1, unattributed: 1, assigned: 0 });
     assert.equal(d.history.unattributed[0].reason, 'nobody_on_extension');
     const me = d.employees.find(p => p.employeeId === e.id);
     assert.equal(me.calls, 2);
     assert.equal(me.fromHistory, 1);
     assert.equal(d.calls.find(c => c.source === 'history').durationSeconds, 120);
+    assert.deepEqual(d.history.unattributed[0].suggestions, [], 'Ahmed was working on 101 at that moment: never suggested for 150');
+
+    // Sara signs in on 150 a bit later: she is the suggestion for the call on 150, and the supervisor assigns it.
+    const sara = await t.employee(admin, { name: 'Sara', code: 'E2', pin: '5678' });
+    const s2 = await t.session('5678', '150');
+    await t.call('POST', '/api/events', { headers: { 'x-device-token': require('./helpers.cjs').DEVICE, 'x-employee-session': s2.token }, body: { eventType: 'heartbeat', eventKey: '150:hb:' + Date.now(), extension: '150', occurredAt: new Date(t.clock.now).toISOString(), state: 'ready', clientVersion: 't', payload: {} } });
+    let d2 = (await admin('GET', '/api/day?date=2026-10-22')).body, u = d2.history.unattributed[0];
+    assert.equal(u.suggestions[0].name, 'Sara', JSON.stringify(u));
+    assert.match(u.suggestions[0].reasons.join(' '), /دخل التحويلة دي بعدها/);
+    assert.deepEqual(u.groupKeys, [u.key]);
+    assert.equal((await admin('POST', '/api/call-assignments', { action: 'assign', keys: u.groupKeys, employeeId: sara.id })).status, 200);
+    d2 = (await admin('GET', '/api/day?date=2026-10-22')).body;
+    assert.equal(d2.history.unattributed.length, 0);
+    assert.equal(d2.history.assigned[0].name, 'Sara');
+    assert.equal(d2.employees.find(p => p.employeeId === sara.id).calls, 1);
+    assert.equal(d2.calls.find(c => c.source === 'manual').employee, 'Sara');
+    await admin('POST', '/api/call-assignments', { action: 'remove', keys: [u.key] });
+    assert.equal((await admin('GET', '/api/day?date=2026-10-22')).body.history.unattributed.length, 1, 'undone');
   } finally { await t.close(); }
 });
 

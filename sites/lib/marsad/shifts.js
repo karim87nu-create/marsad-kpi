@@ -13,6 +13,29 @@ function setup(app) {
     await app.audit('shift_changed', s.employee_id, { actor: who.name, sessionId: s.id, status: b.action, note });
     return { ok: true };
   });
+
+  // Answered Arabicss calls nobody was signed in for: the supervisor says who took them (one call or a whole stretch).
+  app.route('POST', '/api/call-assignments', async ctx => {
+    const who = await app.requireAdmin(ctx, 'write');
+    const b = ctx.body, keys = Array.isArray(b.keys) ? [...new Set(b.keys.map(String))] : [];
+    if (!keys.length || keys.length > 300 || keys.some(k => !/^\d{4}-\d{2}-\d{2}\|/.test(k) || k.length > 120)) fail(400, 'المكالمات غير صحيحة');
+    if (b.action === 'remove') {
+      const parts = []; for (let i = 0; i < keys.length; i += 90) parts.push(keys.slice(i, i + 90));
+      await db.batch(parts.map(p => db.prepare('DELETE FROM call_assignments WHERE call_key IN (' + p.map(() => '?').join(',') + ')').bind(...p)));
+      await app.audit('calls_unassigned', null, { actor: who.name, count: keys.length });
+      return { ok: true };
+    }
+    if (b.action !== 'assign') fail(400, 'invalid_action');
+    const e = await db.prepare('SELECT id, name FROM employees WHERE id = ? AND deleted_at IS NULL').get(Number(b.employeeId));
+    if (!e) fail(400, 'اختار الموظف');
+    const note = String(b.note || '').trim().slice(0, 300) || null;
+    // 19 calls per statement (5 values each, under D1's 100 bound values).
+    const parts = []; for (let i = 0; i < keys.length; i += 19) parts.push(keys.slice(i, i + 19));
+    await db.batch(parts.map(p => db.prepare('INSERT INTO call_assignments (call_key, employee_id, decided_at, decided_by, note) VALUES ' + p.map(() => '(?,?,?,?,?)').join(',')
+      + ' ON CONFLICT(call_key) DO UPDATE SET employee_id = excluded.employee_id, decided_at = excluded.decided_at, decided_by = excluded.decided_by, note = excluded.note').bind(...p.flatMap(k => [k, e.id, ctx.now, who.name, note]))));
+    await app.audit('calls_assigned', e.id, { actor: who.name, count: keys.length, note });
+    return { ok: true, count: keys.length };
+  });
 }
 
 export { setup };

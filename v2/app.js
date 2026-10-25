@@ -376,7 +376,7 @@
     { title: 'الموظف', get: c => c.employee || name(c.employeeId) }, { title: 'التحويلة', get: c => c.extension }, { title: 'الرقم', get: c => c.phone },
     { title: 'البداية', get: c => c.startedAt, show: c => stamp(c.startedAt), type: 'datetime' },
     { title: 'المدة', get: c => c.complete ? c.durationSeconds : null, show: c => c.complete ? dur(c.durationSeconds) : 'بدون نهاية مسجلة', type: 'duration' },
-    { title: 'المصدر', get: c => c.source === 'history' ? 'من سجل أرابيكس' : 'الإضافة' },
+    { title: 'المصدر', get: c => c.source === 'history' ? 'من سجل أرابيكس' : c.source === 'manual' ? 'اتنسبت يدوي' + (c.assignedBy ? ' — ' + c.assignedBy : '') : 'الإضافة' },
     { title: 'ملاحظة', get: c => c.outsideHours ? 'خارج ساعات التشغيل' : '' }];
   function filteredCalls(d) {
     const q = $('callSearch').value.trim(), emp = $('callEmployee').value, st = $('callStatus').value;
@@ -395,14 +395,52 @@
       (() => { const r = d.history.report; return kpi('مكالمات فائتة', r ? r.abandoned : '—', r ? (r.abandoned ? toneLow(r.abandonmentRate, 5, 10) : 'good') : '', r ? 'نسبة الفائتة ' + pct(r.abandonmentRate) + ' · ' + r.shortAbandoned + ' قصيرة ≤7ث' : 'مفيش سجل أرابيكس'); })(),
       kpi('متوسط المدة', dur(avg(done.map(c => c.durationSeconds)))), kpi('أطول من 4 دقايق', longCalls, longCalls ? 'warn' : ''),
       kpi('واردة', list.filter(c => c.callType !== 'outgoing').length, '', list.filter(c => c.callType === 'outgoing').length + ' صادرة'),
-      kpi('اتضافت من سجل أرابيكس', list.filter(c => c.source === 'history').length, '', 'الإضافة مشافتهاش'), kpi('من غير موظف مسجل', u.length, u.length ? 'bad' : 'good'));
-    C.bars($('callsChart'), hourly(list, c => cairoHour(c.startedAt), g => ({ ext: g.filter(c => c.source !== 'history').length, hist: g.filter(c => c.source === 'history').length })),
+      kpi('اتضافت من سجل أرابيكس', list.filter(c => c.source === 'history').length, '', 'الإضافة مشافتهاش'), kpi('من غير موظف مسجل', u.length, u.length ? 'bad' : 'good', (d.history.assigned || []).length ? (d.history.assigned || []).length + ' اتنسبت يدوي' : ''));
+    C.bars($('callsChart'), hourly(list, c => cairoHour(c.startedAt), g => ({ ext: g.filter(c => c.source !== 'history' && c.source !== 'manual').length, hist: g.filter(c => c.source === 'history' || c.source === 'manual').length })),
       [{ key: 'ext', label: 'من الإضافة', color: '--call' }, { key: 'hist', label: 'من سجل أرابيكس', color: '--accent' }]);
     const per = new Map(); for (const c of list) { const k = c.employeeId; const x = per.get(k) || { name: c.employee || name(k), calls: 0, talk: 0 }; x.calls++; if (c.complete) x.talk += c.durationSeconds; per.set(k, x); }
     $('callsRanks').replaceChildren(rankList([...per.values()].sort((a, b) => b.calls - a.calls).slice(0, 8), x => x.calls, x => x.calls + ' · ' + dur(x.talk), 'var(--call)'));
-    $('unattributedNote').textContent = u.length ? u.length + ' مكالمة اترد عليها في أرابيكس وقت ما مكانش فيه موظف مسجل في المرصد على التحويلة — يعني حد شغال من غير ما يكتب الباسورد.' : 'كل المكالمات المردود عليها في سجل أرابيكس معروف مين ردّ عليها.';
-    table('unattributedTable', [{ title: 'الوقت', get: x => ampm(x.time) }, { title: 'الرقم', get: x => x.phone }, { title: 'التحويلة في أرابيكس', get: x => x.extension || '—' }, { title: 'نوع الطلب', get: x => QUEUE(x.queue) },
-      { title: 'السبب', get: x => ({ nobody_on_extension: 'مفيش موظف مسجل على التحويلة وقتها', several_employees: 'أكتر من موظف على نفس التحويلة', no_extension: 'السجل من غير تحويلة' })[x.reason] || x.reason }], u, { empty: '' });
+    renderUnattributed(d);
+  }
+
+  // Answered calls nobody was signed in for: grouped into stretches (same extension, < 30 min apart), each with the
+  // most likely employee from the day's data, assignable in one click (the whole stretch or call by call).
+  const CONF = { high: ['ثقة عالية', 'ok'], medium: ['ثقة متوسطة', 'info'], low: ['ثقة ضعيفة', 'warn'], none: ['مفيش ترشيح', ''] };
+  function renderUnattributed(d) {
+    const u = d.history.unattributed || [], done = d.history.assigned || [];
+    $('unattributedNote').textContent = u.length ? u.length + ' مكالمة اترد عليها في أرابيكس وقت ما مكانش فيه موظف مسجل في المرصد على التحويلة. المرصد رشّح مين غالبًا ردّ عليها من شغل اليوم (مين كان على التحويلة قبلها أو بعدها، ومين كان برّه أو منقطع وقتها، ومين مستحيل يكون هو لأنه كان شغال على تحويلة تانية). اختار وانسب.'
+      : done.length ? 'كل المكالمات اتنسبت.' : 'كل المكالمات المردود عليها في سجل أرابيكس معروف مين ردّ عليها.';
+    const groups = new Map(); for (const x of u) { const k = (x.businessDate || '') + ':' + x.group; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(x); }
+    const assign = async (keys, employeeId, btn) => {
+      if (!employeeId) return alert('اختار الموظف');
+      btn.disabled = true; btn.textContent = 'جارٍ النسب…';
+      try { await api('/api/call-assignments', { method: 'POST', body: { action: 'assign', keys, employeeId: Number(employeeId) } }); await dayData(true); await renderCalls(); }
+      catch (e) { btn.disabled = false; btn.textContent = 'تعذر: ' + e.message; }
+    };
+    const picker = sug => {
+      const sel = h('select', {}, h('option', { value: '', textContent: 'اختار الموظف…' }));
+      if (sug.length) sel.append(h('optgroup', { label: 'المرشحين' }, ...sug.map(x => h('option', { value: x.employeeId, textContent: x.name + ' — ' + x.score + '%' }))));
+      sel.append(h('optgroup', { label: 'كل الموظفين' }, ...state.employees.filter(e => e.active && !sug.some(x => x.employeeId === e.id)).map(e => h('option', { value: e.id, textContent: e.name }))));
+      if (sug[0]) sel.value = String(sug[0].employeeId);
+      return sel;
+    };
+    const cards = [...groups.values()].map(items => {
+      const g = items[0], sug = g.suggestions || [], [cl, ck] = CONF[g.confidence || 'none'];
+      const sel = picker(sug), all = h('button', { type: 'button', textContent: items.length > 1 ? 'انسب الـ ' + items.length + ' مكالمات' : 'انسب المكالمة' });
+      all.onclick = () => assign(items.map(x => x.key), sel.value, all);
+      const head = h('div', { className: 'inline' }, h('strong', { textContent: (g.extension ? 'تحويلة ' + g.extension : 'من غير تحويلة') + ' · ' + (items.length > 1 ? 'من ' + ampm(g.groupFrom) + ' لـ ' + ampm(g.groupTo) + ' · ' + items.length + ' مكالمات' : ampm(g.time)) + (g.businessDate ? ' · ' + g.businessDate : '') }), pill(cl, ck));
+      const why = sug.length ? h('div', { className: 'stack' }, ...sug.map((x, n) => h('small', { className: n ? 'muted' : '', textContent: (n ? '' : '⭐ ') + x.name + ' (' + x.score + '%): ' + x.reasons.join(' · ') + (x.conflicts ? ' — بس كان شغال على تحويلة تانية وقت ' + x.conflicts + ' منهم' : '') })))
+        : h('small', { className: 'muted', textContent: 'مفيش حد اشتغل على التحويلة دي ولا كان برّه وقتها؛ اختار يدوي.' });
+      const list = h('details', {}, h('summary', { textContent: 'المكالمات (' + items.length + ') — تقدر تنسب كل واحدة لوحدها' }),
+        ...items.map(x => { const one = picker(sug), b = h('button', { type: 'button', className: 'ghost', textContent: 'انسب' }); b.onclick = () => assign([x.key], one.value, b);
+          return h('div', { className: 'inline' }, h('span', { textContent: ampm(x.time) + ' · ' + x.phone + ' · ' + QUEUE(x.queue) }), canWrite() ? one : '', canWrite() ? b : ''); }));
+      return h('div', { className: 'panel' }, head, why, canWrite() ? h('div', { className: 'inline' }, sel, all) : '', list);
+    });
+    const undo = async (keys, btn) => { btn.disabled = true; try { await api('/api/call-assignments', { method: 'POST', body: { action: 'remove', keys } }); await dayData(true); await renderCalls(); } catch (e) { btn.disabled = false; btn.textContent = e.message; } };
+    const doneBox = h('div');
+    if (done.length) table(doneBox, [{ title: 'الوقت', get: x => ampm(x.time) }, { title: 'الرقم', get: x => x.phone }, { title: 'التحويلة', get: x => x.extension || '—' }, { title: 'اتنسبت لـ', get: x => x.name },
+      { title: 'بواسطة', get: x => x.by + ' · ' + stamp(x.decidedAt) }, { title: '', get: () => '', show: x => { if (!canWrite()) return '—'; const b = h('button', { type: 'button', className: 'ghost', textContent: 'تراجع' }); b.onclick = () => undo([x.key], b); return b; } }], done);
+    $('unattributedTable').replaceChildren(...cards, done.length ? h('h3', { textContent: 'اتنسبت يدوي — ' + done.length }) : '', doneBox);
   }
 
   // ---------- الفائتة ----------
