@@ -418,6 +418,14 @@
       [{ key: 'ext', label: 'من الإضافة', color: '--call' }, { key: 'hist', label: 'من سجل أرابيكس', color: '--accent' }]);
     const per = new Map(); for (const c of list) { const k = c.employeeId; const x = per.get(k) || { name: c.employee || name(k), calls: 0, talk: 0 }; x.calls++; if (c.complete) x.talk += c.durationSeconds; per.set(k, x); }
     $('callsRanks').replaceChildren(rankList([...per.values()].sort((a, b) => b.calls - a.calls).slice(0, 8), x => x.calls, x => x.calls + ' · ' + dur(x.talk), 'var(--call)'));
+    // Why this count differs from the day summary: the summary counts customers' calls (Arabicss, working hours, answered or missed);
+    // this page counts the calls employees handled (incoming and outgoing), so missed calls are not here.
+    const r = d.history.report, all = d.calls, inc = all.filter(c => c.callType !== 'outgoing'), out = all.length - inc.length, late = inc.filter(c => c.outsideHours).length;
+    $('callsWhy').hidden = !r || !!filtered;
+    if (r) $('callsWhy').textContent = 'ليه الرقم هنا غير «مكالمات محتسبة» في ملخص اليوم؟ الملخص بيعد مكالمات العملاء من سجل أرابيكس في ساعات العمل: ' + r.calls + ' = ' + r.answered + ' اترد عليها + ' + r.abandoned + ' فائتة'
+      + (r.shortAbandoned ? ' (ومش بيعد ' + r.shortAbandoned + ' فائتة قصيرة ≤7 ث)' : '') + '. الصفحة دي بتعد المكالمات اللي الموظفين ردوا عليها أو عملوها: ' + all.length + ' = '
+      + (inc.length - late) + ' واردة في ساعات العمل' + (late ? ' + ' + late + ' بعد 3 الفجر أو خارج ساعات العمل' : '') + (out ? ' + ' + out + ' صادرة' : '')
+      + '. الفائتة مش هنا لأن محدش رد عليها' + (u.length ? '، و' + u.length + ' مكالمة اترد عليها من غير موظف مسجل مش محسوبة على حد (تحت في «من غير موظف مسجل»)' : '') + '.';
     renderUnattributed(d);
   }
 
