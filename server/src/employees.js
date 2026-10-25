@@ -79,19 +79,10 @@ function setup(app) {
     return { ok: true };
   });
 
+  // Nothing is deleted: an employee is stopped (active = 0) and keeps the password, history and messages.
   app.route('DELETE', '/api/employees', async ctx => {
-    const who = await app.requireAdmin(ctx, 'admin');
-    const e = await db.prepare('SELECT * FROM employees WHERE id = ? AND deleted_at IS NULL').get(Number(ctx.body.id));
-    if (!e) fail(404, 'الموظف غير موجود');
-    if (String(ctx.body.confirmCode) !== e.employee_code) fail(400, 'الكود غير مطابق؛ لم يتم الحذف');
-    // History stays; the account can no longer log in and its code becomes reusable.
-    await db.batch([
-      db.prepare('UPDATE employees SET deleted_at = ?, active = 0, pin_hash = NULL, pin_lookup = NULL, legacy_pin_hash = NULL WHERE id = ?').bind(ctx.now, e.id),
-      revokeSessions(e.id, 'employee_deleted', ctx.now),
-      db.prepare('DELETE FROM message_recipients WHERE employee_id = ?').bind(e.id),
-    ]);
-    await app.audit('employee_deleted', e.id, { actor: who.name, name: e.name, employeeCode: e.employee_code });
-    return { ok: true };
+    await app.requireAdmin(ctx, 'admin');
+    fail(409, 'الحذف متوقف عشان مفيش بيانات تضيع؛ استخدم «إيقاف» بدلها');
   });
 }
 

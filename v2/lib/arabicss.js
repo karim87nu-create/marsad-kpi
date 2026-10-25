@@ -63,7 +63,8 @@ function toRecord(row, map, fallbackDate, index) {
   const date = normalizeDate(get('date'), fallbackDate);
   const start = parseClock(get('start')), end = parseClock(get('end'));
   const [y, mo, d] = parseDate(date) || [];
-  const at = c => (c && y ? cairoToUtc(y, mo, d, 0, 0, 0) + c.seconds * 1000 : null);
+  // Cairo wall time of the call itself (not midnight + seconds: midnight does not exist on the spring-forward day).
+  const at = c => (c && y ? cairoToUtc(y, mo, d, Math.floor(c.seconds / 3600), Math.floor(c.seconds % 3600 / 60), c.seconds % 60) : null);
   let startMs = at(start), endMs = at(end);
   if (startMs != null && endMs != null && endMs < startMs) endMs += 86400000;   // crossed midnight
   const status = String(get('status') ?? '').trim();

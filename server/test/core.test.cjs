@@ -56,12 +56,14 @@ test('employees: unique code and PIN, PIN change ends the session, delete keeps 
     assert.equal((await t.event(s.token, 'heartbeat', { state: 'ready' })).body.error, 'invalid_employee_session');
     assert.equal((await t.session('1234')).status, 401);
     assert.equal((await t.session('4321')).status, 200);
-    assert.equal((await admin('DELETE', '/api/employees', { id: e.id, confirmCode: 'nope' })).status, 400);
-    assert.equal((await admin('DELETE', '/api/employees', { id: e.id, confirmCode: 'E1' })).status, 200);
+    // Nothing is deleted: the delete route refuses, and stopping the employee keeps the record and the password.
+    assert.equal((await admin('DELETE', '/api/employees', { id: e.id, confirmCode: 'E1' })).status, 409);
+    assert.equal((await admin('PATCH', '/api/employees', { id: e.id, active: false })).status, 200);
     const list = (await admin('GET', '/api/employees')).body;
-    assert.equal(list.employees.length, 0);
-    assert.equal(list.archivedEmployees[0].historyOnly, true);
+    assert.equal(list.employees.find(x => x.id === e.id).active, false);
     assert.equal((await t.session('4321')).status, 401);
+    assert.equal((await admin('PATCH', '/api/employees', { id: e.id, active: true })).status, 200);
+    assert.equal((await t.session('4321')).status, 200);
   } finally { await t.close(); }
 });
 

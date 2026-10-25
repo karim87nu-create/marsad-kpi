@@ -92,6 +92,9 @@ function setup(app) {
     const b = ctx.body;
     if (b.action === 'setup') {
       if (await masterHash()) fail(409, 'كلمة المرور الرئيسية متحددة بالفعل');
+      // Only a truly empty server may be set up from the page; a server with data needs MARSAD_ADMIN_PASSWORD.
+      if ((await db.prepare('SELECT COUNT(*) n FROM employees').get()).n || (await db.prepare('SELECT COUNT(*) n FROM admin_accounts').get()).n)
+        fail(409, 'السيرفر فيه بيانات؛ كلمة المرور الرئيسية لازم تتحدد من إعدادات السيرفر (MARSAD_ADMIN_PASSWORD)');
       if (typeof b.password !== 'string' || b.password.length < 8 || b.password.length > 200) fail(400, 'كلمة المرور لازم تكون 8 حروف أو أكثر');
       if (b.password !== b.confirmation) fail(400, 'تأكيد كلمة المرور غير مطابق');
       for (const a of await db.prepare('SELECT * FROM admin_accounts WHERE deleted_at IS NULL').all())
@@ -135,7 +138,7 @@ function setup(app) {
     if (!a) fail(404, 'المستخدم غير موجود');
     const changes = {};
     if (b.role !== undefined) { if (!ROLES.includes(b.role)) fail(400, 'اختار دورًا صحيحًا'); changes.role = b.role; }
-    if (b.active !== undefined) changes.active = b.active ? 1 : 0;
+    if (b.active !== undefined) { if (!b.active && a.id === who.id) fail(400, 'مينفعش توقف حسابك انت'); changes.active = b.active ? 1 : 0; }
     if (b.password) { await checkNewPassword(b.password, b.confirmation, a.id); changes.password_hash = await hashPassword(b.password); }
     if (!Object.keys(changes).length) fail(400, 'لا يوجد تغيير');
     const keys = Object.keys(changes);
@@ -147,16 +150,10 @@ function setup(app) {
     return { ok: true };
   });
 
+  // Nothing is deleted: an admin account is stopped (active = 0) instead.
   app.route('DELETE', '/api/admin-access', async ctx => {
-    const who = await app.requireAdmin(ctx, 'admin');
-    const a = await db.prepare('SELECT * FROM admin_accounts WHERE id = ? AND deleted_at IS NULL').get(Number(ctx.body.id));
-    if (!a) fail(404, 'المستخدم غير موجود');
-    await db.batch([
-      db.prepare('UPDATE admin_accounts SET deleted_at = ?, active = 0 WHERE id = ?').bind(ctx.now, a.id),
-      db.prepare('UPDATE admin_sessions SET revoked_at = ? WHERE account_id = ? AND revoked_at IS NULL').bind(ctx.now, a.id),
-    ]);
-    await app.audit('admin_account_deleted', null, { actor: who.name, accountId: a.id, name: a.name });
-    return { ok: true };
+    await app.requireAdmin(ctx, 'admin');
+    fail(409, 'الحذف متوقف عشان مفيش بيانات تضيع؛ استخدم «إيقاف» بدلها');
   });
 }
 

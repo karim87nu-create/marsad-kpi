@@ -369,7 +369,7 @@ function setup(app) {
     const used = regular.reduce((n, p) => n + p.seconds, 0), remaining = Math.max(0, RULES.breakBudgetSeconds - used), starts = regular.length;
     const next = starts === 0 ? Math.min(RULES.breakPeriodSeconds + RULES.breakGraceSeconds, remaining) : starts === 1 ? remaining : 0;
     const regularAvailable = now < w.operatingEnd && starts < 2 && next > 0 && !regular.some(p => p.running);
-    return { startsUsed: starts, usedSeconds: used, remainingSeconds: remaining, nextAllowedSeconds: regularAvailable ? next : 0, secondRemainingSeconds: starts <= 1 ? remaining - (starts ? 0 : 0) : 0,
+    return { startsUsed: starts, usedSeconds: used, remainingSeconds: remaining, nextAllowedSeconds: regularAvailable ? next : 0, secondRemainingSeconds: starts <= 1 ? remaining : 0,
       regularAvailable, requiresApproval: !regularAvailable, graceSeconds: starts === 0 ? RULES.breakGraceSeconds : 0, estimated: regular.some(p => p.estimated), activeRegular: regular.some(p => p.running) };
   };
 

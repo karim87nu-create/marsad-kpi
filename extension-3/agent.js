@@ -55,13 +55,31 @@
     return 'ready';
   }
 
+  // A call or break in progress is kept with the identity, so an update of the connector or a console reload in
+  // the middle of it keeps its exact start (instead of an "observed" call/break with an unknown duration).
+  let liveKey = '';
+  setInterval(() => {
+    if (!id) return;
+    const live = JSON.stringify({ call, brk });
+    if (live === liveKey) return;
+    liveKey = live; id.live = { call, brk }; save();
+  }, 500);
+  function restoreLive() {
+    const l = id?.live; if (!l) return;
+    const recent = x => x && x.startedAt && now() - x.startedAt < 12 * 3600000;
+    if (recent(l.call)) call = l.call;
+    if (recent(l.brk)) brk = l.brk;
+    liveKey = JSON.stringify({ call, brk });
+  }
+
   // ---------- events to the server ----------
   const delivered = new Map();
   async function send(eventType, fields = {}) {
     if (!id || passive) return null;
     const extension = id.extension || ext();
     if (!extension) return null;
-    if (offset === null) await syncClock();
+    // Times are only sent on the server's clock: wait a few seconds for it rather than send a time the server refuses.
+    for (let i = 0; offset === null && i < 5; i++) { if (await syncClock()) break; await new Promise(r => setTimeout(r, 1000)); }
     const at = now(), eventKey = extension + ':' + eventType + ':' + at + ':' + crypto.randomUUID();
     const { payload, ...top } = fields;
     const event = { eventType, eventKey, extension, occurredAt: iso(at), clientVersion: M.VERSION, ...top,
@@ -190,7 +208,7 @@
     if (!id || id.token !== token) return;
     const was = id;
     if (!passive && was.extension) send(reason === 'manual' ? 'session_logout' : 'arabicss_logout', { state: reason });
-    id = null; call = null; brk = null; permit = null; passive = false; lastState = '';
+    id = null; call = null; brk = null; permit = null; passive = false; lastState = ''; liveKey = '';
     try { sessionStorage.removeItem(KEY); } catch {}
     if (reason !== 'session_rejected') bg({ type: 'END', token: was.token, reason }).catch(() => {});
     notice = message || '';
@@ -310,19 +328,6 @@
   }
 
   // ---------- screen ----------
-  let skipped = false, failures = 0;
-  async function probe() {
-    if (id) return;
-    try { const r = await api('/api/employees/list'); failures = r?.ok ? 0 : r?.status >= 500 ? failures + 1 : 0; } catch { failures++; }
-    const skip = $('#marsad-gate button.secondary'); if (skip) skip.hidden = failures < 3;
-  }
-  setInterval(probe, 10000);
-  function showLater() {
-    if ($('#marsad-later')) return;
-    const later = el('button', { id: 'marsad-later', type: 'button', textContent: 'غير مسجل في المرصد — سجّل الباسورد' });
-    later.onclick = () => { skipped = false; later.remove(); render(); };
-    document.body.append(later);
-  }
   function render() {
     if (!document.body) return;
     const gate = $('#marsad-gate'), box = $('#marsad-box');
@@ -338,18 +343,13 @@
           go.disabled = true; err.textContent = 'جارٍ التحقق…';
           try { await start(pin.value); pin.value = ''; } catch (x) { err.textContent = x.message; } finally { go.disabled = false; render(); }
         };
-        // If the server cannot be reached, Arabicss must stay usable: the employee can continue unregistered.
-        const skip = el('button', { type: 'button', className: 'secondary', hidden: true, textContent: 'السيرفر مش متاح — كمّل شغلك من غير تسجيل' });
-        skip.onclick = () => { skipped = true; $('#marsad-gate')?.remove(); render(); };
-        form.append(skip);
         document.body.append(el('div', { id: 'marsad-gate', dir: 'rtl' }, form));
         setTimeout(() => pin.focus(), 50);
       }
-      if (skipped) { $('#marsad-gate')?.remove(); showLater(); return; }
       const n = $('#marsad-gate .note'); if (n && n.textContent !== notice) n.textContent = notice;
       return;
     }
-    gate?.remove(); $('#marsad-later')?.remove();
+    gate?.remove();
     let b = box;
     if (!b) {
       b = el('aside', { id: 'marsad-box', dir: 'rtl' });
@@ -394,9 +394,10 @@
     if (id) {
       const reg = await bg({ type: 'REGISTER', token: id.token, identity: id }).catch(() => null);
       if (reg?.closed) { id = null; notice = 'الجلسة دي انتهت (اتقفل المتصفح أو الصفحة أو سجّلت خروج). أدخل الباسورد تاني.'; try { sessionStorage.removeItem(KEY); } catch {} }
-      else { passive = !reg?.ok; save(); }
+      else { passive = !reg?.ok; restoreLive(); save(); }
     }
-    const ready = () => { render(); loadBreaks(); loadMessages(); };
+    // After a connector update the previous copy's panel is still on the page with buttons wired to the old script: rebuild it.
+    const ready = () => { for (const sel of ['#marsad-box', '#marsad-gate', '#marsad-later', '#marsad-messages']) $(sel)?.remove(); messagesKey = ''; render(); loadBreaks(); loadMessages(); };
     if (document.body) ready(); else document.addEventListener('DOMContentLoaded', ready, { once: true });
   })();
 })();

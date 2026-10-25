@@ -19,7 +19,15 @@ const PAGES = {
   console: ['/index.php?menu=agent_console', '<div id="issabel-callcenter-titulo-consola">Agent Console - SIP/101</div><div id="issabel-callcenter-cronometro">00:00:00</div><select id="break_select"><option value="2">Break</option></select><button id="btn_togglebreak">Break</button>'],
 };
 
-async function harness(t) {
+// The break part needs operating hours (9am–3am Cairo): outside them the whole test runs on a clock moved to 12:00 Cairo,
+// and the server's Date header (which the connector syncs to) follows that clock.
+function middayShift() {
+  const { cairoParts, cairoToUtc } = require('../src/time.js');
+  const p = cairoParts(Date.now());
+  return p.hour >= 10 && p.hour < 22 ? 0 : cairoToUtc(p.year, p.month, p.day, 12, 0, 0) - Date.now();
+}
+
+async function harness(t, shift = 0) {
   const read = f => fs.readFileSync(path.join(EXT, f), 'utf8').replace("API: 'https://marsad-v2.karim87nu.chatgpt.site'", "API: '" + t.base + "'");
   const store = {}, listeners = [], pageListeners = [];
   let current = '', w = null;
@@ -30,13 +38,14 @@ async function harness(t) {
     browserAction: { onClicked: { addListener() {} } }, notifications: { create: async () => {} },
   };
   const bg = { console, URL, URLSearchParams, AbortController, setTimeout, clearTimeout, setInterval, performance, crypto: globalThis.crypto,
-    Intl, Date, JSON, Math, Promise, Error, Number, String, Array, Object, Map, Set, structuredClone, DOMParser: class {}, fetch, browser };
+    Intl, Date, JSON, Math, Promise, Error, Number, String, Array, Object, Map, Set, structuredClone, DOMParser: class {}, browser,
+    fetch: !shift ? fetch : async (...a) => { const r = await fetch(...a); const hd = new Headers(r.headers); hd.set('date', new Date(Date.now() + shift).toUTCString()); return new Response(r.body, { status: r.status, headers: hd }); } };
   bg.globalThis = bg;
   vm.createContext(bg);
   for (const f of ['config.js', 'background.js']) vm.runInContext(read(f), bg, { filename: f });
   const toBackground = async m => { const sender = { tab: { id: 7 }, url: current }; for (const f of listeners) { const r = await f(structuredClone(m), sender); if (r !== undefined) return structuredClone(r); } };
   const es = { listeners: {} };
-  async function open(name, { idle = true } = {}) {
+  async function open(name, { idle = true, callid = '1' } = {}) {
     w?.close(); pageListeners.length = 0;
     const [route, body] = PAGES[name];
     current = 'https://41.38.207.218' + route;
@@ -46,7 +55,7 @@ async function harness(t) {
     w.browser = { runtime: { sendMessage: toBackground, getURL: x => 'moz-extension://x/' + x, onMessage: { addListener: f => pageListeners.push(f) } } };
     es.listeners = {};
     w.EventSource = class { constructor(url) { this.url = url; this.readyState = 1; } addEventListener(type, fn) { (es.listeners[type] ||= []).push(fn); } close() { this.readyState = 2; } };
-    if (name === 'console') { w.evtSource = new w.EventSource('index.php?menu=agent_console&action=checkStatus'); w.estadoCliente = { break_id: null, callid: idle ? null : '1', calltype: null, waitingcall: false, onhold: false }; }
+    if (name === 'console') { w.evtSource = new w.EventSource('index.php?menu=agent_console&action=checkStatus'); w.estadoCliente = { break_id: null, callid: idle ? null : callid, calltype: null, waitingcall: false, onhold: false }; }
     // Scripts appended by the content script run in the page.
     const append = w.Node.prototype.appendChild, run = n => { if (n.tagName === 'SCRIPT') { w.eval(read('hook.js')); n.onload?.(); return true; } return false; };
     w.document.head.append = function (...n) { if (!run(n[0])) return w.Element.prototype.append.apply(this, n); };
@@ -60,9 +69,10 @@ async function harness(t) {
 }
 
 test('extension 3: one password through the Arabicss logins, calls, breaks, messages, logout', { skip: !JSDOM && 'jsdom not installed' }, async () => {
-  const t = await start({ at: Date.now() });
-  Object.defineProperty(t.clock, 'now', { get: () => Date.now(), set() {} });
-  const h = await harness(t);
+  const shift = middayShift();
+  const t = await start({ at: Date.now() + shift });
+  Object.defineProperty(t.clock, 'now', { get: () => Date.now() + shift, set() {} });
+  const h = await harness(t, shift);
   try {
     const admin = await t.admin();
     const emp = await t.employee(admin);
@@ -73,6 +83,7 @@ test('extension 3: one password through the Arabicss logins, calls, breaks, mess
     let w = await h.open('mainLogin');
     const gate = w.document.getElementById('marsad-gate');
     assert.ok(gate, 'gate shown');
+    assert.equal(gate.querySelector('button.secondary'), null, 'no "continue without registering" button');
     gate.querySelector('input').value = '1234';
     gate.querySelector('form').dispatchEvent(new w.Event('submit', { cancelable: true }));
     await settle(1500);
@@ -110,11 +121,25 @@ test('extension 3: one password through the Arabicss logins, calls, breaks, mess
     w.estadoCliente.callid = null;
     h.sse({ event: 'agentunlinked', callid: '555' });
     await settle(2500);
-    const day = require('../src/time.js').businessDay(Date.now());
+    const day = require('../src/time.js').businessDay(Date.now() + shift);
     const d = (await admin('GET', '/api/day?date=' + day)).body;
     assert.equal(d.calls.length, 1);
     assert.equal(d.calls[0].complete, true);
     assert.equal(d.calls[0].phone, '01001234567');
+
+    // A console reload (or a connector update) in the middle of a call keeps the call's exact start.
+    w.estadoCliente.callid = '556';
+    h.sse({ event: 'agentlinked', callid: '556', calltype: 'incoming', txt_contacto_telefono: '01009999999', queue: '2001' });
+    await settle(3000);
+    w = await h.open('console', { idle: false, callid: '556' });
+    await settle(2500);
+    w.estadoCliente.callid = null;
+    h.sse({ event: 'agentunlinked', callid: '556' });
+    await settle(2500);
+    const after = events();
+    assert.ok(!after.some(e => e.event_type === 'call_observed'), 'no observed call after reload: ' + after.map(e => e.event_type).join(','));
+    const ended = after.filter(e => e.event_type === 'agentunlinked').pop();
+    assert.ok(ended.duration_seconds >= 5, 'exact duration across the reload: ' + ended.duration_seconds);
 
     // Arabicss's own break button is held until the server gives a permission.
     let nativeClicks = 0;

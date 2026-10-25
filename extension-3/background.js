@@ -50,6 +50,8 @@ async function enqueue(event, token) {
   return locked(async () => {
     const q = await store.get(OUTBOX, []);
     if (!q.some(e => e.token === token && e.event.eventKey === event.eventKey)) q.push({ token, event, tries: 0 });
+    // Long offline stretches: the outbox stays bounded by dropping the oldest periodic heartbeats first (real events are kept).
+    for (let i = 0; q.length > 5000 && (i = q.findIndex(e => e.event.eventType === 'heartbeat')) >= 0;) q.splice(i, 1);
     await store.set(OUTBOX, q);
     return q.length;
   });
@@ -175,7 +177,7 @@ const setState = patch => { collectorState = { ...collectorState, ...patch }; };
 async function collectorPost(body) {
   let c = await store.get(COLLECTOR, null);
   if (!c) throw Error('الموصل غير مربوط');
-  if (Number(String(c.token).split('.')[0]) < Date.now() + 3600000) c = await refreshCollector(c);
+  if (Number(String(c.token).split('.')[0]) < (clock.now() ?? Date.now()) + 3600000) c = await refreshCollector(c);   // server clock, not the PC's
   const send = () => api('/api/history', { method: 'POST', headers: { 'content-type': 'application/json', 'x-history-token': c.token }, body: JSON.stringify(body), timeout: body.rows && !body.action ? 90000 : 20000 });
   let r = await send();
   if (r.status === 401) { c = await refreshCollector(c); r = await send(); }
@@ -300,7 +302,8 @@ collectHistory(); collectLive();
 
 async function collectorMessage(m, sender) {
   const page = browser.runtime.getURL('collector.html');
-  const adminPage = (() => { try { const u = new URL(sender.url); return globalThis.MARSAD.ADMIN_ORIGINS.includes(u.origin); } catch { return false; } })();
+  // Only the Marsad admin pages themselves (not any other page on the same github.io account).
+  const adminPage = (() => { try { const u = new URL(sender.url); return globalThis.MARSAD.ADMIN_ORIGINS.includes(u.origin) && (u.hostname !== 'karim87nu-create.github.io' || u.pathname.startsWith('/marsad-kpi/')); } catch { return false; } })();
   if (sender.url !== page && !adminPage) throw Error('invalid_sender');
   if (m.type === 'COLLECTOR_LINK' && adminPage) {
     if (typeof m.token !== 'string' || typeof m.refreshToken !== 'string') throw Error('invalid_link');

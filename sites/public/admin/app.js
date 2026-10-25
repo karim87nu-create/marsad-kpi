@@ -10,6 +10,9 @@
   // ---------- formatting ----------
   const dur = s => { if (s == null || !Number.isFinite(Number(s))) return '—'; s = Math.max(0, Math.floor(s)); return [Math.floor(s / 3600), Math.floor(s % 3600 / 60), s % 60].map(n => String(n).padStart(2, '0')).join(':'); };
   const clock = v => v ? new Date(v).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', ...(state.day !== state.to ? { day: '2-digit', month: '2-digit' } : {}), hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
+  // Hour and minute (with ص/م); in a date range the day comes with it.
+  const hm = v => v ? new Date(v).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', ...(state.day !== state.to ? { day: '2-digit', month: '2-digit' } : {}), hour: '2-digit', minute: '2-digit' }) : '—';
+  const hms = v => v ? new Date(v).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
   const stamp = v => v ? new Date(v).toLocaleString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
   const pct = v => v == null ? 'غير متاح' : Number(v).toFixed(1) + '%';
   const secs = v => v == null ? 'غير متاح' : Number(v).toFixed(1) + ' ث';
@@ -28,8 +31,8 @@
   // ---------- server ----------
   let token = sessionStorage.getItem(TOKEN) || '', who = null, offset = 0;
   const serverNow = () => Date.now() + offset;
-  async function api(path, { method = 'GET', body } = {}) {
-    const r = await fetch(API + path, { method, cache: 'no-store', headers: { 'x-admin-password': token, ...(body ? { 'content-type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  async function api(path, { method = 'GET', body, timeout } = {}) {
+    const r = await fetch(API + path, { method, cache: 'no-store', signal: timeout ? AbortSignal.timeout(timeout) : undefined, headers: { 'x-admin-password': token, ...(body ? { 'content-type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
     const d = await r.json().catch(() => ({}));
     if (r.status === 401) { logout('انتهى الدخول؛ ادخل تاني'); throw Error('انتهى الدخول'); }
     if (!r.ok) throw Error(d.error || 'تعذر الاتصال بالسيرفر');
@@ -53,7 +56,7 @@
       body.append(tr);
     }
     if (!list.length) body.append(h('tr', {}, h('td', { colSpan: columns.length, textContent: empty, className: 'muted' })));
-    box.replaceChildren(h('div', { className: 'tablewrap' }, h('table', {}, h('thead', {}, head), body)), list.length > limit ? h('p', { className: 'muted', textContent: 'معروض أول ' + limit + ' من ' + list.length + '؛ التصدير فيه الكل.' }) : '');
+    box.replaceChildren(h('div', { className: 'tablewrap', tabIndex: 0 }, h('table', {}, h('thead', {}, head), body)), list.length > limit ? h('p', { className: 'muted', textContent: 'معروض أول ' + limit + ' من ' + list.length + '؛ التصدير فيه الكل.' }) : '');
   }
   function exportSheets(file, sheets) {
     window.MarsadXlsx.download(file + '-' + periodLabel(), sheets.map(([sheet, columns, rows]) => ({ name: sheet, columns: columns.map(c => ({ title: c.title, type: c.type })), rows: rows.map(r => columns.map(c => { const v = c.get(r); return v instanceof Node ? v.textContent : v; })) })));
@@ -109,20 +112,24 @@
   const dayData = (force = false) => { if (force) cache.delete(rangeKey()); return cached(rangeKey(), state.to === cairoToday() ? 20000 : 600000, () => api('/api/day?' + periodQuery())); };
   const dayHistory = async (force = false) => (await dayData(force)).history;
 
-  function syncStatus(ok, text) { const s = $('sync'); s.textContent = text || (ok ? 'آخر تحديث ' + clock(Date.now()) : 'تعذر التحديث'); s.classList.toggle('bad', !ok); }
+  function syncStatus(ok, text) { const s = $('sync'); s.textContent = text || (ok ? 'آخر تحديث ' + hms(Date.now()) : 'تعذر التحديث'); s.classList.toggle('bad', !ok); }
   function showError(e) { $('error').hidden = !e; $('error').textContent = e ? e.message || String(e) : ''; }
 
   // ---------- الآن ----------
   async function refreshNow() {
-    const d = await api('/api/live');
-    state.live = d; state.queue = d.queue;
-    renderNow();
+    const d = await api('/api/live', { timeout: 4000 });
+    state.live = d; state.queue = d.queue; state.liveAt = Date.now();
+    renderNow(); state.drawnAt = Date.now();
   }
   
   function renderNow() {
     const d = state.live;
     if (!d) return;
-    const now = serverNow(), people = d.employees.map(p => ({ ...p, s: p.state, elapsed: p.since ? (now - Date.parse(p.since)) / 1000 : null }));
+    // Old data is never shown as live: after 5 s without a successful update the screen says so and greys out.
+    const stale = Date.now() - (state.liveAt || 0) > 5000;
+    $('nowStale').hidden = !stale; $('nowStale').textContent = stale ? 'البيانات مش بتتحدث — آخر تحديث ناجح ' + hms(state.liveAt) + '. الأرقام والعدادات دي قديمة.' : '';
+    $('view-now').classList.toggle('stale', stale);
+    const now = stale ? (state.liveAt || Date.now()) + offset : serverNow(), people = d.employees.map(p => ({ ...p, s: p.state, elapsed: p.since ? (now - Date.parse(p.since)) / 1000 : null }));
     const count = s => people.filter(p => p.s === s).length;
     const q = state.queue, qAge = q ? (now - Date.parse(q.observedAt)) / 1000 : null, qFresh = q && qAge < 30;
     const waiting = qFresh ? q.waiting : [];
@@ -133,8 +140,9 @@
     const order = ['on_call', 'break', 'ready', 'unknown', 'logged_in', 'disconnected', 'logged_out', 'no_session'];
     const groups = order.map(s => [s, people.filter(p => p.s === s).sort((a, b) => (b.elapsed || 0) - (a.elapsed || 0))]).filter(([, list]) => list.length);
     // People who are not working right now only take one line each group.
-    $('staffNow').replaceChildren(...groups.map(([s, list]) => ['no_session', 'logged_out'].includes(s) ? h('div', { className: 'group' }, h('h3', { textContent: (STATE[s] || s) + ' — ' + list.length }),
-      h('div', { className: 'inline' }, ...list.map(p => pill(p.name + (s === 'logged_out' ? (p.outKind ? ' · ' + OUT[p.outKind] : '') + (p.since ? ' ' + clock(p.since).slice(0, 5) : '') : ''))))) : h('div', { className: 'group' }, h('h3', { textContent: (STATE[s] || s) + ' — ' + list.length }),
+    if (!groups.length) $('staffNow').replaceChildren(h('p', { className: 'muted', textContent: 'مفيش موظفين مسجلين في المرصد دلوقتي' }));
+    else $('staffNow').replaceChildren(...groups.map(([s, list]) => ['no_session', 'logged_out'].includes(s) ? h('div', { className: 'group' }, h('h3', { textContent: (STATE[s] || s) + ' — ' + list.length }),
+      h('div', { className: 'inline' }, ...list.map(p => pill(p.name + (s === 'logged_out' ? (p.outKind ? ' · ' + OUT[p.outKind] : '') + (p.since ? ' ' + hm(p.since) : '') : ''))))) : h('div', { className: 'group' }, h('h3', { textContent: (STATE[s] || s) + ' — ' + list.length }),
       h('div', { className: 'tiles' }, ...list.map(p => {
         const over = (s === 'break' && p.elapsed > 900) || (s === 'on_call' && p.elapsed > 240);
         return h('div', { className: 'tile ' + s + (over ? ' over' : ''), title: 'آخر إشارة ' + stamp(p.lastEvidence) },
@@ -207,7 +215,7 @@
 
   // ---------- على مدار اليوم ----------
   const slotColumns = [
-    { title: 'من', get: x => x.start, show: x => clock(x.start).slice(0, 5), type: 'datetime' }, { title: 'مكالمات محتسبة', get: x => x.calls, type: 'number' }, { title: 'تم الرد', get: x => x.answered, type: 'number' },
+    { title: 'من', get: x => x.start, show: x => hm(x.start), type: 'datetime' }, { title: 'مكالمات محتسبة', get: x => x.calls, type: 'number' }, { title: 'تم الرد', get: x => x.answered, type: 'number' },
     { title: 'فائتة محتسبة', get: x => x.abandoned, type: 'number', cls: x => x.abandoned ? 'bad' : '' }, { title: 'فائتة قصيرة', get: x => x.shortAbandoned, type: 'number' },
     { title: 'الرد خلال 10 ث', get: x => x.sla, show: x => pct(x.sla), type: 'percent', cls: x => x.sla != null && x.sla < 60 ? 'bad' : x.sla != null && x.sla < 80 ? 'warn' : '' },
     { title: 'متوسط الانتظار (ث)', get: x => x.asa == null ? null : Math.round(x.asa * 10) / 10, type: 'number' },
@@ -218,7 +226,7 @@
     const d = await dayData(), list = hourRows(d);
     C.slots($('hoursChart'), list);
     const op = list.filter(x => x.operating && x.calls), peak = [...op].sort((a, b) => b.calls - a.calls)[0], worst = [...op].filter(x => x.sla != null).sort((a, b) => a.sla - b.sla)[0];
-    const thin = op.filter(x => x.ready < 1).length, missedSlots = op.filter(x => x.abandoned).length, slot = x => x ? clock(x.start).slice(0, 5) : '—';
+    const thin = op.filter(x => x.ready < 1).length, missedSlots = op.filter(x => x.abandoned).length, slot = x => x ? hm(x.start) : '—';
     $('hoursCards').replaceChildren(kpi('أعلى نص ساعة ضغط', peak ? peak.calls + ' مكالمة' : '—', 'info', peak ? 'من ' + slot(peak) : ''), kpi('أقل رد خلال 10 ث', worst ? pct(worst.sla) : '—', worst ? toneHigh(worst.sla, 80, 60) : '', worst ? 'من ' + slot(worst) : ''),
       kpi('نص ساعات فيها فائتة', missedSlots, missedSlots ? 'warn' : 'good'), kpi('نص ساعات المتاحين فيها أقل من واحد', thin, thin ? 'bad' : 'good', 'في وقت فيه مكالمات'),
       kpi('أقصى متوسط في بريك مع بعض', op.length ? Math.max(...op.map(x => x.onBreak)) : '—', op.some(x => x.onBreak >= 2) ? 'warn' : ''));
@@ -236,7 +244,7 @@
   const teamRows = d => d.employees.map(e => ({ id: e.employeeId, name: e.name, calls: e.calls, answered: e.answered, aht: e.averageCallSeconds, work: e.workSeconds, ready: e.readySeconds,
     onCall: e.callSeconds, unknown: outTotal(e), outDetail: outDetail(e), breakSeconds: e.breakSeconds, breakCount: e.breakCount, overBreakDays: e.overBreakDays, fromHistory: e.fromHistory, firstLogin: e.firstLogin, lastLogout: e.lastLogout }));
   const teamColumns = [
-    { title: 'الموظف', get: r => r.name }, { title: 'توزيع الوقت', get: r => r.onCall + r.ready ? Math.round(r.onCall / (r.onCall + r.ready) * 100) : null, show: r => C.usage([{ state: 'ready', value: r.ready, label: 'متاح ' + dur(r.ready) }, { state: 'on_call', value: r.onCall, label: 'في مكالمة ' + dur(r.onCall) }, { state: 'break', value: r.breakSeconds, label: 'بريك ' + dur(r.breakSeconds) }]) },
+    { title: 'الموظف', get: r => r.name }, { title: 'توزيع الوقت (نسبة الانشغال من وقت الشغل)', get: r => r.onCall + r.ready ? Math.round(r.onCall / (r.onCall + r.ready) * 100) : null, show: r => C.usage([{ state: 'ready', value: r.ready, label: 'متاح ' + dur(r.ready) }, { state: 'on_call', value: r.onCall, label: 'في مكالمة ' + dur(r.onCall) }, { state: 'break', value: r.breakSeconds, label: 'بريك ' + dur(r.breakSeconds) }]) },
     { title: 'نسبة الانشغال', get: r => r.onCall + r.ready ? Math.round(r.onCall / (r.onCall + r.ready) * 100) : null, show: r => r.onCall + r.ready ? Math.round(r.onCall / (r.onCall + r.ready) * 100) + '%' : '—', type: 'percent' },
     { title: 'مكالمات', get: r => r.calls, type: 'number' }, { title: 'تم الرد', get: r => r.answered, type: 'number' }, { title: 'منها من سجل أرابيكس', get: r => r.fromHistory, type: 'number' },
     { title: 'متوسط مدة المكالمة', get: r => r.aht, show: r => dur(r.aht), type: 'duration' }, { title: 'مدة العمل', get: r => r.work, show: r => dur(r.work), type: 'duration' },
@@ -311,7 +319,7 @@
     const brk = breaks.filter(b => !b.outsideHours), longest = brk.reduce((m, b) => b.durationSeconds > (m?.durationSeconds || 0) ? b : m, null);
     const unknownLogout = d.sessions.filter(s => s.workStartedAt != null && !s.running && !s.closureKnown).length;
     $('attendanceCards').replaceChildren(kpi('موظفين حضروا', rows.length, 'info'), kpi('عدد البريكات', brk.length, 'break'), kpi('إجمالي البريك', dur(brk.reduce((n, b) => n + b.durationSeconds, 0)), 'break'),
-      kpi('عدّوا الـ 30 دقيقة', att.totals.filter(x => x.total > 1800).length, att.totals.some(x => x.total > 1800) ? 'bad' : 'good'), kpi('أطول بريك', longest ? dur(longest.durationSeconds) : '—', longest && longest.durationSeconds > 1200 ? 'warn' : '', longest ? name(longest.employeeId) : ''),
+      kpi('عدّوا الـ 30 دقيقة', att.totals.filter(x => x.over > 0).length, att.totals.some(x => x.over > 0) ? 'bad' : 'good'), kpi('أطول بريك', longest ? dur(longest.durationSeconds) : '—', longest && longest.durationSeconds > 1200 ? 'warn' : '', longest ? name(longest.employeeId) : ''),
       kpi('جلسات خلصت من غير خروج مسجل', unknownLogout, unknownLogout ? 'warn' : 'good'));
     table('breakTotals', att.totalColumns = [{ title: 'الموظف', get: x => x.name }, { title: 'عدد البريكات', get: x => x.count, type: 'number' }, { title: 'الإجمالي', get: x => x.total, show: x => x.over > 0 ? pill(dur(x.total), 'bad') : dur(x.total), type: 'duration' },
       { title: 'أطول بريك', get: x => x.longest, show: x => x.longest > 1200 ? pill(dur(x.longest), 'warn') : dur(x.longest), type: 'duration' }, { title: 'من المسموح في الفترة', get: x => Math.round(x.total / x.allowance * 100) , show: x => C.meter(x.total, x.allowance, x.over > 0 ? 'var(--bad)' : 'var(--break)') }], att.totals, { empty: 'مفيش بريك' });
@@ -418,7 +426,7 @@
       catch (e) { btn.disabled = false; btn.textContent = 'تعذر: ' + e.message; }
     };
     const picker = sug => {
-      const sel = h('select', {}, h('option', { value: '', textContent: 'اختار الموظف…' }));
+      const sel = h('select', { ariaLabel: 'الموظف' }, h('option', { value: '', textContent: 'اختار الموظف…' }));
       if (sug.length) sel.append(h('optgroup', { label: 'المرشحين' }, ...sug.map(x => h('option', { value: x.employeeId, textContent: x.name }))));
       sel.append(h('optgroup', { label: 'كل الموظفين' }, ...state.employees.filter(e => e.active && !sug.some(x => x.employeeId === e.id)).map(e => h('option', { value: e.id, textContent: e.name }))));
       if (sug[0]) sel.value = String(sug[0].employeeId);
@@ -480,7 +488,7 @@
   const REVIEW = { new: ['جديدة', 'info'], in_progress: ['جاري المتابعة', 'warn'], resolved: ['اتحلت', 'ok'], reviewed: ['تمت المراجعة', ''] };
   let reviewRows = [];
   const reviewColumns = () => [{ title: 'التاريخ', get: r => r.date }, { title: 'الموضوع', get: r => r.title, cls: () => 'wrap' }, { title: 'الموظف', get: r => r.employeeId ? name(r.employeeId) : '—' },
-    { title: 'الحالة', get: r => REVIEW[r.status]?.[0], show: r => !canWrite() ? pill(...REVIEW[r.status]) : (() => { const sel = h('select', {}, ...Object.entries(REVIEW).map(([k, [t]]) => h('option', { value: k, textContent: t, selected: k === r.status }))); sel.onclick = e => e.stopPropagation(); sel.onchange = async () => { try { await api('/api/reviews', { method: 'POST', body: { id: r.id, status: sel.value } }); renderFollowup(); } catch (e) { alert(e.message); } }; return sel; })() },
+    { title: 'الحالة', get: r => REVIEW[r.status]?.[0], show: r => !canWrite() ? pill(...REVIEW[r.status]) : (() => { const sel = h('select', { ariaLabel: 'الحالة' }, ...Object.entries(REVIEW).map(([k, [t]]) => h('option', { value: k, textContent: t, selected: k === r.status }))); sel.onclick = e => e.stopPropagation(); sel.onchange = async () => { try { await api('/api/reviews', { method: 'POST', body: { id: r.id, status: sel.value } }); renderFollowup(); } catch (e) { alert(e.message); } }; return sel; })() },
     { title: 'المسؤول', get: r => r.owner || '—' }, { title: 'الملاحظة', get: r => r.note || '', cls: () => 'wrap' }, { title: 'آخر تعديل', get: r => r.updatedAt, show: r => stamp(r.updatedAt) + (r.updatedBy ? ' · ' + r.updatedBy : ''), type: 'datetime' }];
   async function renderFollowup() {
     $('reviewForm').hidden = !canWrite(); $('saveReport').hidden = !canWrite();
@@ -509,9 +517,10 @@
   }
 
   // ---------- حالة النظام ----------
-  const AUDIT = { old_data_imported: 'نقل بيانات من النظام القديم', master_password_set: 'اختيار الباسورد الرئيسي', report_saved: 'حفظ تقرير اليوم', review_added: 'متابعة جديدة', review_updated: 'تعديل متابعة', shift_changed: 'قرار نهاية شيفت',
-    employee_added: 'إضافة موظف', employee_updated: 'تعديل موظف', employee_deleted: 'حذف موظف', employee_pin_changed: 'تغيير باسورد موظف', admin_added: 'إضافة مستخدم إدارة', admin_updated: 'تعديل مستخدم إدارة', admin_deleted: 'حذف مستخدم إدارة',
-    break_approved: 'موافقة على بريك', break_rejected: 'رفض بريك', message_sent: 'رسالة للموظفين', telegram_settings: 'إعدادات تليجرام', telegram_linked: 'ربط تليجرام', collector_linked: 'ربط الموصل' };
+  const AUDIT = { old_data_imported: 'نقل بيانات من النظام القديم', old_data_backfilled: 'إكمال بيانات ناقصة من النظام القديم', master_password_set: 'اختيار الباسورد الرئيسي', report_saved: 'حفظ تقرير اليوم',
+    review_added: 'متابعة جديدة', review_updated: 'تعديل متابعة', shift_changed: 'قرار نهاية شيفت', employee_created: 'إضافة موظف', employee_changed: 'تعديل موظف', employee_deleted: 'حذف موظف (قديم)',
+    admin_account_created: 'إضافة مستخدم إدارة', admin_account_changed: 'تعديل مستخدم إدارة', admin_account_deleted: 'حذف مستخدم إدارة (قديم)', break_request_decided: 'قرار طلب بريك',
+    calls_assigned: 'نسبة مكالمات لموظف', calls_unassigned: 'إلغاء نسبة مكالمات', message_sent: 'رسالة للموظفين', telegram_settings: 'إعدادات تليجرام', telegram_bot_linked: 'ربط بوت تليجرام', telegram_group_linked: 'ربط جروب تليجرام', collector_linked: 'ربط الموصل' };
   let auditRows = [];
   const auditColumns = [{ title: 'الوقت', get: a => a.at, show: a => stamp(a.at), type: 'datetime' }, { title: 'التغيير', get: a => AUDIT[a.action] || a.action }, { title: 'بواسطة', get: a => a.actor || '—' }, { title: 'الموظف', get: a => a.employee || '—' },
     { title: 'التفاصيل', get: a => Object.entries(a.details || {}).filter(([k]) => !['actor', 'legacyId'].includes(k)).map(([k, v]) => k + ': ' + (typeof v === 'object' ? JSON.stringify(v) : v)).join(' · ').slice(0, 300), cls: () => 'wrap' }];
@@ -553,8 +562,7 @@
     table('employeesTable', [{ title: 'الاسم', get: e => e.name }, { title: 'الكود', get: e => e.employeeCode }, { title: 'الحالة', get: e => e.active ? 'نشط' : 'موقوف', show: e => pill(e.active ? 'نشط' : 'موقوف', e.active ? 'ok' : 'warn') },
       { title: '', get: () => '', show: e => !isAdmin() ? '' : h('span', { className: 'inline' },
         btn('الباسورد', async () => { const pin = await askPasswords('باسورد جديد لـ ' + e.name); if (pin == null) return; await act('employeeMessage', () => api('/api/employees', { method: 'PATCH', body: { id: e.id, pin, pinConfirmation: pin } }), 'اتغير الباسورد وانتهت جلسته الحالية'); }),
-        btn(e.active ? 'إيقاف' : 'تفعيل', () => act('employeeMessage', () => api('/api/employees', { method: 'PATCH', body: { id: e.id, active: !e.active } }), 'اتحفظ')),
-        btn('حذف', async () => { const code = prompt('حذف ' + e.name + ' نهائيًا؟ سجله بيفضل محفوظ. اكتب كوده للتأكيد: ' + e.employeeCode); if (code === null) return; await act('employeeMessage', () => api('/api/employees', { method: 'DELETE', body: { id: e.id, confirmCode: code } }), 'اتحذف'); }, 'danger')) }],
+        btn(e.active ? 'إيقاف' : 'تفعيل', () => act('employeeMessage', () => api('/api/employees', { method: 'PATCH', body: { id: e.id, active: !e.active } }), 'اتحفظ'))) }],
     state.employees);
     const m = await api('/api/messages?date=' + cairoToday()), groups = new Map();
     for (const r of m.messages) { const g = groups.get(r.id) || { ...r, total: 0, delivered: 0, read: 0 }; g.total++; if (r.delivered_at) g.delivered++; if (r.acknowledged_at) g.read++; groups.set(r.id, g); }
@@ -565,8 +573,7 @@
       table('adminsTable', [{ title: 'الاسم', get: x => x.name }, { title: 'الدور', get: x => ROLE[x.role] }, { title: 'الحالة', get: x => x.active ? 'مفعّل' : 'موقوف' },
         { title: '', get: () => '', show: x => h('span', { className: 'inline' },
           btn('الباسورد', async () => { const p = await askPasswords('باسورد جديد لـ ' + x.name, { minLength: 6, digits: false }); if (p == null) return; await act('adminMessage', () => api('/api/admin-access', { method: 'PATCH', body: { id: x.id, password: p, confirmation: p } }), 'اتغير'); }),
-          btn(x.active ? 'إيقاف' : 'تفعيل', () => act('adminMessage', () => api('/api/admin-access', { method: 'PATCH', body: { id: x.id, active: !x.active } }), 'اتحفظ')),
-          btn('حذف', () => confirm('حذف ' + x.name + '؟') && act('adminMessage', () => api('/api/admin-access', { method: 'DELETE', body: { id: x.id } }), 'اتحذف'), 'danger')) }], a.accounts || []);
+          x.id === who?.id ? null : btn(x.active ? 'إيقاف' : 'تفعيل', () => act('adminMessage', () => api('/api/admin-access', { method: 'PATCH', body: { id: x.id, active: !x.active } }), 'اتحفظ'))) }], a.accounts || []);
     }
     $('telegramPanel').hidden = !isAdmin();
     if (isAdmin()) api('/api/import-old').then(r => { $('importPanel').hidden = !r.available && !r.backfill; $('importLast').textContent = r.lastImportAt ? 'آخر نقل: ' + new Date(r.lastImportAt).toLocaleString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo' }) : ''; }).catch(() => {});
@@ -706,11 +713,15 @@
     ticking = true;
     try { await refreshNow(); syncStatus(true); showError(null); } catch (e) { syncStatus(false); } finally { ticking = false; }
   }
-  setInterval(tick, 1000);
-  setInterval(() => { if (state.view === 'now') renderNow(); }, 1000);
-  setInterval(() => { if (token) refreshRequests(); }, 5000);
+  // One draw per second: fetch, then draw (timers keep counting from the last good data).
+  setInterval(() => { tick(); if (state.view === 'now' && Date.now() - (state.drawnAt || 0) > 900) { renderNow(); state.drawnAt = Date.now(); } }, 1000);
+  setInterval(() => { if (token && !document.hidden) refreshRequests(); }, 2000);
+  // The day picker's latest day follows the 9am change.
+  setInterval(() => { const t = cairoToday(); if ($('day').max !== t) { $('day').max = t; $('dayTo').max = t; $('dayNext').disabled = state.to >= t; } }, 60000);
   // Today's numbers on the open page refresh every minute.
-  setInterval(() => { if (token && DAY_VIEWS.includes(state.view) && state.view !== 'followup' && state.to === cairoToday() && !document.hidden) show(state.view, true); }, 60000);
+  // Skipped while the supervisor is choosing or typing something on the page, or has a section open, so nothing they picked is lost.
+  const busyHere = () => { const a = document.activeElement, v = document.querySelector('.view:not([hidden])'); return !!v && ((a && v.contains(a) && /^(SELECT|INPUT|TEXTAREA)$/.test(a.tagName)) || !!v.querySelector('details[open]')); };
+  setInterval(() => { if (token && DAY_VIEWS.includes(state.view) && state.view !== 'followup' && state.to === cairoToday() && !document.hidden && !busyHere()) show(state.view, true); }, 60000);
 
   // ---------- sign in ----------
   async function enter() {

@@ -16,7 +16,7 @@
     const maxCalls = Math.max(5, ...list.map(s => s.calls + s.shortAbandoned)), maxPeople = Math.max(3, ...list.map(s => Math.max(s.ready + s.onCall, s.onBreak)));
     const y1 = v => T + (H - T - B) * (1 - v / maxCalls), y2 = v => T + (H - T - B) * (1 - v / maxPeople);
     const x = i => W - R - (i + 0.5) * bw;                       // right to left: the day starts on the right
-    const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img' });
+    const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img', 'aria-label': 'رسم المكالمات والموظفين على مدار اليوم' }, el('title', {}, 'المكالمات والموظفين على مدار اليوم'));
     for (let k = 0; k <= 4; k++) { const v = Math.round(maxCalls * k / 4), y = y1(v); svg.append(el('line', { x1: L, x2: W - R, y1: y, y2: y, class: 'grid' }), el('text', { x: W - R + 6, y: y + 4 }, String(v))); }
     for (let k = 0; k <= 3; k++) { const v = Math.round(maxPeople * k / 3 * 10) / 10; svg.append(el('text', { x: 4, y: y2(v) + 4, fill: css('--ready') }, String(v))); }
     list.forEach((s, i) => {
@@ -51,7 +51,7 @@
     const W = 560, H = 230, L = 6, R = 26, T = 10, B = 24, n = items.length, bw = (W - L - R) / n;   // drawn half width: these sit in half-width panels
     const max = Math.max(1, ...items.map(it => series.reduce((m, x) => m + (it.values[x.key] || 0), 0)));
     const y = v => T + (H - T - B) * (1 - v / max), x = i => W - R - (i + 0.5) * bw;
-    const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img' });
+    const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img', 'aria-label': 'رسم بياني' }, el('title', {}, 'رسم بياني'));
     for (let k = 0; k <= 4; k++) { const v = Math.round(max * k / 4), yy = y(v); svg.append(el('line', { x1: L, x2: W - R, y1: yy, y2: yy, class: 'grid' }), el('text', { x: W - R + 6, y: yy + 4 }, String(v))); }
     const wrap = div('chartbox'), tip = div('tip'); tip.hidden = true;
     items.forEach((it, i) => {

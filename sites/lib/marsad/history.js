@@ -31,6 +31,11 @@ function setup(app) {
       await db.prepare('UPDATE history_reports SET imported_at = ?, verified_total = MAX(verified_total, ?) WHERE id = ?').run(now, verified ? 1 : 0, last.id);
       return { id: last.id, duplicate: true };
     }
+    // A partial upload (e.g. an Excel file of half a day) never replaces a fuller report of the same date.
+    if (last && !verified) {
+      const had = (await db.prepare('SELECT COUNT(*) n FROM history_calls WHERE report_id = ?').get(last.id)).n;
+      if (rows.length < had) fail(409, 'الملف فيه ' + rows.length + ' مكالمة بس، والمحفوظ لنفس اليوم ' + had + ' مكالمة؛ متغيرش');
+    }
     // The report header goes in first; its calls follow in one atomic batch, then older copies of the date are removed.
     const r = await db.prepare('INSERT INTO history_reports (date, imported_at, source, verified_total, expected_count, header, fingerprint) VALUES (?,?,?,?,?,?,?)')
       .run(date, now, source, verified ? 1 : 0, expected ?? null, JSON.stringify(header), fingerprint);

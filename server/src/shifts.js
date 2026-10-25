@@ -20,9 +20,12 @@ function setup(app) {
     const b = ctx.body, keys = Array.isArray(b.keys) ? [...new Set(b.keys.map(String))] : [];
     if (!keys.length || keys.length > 300 || keys.some(k => !/^\d{4}-\d{2}-\d{2}\|/.test(k) || k.length > 120)) fail(400, 'المكالمات غير صحيحة');
     if (b.action === 'remove') {
+      // The removed assignments are kept in the change log (who had each call), so an undo is always possible.
+      const before = [];
+      for (let i = 0; i < keys.length; i += 90) { const p = keys.slice(i, i + 90); before.push(...await db.prepare('SELECT call_key, employee_id FROM call_assignments WHERE call_key IN (' + p.map(() => '?').join(',') + ')').all(...p)); }
       const parts = []; for (let i = 0; i < keys.length; i += 90) parts.push(keys.slice(i, i + 90));
       await db.batch(parts.map(p => db.prepare('DELETE FROM call_assignments WHERE call_key IN (' + p.map(() => '?').join(',') + ')').bind(...p)));
-      await app.audit('calls_unassigned', null, { actor: who.name, count: keys.length });
+      await app.audit('calls_unassigned', null, { actor: who.name, count: keys.length, removed: before.map(r => [r.call_key, r.employee_id]) });
       return { ok: true };
     }
     if (b.action !== 'assign') fail(400, 'invalid_action');

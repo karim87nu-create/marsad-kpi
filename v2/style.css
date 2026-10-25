@@ -77,3 +77,8 @@ dialog{width:min(1000px,95vw);border:1px solid var(--line);border-radius:16px;ba
 .ranks{display:grid;gap:6px}.ranks .r{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}.ranks .r .meter{grid-column:1/-1}
 @media(max-width:1000px){.two,.split{grid-template-columns:1fr}}
 @media(max-width:900px){#app{grid-template-columns:1fr}#nav{position:static;height:auto}#nav nav{display:flex;flex-wrap:wrap}#nav .navgroup{display:none}main{padding:12px 16px}.timeline{grid-template-columns:100px 1fr}}
+
+/* الآن: data that stopped updating is never shown as live */
+.stalebar{background:#7f1d1d;color:#fff;border-radius:10px;padding:10px 14px;margin:0 0 12px;font-weight:600}
+#view-now.stale #nowCards,#view-now.stale .split{opacity:.45;filter:grayscale(1)}
+.tablewrap:focus-visible{outline:2px solid var(--accent,#22d3ee);outline-offset:2px}

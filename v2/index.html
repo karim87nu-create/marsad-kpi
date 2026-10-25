@@ -54,6 +54,7 @@
     <div id="breakRequests" aria-live="polite"></div>
 
     <section id="view-now" class="view">
+      <p id="nowStale" class="stalebar" role="alert" hidden></p>
       <div id="nowCards" class="cards big"></div>
       <div class="split">
         <article class="panel"><h2>الموظفون الآن</h2><div id="staffNow"></div></article>
@@ -86,7 +87,7 @@
     </section>
 
     <section id="view-profile" class="view" hidden>
-      <div class="filters"><select id="profileEmployee"></select><button class="ghost small" data-export="profile">تصدير Excel</button></div>
+      <div class="filters"><select id="profileEmployee" aria-label="الموظف"></select><button class="ghost small" data-export="profile">تصدير Excel</button></div>
       <div id="profileBody"></div>
     </section>
 
@@ -117,8 +118,8 @@
     <section id="view-calls" class="view" hidden>
       <div class="filters">
         <input id="callSearch" type="search" placeholder="بحث بالموظف أو الرقم">
-        <select id="callEmployee"><option value="">كل الموظفين</option></select>
-        <select id="callStatus"><option value="">كل المكالمات</option><option value="complete">مكتملة</option><option value="open">بدون نهاية مسجلة</option></select>
+        <select id="callEmployee" aria-label="الموظف"><option value="">كل الموظفين</option></select>
+        <select id="callStatus" aria-label="حالة المكالمة"><option value="">كل المكالمات</option><option value="complete">مكتملة</option><option value="open">بدون نهاية مسجلة</option></select>
         <button class="ghost small" data-export="calls">تصدير Excel</button>
       </div>
       <div id="callsCards" class="cards four"></div>
@@ -132,7 +133,7 @@
 
     <section id="view-missed" class="view" hidden>
       <div class="filters">
-        <select id="missedClass"><option value="">كل الفائتة</option><option value="counted">محتسبة (أكثر من 7 ث)</option><option value="short_exempt">قصيرة — للتوضيح</option><option value="after_hours">خارج ساعات العمل</option></select>
+        <select id="missedClass" aria-label="نوع المكالمات الفائتة"><option value="">كل الفائتة</option><option value="counted">محتسبة (أكثر من 7 ث)</option><option value="short_exempt">قصيرة — للتوضيح</option><option value="after_hours">خارج ساعات العمل</option></select>
         <button class="ghost small" data-export="missed">تصدير Excel</button>
       </div>
       <div id="missedCards" class="cards"></div>
@@ -149,9 +150,9 @@
       <article class="panel"><h2>إضافة متابعة</h2>
         <form id="reviewForm" class="inline">
           <input name="title" placeholder="الموضوع" maxlength="200" required style="flex:2">
-          <select name="employeeId"><option value="">من غير موظف</option></select>
+          <select name="employeeId" aria-label="الموظف"><option value="">من غير موظف</option></select>
           <input name="owner" placeholder="مسؤول المتابعة" maxlength="100">
-          <select name="status"><option value="new">جديدة</option><option value="in_progress">جاري المتابعة</option><option value="resolved">اتحلت</option><option value="reviewed">تمت المراجعة</option></select>
+          <select name="status" aria-label="الحالة"><option value="new">جديدة</option><option value="in_progress">جاري المتابعة</option><option value="resolved">اتحلت</option><option value="reviewed">تمت المراجعة</option></select>
           <input name="note" placeholder="ملاحظة" maxlength="2000" style="flex:2">
           <button type="submit">إضافة</button>
         </form>
@@ -199,9 +200,9 @@
       </article>
       <article class="panel"><h2>رسالة للموظفين</h2>
         <form id="messageForm" class="stack">
-          <div class="inline"><select name="to"><option value="all">كل الموظفين النشطين</option></select>
-          <select name="priority"><option value="normal">عادي</option><option value="urgent">عاجل</option></select>
-          <select name="hours"><option value="1">صلاحية ساعة</option><option value="4" selected>4 ساعات</option><option value="12">12 ساعة</option><option value="24">24 ساعة</option></select></div>
+          <div class="inline"><select name="to" aria-label="مين يستلم الرسالة"><option value="all">كل الموظفين النشطين</option></select>
+          <select name="priority" aria-label="أهمية الرسالة"><option value="normal">عادي</option><option value="urgent">عاجل</option></select>
+          <select name="hours" aria-label="مدة ظهور الرسالة"><option value="1">صلاحية ساعة</option><option value="4" selected>4 ساعات</option><option value="12">12 ساعة</option><option value="24">24 ساعة</option></select></div>
           <input name="title" maxlength="80" placeholder="العنوان" required>
           <textarea name="message" maxlength="1000" rows="3" placeholder="الرسالة" required></textarea>
           <button type="submit">إرسال</button>
@@ -212,7 +213,7 @@
       <article class="panel" id="adminUsersPanel"><h2>مستخدمو صفحة الإدارة</h2>
         <form id="addAdmin" class="inline">
           <input name="name" placeholder="الاسم" required>
-          <select name="role"><option value="supervisor">مشرف</option><option value="viewer">مشاهدة فقط</option><option value="admin">مدير</option></select>
+          <select name="role" aria-label="الدور"><option value="supervisor">مشرف</option><option value="viewer">مشاهدة فقط</option><option value="admin">مدير</option></select>
           <input name="password" type="password" placeholder="الباسورد (6 أو أكثر)" required><input name="password2" type="password" placeholder="تأكيد الباسورد" required>
           <button type="submit">إضافة</button>
         </form>
@@ -221,14 +222,14 @@
       </article>
       <article class="panel" id="importPanel" hidden><h2>نقل بيانات النظام القديم</h2>
         <p class="muted">ارفع ملف الـ zip اللي نزلته من شات «تصدير كود marsad-kpi-live» على ChatGPT (أو ملف database/marsad-kpi-live.sqlite اللي جواه)، والملف بيتفك ويتحوّل هنا في المتصفح. الموظفين بباسورداتهم ومستخدمين الإدارة وكل الأيام هتتنقل. تقدر ترفع نسخة أحدث في أي وقت وهو يكمّل الناقص من غير تكرار. بعد ما الموظفين اشتغلوا على السيستم الجديد، النقل بيجيب بس اللي سجّله النظام القديم وناقص هنا، ومش بيغيّر أي حاجة اتسجلت على الجديد. لازم تكون داخل بالباسورد الرئيسي.</p><p id="importLast" class="muted"></p>
-        <div class="inline"><input type="file" id="importFile" accept=".zip,.sqlite,.db,.gz"><button type="button" id="importButton">رفع ونقل البيانات</button></div>
+        <div class="inline"><input type="file" id="importFile" aria-label="ملف قاعدة البيانات القديمة" accept=".zip,.sqlite,.db,.gz"><button type="button" id="importButton">رفع ونقل البيانات</button></div>
         <p id="importNote" class="muted" role="status"></p>
       </article>
       <article class="panel" id="telegramPanel"><h2>تنبيهات تليجرام</h2>
         <p class="muted">1) اعمل بوت من BotFather وانسخ التوكن. 2) ضيف البوت لجروب المشرفين وابعت فيه أي رسالة. 3) دوس «دور على الجروب» واختاره.</p>
         <p id="tgStatus"></p>
         <form id="tgToken" class="inline"><input name="token" placeholder="توكن البوت" autocomplete="off" required><button type="submit">ربط البوت</button></form>
-        <div class="inline" style="margin-top:8px"><button type="button" id="tgDiscover" class="ghost">دور على الجروب</button><select id="tgChats" hidden></select><button type="button" id="tgChoose" hidden>ربط الجروب ده</button><button type="button" id="tgTest" class="ghost">رسالة تجربة</button></div>
+        <div class="inline" style="margin-top:8px"><button type="button" id="tgDiscover" class="ghost">دور على الجروب</button><select id="tgChats" aria-label="جروب تليجرام" hidden></select><button type="button" id="tgChoose" hidden>ربط الجروب ده</button><button type="button" id="tgTest" class="ghost">رسالة تجربة</button></div>
         <form id="tgSettings" class="stack" style="margin-top:10px"><label><input type="checkbox" name="enabled"> التنبيهات شغالة</label><div id="tgRules" class="stack"></div><button type="submit">حفظ</button></form>
         <p id="tgNote" class="muted" role="status"></p>
         <p class="muted">كل تنبيه يتبعه إشعار عند انتهاء الحالة أو تغيّرها، بدون تكرار. انقطاع البيانات لا يُعتبر انتهاءً للمشكلة.</p><h3>تنبيهات النهارده</h3><div id="tgLog"></div>

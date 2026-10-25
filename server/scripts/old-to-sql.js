@@ -2,8 +2,8 @@
 // Converts the old system's database (marsad-kpi-live.sqlite) into a SQL file for this server's D1
 // database on ChatGPT Sites:  node scripts/old-to-sql.js marsad-kpi-live.sqlite marsad-import.sql
 // Then: wrangler d1 execute <DB> --remote --file marsad-import.sql   (or the Sites D1 import)
-// The file first empties the data tables (so it can be run again on cutover day), keeping the
-// server's own settings (its secret) and the Telegram link.
+// Nothing is ever emptied or overwritten: every row is INSERT OR IGNORE, so running it again only adds
+// rows that are missing and never touches accounts, passwords or activity already on the new server.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,11 +21,10 @@ const TABLES = ['admin_accounts', 'admin_sessions', 'employees', 'employee_sessi
 const value = v => v === null || v === undefined ? 'NULL' : typeof v === 'number' || typeof v === 'bigint' ? String(v) : "'" + String(v).replace(/'/g, "''") + "'";
 const out = fs.openSync(outPath, 'w');
 const write = s => fs.writeSync(out, s + '\n');
-for (const t of TABLES) write('DELETE FROM ' + t + ';');
 let rows = 0;
 for (const t of TABLES) {
   const cols = db.raw.prepare('PRAGMA table_info(' + t + ')').all().map(c => c.name);
-  const head = 'INSERT INTO ' + t + ' (' + cols.join(', ') + ') VALUES ';
+  const head = 'INSERT OR IGNORE INTO ' + t + ' (' + cols.join(', ') + ') VALUES ';
   for (const r of db.raw.prepare('SELECT * FROM ' + t).raw().iterate()) { write(head + '(' + r.map(value).join(', ') + ');'); rows++; }
 }
 fs.closeSync(out);
