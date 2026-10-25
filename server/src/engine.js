@@ -308,7 +308,7 @@ function setup(app) {
   const LIVE_WINDOW_MS = 4 * 3600000;
   app.live = async function live(now = app.now()) {
     const today = businessDay(now), w = dayWindow(today);
-    const latestSql = 'SELECT s.* FROM employee_sessions s WHERE s.id = (SELECT id FROM employee_sessions x WHERE x.employee_id = s.employee_id ORDER BY issued_at DESC, id DESC LIMIT 1)';
+    const latestSql = 'SELECT s.*, (SELECT d.action FROM shift_decisions d WHERE d.session_id = s.id ORDER BY d.id DESC LIMIT 1) AS shift_decision FROM employee_sessions s WHERE s.id = (SELECT id FROM employee_sessions x WHERE x.employee_id = s.employee_id ORDER BY issued_at DESC, id DESC LIMIT 1)';
     const [people, latest] = await Promise.all([names(), db.prepare(latestSql).all()]);
     // Recent events of today's latest sessions, through the (session_id, occurred_at) index, 40 sessions per query.
     const wanted = latest.filter(s => (s.revoked_at ?? s.expires_at) >= w.start), from = new Map(wanted.map(s => [s.id, Math.max(s.issued_at, now - LIVE_WINDOW_MS)]));
@@ -326,6 +326,7 @@ function setup(app) {
       const open = !s.revoked_at && s.expires_at > now;
       const events = recent.get(s.id) || [], sp = spansOf(s, events), last = sp.at(-1);
       const lastAt = events.length ? events.at(-1).occurred_at : s.issued_at;
+      if (!open && s.shift_decision === 'exclude') { out.push({ ...base, state: 'shift_ended', reason: s.revoke_reason || null, since: iso(s.revoked_at ?? s.expires_at), lastEvidence: iso(lastAt) }); continue; }
       if (!open) { const kind = outKind(s.revoke_reason); out.push({ ...base, state: kind === 'gap' ? 'disconnected' : 'logged_out', outKind: kind, reason: s.revoke_reason || null, since: iso(s.revoked_at ?? s.expires_at), lastEvidence: iso(lastAt) }); continue; }
       if (!numeric(s.extension)) { out.push({ ...base, state: 'logged_in', since: iso(s.issued_at), lastEvidence: iso(lastAt) }); continue; }
       if (!last || now - last.lastEvidence >= GAP_MS) { out.push({ ...base, state: 'unknown', since: iso(last ? last.lastEvidence : s.issued_at), lastEvidence: iso(lastAt) }); continue; }

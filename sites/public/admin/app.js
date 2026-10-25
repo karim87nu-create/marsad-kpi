@@ -129,23 +129,23 @@
     const stale = Date.now() - (state.liveAt || 0) > 5000;
     $('nowStale').hidden = !stale; $('nowStale').textContent = stale ? 'البيانات مش بتتحدث — آخر تحديث ناجح ' + hms(state.liveAt) + '. الأرقام والعدادات دي قديمة.' : '';
     $('view-now').classList.toggle('stale', stale);
-    const now = stale ? (state.liveAt || Date.now()) + offset : serverNow(), people = d.employees.map(p => ({ ...p, s: p.state, elapsed: p.since ? (now - Date.parse(p.since)) / 1000 : null }));
+    const now = stale ? (state.liveAt || Date.now()) + offset : serverNow(), people = d.employees.map(p => ({ ...p, s: ['unknown', 'disconnected'].includes(p.state) ? 'unknown' : p.state, elapsed: p.since ? (now - Date.parse(p.since)) / 1000 : null }));
     const count = s => people.filter(p => p.s === s).length;
     const q = state.queue, qAge = q ? (now - Date.parse(q.observedAt)) / 1000 : null, qFresh = q && qAge < 30;
     const waiting = qFresh ? q.waiting : [];
     const longestWait = waiting.reduce((m, r) => Math.max(m, waitNow(r.wait, qAge) || 0), 0);
     $('nowCards').replaceChildren(kpi('متاحين', count('ready'), count('ready') ? 'ready' : 'bad'), kpi('في مكالمة', count('on_call'), 'on_call'), kpi('في بريك', count('break'), 'break'),
-      kpi('انقطاع رصد', count('unknown') + count('disconnected'), count('unknown') + count('disconnected') ? 'unknown' : ''), kpi('سجّلوا ولسه مدخلوش الكونسول', count('logged_in')),
+      kpi('انقطاع رصد', count('unknown'), count('unknown') ? 'unknown' : ''), kpi('سجّلوا ولسه مدخلوش الكونسول', count('logged_in')),
       kpi('عملاء منتظرين', qFresh ? waiting.length : 'غير متاح', !qFresh ? '' : waiting.length && !count('ready') ? 'bad' : waiting.length ? 'warn' : 'good', qFresh && waiting.length ? 'أطول انتظار ' + dur(longestWait) : ''));
-    const order = ['on_call', 'break', 'ready', 'unknown', 'logged_in', 'disconnected', 'logged_out', 'no_session'];
+    const order = ['on_call', 'break', 'ready', 'unknown', 'logged_in', 'logged_out', 'shift_ended', 'no_session'];
     const groups = order.map(s => [s, people.filter(p => p.s === s).sort((a, b) => (b.elapsed || 0) - (a.elapsed || 0))]).filter(([, list]) => list.length);
     // People who are not working right now only take one line each group.
     if (!groups.length) $('staffNow').replaceChildren(h('p', { className: 'muted', textContent: 'مفيش موظفين مسجلين في المرصد دلوقتي' }));
-    else $('staffNow').replaceChildren(...groups.map(([s, list]) => ['no_session', 'logged_out'].includes(s) ? h('div', { className: 'group' }, h('h3', { textContent: (STATE[s] || s) + ' — ' + list.length }),
+    else $('staffNow').replaceChildren(...groups.map(([s, list]) => ['no_session', 'logged_out', 'shift_ended'].includes(s) ? h('div', { className: 'group' }, h('h3', { textContent: (STATE[s] || s) + ' — ' + list.length }),
       h('div', { className: 'inline' }, ...list.map(p => pill(p.name + (s === 'logged_out' ? (p.outKind ? ' · ' + OUT[p.outKind] : '') + (p.since ? ' ' + hm(p.since) : '') : ''))))) : h('div', { className: 'group' }, h('h3', { textContent: (STATE[s] || s) + ' — ' + list.length }),
       h('div', { className: 'tiles' }, ...list.map(p => {
         const over = (s === 'break' && p.elapsed > 900) || (s === 'on_call' && p.elapsed > 240);
-        return h('div', { className: 'tile ' + s + (over ? ' over' : ''), title: 'آخر إشارة ' + stamp(p.lastEvidence) },
+        return h('div', { className: 'tile ' + s + (over ? ' over' : ''), title: 'آخر إشارة ' + stamp(p.lastEvidence) + (s === 'unknown' ? (p.state === 'disconnected' ? ' · جلسة انقطعت من غير خروج مسجل' : ' · الإشارة متوقفة والجلسة لم تُغلق') : '') },
           ['on_call', 'break'].includes(s) && p.elapsed != null ? h('time', { textContent: dur(p.elapsed) }) : null,
           h('strong', { textContent: p.name }),
           h('small', { textContent: [p.extension && 'تحويلة ' + p.extension, s === 'on_call' && p.phone, s === 'on_call' && p.queue && QUEUE(p.queue)].filter(Boolean).join(' · ') || ' ' }));

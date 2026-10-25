@@ -1,3 +1,4 @@
+import { RULES } from './time.js';
 function setup(app) {
   const { db, fail } = app;
   app.route('POST', '/api/shifts', async ctx => {
@@ -7,9 +8,30 @@ function setup(app) {
     const requestId = String(b.requestId || '');
     if (requestId && await db.prepare('SELECT 1 FROM shift_decisions WHERE request_id = ?').get(requestId)) return { ok: true, duplicate: true };
     const s = await db.prepare('SELECT * FROM employee_sessions WHERE id = ? AND employee_id = ?').get(Number(b.sessionId), Number(b.employeeId));
-    if (!s || !s.revoked_at) fail(404, 'الجلسة غير موجودة أو ما زالت مفتوحة');
-    await db.prepare('INSERT OR IGNORE INTO shift_decisions (request_id, employee_id, session_id, action, note, decided_at, decided_by) VALUES (?,?,?,?,?,?,?)')
-      .run(requestId || null, s.employee_id, s.id, b.action, note, ctx.now, who.name);
+    if (!s) fail(404, 'الجلسة غير موجودة');
+    const staleBefore = ctx.now - RULES.presenceStaleMs;
+    if (s.revoked_at == null && s.expires_at > ctx.now && s.last_seen > staleBefore)
+      fail(409, 'الجلسة لسه بتبعت بيانات؛ حدّث الصفحة قبل تحديد نهاية الشيفت');
+    const writes = [];
+    if (b.action === 'exclude' && s.revoked_at == null) {
+      // Close only an inactive session, at its existing evidence cutoff, never at the admin click time.
+      const evidence = await db.prepare(`SELECT MAX(occurred_at) at FROM events WHERE session_id = ? AND occurred_at <= ? AND
+        ((event_type = 'heartbeat' AND state IN ('ready','on_call','break','post_call')) OR
+         event_type IN ('break_start','break_observed','break_end','break_end_unknown','agentlinked','agentunlinked','call_observed','call_observed_end'))`).get(s.id, ctx.now);
+      const closedAt = Math.max(s.issued_at, Math.min(ctx.now, s.expires_at, (evidence?.at ?? s.last_seen ?? s.issued_at) + RULES.presenceStaleMs));
+      writes.push(db.prepare(`UPDATE employee_sessions SET revoked_at = ?, revoke_reason = 'manual' WHERE id = ? AND revoked_at IS NULL
+        AND last_seen = ? AND (expires_at <= ? OR last_seen <= ?)`).bind(closedAt, s.id, s.last_seen, ctx.now, staleBefore));
+    }
+    // Check liveness again inside the transaction: a heartbeat arriving while the dialog was open wins.
+    writes.push(db.prepare(`INSERT OR IGNORE INTO shift_decisions (request_id, employee_id, session_id, action, note, decided_at, decided_by)
+      SELECT ?,?,?,?,?,?,? FROM employee_sessions WHERE id = ? AND
+        (revoked_at IS NOT NULL OR expires_at <= ? OR last_seen <= ?) AND (? != 'exclude' OR revoked_at IS NOT NULL)`)
+      .bind(requestId || null, s.employee_id, s.id, b.action, note, ctx.now, who.name, s.id, ctx.now, staleBefore, b.action));
+    const result = await db.batch(writes);
+    if (!result.at(-1).changes) {
+      if (requestId && await db.prepare('SELECT 1 FROM shift_decisions WHERE request_id = ?').get(requestId)) return { ok: true, duplicate: true };
+      fail(409, 'الجلسة رجعت تبعت بيانات؛ حدّث الصفحة وأعد مراجعتها');
+    }
     await app.audit('shift_changed', s.employee_id, { actor: who.name, sessionId: s.id, status: b.action, note });
     return { ok: true };
   });
