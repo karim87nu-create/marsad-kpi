@@ -1,13 +1,13 @@
 // مرصد الأوردرات: the monitor on the restaurant PC reads Apex (read-only) and pushes a summary of the
-// operating day here every few seconds. The admin page shows it; its alerts go out through the same
-// Telegram group as the call-center alerts (each kind can be switched off from the Telegram settings).
+// operating day here every few seconds. The admin page shows it; its alerts go out through the appropriate
+// department group, including replies when an alert changes state (each kind can be switched off from the Telegram settings).
 import { businessDay, dayWindow, isOperating, iso, validDate } from './time.js';
 import { sha256, randomToken } from './security.js';
 
-const KINDS = ['ordersLate', 'ordersCancel', 'ordersDiscount', 'ordersEntry', 'ordersStale'];
+const KINDS = ['ordersLate', 'ordersCancel', 'ordersDiscount', 'ordersEntry', 'ordersEntryLate', 'ordersStale'];
 const STALE_MS = 3 * 60000, CHECK_MS = 60000;
 // Which group: delays leaving the branch and cancellations after the pilot took the order go to the branch managers.
-const BRANCH_KINDS = new Set(['ordersLate', 'ordersCancel']);
+const BRANCH_KINDS = new Set(['ordersLate']);
 
 function setup(app) {
   const { db, fail } = app;
@@ -22,7 +22,7 @@ function setup(app) {
     if (!alerts.length) return;
     const on = await rulesOn();
     await db.batch(alerts.map(a => db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, reply_to, sent_at, target) VALUES (?,?,?,?,?,?,?,?)')
-      .bind(a.key, a.kind, null, a.text, now, a.replyTo || null, on(a.kind) ? null : now, BRANCH_KINDS.has(a.kind) ? 'branches' : null)));
+      .bind(a.key, a.kind, null, a.text, now, a.replyTo || null, on(a.kind) || a.replyTo ? null : now, a.target || (BRANCH_KINDS.has(a.kind) ? 'branches' : 'online'))));
   };
 
   // ---- the monitor's key: made once from the admin page, kept only as a hash ----
@@ -51,9 +51,44 @@ function setup(app) {
     await db.prepare('INSERT INTO orders_days (day, data, received_at) VALUES (?, ?, ?) ON CONFLICT(day) DO UPDATE SET data = excluded.data, received_at = excluded.received_at')
       .run(b.day, data, ctx.now);
     await put('orders_last_push', ctx.now);
-    const alerts = (Array.isArray(b.alerts) ? b.alerts : []).slice(0, 50)
-      .filter(a => a && KINDS.includes(a.kind) && a.kind !== 'ordersStale' && a.key && a.text)
-      .map(a => ({ key: 'orders:' + b.day + ':' + String(a.key).slice(0, 80), kind: a.kind, text: String(a.text).slice(0, 3500) }));
+    const alerts = [];
+    // Persist each alert's last state per Apex day. A retry must not create a second reply.
+    const stateKey = 'orders_alert_states:' + b.day;
+    let states = {}; try { states = JSON.parse(await setting(stateKey) || '{}'); } catch {}
+    const rows = name => Array.isArray(b[name]) ? b[name] : [];
+    const orderNo = a => String(a.orderNo ?? a.orderId ?? (/^(?:late|del|disc|pay|entry|duplicate|cancel):([0-9]+)(?::|$)/.exec(String(a.key))?.[1] || ''));
+    for (const a of (Array.isArray(b.alerts) ? b.alerts : []).slice(0, 50)) {
+      if (!a || !KINDS.includes(a.kind) || a.kind === 'ordersStale' || !a.key || !a.text) continue;
+      const key = 'orders:' + b.day + ':' + String(a.key).slice(0, 80), text = String(a.text).slice(0, 3500);
+      const old = states[key], no = orderNo(a);
+      const cancellation = rows('cancels').find(o => String(o.no) === no);
+      const target = BRANCH_KINDS.has(a.kind) || a.kind === 'ordersCancel' && cancellation && (cancellation.out || cancellation.pilot) ? 'branches' : 'online';
+      const status = String(a.status || 'active').slice(0,80);
+      const version = sha256(JSON.stringify([status, text]));
+      if (!old) {
+        if (status === 'resolved') continue; // No original warning to answer.
+        alerts.push({ key, kind: a.kind, text, target });
+        states[key] = { no, kind: a.kind, text, status, version, target };
+      } else if (old.version !== version) {
+        // Explicit state changes, including corrected entry errors, answer the original alert.
+        // A changing duration in text alone is not a new state.
+        if (old.status !== status || a.changed === true) alerts.push({ key: 'state:' + key + ':' + ((old.sequence || 0) + 1), kind: old.kind,
+          text, replyTo: key, target: old.target });
+        states[key] = { ...old, status, version, text, sequence: (old.sequence || 0) + (old.status !== status || a.changed === true ? 1 : 0) };
+      }
+    }
+    for (const [key, old] of Object.entries(states)) {
+      if (old.status === 'resolved' || !old.no) continue;
+      const out = rows('lateOut').find(o => String(o.no) === old.no && o.out);
+      const cancel = rows('cancels').find(o => String(o.no) === old.no);
+      let text = null;
+      if (old.kind === 'ordersLate' && (out || cancel)) text = cancel ? '🔄 أوردر ' + old.no + ' اتلغى بعد تنبيه تأخير الخروج.' : '✅ أوردر ' + old.no + ' خرج مع الطيار بعد تنبيه التأخير — وقت الخروج: ' + out.out;
+      // Only a complete issues snapshot can prove that a recorded entry issue disappeared.
+      if (old.kind === 'ordersEntry' && Array.isArray(b.issues) && Number.isInteger(b.totals?.issues) && b.totals.issues === b.issues.length &&
+          old.observedIssue && !b.issues.some(o => String(o.no) === old.no)) text = '✅ أوردر ' + old.no + ': مشكلة الضرب لم تعد موجودة في قراءة Apex الكاملة.';
+      if (old.kind === 'ordersEntry' && rows('issues').some(o => String(o.no) === old.no)) old.observedIssue = true;
+      if (text) { alerts.push({ key: 'resolved:' + key + ':' + ((old.sequence || 0) + 1), kind: old.kind, text, replyTo: key, target: old.target }); old.status = 'resolved'; old.sequence = (old.sequence || 0) + 1; }
+    }
     // The monitor was reported stopped: say it is back, as a reply to that alert.
     if (previous) {
       const gone = await db.prepare('SELECT key FROM telegram_log WHERE key = ?').get('orders:stale:' + previous);
@@ -61,6 +96,7 @@ function setup(app) {
         text: '✅ مرصد الأوردرات رجع يشتغل — كان واقف ' + Math.round((ctx.now - previous) / 60000) + ' دقيقة' });
     }
     await queue(alerts, ctx.now);
+    await put(stateKey, JSON.stringify(states));
     return { ok: true, serverNow: iso(ctx.now) };
   }, { limit: 1024 * 1024 });
 

@@ -671,27 +671,28 @@
     const t = await api('/api/telegram');
     const group = (label, chat, target, note) => h('div', { className: 'tg-group' }, h('span', { className: 'muted', textContent: label }),
       chat ? h('strong', { textContent: chat.title || chat.id }) : pill('مش مربوط', 'warn'), note ? h('small', { className: 'muted', textContent: note }) : null,
-      h('span', { className: 'inline' }, chat ? btn('رسالة تجربة', () => tgTest(target)) : null, chat && target === 'branches' ? btn('فك الربط', async () => { if (!confirm('فك ربط جروب الفروع؟ تنبيهات الفروع هتروح لجروب الكول سنتر.')) return; try { await api('/api/telegram', { method: 'POST', body: { action: 'unlinkBranches' } }); say('tgNote', 'اتفك ربط جروب الفروع.'); renderTelegram(); } catch (x) { say('tgNote', x.message); } }) : null));
+      h('span', { className: 'inline' }, chat ? btn('رسالة تجربة', () => tgTest(target)) : null, chat && target === 'branches' ? btn('فك الربط', async () => { if (!confirm('فك ربط جروب الفروع؟ تنبيهات الفروع هتنتظر لحد ربط جروب الفروع تاني.')) return; try { await api('/api/telegram', { method: 'POST', body: { action: 'unlinkBranches' } }); say('tgNote', 'اتفك ربط جروب الفروع.'); renderTelegram(); } catch (x) { say('tgNote', x.message); } }) : null));
     $('tgStatus').replaceChildren(h('p', {}, !t.configured ? 'البوت مش مربوط.' : 'البوت: @' + t.botName + ' · ' + (t.enabled ? 'التنبيهات شغالة' : 'التنبيهات متوقفة')),
-      group('جروب الكول سنتر', t.chat, 'main', 'تنبيهات المكالمات والموظفين ومرصد الأوردرات لما يقف.'),
-      group('جروب إدارات الفروع', t.branchChat, 'branches', t.branchChat ? 'تأخير خروج الأوردرات والإلغاء بعد التحميل.' : 'لحد ما يتربط، تنبيهات الفروع بتروح لجروب الكول سنتر.'));
+      group('جروب الكول سنتر — المكالمات', t.chat, 'main', 'المكالمات والانتظار والموظفين وتغيّر حالة تنبيهاتهم.'),
+      group('جروب الكول سنتر — الأونلاين وضرب الأوردر', t.onlineChat, 'online', 'أخطاء الضرب والتكرار والخصومات والإلغاء وتأخير الضرب وتغيّر حالتها. لازم يتربط عشان يستقبل التنبيهات.'),
+      group('جروب إدارات الفروع', t.branchChat, 'branches', t.branchChat ? 'تأخير خروج الأوردرات والإلغاء بعد التحميل.' : 'تنبيهات الفروع بتنتظر لحد ربط جروبها؛ مش بتروح للكول سنتر.'));
     $('tgSettings').elements.enabled.checked = t.enabled;
     const box = (title, list) => list.length ? [h('h3', { textContent: title }), ...list.map(r => h('label', {}, h('input', { type: 'checkbox', name: 'rule', value: r.key, checked: r.on }), ' ' + r.label.replace(/^الأوردرات: /, '')))] : [];
-    $('tgRules').replaceChildren(...box('الكول سنتر', t.rules.filter(r => !r.key.startsWith('orders'))), ...box('الأوردرات والفروع', t.rules.filter(r => r.key.startsWith('orders'))));
+    $('tgRules').replaceChildren(...box('الكول سنتر', t.rules.filter(r => !r.key.startsWith('orders'))), ...box('الفروع', t.rules.filter(r => r.key === 'ordersLate')), ...box('الأونلاين وضرب الأوردر', t.rules.filter(r => r.key.startsWith('orders') && r.key !== 'ordersLate')));
     const log = (await api('/api/telegram?log=1&date=' + cairoToday())).log;
     table('tgLog', [{ title: 'الوقت', get: x => x.createdAt, show: x => clock(x.createdAt), type: 'datetime' }, { title: 'الجروب', get: x => x.group || 'الكول سنتر' }, { title: 'النوع', get: x => x.label }, { title: 'الرسالة', get: x => x.text.split('\n')[0] },
       { title: 'اتبعت', get: x => x.sentAt ? 'أيوه' : 'لأ' + (x.error ? ' — ' + x.error : '') }], log, { empty: 'مفيش تنبيهات النهارده', limit: 100 });
   }
-  async function tgTest(target) { try { await api('/api/telegram', { method: 'POST', body: { action: 'test', target } }); say('tgNote', 'اتبعتت رسالة تجربة لجروب ' + (target === 'branches' ? 'الفروع' : 'الكول سنتر') + '.'); } catch (x) { say('tgNote', x.message); } }
+  async function tgTest(target) { try { await api('/api/telegram', { method: 'POST', body: { action: 'test', target } }); say('tgNote', 'اتبعتت رسالة تجربة لجروب ' + (target === 'branches' ? 'الفروع' : target === 'online' ? 'الأونلاين وضرب الأوردر' : 'المكالمات') + '.'); } catch (x) { say('tgNote', x.message); } }
   $('tgToken').onsubmit = async e => { e.preventDefault(); try { const r = await api('/api/telegram', { method: 'POST', body: { action: 'token', token: e.target.elements.token.value.trim() } }); e.target.reset(); say('tgNote', 'اتربط البوت @' + r.botName + '. ضيفه للجروب وابعت رسالة، وبعدين دوس «دور على الجروب».'); renderTelegram(); } catch (x) { say('tgNote', x.message); } };
   $('tgDiscover').onclick = async () => {
     try { const { chats } = await api('/api/telegram', { method: 'POST', body: { action: 'discover' } });
       if (!chats.length) return say('tgNote', 'البوت مش شايف أي جروب لسه. ضيفه للجروب وابعت فيه رسالة وجرب تاني.');
-      $('tgChats').replaceChildren(...chats.map(c => h('option', { value: c.id, textContent: c.title }))); $('tgChats').hidden = $('tgChoose').hidden = $('tgChooseBranches').hidden = false; say('tgNote', 'اختار الجروب واربطه كجروب الكول سنتر أو جروب الفروع.');
+      $('tgChats').replaceChildren(...chats.map(c => h('option', { value: c.id, textContent: c.title }))); $('tgChats').hidden = $('tgChoose').hidden = $('tgChooseOnline').hidden = $('tgChooseBranches').hidden = false; say('tgNote', 'اختار الجروب وحدد: المكالمات، الأونلاين وضرب الأوردر، أو الفروع.');
     } catch (x) { say('tgNote', x.message); }
   };
-  const tgChoose = target => async () => { const o = $('tgChats').selectedOptions[0]; if (!o) return; try { await api('/api/telegram', { method: 'POST', body: { action: 'chat', chatId: o.value, title: o.textContent, target } }); say('tgNote', 'اتربط «' + o.textContent + '» كجروب ' + (target === 'branches' ? 'إدارات الفروع' : 'الكول سنتر') + ' وجاتلكم رسالة تأكيد.'); $('tgChats').hidden = $('tgChoose').hidden = $('tgChooseBranches').hidden = true; renderTelegram(); } catch (x) { say('tgNote', x.message); } };
-  $('tgChoose').onclick = tgChoose('main'); $('tgChooseBranches').onclick = tgChoose('branches');
+  const tgChoose = target => async () => { const o = $('tgChats').selectedOptions[0]; if (!o) return; try { await api('/api/telegram', { method: 'POST', body: { action: 'chat', chatId: o.value, title: o.textContent, target } }); say('tgNote', 'اتربط «' + o.textContent + '» كجروب ' + (target === 'branches' ? 'إدارات الفروع' : target === 'online' ? 'الأونلاين وضرب الأوردر' : 'المكالمات') + ' وجاتلكم رسالة تأكيد.'); $('tgChats').hidden = $('tgChoose').hidden = $('tgChooseOnline').hidden = $('tgChooseBranches').hidden = true; renderTelegram(); } catch (x) { say('tgNote', x.message); } };
+  $('tgChooseOnline').onclick = tgChoose('online'); $('tgChoose').onclick = tgChoose('main'); $('tgChooseBranches').onclick = tgChoose('branches');
   $('tgSettings').onsubmit = async e => { e.preventDefault(); const f = e.target, rules = Object.fromEntries([...f.querySelectorAll('[name=rule]')].map(i => [i.value, i.checked]));
     try { await api('/api/telegram', { method: 'POST', body: { action: 'settings', enabled: f.elements.enabled.checked, rules } }); say('tgNote', 'اتحفظ.'); renderTelegram(); } catch (x) { say('tgNote', x.message); } };
 

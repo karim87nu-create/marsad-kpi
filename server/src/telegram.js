@@ -26,6 +26,7 @@ const RULE_LIST = {
   ordersCancel: 'الأوردرات: إلغاء أوردر',
   ordersDiscount: 'الأوردرات: خصم كبير على أوردر',
   ordersEntry: 'الأوردرات: خطأ إدخال محتمل أو أوردر متكرر',
+  ordersEntryLate: 'الأوردرات: تأخير ضرب الأوردر',
   ordersStale: 'الأوردرات: مرصد الأوردرات واقف أو رجع',
 };
 const RECOVERY_LABELS = { breakStart: 'رجع من البريك', breakOver: 'رجع من البريك', longCall: 'خلّص المكالمة الطويلة', gap: 'رجع الرصد', breakRequest: 'الرد على طلب البريك', queueNobody: 'انتهى الانتظار', logout: 'رجع للشغل',
@@ -47,7 +48,8 @@ function setup(app) {
   const open = async sealed => { try { const [iv, data] = sealed.split('.').map(fromB64); return new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, await aes(), data)); } catch { return null; } };
   const config = async () => {
     const c = await db.prepare('SELECT * FROM telegram_config WHERE id = 1').get();
-    return c ? { ...c, token: c.bot_token ? await open(c.bot_token) : null, rules: { ...DEFAULT_RULES, ...JSON.parse(c.rules || '{}') } } : { token: null, rules: DEFAULT_RULES, enabled: 0 };
+    const online = Object.fromEntries((await db.prepare("SELECT key, value FROM settings WHERE key IN ('telegram_online_chat_id','telegram_online_chat_title')").all()).map(r => [r.key.replace('telegram_', ''), r.value]));
+    return c ? { ...c, ...online, token: c.bot_token ? await open(c.bot_token) : null, rules: { ...DEFAULT_RULES, ...JSON.parse(c.rules || '{}') } } : { token: null, rules: DEFAULT_RULES, enabled: 0 };
   };
   const save = fields => {
     const keys = Object.keys(fields);
@@ -72,9 +74,10 @@ function setup(app) {
     if (ctx.query.log === '1') {
       const w = dayWindow(ctx.query.date || businessDay(ctx.now));
       return { log: (await db.prepare('SELECT * FROM telegram_log WHERE created_at >= ? AND created_at < ? ORDER BY created_at DESC LIMIT 500').all(w.start, w.end))
-        .map(r => ({ kind: r.kind, group: r.target === 'branches' ? 'الفروع' : 'الكول سنتر', label: RULE_LIST[r.kind] || RECOVERY_LABELS[r.kind.replace(':resolved', '')] || r.kind, text: r.text, createdAt: iso(r.created_at), sentAt: iso(r.sent_at), error: r.sent_at ? null : r.error })) };
+        .map(r => ({ kind: r.kind, group: r.target === 'branches' ? 'الفروع' : r.target === 'online' || r.kind.startsWith('orders') && !['ordersLate','ordersLate:resolved'].includes(r.kind) ? 'الأونلاين وضرب الأوردر' : 'المكالمات', label: RULE_LIST[r.kind] || RECOVERY_LABELS[r.kind.replace(':resolved', '')] || r.kind, text: r.text, createdAt: iso(r.created_at), sentAt: iso(r.sent_at), error: r.sent_at ? null : r.error })) };
     }
     return { configured: !!c.token, botName: c.bot_name || null, chat: c.chat_id ? { id: c.chat_id, title: c.chat_title } : null,
+      onlineChat: c.online_chat_id ? { id: c.online_chat_id, title: c.online_chat_title } : null,
       branchChat: c.branch_chat_id ? { id: c.branch_chat_id, title: c.branch_chat_title } : null, enabled: !!c.enabled,
       rules: Object.entries(RULE_LIST).map(([key, label]) => ({ key, label, on: !!c.rules[key] })) };
   });
@@ -98,10 +101,12 @@ function setup(app) {
     if (b.action === 'chat') {
       const chatId = String(b.chatId || '');
       if (!/^-?\d+$/.test(chatId)) fail(400, 'اختار الجروب');
-      const branches = b.target === 'branches';
-      try { await call('sendMessage', { chat_id: chatId, text: branches ? '✅ مرصد الدهان اتربط بالجروب ده كجروب إدارات الفروع: تأخير خروج الأوردرات ومشاكل الفروع هتوصل هنا.' : '✅ مرصد الدهان اتربط بالجروب ده. تنبيهات الكول سنتر هتوصل هنا.' }); } catch (e) { fail(400, 'مقدرتش أبعت للجروب: ' + e.message); }
+      const branches = b.target === 'branches', online = b.target === 'online';
+      try { await call('sendMessage', { chat_id: chatId, text: branches ? '✅ مرصد الدهان اتربط بالجروب ده كجروب إدارات الفروع: تأخير خروج الأوردرات ومشاكل الفروع هتوصل هنا.' : online ? '✅ مرصد الدهان اتربط بالجروب ده: جروب الأونلاين وضرب الأوردرات وأخطائها وتأخيرها وتغيّر حالتها.' : '✅ مرصد الدهان اتربط بالجروب ده: جروب المكالمات والموظفين وتغيّر حالة التنبيهات.' }); } catch (e) { fail(400, 'مقدرتش أبعت للجروب: ' + e.message); }
       if (branches) await save({ branch_chat_id: chatId, branch_chat_title: String(b.title || '').slice(0, 100) });
-      else await save({ chat_id: chatId, chat_title: String(b.title || '').slice(0, 100), enabled: 1 });
+      else if (online) {
+        await db.batch([['telegram_online_chat_id', chatId], ['telegram_online_chat_title', String(b.title || '').slice(0,100)]].map(([k,v]) => db.prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').bind(k,v)));
+      } else await save({ chat_id: chatId, chat_title: String(b.title || '').slice(0, 100), enabled: 1 });
       await app.audit('telegram_group_linked', null, { actor: who.name, chat: b.title });
       return { ok: true };
     }
@@ -112,10 +117,11 @@ function setup(app) {
       return { ok: true };
     }
     if (b.action === 'test') {
-      const c = await config(), chat = b.target === 'branches' ? c.branch_chat_id : c.chat_id;
+      const c = await config(), chat = b.target === 'branches' ? c.branch_chat_id : b.target === 'online' ? c.online_chat_id : c.chat_id;
       if (!chat) fail(400, 'اربط الجروب الأول');
       await call('sendMessage', { chat_id: chat, text: '🔔 رسالة تجربة من مرصد الدهان — ' + clock(ctx.now) }); return { ok: true };
     }
+    if (b.action === 'unlinkOnline') { await db.prepare("DELETE FROM settings WHERE key IN ('telegram_online_chat_id','telegram_online_chat_title')").run(); return { ok: true }; }
     if (b.action === 'unlinkBranches') { await save({ branch_chat_id: null, branch_chat_title: null }); return { ok: true }; }
     fail(400, 'invalid_action');
   });
@@ -390,17 +396,23 @@ function setup(app) {
     let sent = 0;
     try {
       const c = await config();
-      if (!c.enabled || !c.token || !c.chat_id) return 0;
+      if (!c.enabled || !c.token) return 0;
       const alerts = await collect(c, now);
       if (alerts.length) await db.batch(alerts.map(a => db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, reply_to, sent_at) VALUES (?,?,?,?,?,?,?)').bind(a.key, a.kind, a.employeeId, a.text, now, a.replyTo, a.silent ? now : null)));
-      for (const r of await db.prepare('SELECT * FROM telegram_log WHERE sent_at IS NULL AND tries < 5 AND created_at > ? ORDER BY id LIMIT 20').all(now - 3600000)) {
-        // Claim the row before sending, so two instances never send the same alert.
+      for (const r of await db.prepare('SELECT * FROM telegram_log WHERE sent_at IS NULL AND tries < 5 AND created_at > ? ORDER BY id LIMIT 500').all(now - 3600000)) {
+        if (sent >= 20) break;
+        // A reply stays in the chat which actually received its parent, even after relinking.
+        const parent = r.reply_to ? await db.prepare('SELECT * FROM telegram_log WHERE key = ?').get(r.reply_to) : null;
+        if (r.reply_to && (!parent?.message_id || parent.error)) continue;
+        const delivered = parent ? await db.prepare('SELECT value FROM settings WHERE key = ?').get('telegram_delivery:' + parent.key) : null;
+        const target = r.target || (r.kind.startsWith('orders') ? (r.kind.split(':')[0] === 'ordersLate' ? 'branches' : 'online') : null);
+        const chat = delivered?.value || (target === 'branches' ? c.branch_chat_id : target === 'online' ? c.online_chat_id : c.chat_id);
+        if (!chat) continue; // Never fall back to a different department's group.
         const claim = await db.prepare('UPDATE telegram_log SET sent_at = ?, tries = tries + 1 WHERE id = ? AND sent_at IS NULL').run(app.now(), r.id);
         if (!claim.changes) continue;
         try {
-          const parent = r.reply_to ? await db.prepare('SELECT message_id FROM telegram_log WHERE key = ?').get(r.reply_to) : null;
-          // Branch alerts go to the branch managers' group; until that group is linked, to the main group.
-          const m = await call('sendMessage', { chat_id: r.target === 'branches' && c.branch_chat_id ? c.branch_chat_id : c.chat_id, text: r.text, ...(parent?.message_id ? { reply_parameters: { message_id: parent.message_id, allow_sending_without_reply: true } } : {}) }, c.token);
+          const m = await call('sendMessage', { chat_id: chat, text: r.text, ...(parent?.message_id ? { reply_parameters: { message_id: parent.message_id, allow_sending_without_reply: true } } : {}) }, c.token);
+          await db.prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('telegram_delivery:' + r.key, String(chat));
           await db.prepare('UPDATE telegram_log SET error = NULL, message_id = ? WHERE id = ?').run(m?.message_id ?? null, r.id); sent++;
         }
         catch (e) { await db.prepare('UPDATE telegram_log SET sent_at = NULL, error = ? WHERE id = ?').run(String(e.message).slice(0, 300), r.id); }
