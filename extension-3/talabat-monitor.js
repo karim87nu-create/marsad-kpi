@@ -33,6 +33,27 @@
     return new Date(t).toISOString();
   }
 
+  // The operating day as times: 9 ص Cairo to 9 ص the next day.
+  const dayStart = () => { const d = day(); return Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10), 9, 0) - offsetAt(Date.now()); };
+  // The time shown on a list row ("Today, 19:55", "Yesterday, 23:10", "Oct 24, 21:00"), as ms; null when there is none.
+  const MON = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+  function rowTime(l) {
+    for (const x of l) {
+      const m = x.match(/^(.*?)[,،]?\s*(\d{1,2}):(\d{2})$/); if (!m) continue;
+      const p = parts(Date.now()), w = m[1].trim().toLowerCase();
+      let y = +p.year, mo = +p.month - 1, d = +p.day;
+      if (/^(today|اليوم|النهارده)$/.test(w)) { /* today */ }
+      else if (/^(yesterday|أمس|امبارح|إمبارح)$/.test(w)) { const t = new Date(Date.UTC(y, mo, d) - 864e5); y = t.getUTCFullYear(); mo = t.getUTCMonth(); d = t.getUTCDate(); }
+      else {
+        const a = w.match(/([a-z]{3})[a-z]*\.?\s+(\d{1,2})|(\d{1,2})\s+([a-z]{3})/); if (!a) continue;
+        const mm = MON[a[1] || a[4]]; if (mm === undefined) continue;
+        if (mm > mo) y--; mo = mm; d = +(a[2] || a[3]);
+      }
+      return Date.UTC(y, mo, d, +m[2], +m[3]) - offsetAt(Date.now());
+    }
+    return null;
+  }
+
   // ---------- a small banner so nobody uses this window by hand ----------
   const banner = Object.assign(document.createElement('div'), { id: 'marsad-tal-banner', dir: 'rtl' });
   banner.style.cssText = 'position:fixed;left:10px;bottom:10px;z-index:2147483646;padding:6px 12px;border-radius:999px;background:#12233af2;border:1px solid #2dd4bf;color:#e2e8f0;font:13px Tahoma,Arial;pointer-events:none';
@@ -77,7 +98,7 @@
       const id = String(row.dataset.id || '').split('|').pop();
       if (!/^\d{6,}$/.test(id)) continue;
       const l = lines(row);
-      out.push({ id, status: (l[1] || '').toUpperCase(), store: (l.find(x => /الدهان|el ?dahan/i.test(x)) || '').replace(/^\|\s*/, '') || null, total: money(l.find(x => /E£|EGP|ج\.م/.test(x))) });
+      out.push({ id, at: rowTime(l), status: (l[1] || '').toUpperCase(), store: (l.find(x => /الدهان|el ?dahan/i.test(x)) || '').replace(/^\|\s*/, '') || null, total: money(l.find(x => /E£|EGP|ج\.م/.test(x))) });
     }
     return out;
   }
@@ -141,20 +162,23 @@
   async function cycle() {
     // The "allow notifications" box covers the list.
     [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Got it')?.click();
-    if (location.pathname + location.search !== listUrl() && !T('details-order-id')) {
-      // Some Talabat accounts replace unknown URL date filters with Last 7 days.
+    const exact = location.pathname + location.search === listUrl();
+    if (!exact && !T('details-order-id')) {
+      // Some Talabat accounts replace the URL date filter with their own (e.g. yesterday–today).
       // One attempt only: otherwise every cycle navigates again before the grid can load.
       const navKey = 'marsadTalabatNavigate:' + day();
       if (!sessionStorage.getItem(navKey)) { sessionStorage.setItem(navKey, '1'); location.href = listUrl(); return; }
-      say('طلبات غيّر فلتر التاريخ؛ اختار يوم التشغيل من فلتر التاريخ في Order History. مش هنكرر تحميل الصفحة.');
-      return;
+      // Otherwise the list is read as it is, and only the operating day's rows (by the time on each row) are taken.
     }
     if (T('details-order-id')) await closeDetail();
+    const start = dayStart(), end = start + 864e5;
+    const inDay = o => o.at === null ? exact : o.at >= start - 60000 && o.at < end;
+    const older = () => { const t = readList().at(-1)?.at; return t != null && t < start - 60000; };
     // The list shows 50 at a time: on the first pass load the whole day, later only when an asked-for order is further down.
     const loadMore = () => [...document.querySelectorAll('button,div,span,p')].find(e => e.childElementCount === 0 && /^(Load more|عرض المزيد)$/i.test(e.textContent.trim()));
     const full = Date.now() - fullAt() > 600000;
-    for (let i = 0; i < 40 && loadMore() && (full || want.some(id => !readList().some(o => o.id === id))); i++) { loadMore().click(); await sleep(1500); }
-    const list = readList();
+    for (let i = 0; i < 40 && loadMore() && !older() && (full || want.some(id => !readList().some(o => o.id === id))); i++) { loadMore().click(); await sleep(1500); }
+    const list = readList().filter(inDay);
     if (!list.length) { say('سجل طلبات لسه محمّلش أوردرات؛ مستني ظهور الصفوف. اللايف شغال في التبويب التاني.'); return; }
     // Sent: everything on a full pass; otherwise what is new or changed since this page loaded, plus the top of the list.
     const send = full ? list : list.filter((o, i) => i < 60 || known.get(o.id) !== o.status);
@@ -168,7 +192,7 @@
       if (d) await push([{ ...d, store: list.find(o => o.id === id)?.store, total: list.find(o => o.id === id)?.total }]);
     }
     if (failures) return; // Preserve the delivery error instead of overwriting it with a success banner.
-    say(list.length + ' أوردر النهارده · آخر قراءة ' + new Date().toLocaleTimeString('ar-EG-u-nu-latn', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    say(list.length + ' أوردر النهارده' + (exact ? '' : ' (من فلتر طلبات، يوم التشغيل بس)') + ' · آخر قراءة ' + new Date().toLocaleTimeString('ar-EG-u-nu-latn', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
     // The list itself does not refresh on its own: reload it every minute when nothing is pending.
     if (!want.length && Date.now() - lastReload > 60000) { lastReload = Date.now(); location.reload(); }
   }
