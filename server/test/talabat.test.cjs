@@ -14,6 +14,7 @@ test('talabat: monitor key, orders with details, Apex match (auto and manual), a
     assert.equal((await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': 'x' }, body: {} })).status, 401);
     const { token } = (await admin('POST', '/api/talabat/token')).body;
     assert.match(token, /^tal_[a-f0-9]{48}$/);
+    t.app.apexDetails = async () => ({ extra: () => '\n💬 ملاحظة الأوردر: بدون بصل', status: () => { throw new Error('Talabat must not append Apex status'); } });
     const push = orders => t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders } });
     // List only first: the server asks for the details.
     let r = await push([{ id: '3977400001', store: 'الدهان، التجمع الخامس - البنفسج', status: 'ACCEPTED', placedAt: at(0), total: 300 },

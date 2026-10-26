@@ -82,3 +82,21 @@ test('site: key, sync of orders and notes, the day rows, alerts', async () => {
     assert.equal(rep.reply_to, 'site:transfer:102'); assert.match(rep.text, /اتحوّل لـ التجمع/);
   } finally { await t.close(); }
 });
+
+
+test('site: prep warnings keep comments but do not append Apex status', async () => {
+  const t0 = cairoToUtc(2026, 10, 22, 13, 0, 0), site = fakeSite(t0);
+  site.orders[0].status = 'processing';
+  site.notes[101] = site.notes[101].slice(0, 2);
+  const t = await start({ at: t0 + 40 * 60000, config: { siteFetch: site.fetch } });
+  try {
+    const admin = await t.admin();
+    t.app.apexDetails = async () => ({ extra: () => '', status: () => { throw new Error('Site must not append Apex status'); } });
+    const r = await admin('POST', '/api/site', { action: 'key', key: 'ck_' + 'a'.repeat(40), secret: 'cs_' + 'b'.repeat(40) });
+    assert.equal(r.status, 200);
+    const warning = t.app.db.raw.prepare("SELECT text FROM telegram_log WHERE key = 'site:prep:101'").get();
+    assert.ok(warning);
+    assert.match(warning.text, /لسه ماخرجش للتوصيل/);
+    assert.doesNotMatch(warning.text, /حالة الفرع دلوقتي/);
+  } finally { await t.close(); }
+});

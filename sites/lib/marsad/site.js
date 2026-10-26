@@ -106,17 +106,17 @@ function setup(app) {
     const c = await db.prepare('SELECT rules FROM telegram_config WHERE id = 1').get();
     let r = {}; try { r = JSON.parse(c?.rules || '{}'); } catch {}
     const list = [], clock = ms => new Date(ms).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit' });
-    // Same details as the Apex messages: the Apex order (small number, who entered it), area, comments, branch status.
-    const day = businessDay(now), det = app.apexDetails ? await app.apexDetails(day) : { extra: () => '', status: () => '' };
+    // Keep the linked Apex number, area and comments; Apex status summaries belong only in Apex messages.
+    const day = businessDay(now), det = app.apexDetails ? await app.apexDetails(day) : { extra: () => '' };
     let mt = new Map(); try { mt = (await apexMatch(day, rows)).matches; } catch {}
-    const more = (o, withStatus) => { const a = mt.get(o.id);
+    const more = o => { const a = mt.get(o.id);
       return (o.total ? '\nقيمة الأوردر: ' + Math.round(o.total) + ' ج' : '') +
-        (a ? '\nرقمه على Apex: ' + (a.sn ?? a.no) + (a.user ? '، ضربه ' + a.user : '') + (a.at ? ' الساعة ' + clock(Date.parse(a.at)) : '') : '\nلسه مش لاقيينه على Apex') + (a ? det.extra(a.no) : '') + (withStatus ? det.status(a?.branch || o.branch) : ''); };
+        (a ? '\nرقمه على Apex: ' + (a.sn ?? a.no) + (a.user ? '، ضربه ' + a.user : '') + (a.at ? ' الساعة ' + clock(Date.parse(a.at)) : '') : '\nلسه مش لاقيينه على Apex') + (a ? det.extra(a.no) : ''); };
     for (const o of rows) {
       if (o.received_at && !o.transfer_at && now - o.received_at > TRANSFER_MIN * 60000)
-        list.push({ key: 'site:transfer:' + o.id, kind: 'siteTransfer', target: 'online', text: '🌐 الموقع | ⏳ أوردر وصل على الموقع ولسه ماتحوّلش لأي فرع\nرقم أوردر الموقع: #' + o.id + '\nوصل الساعة ' + clock(o.received_at) + '، وبقاله ' + Math.round((now - o.received_at) / 60000) + ' دقيقة' + more(o, false) });
+        list.push({ key: 'site:transfer:' + o.id, kind: 'siteTransfer', target: 'online', text: '🌐 الموقع | ⏳ أوردر وصل على الموقع ولسه ماتحوّلش لأي فرع\nرقم أوردر الموقع: #' + o.id + '\nوصل الساعة ' + clock(o.received_at) + '، وبقاله ' + Math.round((now - o.received_at) / 60000) + ' دقيقة' + more(o) });
       if (o.fulfillment === 'delivery' && o.transfer_at && !o.out_at && now - o.transfer_at > PREP_MIN * 60000)
-        list.push({ key: 'site:prep:' + o.id, kind: 'sitePrep', target: 'branches', branch: o.branch || null, text: '🌐 الموقع | 🟠 أوردر عدّى 30 دقيقة من التحويل ولسه ماخرجش للتوصيل\nالفرع: ' + (o.branch || 'غير معروف') + '\nرقم أوردر الموقع: #' + o.id + '\nاتحوّل للفرع الساعة ' + clock(o.transfer_at) + '، وبقاله ' + Math.round((now - o.transfer_at) / 60000) + ' دقيقة' + more(o, true) });
+        list.push({ key: 'site:prep:' + o.id, kind: 'sitePrep', target: 'branches', branch: o.branch || null, text: '🌐 الموقع | 🟠 أوردر عدّى 30 دقيقة من التحويل ولسه ماخرجش للتوصيل\nالفرع: ' + (o.branch || 'غير معروف') + '\nرقم أوردر الموقع: #' + o.id + '\nاتحوّل للفرع الساعة ' + clock(o.transfer_at) + '، وبقاله ' + Math.round((now - o.transfer_at) / 60000) + ' دقيقة' + more(o) });
     }
     // Each warning is answered when the order moves on: transferred, out for delivery, delivered, or cancelled.
     const waiting = await db.prepare("SELECT l.key, l.kind, l.target, l.branch FROM telegram_log l WHERE (l.key LIKE 'site:transfer:%' OR l.key LIKE 'site:prep:%') AND l.created_at >= ? AND NOT EXISTS (SELECT 1 FROM telegram_log x WHERE x.key = 'resolved:' || l.key)").all(now - 12 * 3600000);
