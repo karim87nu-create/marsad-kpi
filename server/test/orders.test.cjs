@@ -97,12 +97,14 @@ test('telegram: branch alerts go to the branch managers group, the rest to the m
     assert.ok(cfg.rules.some(r => r.key === 'ordersLate'));
     const { token } = (await admin('POST', '/api/orders/token')).body;
     await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': token }, body: payload({ alerts: [
-      { key: 'late:1', kind: 'ordersLate', text: 'late' }, { key: 'pay:2', kind: 'ordersEntry', text: 'entry' }] }) });
+      { key: 'late:1', kind: 'ordersLate', text: 'late', branch: 'التجمع' }, { key: 'pay:2', kind: 'ordersEntry', text: 'entry' }] }) });
+    await admin('POST', '/api/telegram', { action: 'chat', chatId: '-250', title: 'فرع التجمع', target: 'branch', branch: 'التجمع' });
     sent.length = 0;
     await t.app.telegramTick(t.clock.now);
     const to = Object.fromEntries(sent.map(m => [m.text, m.chat_id]));
-    assert.equal(to.late, '-200');
+    assert.equal(to.late, '-250', 'a branch message goes to its own branch group only');
     assert.equal(to.entry, '-300');
+    assert.ok(!sent.some(m => m.chat_id === '-200'), 'never to the shared branches group');
   } finally { await t.close(); tg.close(); }
 });
 
@@ -122,21 +124,23 @@ test('orders: state replies stay in their original department, missing groups ne
     await admin('POST','/api/telegram',{action:'chat',chatId:'-200',title:'Branches',target:'branches'});
     const {token}=(await admin('POST','/api/orders/token')).body;
     const push=body=>t.call('POST','/api/orders/push',{body:payload(body),headers:{'x-orders-token':token}});
+    await push({});
+    await admin('POST','/api/telegram',{action:'chat',chatId:'-250',title:'فرع التجمع',target:'branch',branch:'التجمع'});
     sent.length=0;
-    await push({alerts:[{key:'late:9',kind:'ordersLate',text:'late'},{key:'pay:8',kind:'ordersEntry',text:'entry'}],issues:[{no:8}],totals:{issues:1}});
+    await push({alerts:[{key:'late:9',kind:'ordersLate',text:'late',branch:'التجمع'},{key:'pay:8',kind:'ordersEntry',text:'entry'}],issues:[{no:8}],totals:{issues:1}});
     await t.app.telegramTick();
-    assert.deepEqual(sent.map(x=>[x.text,x.chat_id]),[['late','-200']], 'online must wait, never use Calls');
+    assert.deepEqual(sent.map(x=>[x.text,x.chat_id]),[['late','-250']], 'online must wait, never use Calls');
     await admin('POST','/api/telegram',{action:'chat',chatId:'-300',title:'Online',target:'online'});
     await t.app.telegramTick();
     const warning=sent.find(x=>x.text==='entry');assert.equal(warning.chat_id,'-300');
-    const branchId=(await t.app.db.prepare("SELECT message_id FROM telegram_log WHERE key='orders:2026-10-22:late:9'").get()).message_id;
-    await admin('POST','/api/telegram',{action:'chat',chatId:'-400',title:'New Branches',target:'branches'});
+    const branchId=(await t.app.db.prepare("SELECT message_id FROM telegram_log WHERE key='b:orders:2026-10-22:late:9'").get()).message_id;
+    await admin('POST','/api/telegram',{action:'chat',chatId:'-400',title:'فرع التجمع الجديد',target:'branch',branch:'التجمع'});
     await push({lateOut:[{no:9,sn:484,out:'2026-10-22T10:10:00Z'}],issues:[]}); // incomplete snapshot cannot clear entry
     await t.app.telegramTick();
     assert.equal(sent.filter(x=>x.text.includes('مشكلة الضرب')).length,0);
     const reply=sent.find(x=>x.text.includes('خرج مع الطيار'));
     assert.match(reply.text,/أوردر 484 /,'the state change shows the small serial, not the internal number');
-    assert.equal(reply.chat_id,'-200');assert.equal(reply.reply_parameters.message_id,branchId);
+    assert.equal(reply.chat_id,'-250','a reply stays where its warning went');assert.equal(reply.reply_parameters.message_id,branchId);
     await push({lateOut:[{no:9,out:'2026-10-22T10:10:00Z'}],issues:[],totals:{issues:0}});
     await t.app.telegramTick();
     assert.equal(sent.find(x=>x.text.includes('مشكلة الضرب')).chat_id,'-300');
@@ -144,9 +148,9 @@ test('orders: state replies stay in their original department, missing groups ne
     await t.app.telegramTick();
     assert.equal(sent.filter(x=>x.text.includes('خرج مع الطيار')).length,1);
     assert.equal(sent.filter(x=>x.text.includes('مشكلة الضرب')).length,1);
-    await push({alerts:[{key:'cancel:11',orderNo:11,kind:'ordersCancel',text:'cancel'}]});
+    await push({alerts:[{key:'cancel:11',orderNo:11,kind:'ordersCancel',text:'cancel',branch:'التجمع'}]});
     await t.app.telegramTick();assert.equal(sent.find(x=>x.text==='cancel').chat_id,'-400');
-    await push({alerts:[{key:'cancel:11',orderNo:11,kind:'ordersCancel',status:'resolved',text:'cancel changed'}]});
+    await push({alerts:[{key:'cancel:11',orderNo:11,kind:'ordersCancel',status:'resolved',text:'cancel changed',branch:'التجمع'}]});
     await t.app.telegramTick();assert.equal(sent.find(x=>x.text==='cancel changed').chat_id,'-400');
     assert.ok(sent.find(x=>x.text==='cancel changed').reply_parameters.message_id);
   } finally {await t.close();tg.close();}

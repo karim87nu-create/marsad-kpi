@@ -454,6 +454,8 @@ function setup(app) {
           : db.prepare(insert + 'VALUES (?,?,?,?,?,?,?)').bind(...values);
       }));
       let groups = null;
+      // Two passes: a branch message copied to its branch group in the first pass is sent in the second, without waiting a tick.
+      for (let pass = 0, copied = true; pass < 2 && copied; pass++) { copied = false;
       for (const r of await db.prepare('SELECT * FROM telegram_log WHERE sent_at IS NULL AND tries < 5 AND created_at > ? ORDER BY id LIMIT 500').all(now - 3600000)) {
         if (sent >= 20) break;
         if (r.kind === 'gap' && await db.prepare("SELECT 1 FROM telegram_log l WHERE l.kind = 'gap' AND l.employee_id = ? AND l.id != ? AND l.message_id IS NOT NULL AND l.sent_at IS NOT NULL AND l.error IS NULL AND NOT EXISTS (SELECT 1 FROM telegram_log x WHERE x.key = 'resolved:' || l.key) LIMIT 1").get(r.employee_id, r.id)) {
@@ -464,16 +466,17 @@ function setup(app) {
         // A reply stays in the chat which actually received its parent, even after relinking.
         const parent = r.reply_to ? await db.prepare('SELECT * FROM telegram_log WHERE key = ?').get(r.reply_to) : null;
         const target = r.target || (r.kind.startsWith('orders') ? (r.kind.split(':')[0] === 'ordersLate' ? 'branches' : 'online') : null);
-        // A branch alert goes to that branch's own group only (the managers' group gets it only while the branch has no group).
-        // A reply whose warning already went to the managers' group stays there under it.
-        if (target === 'branches' && r.branch && !parent?.message_id) {
-          const g = groups || (groups = await branchGroups()), name = await branchGroupOf(r.branch, g);
+        // A branch message goes to that branch's own group only, never to a shared group. A branch with no group
+        // linked yet: the message stays in the log, marked not sent.
+        if (target === 'branches') {
+          const g = groups || (groups = await branchGroups()), name = r.branch && !parent?.message_id ? await branchGroupOf(r.branch, g) : null;
           if (name) {
             await db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, reply_to, sent_at, target, branch) VALUES (?,?,?,?,?,?,NULL,?,?)')
               .run('b:' + r.key, r.kind, null, r.text, r.created_at, r.reply_to ? 'b:' + r.reply_to : null, 'branch:' + name, r.branch);
             await db.prepare("UPDATE telegram_log SET sent_at = ?, error = 'routed:branch' WHERE id = ? AND sent_at IS NULL").run(now, r.id);
-            continue;
-          }
+            copied = true;
+          } else await db.prepare('UPDATE telegram_log SET tries = 5, error = ? WHERE id = ? AND sent_at IS NULL').run('مفيش جروب للفرع' + (r.branch ? ' (' + r.branch + ')' : ''), r.id);
+          continue;
         }
         if (r.reply_to && (!parent?.message_id || parent.error)) continue;
         const delivered = parent ? await db.prepare('SELECT value FROM settings WHERE key = ?').get('telegram_delivery:' + parent.key) : null;
@@ -487,6 +490,7 @@ function setup(app) {
           await db.prepare('UPDATE telegram_log SET error = NULL, message_id = ? WHERE id = ?').run(m?.message_id ?? null, r.id); sent++;
         }
         catch (e) { await db.prepare('UPDATE telegram_log SET sent_at = NULL, error = ? WHERE id = ?').run(String(e.message).slice(0, 300), r.id); }
+      }
       }
     } finally { busy = false; }
     return sent;

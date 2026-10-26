@@ -1,10 +1,10 @@
-name: Sign and publish Firefox connector (v2 admin) 3.1.4
+name: Sign and publish Firefox connector (v2 admin) 3.1.5
 
 on:
   push:
     paths:
       - 'extension-3/**'
-      - '.github/workflows/sign-extension-3.1.4.yml'
+      - '.github/workflows/sign-extension-3.1.5.yml'
   workflow_dispatch: {}
 
 permissions:
@@ -24,18 +24,18 @@ jobs:
         run: |
           for f in extension-3/*.js; do node --check "$f"; done
           python -m json.tool extension-3/manifest.json >/dev/null
-          test "$(python -c "import json;print(json.load(open('extension-3/manifest.json'))['version'])")" = "3.1.4"
+          test "$(python -c "import json;print(json.load(open('extension-3/manifest.json'))['version'])")" = "3.1.5"
       - name: Build unsigned audit package
         run: |
-          rm -f arabicss-kpi-3.1.4-unsigned.xpi
+          rm -f arabicss-kpi-3.1.5-unsigned.xpi
           cd extension-3
-          zip -qr ../arabicss-kpi-3.1.4-unsigned.xpi .
+          zip -qr ../arabicss-kpi-3.1.5-unsigned.xpi .
           cd ..
-          unzip -t arabicss-kpi-3.1.4-unsigned.xpi >/dev/null
+          unzip -t arabicss-kpi-3.1.5-unsigned.xpi >/dev/null
       - uses: actions/upload-artifact@v4
         with:
-          name: arabicss-kpi-3.1.4-unsigned-audit
-          path: arabicss-kpi-3.1.4-unsigned.xpi
+          name: arabicss-kpi-3.1.5-unsigned-audit
+          path: arabicss-kpi-3.1.5-unsigned.xpi
           retention-days: 14
       - name: Check signing credentials
         id: creds
@@ -51,7 +51,7 @@ jobs:
       - name: Install Mozilla web-ext signer
         if: steps.creds.outputs.available == 'true'
         run: npm install --global web-ext
-      - name: Sign unlisted 3.1.4 package with Mozilla
+      - name: Sign unlisted 3.1.5 package with Mozilla
         if: steps.creds.outputs.available == 'true'
         run: |
           rm -rf signed-artifacts
@@ -69,7 +69,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: steps.creds.outputs.available == 'true'
         with:
-          name: arabicss-kpi-3.1.4-signed
+          name: arabicss-kpi-3.1.5-signed
           path: signed-artifacts/*.xpi
           retention-days: 30
       - name: Publish signed package and update feed
@@ -77,8 +77,8 @@ jobs:
         shell: bash
         run: |
           SIGNED=$(cat signed-artifacts/selected.txt)
-          cp "$SIGNED" releases/arabicss-kpi-3.1.4.xpi
-          SHA=$(sha256sum releases/arabicss-kpi-3.1.4.xpi | awk '{print $1}')
+          cp "$SIGNED" releases/arabicss-kpi-3.1.5.xpi
+          SHA=$(sha256sum releases/arabicss-kpi-3.1.5.xpi | awk '{print $1}')
           python - "$SHA" <<'PY'
           import json,sys
           from pathlib import Path
@@ -86,22 +86,22 @@ jobs:
           p=Path('firefox-updates.json')
           data=json.loads(p.read_text())
           addon=data['addons']['arabicss-kpi@eldahan.local']
-          updates=[u for u in addon.get('updates',[]) if u.get('version')!='3.1.4']
+          updates=[u for u in addon.get('updates',[]) if u.get('version')!='3.1.5']
           updates.insert(0,{
-              'version':'3.1.4',
-              'update_link':'https://karim87nu-create.github.io/marsad-kpi/releases/arabicss-kpi-3.1.4.xpi',
+              'version':'3.1.5',
+              'update_link':'https://karim87nu-create.github.io/marsad-kpi/releases/arabicss-kpi-3.1.5.xpi',
               'update_hash':'sha256:'+sha,
               'applications':{'gecko':{'strict_min_version':'142.0'}}
           })
           addon['updates']=updates
           p.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
-          r=Path('firefox-release.json');rel=json.loads(r.read_text());rel['version']='3.1.4';rel['sha256']=sha;r.write_text(json.dumps(rel,ensure_ascii=False,indent=2)+'\n')
+          r=Path('firefox-release.json');rel=json.loads(r.read_text());rel['version']='3.1.5';rel['sha256']=sha;r.write_text(json.dumps(rel,ensure_ascii=False,indent=2)+'\n')
           PY
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          cp releases/arabicss-kpi-3.1.4.xpi arabicss-kpi-latest.xpi
-          git add releases/arabicss-kpi-3.1.4.xpi arabicss-kpi-latest.xpi firefox-updates.json firefox-release.json
+          cp releases/arabicss-kpi-3.1.5.xpi arabicss-kpi-latest.xpi
+          git add releases/arabicss-kpi-3.1.5.xpi arabicss-kpi-latest.xpi firefox-updates.json firefox-release.json
           if git diff --cached --quiet; then exit 0; fi
-          git commit -m 'Publish signed Firefox connector 3.1.4'
+          git commit -m 'Publish signed Firefox connector 3.1.5'
           git pull --rebase origin main
           git push

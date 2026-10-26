@@ -29,11 +29,11 @@ test('telegram: each branch has its own group; its alerts and their replies go t
     assert.equal((await admin('POST', '/api/telegram', { action: 'chat', chatId: '-300', title: 'فرع التجمع', target: 'branch', branch: 'التجمع' })).status, 200);
     assert.match(sent.pop().text, /كجروب فرع التجمع/);
     assert.deepEqual((await admin('GET', '/api/telegram')).body.branchGroups, { 'التجمع': { id: '-300', title: 'فرع التجمع' } });
-    // A late order at Tagamoa (Tagamoa's group only), one at Madinaty (no group yet: the managers' group).
+    // A late order at Tagamoa (Tagamoa's group only), one at Madinaty (no group yet: not sent anywhere, kept in the log).
     await push({ open: [{ no: 51, branch: 'التجمع', kind: 'Hotline', at: at(0), wait: 31 }, { no: 52, branch: 'مدينتي', kind: 'Hotline', at: at(0), wait: 31 }],
       alerts: [{ key: 'late:51', kind: 'ordersLate', text: 'late 51' }, { key: 'late:52', kind: 'ordersLate', text: 'late 52' }] });
     await t.app.telegramTick(); await t.app.telegramTick();
-    assert.deepEqual(sent.filter(s => s.text.startsWith('late')).map(s => s.chat + ' ' + s.text).sort(), ['-200 late 52', '-300 late 51']);
+    assert.deepEqual(sent.filter(s => s.text.startsWith('late')).map(s => s.chat + ' ' + s.text).sort(), ['-300 late 51']);
     // It left: the reply goes under the warning, in the same group.
     await push({ open: [], lateOut: [{ no: 51, branch: 'التجمع', kind: 'Hotline', out: at(35), wait: 35, pilot: 'p' }, { no: 52, branch: 'مدينتي', kind: 'Hotline', out: at(36), wait: 36 }] });
     await t.app.telegramTick(); await t.app.telegramTick();
@@ -43,6 +43,7 @@ test('telegram: each branch has its own group; its alerts and their replies go t
     const log = (await admin('GET', '/api/telegram?log=1&date=2026-10-22')).body.log;
     assert.ok(log.some(l => l.group === 'فرع التجمع'));
     assert.ok(!log.some(l => l.group === 'الفروع' && /51/.test(l.text)), 'the routed copy is not listed twice');
+    assert.match(log.find(l => l.text === 'late 52').error, /مفيش جروب للفرع/);
     assert.equal((await admin('POST', '/api/telegram', { action: 'unlinkBranch', branch: 'التجمع' })).status, 200);
     assert.deepEqual((await admin('GET', '/api/telegram')).body.branchGroups, {});
   } finally { await t.close(); fake.close(); }

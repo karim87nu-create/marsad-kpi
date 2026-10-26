@@ -22,8 +22,10 @@
   const ymd = ms => { const p = parts(ms); return p.year + '-' + p.month + '-' + p.day; };
   const day = () => { const p = parts(Date.now()); const d = p.year + '-' + p.month + '-' + p.day; return +p.hour < 9 ? ymd(Date.parse(d + 'T12:00:00Z') - 864e5) : d; };
   const next = d => new Date(Date.parse(d + 'T12:00:00Z') + 864e5).toISOString().slice(0, 10);
-  // Talabat refuses a date in the future and falls back to «Last 7 days»: the list ends today (Cairo), never tomorrow.
-  const listUrl = () => '/orders?from=' + day() + '&to=' + ymd(Date.now());
+  // Talabat refuses a date in the future (falls back to «Last 7 days») and shows nothing when from = to.
+  // So the list runs from the day before the operating day to today (Cairo); only the operating day's rows are taken.
+  const prev = d => new Date(Date.parse(d + 'T12:00:00Z') - 864e5).toISOString().slice(0, 10);
+  const listUrl = () => '/orders?from=' + prev(day()) + '&to=' + ymd(Date.now());
   // A Cairo wall-clock "HH:MM" on or after the order's placed time, as an ISO time.
   const offsetAt = ms => { const p = parts(ms); return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute) - Math.floor(ms / 60000) * 60000; };
   function clockAfter(hhmm, placedMs) {
@@ -189,7 +191,7 @@
     if (!exact && !T('details-order-id')) {
       // Some Talabat accounts replace the URL date filter with their own (e.g. yesterday–today).
       // One attempt only: otherwise every cycle navigates again before the grid can load.
-      const navKey = 'marsadTalabatNav2:' + day();
+      const navKey = 'marsadTalabatNav3:' + day();
       if (!sessionStorage.getItem(navKey)) { sessionStorage.setItem(navKey, '1'); location.href = listUrl(); return; }
       // Otherwise the list is read as it is, and only the operating day's rows (by the time on each row) are taken.
     }

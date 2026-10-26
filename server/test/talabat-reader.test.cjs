@@ -31,12 +31,12 @@ test('Talabat live: cards whose #code and number are split into pieces, several 
     assert.deepEqual(r.map(x => x.id + ':' + x.code), ['4676931567:8403', '4676934244:8404', '4676935878:8405']);
   } finally { dom.window.close(); }
 });
-test('Talabat history: the list never asks for a future date', () => {
+test('Talabat history: the list never asks for a future date, and never from = to', () => {
   const s = fs.readFileSync(path.join(__dirname, '../../extension-3/talabat-monitor.js'), 'utf8');
-  const code = s.slice(s.indexOf('  const cairo ='), s.indexOf('  // Talabat refuses')) + s.slice(s.indexOf('  const listUrl'), s.indexOf('\n', s.indexOf('  const listUrl')));
+  const code = s.slice(s.indexOf('  const cairo ='), s.indexOf('  // Talabat refuses')) + s.slice(s.indexOf('  const prev ='), s.indexOf('\n', s.indexOf('  const prev =')) + 1) + s.slice(s.indexOf('  const listUrl'), s.indexOf('\n', s.indexOf('  const listUrl')));
   const at = iso => { const N = Date.parse(iso); class D extends Date { constructor(...a) { super(...(a.length ? a : [N])); } static now() { return N; } } return new Function('Date', code + ';return listUrl();')(D); };
-  assert.equal(at('2026-10-26T17:56:00Z'), '/orders?from=2026-10-26&to=2026-10-26');   // 20:56 Cairo
-  assert.equal(at('2026-10-26T22:30:00Z'), '/orders?from=2026-10-26&to=2026-10-27');   // 01:30 Cairo, still the 26th's operating day
+  assert.equal(at('2026-10-26T17:56:00Z'), '/orders?from=2026-10-25&to=2026-10-26');   // 20:56 Cairo
+  assert.equal(at('2026-10-26T22:30:00Z'), '/orders?from=2026-10-25&to=2026-10-27');   // 01:30 Cairo, still the 26th's operating day
 });
 test('Talabat history: a table that only draws the rows on screen is scrolled through and every row is read', async () => {
   const s = fs.readFileSync(path.join(__dirname, '../../extension-3/talabat-monitor.js'), 'utf8');
