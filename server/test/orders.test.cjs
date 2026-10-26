@@ -180,5 +180,12 @@ test('orders: every change answers its warning (very late, cancelled, discount c
     await push({ open: [], cancels: [{ no: 3526805, sn: 421, branch: 'التجمع', kind: 'Hotline' }] });
     assert.equal(log().length, l.length);
     assert.ok(!log().some(x => /3526805/.test(x.text)), 'the internal number is never written');
+    // A discount warned before amounts were tracked: the first follow-up is taken quietly, the next change answers.
+    await push({ alerts: [{ key: 'disc:3526807', kind: 'ordersDiscount', text: 'old disc' }] });
+    const n0 = log().length;
+    await push({ alerts: [{ key: 'disc:3526807', kind: 'ordersDiscount', text: 'same', status: 'd80', follow: true }] });
+    assert.equal(log().length, n0);
+    await push({ alerts: [{ key: 'disc:3526807', kind: 'ordersDiscount', text: 'changed', status: 'd0', follow: true }] });
+    assert.equal(log().at(-1).text, 'changed');
   } finally { await t.close(); }
 });

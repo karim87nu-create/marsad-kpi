@@ -89,9 +89,11 @@ function setup(app) {
       } else if (old.version !== version) {
         // Explicit state changes, including corrected entry errors, answer the original alert.
         // A changing duration in text alone is not a new state.
-        if (old.status !== status || a.changed === true) alerts.push({ key: 'state:' + key + ':' + ((old.sequence || 0) + 1), kind: old.kind,
+        // A discount warning sent before its amount was tracked takes the current amount silently (no change seen).
+        const adopt = a.follow && old.status === 'active' && /^d-?\d+$/.test(status);
+        if (!adopt && (old.status !== status || a.changed === true)) alerts.push({ key: 'state:' + key + ':' + ((old.sequence || 0) + 1), kind: old.kind,
           text, replyTo: key, target: old.target, branch: old.branch });
-        states[key] = { ...old, status, version, text, sequence: (old.sequence || 0) + (old.status !== status || a.changed === true ? 1 : 0) };
+        states[key] = { ...old, status, version, text, sequence: (old.sequence || 0) + (!adopt && (old.status !== status || a.changed === true) ? 1 : 0) };
       }
     }
     for (const [key, old] of Object.entries(states)) {
