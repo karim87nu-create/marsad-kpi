@@ -53,6 +53,7 @@ test('admin page: مرصد الدهان sections, live branches board, reports, 
     assert.match(doc.getElementById('lateOutTable').textContent, /طيار 2/);
     doc.querySelector('[data-view="cancels"]').click();
     await until(() => doc.getElementById('cancelTable').textContent.includes('العميل رفض'), 'cancels');
+    await until(() => /غالبًا العميل/.test(doc.getElementById('cancelOwners').textContent) && /السبب على العميل/.test(doc.getElementById('cancelOwners').textContent), 'cancel owners');
 
     // Sales and the branch file.
     doc.querySelector('[data-view="sales"]').click();

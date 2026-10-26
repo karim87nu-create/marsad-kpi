@@ -758,7 +758,7 @@
   // ---------- navigation ----------
   const VIEWS = { now: ['الآن', null], day: ['ملخص اليوم', renderDay], hours: ['على مدار اليوم', renderHours], team: ['أداء الموظفين', renderTeam], profile: ['ملف الموظف', renderProfile], requests: ['طلبات البريك', refreshRequests], attendance: ['الحضور والبريك', renderAttendance],
     shifts: ['نهاية الشيفت والرجوع للشغل', renderShifts], calls: ['المكالمات', renderCalls], missed: ['المكالمات الفائتة', renderMissed], followup: ['المتابعة والتقارير', renderFollowup], system: ['حالة النظام', renderSystem], manage: ['الإدارة', renderManage], guide: ['طريقة حساب الأرقام', async () => {}],
-    entry: ['ضرب الأوردرات', () => OR.renderEntry()], branchesNow: ['الفروع الآن', null], branches: ['أداء الفروع', () => OR.renderBranches()], cancels: ['الإلغاءات', () => Promise.all([OR.renderCancels(), SITE.renderBranchTalabatCancels()])],
+    entry: ['ضرب الأوردرات', () => OR.renderEntry()], branchesNow: ['الفروع الآن', null], branches: ['أداء الفروع', () => OR.renderBranches()], cancels: ['الإلغاءات', () => Promise.all([OR.renderCancels(), SITE.renderBranchTalabatCancels(), INS.renderCancelOwners()])],
     siteBranches: ['تقرير أداء الموقع للفروع', () => SITE.renderBranches()], siteTransfer: ['تحويل أوردرات الموقع للفروع', () => SITE.renderTransfer()], talabat: ['أوردرات طلبات', () => SITE.renderTalabat()],
     branchFile: ['ملف الفرع', () => INS.renderBranch()], sales: ['المبيعات', () => INS.renderSales()] };
   const DAY_VIEWS = ['day', 'hours', 'team', 'profile', 'attendance', 'shifts', 'calls', 'missed', 'followup', 'entry', 'branches', 'cancels', 'siteBranches', 'siteTransfer', 'talabat', 'branchFile', 'sales'];

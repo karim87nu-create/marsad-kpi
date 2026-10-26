@@ -166,16 +166,31 @@ window.MarsadSite = function MarsadSite(ctx) {
       { title: 'القبول', get: x => x.acceptSeconds, show: x => secs(x.acceptSeconds), type: 'number', cls: x => x.acceptSeconds > 60 ? 'warn' : '' },
       { title: 'على Apex', get: x => x.apex?.at, show: x => !x.apex && d.apexLinked && x.acceptedAt && x.status !== 'CANCELLED' ? h('span', { className: 'inline' }, linkCell(x), R().cell(R().items.talabatNE(x, d.day))) : linkCell(x) }, { title: 'ضربه', get: x => x.apex?.user || '—' }, { title: 'من القبول للضرب', get: entryDelay, show: x => secs(entryDelay(x)), type: 'number', cls: x => entryDelay(x) > 300 ? 'warn' : '' },
       { title: 'خرج', get: x => x.pickedUpAt, show: x => t12(x.pickedUpAt), type: 'datetime' }, { title: 'الحالة', get: x => x.status, show: x => pill(STATUS[x.status] || x.status || '—', x.status === 'CANCELLED' ? 'bad' : x.final ? 'ok' : 'warn') },
-      { title: 'الأصناف', get: x => x.items.reduce((n, i) => n + i.qty, 0), show: x => x.items.map(i => i.qty + '× ' + i.name).join('، ') || '—', cls: () => 'wrap' }, { title: 'الإجمالي', get: x => x.subtotal ?? x.total, type: 'number' }],
+      { title: 'الأصناف', get: x => x.items.reduce((n, i) => n + i.qty, 0), show: x => itemsText(x) || '—', cls: () => 'wrap' },
+      { title: 'مطابقة الأصناف مع Apex', get: x => x.apex?.items ? (x.apex.items.ok ? 'مطابقة' : 'مختلفة') : '', show: itemsCell }, { title: 'الإجمالي', get: x => x.subtotal ?? x.total, type: 'number' }],
       [...o].reverse(), { empty: d.linked ? 'مفيش أوردرات طلبات لليوم ده' : 'شاشة مراقبة طلبات مش متربطة لسه' });
     renderTalabatCancels(d, 'talCancels', pick);
+  }
+  // The dishes in English with what they are on Apex in Arabic (from the comparison), and whether Apex matches.
+  function itemsText(x) {
+    const ar = new Map((x.apex?.items?.pairs || []).map(p => [p.talabat, p.apex]));
+    return x.items.map(i => i.qty + '× ' + i.name + (ar.get(i.name) ? ' (' + ar.get(i.name) + ')' : '')).join('، ');
+  }
+  function itemsCell(x) {
+    const c = x.apex?.items;
+    if (!c) return x.apex ? h('span', { className: 'muted', textContent: '—' }) : '';
+    if (c.ok) return pill('✓ مطابقة', 'ok');
+    const box = h('span', { className: 'inline' }, pill(c.reviewedOk ? 'اتراجعت: مش غلط' : 'صنف مختلف', c.reviewedOk ? '' : 'bad'),
+      h('small', { className: 'muted', textContent: [c.missingOnApex.length ? 'على طلبات بس: ' + c.missingOnApex.join('، ') : '', c.extraOnApex.length ? 'على Apex بس: ' + c.extraOnApex.join('، ') : ''].filter(Boolean).join(' · ') }));
+    if (R().cell) box.append(R().cell(R().items.talabatItems(x, tal?.day || state.day)));
+    return box;
   }
   // Talabat cancellations: time, who it is on, the reason (also shown in the branches' الإلغاءات).
   function renderTalabatCancels(d, id, pick) {
     table(id, [{ title: 'الأوردر', get: x => x.id }, { title: 'الفرع', get: x => x.store || '—' }, { title: 'وصل', get: x => x.receivedAt || x.placedAt, show: x => t12(x.receivedAt || x.placedAt), type: 'datetime' },
       { title: 'اتلغى', get: x => x.cancelledAt, show: x => t12(x.cancelledAt), type: 'datetime' }, { title: 'على مين', get: x => OWNER[x.cancelOwner] || x.cancelOwner || '—', show: x => pill(OWNER[x.cancelOwner] || x.cancelOwner || '—', x.cancelOwner === 'Vendor' ? 'bad' : '') },
       { title: 'السبب', get: x => x.cancelReason || '—', cls: () => 'wrap' }, { title: 'كان خرج', get: x => x.pickedUpAt ? 'أيوه' : 'لأ' }, { title: 'على Apex', get: x => x.apex ? '#' + x.apex.no + ' · ' + (x.apex.user || '') : '—' },
-      { title: 'الأصناف', get: x => x.items.map(i => i.qty + '× ' + i.name).join('، ') || '—', cls: () => 'wrap' }, { title: 'المبلغ', get: x => x.subtotal ?? x.total, type: 'number' }],
+      { title: 'الأصناف', get: x => itemsText(x) || '—', cls: () => 'wrap' }, { title: 'مطابقة الأصناف', get: x => x.apex?.items ? (x.apex.items.ok ? 'مطابقة' : 'مختلفة') : '', show: itemsCell }, { title: 'المبلغ', get: x => x.subtotal ?? x.total, type: 'number' }],
       d.orders.filter(x => x.status === 'CANCELLED' && (!pick || x.store === pick)).reverse(), { empty: 'مفيش إلغاءات على طلبات' });
   }
   async function renderBranchTalabatCancels() {
@@ -188,7 +203,8 @@ window.MarsadSite = function MarsadSite(ctx) {
       { title: 'اتقبل', get: x => x.acceptedAt, type: 'datetime' }, { title: 'أوردر Apex', get: x => x.apex?.no }, { title: 'اتضرب على Apex', get: x => x.apex?.at, type: 'datetime' }, { title: 'ضربه', get: x => x.apex?.user },
       { title: 'من القبول للضرب (ث)', get: entryDelay, type: 'number' }, { title: 'خرج', get: x => x.pickedUpAt, type: 'datetime' }, { title: 'اتسلّم', get: x => x.deliveredAt, type: 'datetime' }, { title: 'الحالة', get: x => STATUS[x.status] || x.status },
       { title: 'اتلغى', get: x => x.cancelledAt, type: 'datetime' }, { title: 'الإلغاء على', get: x => OWNER[x.cancelOwner] || x.cancelOwner }, { title: 'السبب', get: x => x.cancelReason },
-      { title: 'الأصناف', get: x => x.items.map(i => i.qty + '× ' + i.name).join('، ') }, { title: 'الإجمالي', get: x => x.subtotal ?? x.total, type: 'number' }, { title: 'نوع التوصيل', get: x => x.deliveryType }], tal.orders);
+      { title: 'الأصناف', get: x => itemsText(x) }, { title: 'مطابقة الأصناف', get: x => x.apex?.items ? (x.apex.items.ok ? 'مطابقة' : 'مختلفة: ' + [...x.apex.items.missingOnApex, ...x.apex.items.extraOnApex].join('، ')) : '' },
+      { title: 'الإجمالي', get: x => x.subtotal ?? x.total, type: 'number' }, { title: 'نوع التوصيل', get: x => x.deliveryType }], tal.orders);
   }
 
   // ---------- الإدارة: شاشة مراقبة طلبات ----------

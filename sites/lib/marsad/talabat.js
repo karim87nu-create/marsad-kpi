@@ -4,6 +4,7 @@
 // the subtotal. No customer data. Each order is then tied to its Apex order (who entered it and when).
 import { businessDay, iso, validDate } from './time.js';
 import { sha256, randomToken } from './security.js';
+import { compareItems, itemKey, SEED } from './items.js';
 
 const NOT_ENTERED_MIN = 10, STALE_MS = 5 * 60000, WINDOW_MIN = 45;
 const FINAL = new Set(['COMPLETED', 'CANCELLED', 'REJECTED', 'DELIVERED']);
@@ -104,7 +105,9 @@ function setup(app) {
     const rows = await db.prepare('SELECT * FROM talabat_orders WHERE day = ? AND (placed_at IS NOT NULL OR received_at IS NOT NULL) ORDER BY placed_at').all(day);
     const r = await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(day);
     let d = null; try { d = r ? JSON.parse(r.data) : null; } catch {}
-    const apex = (d?.online || []).filter(a => a.kind === 'طلبات' && a.at).map(a => ({ ...a, t: Date.parse(a.at), tag: a.tag ? String(a.tag).replace(/\D/g, '') : null }));
+    // Apex orders of طلبات, and the ones deleted after the pilot took them (a Talabat order cancelled late is one of them).
+    const apex = [...(d?.online || []).filter(a => a.kind === 'طلبات' && a.at), ...(d?.cancels || []).filter(a => a.kind === 'طلبات' && a.entry).map(a => ({ ...a, at: a.entry, cancelled: true }))]
+      .map(a => ({ ...a, t: Date.parse(a.at), tag: a.tag ? String(a.tag).replace(/\D/g, '') : null }));
     const manual = new Map((await db.prepare('SELECT talabat_id, apex_no FROM talabat_links WHERE day = ?').all(day)).map(x => [x.talabat_id, x.apex_no]));
     const names = app.apexNameMap ? await app.apexNameMap() : {};
     const aliases = app.learn ? await app.learn.pairs('branch:talabat') : new Map();
@@ -151,8 +154,35 @@ function setup(app) {
       const anchor = o.accepted_at || o.received_at;
       if (o.store && anchor) await app.learn.record('delay:talabat', o.store, '-', o.id, Math.max(0, (a.t - anchor) / 1000));
     }
-    const shape = (a, h) => a && { no: a.no, at: iso(a.t), user: names[a.user] || a.user || null, branch: a.branch, amount: a.amount ?? null, manual: h === 'manual', how: h || null };
-    return { rows, matches: new Map([...matches].map(([k, a]) => [k, shape(a, how.get(k))])), hasApex: Array.isArray(d?.online), unmatchedApex: apex.filter(a => !usedA.has(String(a.no))).map(a => shape(a)) };
+    // The items: what Talabat received against what was entered on Apex (translated, same quantity, a fitting price).
+    const learnedItems = new Map(), itemPairs = app.learn ? await app.learn.pairs('item:talabat') : new Map();
+    for (const [n, m] of itemPairs) { const ok = new Map([...m].filter(([, c]) => c >= 2)); if (ok.size) learnedItems.set(n, ok); }
+    const ratios = app.learn ? await app.learn.values('ratio:talabat', '-') : [], ratio = ratios.length >= 5 ? [...ratios].sort((x, y) => x - y)[Math.floor(ratios.length / 2)] : 1.13;
+    const okReviews = new Set((await db.prepare("SELECT ref FROM exception_reviews WHERE source = 'talabatItems' AND day = ? AND verdict = 'ok'").all(day)).map(r => r.ref));
+    const itemsOf = new Map();
+    for (const o of rows) {
+      const a = matches.get(o.id); let ti = null; try { ti = JSON.parse(o.items || 'null'); } catch {}
+      if (!a || !Array.isArray(ti) || !ti.length || !Array.isArray(a.items) || !a.items.length) continue;
+      const c = compareItems(ti, a.items, { learned: learnedItems, ratio });
+      c.reviewedOk = okReviews.has(o.id);
+      itemsOf.set(o.id, c);
+      if (!teach || !app.learn || !(how.get(o.id) === 'code' || how.get(o.id) === 'manual' || c.ok)) continue;
+      // Sure pairs teach the dish name and the price ratio; one left on each side with the same quantity and a fitting
+      // price is the same dish under a name not known yet (never over a name already known: that is a wrong item).
+      for (const p of c.pairs) {
+        await app.learn.record('item:talabat', itemKey(p.talabat), String(p.apexNo).trim(), o.id);
+        if (p.ratio && p.how === 'known') await app.learn.record('ratio:talabat', '-', itemKey(p.talabat), o.id, p.ratio);
+      }
+      const known = n => SEED[itemKey(n)] || learnedItems.has(itemKey(n));
+      if (c.missingOnApex.length === 1 && c.extraOnApex.length === 1 && c.unmatched) {
+        const [t] = c.unmatched.talabat, [x] = c.unmatched.apex;
+        if ((!known(t.name) || c.reviewedOk) && Math.abs((t.qty || 1) - (x.qty || 1)) < 0.01 && (!t.price || !x.price || Math.abs(t.price / (t.qty || 1) / x.price - ratio) / ratio < 0.08))
+          await app.learn.record('item:talabat', itemKey(t.name), String(x.no).trim(), o.id);
+      }
+    }
+    const shape = (a, h, id) => a && { no: a.no, at: iso(a.t), user: names[a.user] || a.user || null, branch: a.branch, amount: a.amount ?? null, manual: h === 'manual', how: h || null, cancelled: !!a.cancelled,
+      items: id && itemsOf.get(id) || null };
+    return { rows, matches: new Map([...matches].map(([k, a]) => [k, shape(a, how.get(k), k)])), hasApex: Array.isArray(d?.online), unmatchedApex: apex.filter(a => !usedA.has(String(a.no))).map(a => shape(a)) };
   }
 
   // ---- alerts: accepted and still not on Apex after 10 minutes (online group); cancelled (branches group) ----
@@ -169,10 +199,22 @@ function setup(app) {
       if (o.status === 'CANCELLED' && o.cancelled_at && now - o.cancelled_at < 3 * 3600000)
         out.push({ key: 'talabat:cancel:' + o.id, kind: 'talabatCancel', target: 'branches', text: '❌ إلغاء على طلبات — ' + o.id + store + '\nاتلغى ' + clock(o.cancelled_at) + (o.cancel_owner ? ' · ' + o.cancel_owner : '') + (o.cancel_reason ? '\nالسبب: ' + o.cancel_reason : '') + (o.subtotal ? '\n' + Math.round(o.subtotal) + ' ج' : '') });
     }
-    if (out.length) await db.batch(out.map(a => db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, sent_at, target) VALUES (?,?,?,?,?,?,?)').bind(a.key, a.kind, null, a.text, now, r[a.kind] === false ? now : null, a.target)));
+    // A dish on Talabat that is not what was entered on Apex (only for orders tied by the #code or by hand: sure links).
+    const sent = new Set((await db.prepare("SELECT key FROM telegram_log WHERE (key LIKE 'talabat:items:%' OR key LIKE 'resolved:talabat:items:%') AND created_at >= ?").all(now - 6 * 3600000)).map(x => x.key));
+    for (const o of m.rows) {
+      const a = m.matches.get(o.id), c = a?.items, key = 'talabat:items:' + o.id;
+      if (!c || (a.how !== 'code' && a.how !== 'manual')) continue;
+      if (!c.ok && !c.reviewedOk && !sent.has(key) && now - (o.accepted_at || o.placed_at || now) < 3 * 3600000)
+        out.push({ key, kind: 'talabatItems', target: 'online', text: '🍽️ صنف مضروب غلط محتمل — طلبات ' + (o.code ? '#' + o.code + ' · ' : '') + o.id + '\nأوردر Apex ' + a.no + ' · ' + (a.branch || '') + (a.user ? ' · ضربه ' + a.user : '') +
+          (c.missingOnApex.length ? '\nعلى طلبات ومش على Apex: ' + c.missingOnApex.join('، ') : '') + (c.extraOnApex.length ? '\nعلى Apex ومش على طلبات: ' + c.extraOnApex.join('، ') : '') });
+      else if ((c.ok || c.reviewedOk) && sent.has(key) && !sent.has('resolved:' + key))
+        out.push({ key: 'resolved:' + key, kind: 'talabatItems', target: 'online', replyTo: key, text: '✅ أوردر طلبات ' + o.id + ': الأصناف بقت مطابقة على Apex' + (c.reviewedOk && !c.ok ? ' (اتراجع: مش غلط)' : '') });
+    }
+    if (out.length) await db.batch(out.map(a => db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, sent_at, target, reply_to) VALUES (?,?,?,?,?,?,?,?)').bind(a.key, a.kind, null, a.text, now, r[a.kind] === false && !a.replyTo ? now : null, a.target, a.replyTo || null)));
   }
 
   // ---- the admin page ----
+  app.talabat = { matchDay };
   app.route('GET', '/api/talabat/day', async ctx => {
     await app.requireAdmin(ctx);
     const day = validDate(String(ctx.query.day || '')) ? ctx.query.day : businessDay(ctx.now);

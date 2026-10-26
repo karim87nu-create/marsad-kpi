@@ -32,6 +32,7 @@ const RULE_LIST = {
   sitePrep: 'الأوردرات: أوردر موقع لسه بيتجهز بعد 30 دقيقة من التحويل',
   talabatNotEntered: 'الأوردرات: أوردر طلبات اتقبل وماتضربش على Apex بعد 10 دقايق',
   talabatCancel: 'الأوردرات: إلغاء أوردر على طلبات (الوقت والسبب)',
+  talabatItems: 'الأوردرات: صنف مضروب غلط محتمل (أصناف طلبات مش زي Apex)',
 };
 const RECOVERY_LABELS = { breakStart: 'رجع من البريك', breakOver: 'رجع من البريك', longCall: 'خلّص المكالمة الطويلة', gap: 'رجع الرصد', breakRequest: 'الرد على طلب البريك', queueNobody: 'انتهى الانتظار', logout: 'رجع للشغل',
   waitSla: 'العميل خرج من الانتظار: اترد عليه أو لا', waitConfirm: 'تأكيد سجل أرابيكس', source: 'رجعت قراءة الانتظار', notBound: 'دخل التحويلة' };

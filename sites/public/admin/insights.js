@@ -59,6 +59,7 @@ window.MarsadInsights = function MarsadInsights(ctx) {
     siteTransfer: (x, day) => ({ key: 'siteTransfer:' + x.id, source: 'siteTransfer', ref: x.id, day, signature: 'siteTransfer:' + (x.branch || '') + (x.transfers > 1 ? ':re' : '') }),
     siteLate: (x, day) => ({ key: 'siteLate:' + x.id, source: 'siteLate', ref: x.id, day, signature: 'siteLate:' + (x.branch || '') + ':' + (x.prepLate ? 'prep' : 'delivery') + (x.transfers > 1 ? ':re' : '') }),
     talabatNE: (x, day) => ({ key: 'talabatNE:' + x.id, source: 'talabatNE', ref: x.id, day, signature: 'talabatNE:' + (x.store || '') }),
+    talabatItems: (x, day) => ({ key: 'talabatItems:' + x.id, source: 'talabatItems', ref: x.id, day, signature: 'talabatItems:' + (x.store || '') }),
   };
 
   // ---------- branch names: Apex is the reference ----------
@@ -127,11 +128,12 @@ window.MarsadInsights = function MarsadInsights(ctx) {
     const ab = m.branches.find(x => x.name === b) || {}, bs = (m.sales || []).filter(r => r.branch === b), sum = (l, k) => l.reduce((n, r) => n + (Number(r[k]) || 0), 0);
     const late = m.lateOut.filter(x => x.branch === b), lateCounted = late.filter(x => counts(items.lateOut(x)));
     const canc = m.cancels.filter(x => x.branch === b), iss = m.issues.filter(x => x.branch === b), issCounted = iss.filter(x => counts(items.entry(x)));
-    const parts = [];
+    const parts = [], mineC = await ownedBy('branch', b);
     parts.push(h('h3', { textContent: 'Apex' }), h('div', { className: 'cards' }, kpi('الأوردرات', ab.orders ?? 0, 'info'), kpi('المبيعات', money(bs.length ? sum(bs, 'sales') : ab.sales)),
       kpi('متوسط الخروج', ab.avgOut == null ? '—' : ab.avgOut.toFixed(1) + ' د', ab.avgOut >= 30 ? 'bad' : ab.avgOut >= 20 ? 'warn' : 'good'),
       kpi('خرجوا بعد 30 دقيقة', lateCounted.length, lateCounted.length ? 'warn' : 'good', late.length > lateCounted.length ? (late.length - lateCounted.length) + ' اتراجعوا «مش غلط»' : ''),
-      kpi('إلغاء بعد التحميل', canc.length, canc.length ? 'bad' : 'good', canc.length ? money(sum(canc, 'amount')) : ''), kpi('أخطاء إدخال', issCounted.length, issCounted.length ? 'bad' : 'good')));
+      kpi('إلغاء بعد التحميل', canc.length, canc.length ? 'bad' : 'good', canc.length ? money(sum(canc, 'amount')) : ''), kpi('أخطاء إدخال', issCounted.length, issCounted.length ? 'bad' : 'good'),
+      kpi('إلغاءات على الفرع', mineC.length, mineC.length ? 'bad' : 'good', 'من كل المصادر')));
     if (bs.length) {
       const byKind = [...new Set(bs.map(r => r.kind))].map(k => ({ name: k, sales: sum(bs.filter(r => r.kind === k), 'sales'), orders: sum(bs.filter(r => r.kind === k), 'orders') })).sort((a, c) => c.sales - a.sales);
       const byPay = [...new Set(bs.map(r => r.pay))].map(k => ({ name: k || '—', sales: sum(bs.filter(r => r.pay === k), 'sales'), orders: sum(bs.filter(r => r.pay === k), 'orders') })).sort((a, c) => c.sales - a.sales);
@@ -166,17 +168,64 @@ window.MarsadInsights = function MarsadInsights(ctx) {
       const st = m.staff.find(s => s.name === name), iss = m.issues.filter(x => x.user === name), cnt = iss.filter(x => counts(items.entry(x)));
       const tal = await api('/api/talabat/day?day=' + state.day).catch(() => null);
       const mine = (tal?.orders || []).filter(x => x.apex?.user === name && x.acceptedAt), delays = mine.map(x => (Date.parse(x.apex.at) - Date.parse(x.acceptedAt)) / 1000).filter(x => x >= 0);
-      if (!st && !iss.length && !mine.length) { box.replaceChildren(h('p', { className: 'muted', textContent: 'مفيش أوردرات ضربها في الفترة دي (لو بيضرب على Apex باسم تاني اربطه من «الإدارة» ← «توحيد الأسماء مع Apex»).' })); return; }
+      const mineC = await ownedBy('employee', name);
+      if (!st && !iss.length && !mine.length && !mineC.length) { box.replaceChildren(h('p', { className: 'muted', textContent: 'مفيش أوردرات ضربها في الفترة دي (لو بيضرب على Apex باسم تاني اربطه من «الإدارة» ← «توحيد الأسماء مع Apex»).' })); return; }
       box.replaceChildren(h('div', { className: 'cards' }, kpi('أوردرات ضربها', st?.orders ?? 0, 'info', st ? Object.entries(st.kinds).filter(([, v]) => v).map(([k, v]) => k + ' ' + v).join(' · ') : ''), kpi('مبيعاتها', money(st?.sales)),
         kpi('خصومات', money(st?.discounts), st?.discounts ? 'warn' : ''), kpi('أخطاء إدخال', cnt.length, cnt.length ? 'bad' : 'good', iss.length > cnt.length ? (iss.length - cnt.length) + ' اتراجعوا «مش غلط»' : ''),
-        kpi('ضربها واتلغت بعد التحميل', st?.cancels ?? 0, st?.cancels ? 'warn' : ''), kpi('من قبول طلبات للضرب', delays.length ? secs(delays.reduce((a, c) => a + c, 0) / delays.length) : '—', '', delays.length ? 'متوسط ' + delays.length + ' أوردر' : '')),
+        kpi('ضربها واتلغت بعد التحميل', st?.cancels ?? 0, st?.cancels ? 'warn' : ''), kpi('إلغاءات بسببه', mineC.length, mineC.length ? 'bad' : 'good', mineC.map(x => x.why[0]).filter(Boolean).slice(0, 2).join(' · ')), kpi('من قبول طلبات للضرب', delays.length ? secs(delays.reduce((a, c) => a + c, 0) / delays.length) : '—', '', delays.length ? 'متوسط ' + delays.length + ' أوردر' : '')),
         ...(iss.length ? [(() => { const t = h('div'); table(t, [{ title: 'الأوردر', get: x => x.no }, { title: 'الفرع', get: x => x.branch }, { title: 'النوع', get: x => x.type }, { title: 'التفاصيل', get: x => x.detail, cls: () => 'wrap' }, reviewColumn(items.entry)], iss); return t; })()] : []));
     } catch (e) { box.replaceChildren(h('p', { className: 'error', textContent: e.message })); }
   }
 
+  // ---------- الإلغاءات: on whom (suggested by the monitor, confirmed by a supervisor) ----------
+  let co = { key: '', data: null };
+  async function owners(force) {
+    const k = state.day + ':' + state.to;
+    if (force || co.key !== k || !co.data) co = { key: k, data: await api('/api/cancels/owners?from=' + state.day + '&to=' + state.to) };
+    return co.data;
+  }
+  const OWN_CLS = { employee: 'bad', branch: 'warn', pilot: 'warn', customer: '', platform: 'info', other: '' };
+  function ownerCell(x, O) {
+    const label = x.final ? O[x.final] + (x.finalName ? ': ' + x.finalName : '') : 'مش واضح';
+    const box = h('span', { className: 'inline' }, pill((x.confirmed ? '✓ ' : 'غالبًا ') + label, x.final ? OWN_CLS[x.final] : ''));
+    if (canWrite()) {
+      const sel = h('select', { ariaLabel: 'الإلغاء على مين' }, h('option', { value: '', textContent: x.confirmed ? 'غيّر' : 'أكّد / غيّر' }),
+        ...Object.entries(O).map(([k, v]) => h('option', { value: k, textContent: v + (k === x.owner ? ' (اقتراح المرصد)' : '') })), ...(x.confirmed ? [h('option', { value: '__clear', textContent: 'رجّع اقتراح المرصد' })] : []));
+      sel.onchange = async () => {
+        if (!sel.value) return;
+        try { await api('/api/cancels/owner', { method: 'POST', body: { key: x.key, day: x.day, owner: sel.value === '__clear' ? null : sel.value, reasonKey: x.reasonKey } }); await renderCancelOwners(true); } catch (e) { ctx.showError(e); }
+      };
+      box.append(sel);
+    }
+    return box;
+  }
+  let ownersRows = [];
+  const ownerColumns = O => [{ title: 'اليوم', get: x => x.day }, { title: 'المصدر', get: x => x.source === 'talabat' ? 'طلبات' : 'Apex' }, { title: 'الأوردر', get: x => x.source === 'talabat' ? x.ref + (x.apexNo ? ' · Apex #' + x.apexNo : '') : '#' + x.ref },
+    { title: 'الفرع', get: x => x.branch || x.store || '—' }, { title: 'اتلغى', get: x => x.at, type: 'datetime' }, { title: 'ضربه', get: x => x.user || '—' }, { title: 'السبب', get: x => x.reason || '—', cls: () => 'wrap' },
+    { title: 'المرصد شايف', get: x => x.why.join(' · ') || '—', cls: () => 'wrap muted' }, { title: 'على مين', get: x => x.final ? O[x.final] + (x.finalName ? ': ' + x.finalName : '') : 'مش واضح', show: x => ownerCell(x, O) },
+    { title: 'المبلغ', get: x => x.amount, type: 'number' }];
+  async function renderCancelOwners(force) {
+    const d = await owners(force), O = d.owners, pick = $('cancelPick').value;
+    const list = ownersRows = d.list.filter(x => !pick || x.branch === pick || canon(x.store, [pick], 'branch:talabat') === pick);
+    const by = new Map(); for (const x of list) { const k = x.final || 'unknown'; by.set(k, (by.get(k) || 0) + 1); }
+    const people = new Map(); for (const x of list) if (x.final === 'employee' && x.finalName) people.set(x.finalName, (people.get(x.finalName) || 0) + 1);
+    const max = Math.max(1, ...by.values());
+    $('cancelOwnerRanks').replaceChildren(list.length ? h('div', { className: 'two' },
+      h('div', { className: 'ranks' }, ...[...by].sort((a, b) => b[1] - a[1]).map(([k, n]) => h('div', { className: 'r' }, h('span', { textContent: O[k] || 'مش واضح' }), h('b', { textContent: String(n) }), C.meter(n, max, 'var(--bad)')))),
+      h('div', { className: 'ranks' }, ...(people.size ? [...people].sort((a, b) => b[1] - a[1]).map(([k, n]) => h('div', { className: 'r' }, h('span', { textContent: k }), h('b', { textContent: n + ' إلغاء بسببه' }))) : [h('p', { className: 'muted', textContent: 'مفيش إلغاءات على موظفين' })])))
+      : h('p', { className: 'muted', textContent: 'مفيش إلغاءات في الفترة دي' }));
+    table('cancelOwners', ownerColumns(O), list, { empty: 'مفيش إلغاءات' });
+  }
+  // How many cancellations are on a person or a branch (confirmed, or the monitor's suggestion).
+  async function ownedBy(kind, name) {
+    try { const d = await owners(); await aliases(); return d.list.filter(x => x.final === kind && (x.finalName === name || (kind === 'branch' && canon(x.finalName, [name], 'branch:talabat') === name))); } catch { return []; }
+  }
+  $('cancelPick').addEventListener('change', () => renderCancelOwners().catch(ctx.showError));
+
   function exportKind(kind) {
-    if (kind === 'sales' && sales) exportRows('المبيعات', salesColumns, sales); else return false;
+    if (kind === 'cancelOwners' && co.data) exportRows('الإلغاءات-على-مين', ownerColumns(co.data.owners), ownersRows);
+    else if (kind === 'sales' && sales) exportRows('المبيعات', salesColumns, sales); else return false;
     return true;
   }
-  return { reviews, judge, counts, cell, reviewColumn, items, renderSales, renderBranch, employeeOrders, exportKind, aliases, canon };
+  return { reviews, judge, counts, cell, reviewColumn, items, renderSales, renderBranch, employeeOrders, renderCancelOwners, exportKind, aliases, canon };
 };
