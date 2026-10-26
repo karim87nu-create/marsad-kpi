@@ -5,10 +5,10 @@ import { businessDay, dayWindow, isOperating, iso, validDate } from './time.js';
 import { sha256, randomToken } from './security.js';
 import { entrySignature } from './reviews.js';
 
-const KINDS = ['ordersLate', 'ordersCancel', 'ordersDiscount', 'ordersEntry', 'ordersEntryLate', 'ordersStale'];
+const KINDS = ['ordersLate', 'ordersCancel', 'ordersComment', 'ordersDiscount', 'ordersEntry', 'ordersEntryLate', 'ordersStale'];
 const STALE_MS = 3 * 60000, CHECK_MS = 60000;
 // Which group: delays leaving the branch and all cancellations go to the branch managers.
-const BRANCH_KINDS = new Set(['ordersLate', 'ordersCancel']);
+const BRANCH_KINDS = new Set(['ordersLate', 'ordersCancel', 'ordersComment']);
 
 function setup(app) {
   const { db, fail } = app;
@@ -60,7 +60,7 @@ function setup(app) {
     // The branch of an order, from any list of the day (for the branch's own Telegram group).
     const findNo = no => no && ['open', 'lateOut', 'cancels', 'online', 'issues'].map(k => rows(k).find(o => String(o.no) === no)).find(Boolean);
     const branchOfNo = no => no && ['open', 'lateOut', 'cancels', 'online', 'issues'].map(k => rows(k).find(o => String(o.no) === no)).find(Boolean)?.branch || null;
-    const orderNo = a => String(a.orderNo ?? a.orderId ?? (/^(?:v?late|del|disc|pay|dup|entry|duplicate|cancel):([0-9]+)(?::|$)/.exec(String(a.key))?.[1] || ''));
+    const orderNo = a => String(a.orderNo ?? a.orderId ?? (/^(?:v?late|del|disc|pay|dup|entry|duplicate|cancel|note):([0-9]+)(?::|$)/.exec(String(a.key))?.[1] || ''));
     // New warnings first, then the monitor's follow-ups (the current state of orders already warned about).
     for (const a of (Array.isArray(b.alerts) ? b.alerts : []).slice(0, 400).sort((x, y) => !!x?.follow - !!y?.follow)) {
       if (!a || !KINDS.includes(a.kind) || a.kind === 'ordersStale' || !a.key || !a.text) continue;
