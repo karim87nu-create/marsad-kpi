@@ -189,3 +189,23 @@ test('orders: every change answers its warning (very late, cancelled, discount c
     assert.equal(log().at(-1).text, 'changed');
   } finally { await t.close(); }
 });
+
+test('orders: an order for a set time — reminders every 15 minutes under the warning, and the time in the «left» reply', async () => {
+  const t = await start();
+  try {
+    const admin = await t.admin();
+    const { token } = (await admin('POST', '/api/orders/token')).body;
+    const push = body => t.call('POST', '/api/orders/push', { body: payload(body), headers: { 'x-orders-token': token } });
+    const log = () => t.app.db.raw.prepare("SELECT key, text, reply_to FROM telegram_log WHERE kind LIKE 'orders%' ORDER BY id").all();
+    const open = [{ no: 3526900, sn: 600, branch: 'التجمع', kind: 'Hotline', at: '2026-10-22T15:00:00Z', sched: '2026-10-22T18:00:00Z', wait: 150 }];
+    await push({ open, alerts: [{ key: 'late:3526900', kind: 'ordersLate', text: 'late 600', sn: 600 }] });
+    await push({ open, alerts: [{ key: 'late:3526900', kind: 'ordersLate', text: '⏰ 600 بقاله 210', status: 'r1', follow: true }] });
+    await push({ open, alerts: [{ key: 'late:3526900', kind: 'ordersLate', text: '⏰ 600 بقاله 210', status: 'r1', follow: true }] });
+    await push({ open, alerts: [{ key: 'late:3526900', kind: 'ordersLate', text: '⏰ 600 بقاله 225', status: 'r2', follow: true }] });
+    let l = log().filter(x => x.reply_to === 'orders:2026-10-22:late:3526900');
+    assert.deepEqual(l.map(x => x.text), ['⏰ 600 بقاله 210', '⏰ 600 بقاله 225'], 'one reminder per 15 minutes');
+    await push({ open: [], lateOut: [{ no: 3526900, sn: 600, branch: 'التجمع', kind: 'Hotline', out: '2026-10-22T17:45:00Z', sched: '2026-10-22T18:00:00Z', wait: 165 }] });
+    const out = log().find(x => /خرج مع الطيار/.test(x.text));
+    assert.match(out.text, /أوردر 600 /); assert.match(out.text, /ميعاده كان 09:00 م/);
+  } finally { await t.close(); }
+});

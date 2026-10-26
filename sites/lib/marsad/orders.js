@@ -108,7 +108,7 @@ function setup(app) {
       const clockOf = v => new Date(v).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit' });
       if (old.kind === 'ordersLate' && (out || cancel)) text = cancel
         ? '🔄 أوردر ' + shown + (cancel.kind ? ' · ' + cancel.kind : '') + ' اتلغى بعد تنبيه التأخير' + (cancel.reason ? ' — السبب: ' + cancel.reason : '')
-        : '✅ أوردر ' + shown + (out.kind ? ' · ' + out.kind : '') + ' خرج مع الطيار' + (out.pilot ? ' (' + out.pilot + ')' : '') + (out.wait != null ? ' بعد ' + out.wait + ' دقيقة من الضرب' : '') + (out.out ? ' — الساعة ' + clockOf(out.out) : '');
+        : '✅ أوردر ' + shown + (out.kind ? ' · ' + out.kind : '') + ' خرج مع الطيار' + (out.pilot ? ' (' + out.pilot + ')' : '') + (out.wait != null ? ' بعد ' + out.wait + ' دقيقة من الضرب' : '') + (out.out ? ' — الساعة ' + clockOf(out.out) : '') + (out.sched ? '\nميعاده كان ' + clockOf(out.sched) : '');
       // Only a complete issues snapshot can prove that a recorded entry issue disappeared.
       if (old.kind === 'ordersEntry' && Array.isArray(b.issues) && Number.isInteger(b.totals?.issues) && b.totals.issues === b.issues.length &&
           old.observedIssue && !b.issues.some(o => String(o.no) === old.no)) text = '✅ أوردر ' + shown + ': مشكلة الضرب لم تعد موجودة في قراءة Apex الكاملة.';

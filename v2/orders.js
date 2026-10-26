@@ -146,7 +146,8 @@ window.MarsadOrders = function MarsadOrders(ctx) {
     { title: 'إلغاء بعد التحميل', get: b => b.cancels, type: 'number', cls: b => b.cancels ? 'bad' : '' }, { title: 'قيمة الإلغاء', get: b => Math.round(b.cancelSales), show: b => money(b.cancelSales), type: 'number' }];
   const lateColumns = () => [...dayCol(), { title: 'الأوردر', get: x => x.sn ?? x.no, type: 'number' }, { title: 'الفرع', get: x => x.branch }, { title: 'النوع', get: x => x.kind, show: x => kindPill(x.kind) },
     { title: 'اتضرب', get: x => x.at, show: x => hm(x.at), type: 'datetime' }, { title: 'اتحمّل على الطيار', get: x => x.out, show: x => hm(x.out), type: 'datetime' },
-    { title: 'وقت الخروج (د)', get: x => x.wait, type: 'number', cls: x => x.wait >= 45 ? 'bad' : 'warn' }, { title: 'الطيار', get: x => x.pilot }, { title: 'ضربه', get: x => x.user }, { title: 'المبلغ', get: x => Math.round(x.amount || 0), show: x => money(x.amount), type: 'number' }, ...(ctx.review ? [R().reviewColumn(R().items.lateOut)] : [])];
+    { title: 'الميعاد', get: x => x.sched || null, show: x => x.sched ? hm(x.sched) : '—', type: 'datetime' },
+    { title: 'وقت الخروج (د)', get: x => x.wait, type: 'number', cls: x => (x.over ?? x.wait - 30) >= 15 ? 'bad' : 'warn' }, { title: 'الطيار', get: x => x.pilot }, { title: 'ضربه', get: x => x.user }, { title: 'المبلغ', get: x => Math.round(x.amount || 0), show: x => money(x.amount), type: 'number' }, ...(ctx.review ? [R().reviewColumn(R().items.lateOut)] : [])];
   const pickB = sel => x => !$(sel).value || (x.branch ?? x.name) === $(sel).value;
   async function renderBranches(force) {
     const [m] = await Promise.all([period(force), R().reviews()]); rep = m;
@@ -254,7 +255,7 @@ window.MarsadOrders = function MarsadOrders(ctx) {
         for (const o of list) {
           const t = el('article', 'ob-t'), tm = el('span', 'ob-timer'), bar = el('span', 'fill');
           const barBox = el('div', 'ob-bar'); barBox.append(bar, h('i', { className: 'tick', style: 'inset-inline-start:' + (s.late / s.veryLate * 100) + '%' }));
-          t.append(h('div', { className: 'ob-t-top' }, tm, kindPill(o.kind)), h('div', { className: 'ob-t-mid' }, el('b', '', '#' + (o.sn ?? o.no)), el('span', 'muted', 'اتضرب ' + clockAt(o.at))), barBox,
+          t.append(h('div', { className: 'ob-t-top' }, tm, kindPill(o.kind)), h('div', { className: 'ob-t-mid' }, el('b', '', '#' + (o.sn ?? o.no)), el('span', 'muted', o.sched ? 'ميعاده ' + clockAt(o.sched) : 'اتضرب ' + clockAt(o.at))), barBox,
             el('small', 'muted', [o.user, money(o.amount)].filter(x => x && x !== '—').join(' · ')));
           t.title = 'أوردر ' + (o.sn ?? o.no) + ' · ' + o.kind + ' · ' + n;
           lane.append(t); B.tickets.push({ o, t, tm, bar, col });
@@ -284,7 +285,9 @@ window.MarsadOrders = function MarsadOrders(ctx) {
     let late = 0, red = 0, oldest = null;
     const cols = new Map();
     for (const x of B.tickets) {
-      const sec = (now - Date.parse(x.o.at)) / 1000, min = sec / 60, lv = level(min, s);
+      // An order for a set time is late when it has not left 30 minutes before its time (its clock starts an hour before).
+      const base = x.o.sched ? Math.max(Date.parse(x.o.at), Date.parse(x.o.sched) - 3600000) : Date.parse(x.o.at);
+      const sec = (now - Date.parse(x.o.at)) / 1000, min = Math.max(0, (now - base) / 60000), lv = level(min, s);
       x.tm.textContent = timer(sec);
       x.bar.style.width = Math.min(100, min / s.veryLate * 100) + '%';
       x.t.className = 'ob-t ' + lv;
@@ -297,7 +300,7 @@ window.MarsadOrders = function MarsadOrders(ctx) {
     B.root.classList.toggle('alarm', red > 0 && !stale);
     B.word.className = 'ob-word ' + (red ? 'red' : late ? 'late' : 'ok');
     B.word.textContent = red ? 'تأخير شديد' : late ? 'في تأخير' : B.tickets.length ? 'الفروع ماشية' : 'كل الأوردرات خرجت';
-    B.line.textContent = oldest ? B.tickets.length + ' أوردر دليفري لسه ماخرجش · أقدم واحد في ' + oldest.o.branch + ' بقاله ' + Math.floor(oldest.sec / 60) + ' دقيقة (#' + oldest.o.no + ')' : 'مفيش أوردر دليفري مستني في أي فرع';
+    B.line.textContent = oldest ? B.tickets.length + ' أوردر دليفري لسه ماخرجش · أقدم واحد في ' + oldest.o.branch + ' بقاله ' + Math.floor(oldest.sec / 60) + ' دقيقة (#' + (oldest.o.sn ?? oldest.o.no) + ')' : 'مفيش أوردر دليفري مستني في أي فرع';
   }
 
   // ---------- exports ----------
