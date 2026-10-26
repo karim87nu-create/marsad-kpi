@@ -75,3 +75,42 @@ test('apexDetails: area, comments and the branch status the monitor sent, for th
     assert.equal(d.status('مدينتي'), '');
   } finally { await t.close(); }
 });
+
+test('whatsapp web: the monitor PC takes the messages one at a time (welcome, then the survey after the delay) and reports back', async () => {
+  const t0 = cairoToUtc(2026, 10, 22, 20, 0, 0), at = m => new Date(t0 + m * 60000).toISOString();
+  const t = await start({ at: t0 });
+  try {
+    const admin = await t.admin();
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const H = { 'x-talabat-token': token };
+    const push = orders => t.call('POST', '/api/talabat/push', { headers: H, body: { orders } });
+    const next = async () => (await t.call('POST', '/api/whatsapp/next', { headers: H, body: {} })).body;
+    const result = body => t.call('POST', '/api/whatsapp/result', { headers: H, body });
+    assert.equal((await t.call('POST', '/api/whatsapp/next', { headers: { 'x-talabat-token': 'x' }, body: {} })).status, 401);
+    assert.equal((await next()).on, false);
+    assert.equal((await admin('POST', '/api/whatsapp', { action: 'web', welcomeText: 'أهلاً بيك في الدهان، طلبك {code} بيتجهز', surveyText: 'قيّم تجربتك من 1 لـ 5', delay: 75 })).status, 200);
+    assert.equal((await admin('POST', '/api/whatsapp', { action: 'enable', on: true })).status, 200);
+    let r = await push([{ id: '4676900201', status: 'ACCEPTED', placedAt: at(0), phone: '01001234567' }]);
+    assert.equal(r.body.phones, true);
+    await push([{ id: '4676900202', status: 'ACCEPTED', placedAt: at(0), phone: '01001234568' }]);
+    await t.call('POST', '/api/talabat/push', { headers: H, body: { codes: [{ id: '4676900201', code: '8403' }] } });
+    let n = await next();
+    assert.equal(n.message.kind, 'welcome'); assert.equal(n.message.phone, '201001234567'); assert.match(n.message.text, /طلبك 8403 بيتجهز/);
+    assert.equal((await next()).message, null, 'never faster than the gap');
+    assert.equal((await result({ id: n.message.id, kind: 'welcome', ok: true })).status, 200);
+    t.advance(41000);
+    n = await next(); assert.equal(n.message.phone, '201001234568');
+    await result({ id: n.message.id, kind: 'welcome', ok: false, invalid: true, error: 'الرقم مش على واتساب' });
+    t.advance(30 * 60000);
+    assert.equal((await next()).message, null, 'survey not before 75 minutes');
+    t.advance(46 * 60000);
+    n = await next(); assert.equal(n.message.kind, 'survey'); assert.equal(n.message.text, 'قيّم تجربتك من 1 لـ 5');
+    await result({ id: n.message.id, kind: 'survey', ok: true });
+    assert.equal(t.app.db.raw.prepare('SELECT COUNT(*) n FROM wa_messages WHERE phone IS NOT NULL').get().n, 0, 'every number erased');
+    t.advance(60000);
+    assert.equal((await next()).message, null);
+    const s = (await admin('GET', '/api/whatsapp')).body;
+    assert.equal(s.mode, 'web'); assert.deepEqual([s.today.welcome, s.today.survey], [1, 1]);
+    assert.ok(s.errors.some(e => /مش على واتساب/.test(e.error)));
+  } finally { await t.close(); }
+});

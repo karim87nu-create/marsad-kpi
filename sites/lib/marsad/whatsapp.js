@@ -1,10 +1,13 @@
 // واتساب لعملاء طلبات: a welcome message once a Talabat order is in, and a survey a set time later (75 minutes by
-// default), sent from the restaurant's number through the official WhatsApp Business Platform (Meta Cloud API) with
-// templates Meta approved. Off until the admin links the number and turns it on.
+// default), from the restaurant's number. Two ways to send, chosen on the admin page:
+//  - «web» (default): WhatsApp Web open on the Talabat monitor PC (the restaurant's number linked as a device, the phone
+//    keeps working); the monitor's extension asks this server for the next message and sends it there, one at a time.
+//  - «cloud»: the official WhatsApp Business Platform (Meta Cloud API) with templates Meta approved.
+// Off until the admin turns it on.
 // The customer's number is read by the Talabat monitor screen only while this is on, kept only until the survey is
 // sent (or the order is cancelled, or 12 hours pass), then erased. Numbers are never shown on the admin page.
 import { businessDay, iso } from './time.js';
-import { sha256Bytes, randomBytes, b64, fromB64 } from './security.js';
+import { sha256, sha256Bytes, randomBytes, b64, fromB64 } from './security.js';
 
 const TICK_MS = 30000, GRAPH = 'https://graph.facebook.com/v21.0', KEEP_MS = 12 * 3600000, WELCOME_WINDOW_MS = 2 * 3600000;
 const DEAD = new Set(['CANCELLED', 'REJECTED']);
@@ -32,9 +35,11 @@ function setup(app) {
   async function config() {
     const raw = await setting('whatsapp_config');
     let c = null; try { c = raw ? JSON.parse(await open(raw)) : null; } catch {}
-    return c && c.phoneId && c.token ? c : null;
+    if (!c) return null;
+    if ((c.mode || 'cloud') === 'web') return c.welcomeText ? c : null;
+    return c.phoneId && c.token ? c : null;
   }
-  const on = async () => { const c = await config(); return c && c.enabled && c.welcome ? c : null; };
+  const on = async () => { const c = await config(); return c && c.enabled && (c.mode === 'web' ? c.welcomeText : c.welcome) ? c : null; };
 
   async function graph(c, path, body) {
     const r = await doFetch(GRAPH + '/' + path, { method: body ? 'POST' : 'GET', headers: { authorization: 'Bearer ' + c.token, 'content-type': 'application/json' },
@@ -70,7 +75,7 @@ function setup(app) {
     try {
       // Erase numbers that are not needed any more, whatever the setting.
       await db.prepare('UPDATE wa_messages SET phone = NULL WHERE phone IS NOT NULL AND created_at < ?').run(now - KEEP_MS);
-      const c = await on(); if (!c) return 0;
+      const c = await on(); if (!c || c.mode === 'web') return 0;   // web: the monitor PC asks for each message (outbox below)
       const status = async id => (await db.prepare('SELECT status, accepted_at FROM talabat_orders WHERE id = ?').get(id)) || {};
       for (const r of await db.prepare('SELECT * FROM wa_messages WHERE phone IS NOT NULL AND welcome_at IS NULL AND tries < 3 AND created_at > ? ORDER BY created_at LIMIT 10').all(now - WELCOME_WINDOW_MS)) {
         const s = await status(r.talabat_id);
@@ -92,6 +97,54 @@ function setup(app) {
   };
   app.afterRequest(async now => { if (now - last < TICK_MS) return; last = now; await app.whatsappTick(now); });
 
+  // ---- «web»: the monitor PC asks for the next message, sends it on WhatsApp Web and reports back ----
+  const monitorAuth = async ctx => {
+    const hash = await setting('talabat_token_hash'), given = ctx.header('x-talabat-token');
+    if (!hash || !given || sha256(given) !== hash) fail(401, 'مفتاح شاشة طلبات غير صحيح');
+  };
+  app.route('POST', '/api/whatsapp/next', async ctx => {
+    await monitorAuth(ctx);
+    const now = ctx.now, c = await on();
+    if (!c || c.mode !== 'web') return { ok: true, message: null, on: false };
+    const delay = Math.max(10, Math.min(600, Number(c.delay) || 75)) * 60000, gap = Math.max(20, Number(c.gap) || 40) * 1000;
+    // One at a time, never faster than the gap (a person's pace), and a claimed message waits 3 minutes for its answer.
+    const last = Number(await setting('wa_web_last')) || 0;
+    if (now - last < gap) return { ok: true, message: null, on: true, wait: gap - (now - last) };
+    const free = 'phone IS NOT NULL AND tries < 3 AND (sending_at IS NULL OR sending_at < ' + (now - 180000) + ')';
+    const status = async id => (await db.prepare('SELECT status, accepted_at FROM talabat_orders WHERE id = ?').get(id)) || {};
+    const pick = async (kind, r) => {
+      await db.prepare('UPDATE wa_messages SET sending_at = ? WHERE id = ?').run(now, r.id); await put('wa_web_last', now);
+      const text = (kind === 'survey' ? c.surveyText : c.welcomeText).replace(/\{code\}/g, r.code || '').replace(/\{branch\}/g, r.store || '').trim();
+      return { ok: true, on: true, message: { id: r.id, kind, phone: r.phone, text } };
+    };
+    for (const r of await db.prepare('SELECT w.*, t.code, t.store FROM wa_messages w LEFT JOIN talabat_orders t ON t.id = w.talabat_id WHERE ' + free.replace(/(phone|tries|sending_at)/g, 'w.$1') + ' AND w.welcome_at IS NULL AND w.created_at > ? ORDER BY w.created_at LIMIT 5').all(now - WELCOME_WINDOW_MS)) {
+      if (DEAD.has((await status(r.talabat_id)).status)) { await db.prepare('UPDATE wa_messages SET phone = NULL, error = ? WHERE id = ?').run('الأوردر اتلغى', r.id); continue; }
+      return pick('welcome', r);
+    }
+    if (c.surveyText) for (const r of await db.prepare('SELECT w.*, t.code, t.store FROM wa_messages w LEFT JOIN talabat_orders t ON t.id = w.talabat_id WHERE ' + free.replace(/(phone|tries|sending_at)/g, 'w.$1') + ' AND w.welcome_at IS NOT NULL AND w.survey_at IS NULL ORDER BY w.created_at LIMIT 20').all()) {
+      const s = await status(r.talabat_id);
+      if (DEAD.has(s.status)) { await db.prepare('UPDATE wa_messages SET phone = NULL, error = ? WHERE id = ?').run('الأوردر اتلغى — مفيش استطلاع', r.id); continue; }
+      if (now - (s.accepted_at || r.created_at) < delay) continue;
+      return pick('survey', r);
+    }
+    return { ok: true, on: true, message: null };
+  });
+  app.route('POST', '/api/whatsapp/result', async ctx => {
+    await monitorAuth(ctx);
+    const b = ctx.body || {}, id = Number(b.id), now = ctx.now;
+    if (!Number.isInteger(id)) fail(400, 'invalid_id');
+    if (b.ok) {
+      if (b.kind === 'survey') await db.prepare('UPDATE wa_messages SET survey_at = ?, phone = NULL, sending_at = NULL, error = NULL WHERE id = ?').run(now, id);
+      else await db.prepare('UPDATE wa_messages SET welcome_at = ?, sending_at = NULL, error = NULL WHERE id = ?').run(now, id);
+      const c = await config(); if (b.kind !== 'survey' && c && !c.surveyText) await db.prepare('UPDATE wa_messages SET phone = NULL WHERE id = ?').run(id);
+    } else {
+      const err = String(b.error || 'ماتبعتش').slice(0, 300);
+      // A number that is not on WhatsApp will never work: dropped at once.
+      await db.prepare('UPDATE wa_messages SET tries = CASE WHEN ? THEN 3 ELSE tries + 1 END, sending_at = NULL, error = ?, phone = CASE WHEN ? THEN NULL ELSE phone END WHERE id = ?').run(b.invalid ? 1 : 0, err, b.invalid ? 1 : 0, id);
+    }
+    return { ok: true };
+  });
+
   // ---- admin ----
   app.route('GET', '/api/whatsapp', async ctx => {
     await app.requireAdmin(ctx, 'admin');
@@ -99,15 +152,26 @@ function setup(app) {
     const n = async where => (await db.prepare('SELECT COUNT(*) AS n FROM wa_messages WHERE day = ? AND ' + where).get(day)).n;
     const errors = (await db.prepare('SELECT talabat_id, error, created_at FROM wa_messages WHERE day = ? AND error IS NOT NULL ORDER BY id DESC LIMIT 10').all(day))
       .map(r => ({ order: r.talabat_id, error: r.error, at: iso(r.created_at) }));
-    return { configured: !!c, enabled: !!c?.enabled, phoneIdEnd: c ? String(c.phoneId).slice(-4) : null, welcome: c?.welcome || '', survey: c?.survey || '', lang: c?.lang || 'ar', delay: c?.delay || 75,
+    const raw = await setting('whatsapp_config'); let any = null; try { any = raw ? JSON.parse(await open(raw)) : null; } catch {}
+    return { configured: !!c, enabled: !!c?.enabled, mode: any?.mode || 'web', phoneIdEnd: c?.phoneId ? String(c.phoneId).slice(-4) : null, welcome: any?.welcome || '', survey: any?.survey || '', lang: any?.lang || 'ar', delay: any?.delay || 75,
+      welcomeText: any?.welcomeText || '', surveyText: any?.surveyText || '', lastWeb: iso(Number(await setting('wa_web_last')) || null),
       today: { orders: await n('1 = 1'), welcome: await n('welcome_at IS NOT NULL'), survey: await n('survey_at IS NOT NULL'), waiting: await n('phone IS NOT NULL') }, errors };
   });
   app.route('POST', '/api/whatsapp', async ctx => {
     const who = await app.requireAdmin(ctx, 'admin'), b = ctx.body || {};
     const old = await config();
     const tpl = x => String(x || '').trim().toLowerCase();
+    if (b.action === 'web') {
+      const raw = await setting('whatsapp_config'); let prev = null; try { prev = raw ? JSON.parse(await open(raw)) : null; } catch {}
+      const c = { ...(prev || {}), mode: 'web', welcomeText: String(b.welcomeText || '').trim().slice(0, 1000), surveyText: String(b.surveyText || '').trim().slice(0, 1000),
+        delay: Math.max(10, Math.min(600, Number(b.delay) || 75)), enabled: !!prev?.enabled && prev?.mode === 'web' };
+      if (!c.welcomeText) fail(400, 'اكتب رسالة الترحيب');
+      await put('whatsapp_config', await seal(JSON.stringify(c)));
+      await app.audit('whatsapp_web_config', null, { actor: who.name });
+      return { ok: true };
+    }
     if (b.action === 'config') {
-      const c = { ...(old || {}), phoneId: String(b.phoneId || old?.phoneId || '').trim(), token: String(b.token || '').trim() || old?.token,
+      const c = { ...(old || {}), mode: 'cloud', phoneId: String(b.phoneId || old?.phoneId || '').trim(), token: String(b.token || '').trim() || old?.token,
         welcome: tpl(b.welcome), survey: tpl(b.survey), lang: String(b.lang || 'ar').trim(), delay: Math.max(10, Math.min(600, Number(b.delay) || 75)), enabled: !!old?.enabled };
       if (!/^\d{6,30}$/.test(c.phoneId)) fail(400, 'Phone number ID لازم يكون أرقام بس');
       if (!c.token) fail(400, 'التوكن ناقص');
@@ -121,7 +185,7 @@ function setup(app) {
     }
     if (b.action === 'enable') {
       if (!old) fail(400, 'اربط الرقم الأول');
-      if (b.on && !old.welcome) fail(400, 'اكتب اسم قالب الترحيب الأول');
+      if (b.on && !(old.mode === 'web' ? old.welcomeText : old.welcome)) fail(400, 'اكتب رسالة الترحيب الأول');
       await put('whatsapp_config', await seal(JSON.stringify({ ...old, enabled: !!b.on })));
       if (!b.on) await db.prepare('UPDATE wa_messages SET phone = NULL WHERE phone IS NOT NULL').run();
       await app.audit('whatsapp_' + (b.on ? 'on' : 'off'), null, { actor: who.name });
@@ -129,6 +193,7 @@ function setup(app) {
     }
     if (b.action === 'test') {
       if (!old) fail(400, 'اربط الرقم الأول');
+      if (old.mode === 'web') fail(400, 'في وضع واتساب ويب، التجربة بتتعمل من شاشة طلبات: شغّل الإرسال واضرب أوردر تجربة');
       const to = egMobile(b.to), name = b.which === 'survey' ? old.survey : old.welcome;
       if (!to) fail(400, 'اكتب رقم موبايل مصري صحيح');
       if (!name) fail(400, 'اسم القالب ناقص');

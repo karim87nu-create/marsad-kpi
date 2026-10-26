@@ -224,7 +224,7 @@ CREATE TABLE IF NOT EXISTS exception_reviews (key TEXT PRIMARY KEY, source TEXT,
 CREATE INDEX IF NOT EXISTS exception_reviews_day ON exception_reviews(day);
 CREATE TABLE IF NOT EXISTS cancel_owners (key TEXT PRIMARY KEY, day TEXT NOT NULL, source TEXT, ref TEXT, owner TEXT NOT NULL, name TEXT, reason_key TEXT, by_name TEXT, at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS cancel_owners_day ON cancel_owners(day);
-CREATE TABLE IF NOT EXISTS wa_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, talabat_id TEXT UNIQUE NOT NULL, day TEXT NOT NULL, phone TEXT, created_at INTEGER NOT NULL, welcome_at INTEGER, survey_at INTEGER, tries INTEGER NOT NULL DEFAULT 0, error TEXT);
+CREATE TABLE IF NOT EXISTS wa_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, talabat_id TEXT UNIQUE NOT NULL, day TEXT NOT NULL, phone TEXT, created_at INTEGER NOT NULL, welcome_at INTEGER, survey_at INTEGER, tries INTEGER NOT NULL DEFAULT 0, error TEXT, sending_at INTEGER);
 CREATE INDEX IF NOT EXISTS wa_messages_day ON wa_messages(day);
 CREATE TABLE IF NOT EXISTS apex_names (apex_name TEXT PRIMARY KEY, employee_id INTEGER NOT NULL, set_at INTEGER NOT NULL);
 `;
@@ -248,6 +248,7 @@ async function migrate(db) {
   try { await db.prepare('SELECT total FROM site_orders LIMIT 0').all(); } catch { try { await db.prepare('ALTER TABLE site_orders ADD COLUMN total REAL').run(); } catch {} }
   // Two groups: the call center's (default) and the branch managers' (target = 'branches').
   try { await db.prepare('SELECT target FROM telegram_log LIMIT 0').all(); } catch { try { await db.prepare('ALTER TABLE telegram_log ADD COLUMN target TEXT').run(); } catch {} }
+  try { await db.prepare('SELECT sending_at FROM wa_messages LIMIT 0').all(); } catch { try { await db.prepare('ALTER TABLE wa_messages ADD COLUMN sending_at INTEGER').run(); } catch {} }
   try { await db.prepare('SELECT branch FROM telegram_log LIMIT 0').all(); } catch { try { await db.prepare('ALTER TABLE telegram_log ADD COLUMN branch TEXT').run(); } catch {} }
   try { await db.prepare('SELECT branch_chat_id, branch_chat_title FROM telegram_config LIMIT 0').all(); } catch {
     for (const c of ['branch_chat_id TEXT', 'branch_chat_title TEXT']) { try { await db.prepare('ALTER TABLE telegram_config ADD COLUMN ' + c).run(); } catch {} }

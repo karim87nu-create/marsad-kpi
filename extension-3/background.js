@@ -175,7 +175,8 @@ browser.runtime.onMessage.addListener(async (m, sender) => {
 // ---------- شاشة مراقبة طلبات: only on the PC linked from the admin page ----------
 const TALABAT = 'talabatMonitor', talabatTabs = {};
 const adminSender = sender => { try { const u = new URL(sender.url); return globalThis.MARSAD.ADMIN_ORIGINS.includes(u.origin) && (u.hostname !== 'karim87nu-create.github.io' || u.pathname.startsWith('/marsad-kpi/')); } catch { return false; } };
-const talabatSender = sender => { try { return !!sender.tab && new URL(sender.url).hostname === 'partner-app.talabat.com'; } catch { return false; } };
+const talabatSender = sender => { try { return !!sender.tab && ['partner-app.talabat.com', 'web.whatsapp.com'].includes(new URL(sender.url).hostname); } catch { return false; } };
+const waSender = sender => { try { return new URL(sender.url).hostname === 'web.whatsapp.com'; } catch { return false; } };
 async function talabatMessage(m, sender) {
   if (m.type === 'TALABAT_LINK' && adminSender(sender)) {
     if (typeof m.token !== 'string' || !/^tal_[a-f0-9]{48}$/.test(m.token)) throw Error('invalid_link');
@@ -200,7 +201,23 @@ async function talabatMessage(m, sender) {
     if (!t) return { ok: false, error: 'not_linked' };
     const r = await api('/api/talabat/push', { method: 'POST', headers: { 'content-type': 'application/json', 'x-talabat-token': t.token }, body: JSON.stringify({ orders: Array.isArray(m.orders) ? m.orders.slice(0, 800) : [], codes: Array.isArray(m.codes) ? m.codes.slice(0, 200) : [] }), timeout: 30000 });
     const d = r.json();
-    return r.ok ? { ok: true, want: d.want || [] } : { ok: false, status: r.status, error: d.error };
+    // WhatsApp messages on: keep one WhatsApp Web tab open on this PC (it sends them).
+    if (r.ok && d.phones && !(talabatTabs.wa != null && await browser.tabs.get(talabatTabs.wa).then(() => true, () => false))) {
+      const open = (await browser.tabs.query({ url: 'https://web.whatsapp.com/*' }).catch(() => []))[0];
+      talabatTabs.wa = open ? open.id : (await browser.tabs.create({ url: 'https://web.whatsapp.com/', active: false })).id;
+    }
+    return r.ok ? { ok: true, want: d.want || [], phones: !!d.phones } : { ok: false, status: r.status, error: d.error };
+  }
+  if (m.type === 'TALABAT_WA_ACTIVE') {
+    if (!t || !waSender(sender)) return { active: false };
+    if (talabatTabs.wa != null && talabatTabs.wa !== sender.tab.id && await browser.tabs.get(talabatTabs.wa).then(() => true, () => false)) return { active: false };   // one sender tab
+    talabatTabs.wa = sender.tab.id; return { active: true };
+  }
+  if ((m.type === 'TALABAT_WA_NEXT' || m.type === 'TALABAT_WA_RESULT') && t && waSender(sender) && talabatTabs.wa === sender.tab.id) {
+    const body = m.type === 'TALABAT_WA_NEXT' ? {} : { id: m.id, kind: m.kind, ok: !!m.ok, error: m.error || null, invalid: !!m.invalid };
+    const r = await api(m.type === 'TALABAT_WA_NEXT' ? '/api/whatsapp/next' : '/api/whatsapp/result', { method: 'POST', headers: { 'content-type': 'application/json', 'x-talabat-token': t.token }, body: JSON.stringify(body), timeout: 20000 });
+    const d = r.json();
+    return r.ok ? { ok: true, ...d } : { ok: false, status: r.status, error: d.error };
   }
   throw Error('invalid_type');
 }
