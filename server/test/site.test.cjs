@@ -61,12 +61,13 @@ test('site: key, sync of orders and notes, the day rows, alerts', async () => {
       { no: 5003, kind: 'طلبات', branch: 'مدينة نصر', at: new Date(site.m(4)).toISOString(), user: 'x', amount: 255 }] } });
     const d2 = (await admin('GET', '/api/site/day?day=2026-10-22')).body;
     const o2 = Object.fromEntries(d2.orders.map(x => [x.id, x]));
-    assert.deepEqual(o2[101].apex, { no: 5001, at: new Date(site.m(4)).toISOString(), user: 'سارة', amount: 250 });
+    assert.deepEqual(o2[101].apex, { no: 5001, sn: null, at: new Date(site.m(4)).toISOString(), user: 'سارة', amount: 250, branch: 'فرع مدينة نصر' });
     assert.equal(o2[102].apex, null);
     assert.deepEqual(d2.apex.unmatched.map(x => x.no), [5002]);
     // Order 102: received at 13:10 and not sent to a branch → after 5 minutes one alert for the online group.
     const a = t.app.db.raw.prepare("SELECT kind, target FROM telegram_log WHERE kind LIKE 'site%'").all();
     assert.deepEqual(a, [{ kind: 'siteTransfer', target: 'online' }]);
+    assert.match(t.app.db.raw.prepare("SELECT text FROM telegram_log WHERE key = 'site:transfer:102'").get().text, /لسه مش لاقيينه على Apex/);
     // Next run a minute later: only open orders' notes are read again, no duplicate alert.
     site.calls.length = 0; t.advance(61000);
     await admin('POST', '/api/site', { action: 'sync' });

@@ -106,11 +106,17 @@ function setup(app) {
     const c = await db.prepare('SELECT rules FROM telegram_config WHERE id = 1').get();
     let r = {}; try { r = JSON.parse(c?.rules || '{}'); } catch {}
     const list = [], clock = ms => new Date(ms).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit' });
+    // Same details as the Apex messages: the Apex order (small number, who entered it), area, comments, branch status.
+    const day = businessDay(now), det = app.apexDetails ? await app.apexDetails(day) : { extra: () => '', status: () => '' };
+    let mt = new Map(); try { mt = (await apexMatch(day, rows)).matches; } catch {}
+    const more = (o, withStatus) => { const a = mt.get(o.id);
+      return (a ? '\nعلى Apex: أوردر ' + (a.sn ?? a.no) + (a.user ? ' · ضربه ' + a.user : '') + (a.at ? ' الساعة ' + clock(Date.parse(a.at)) : '') : '\nلسه مش لاقيينه على Apex') +
+        (o.total ? ' · ' + Math.round(o.total) + ' ج' : '') + (a ? det.extra(a.no) : '') + (withStatus ? det.status(a?.branch || o.branch) : ''); };
     for (const o of rows) {
       if (o.received_at && !o.transfer_at && now - o.received_at > TRANSFER_MIN * 60000)
-        list.push({ key: 'site:transfer:' + o.id, kind: 'siteTransfer', target: 'online', text: '⏳ أوردر موقع ماتحوّلش للفرع — #' + o.id + '\nمستني من ' + Math.round((now - o.received_at) / 60000) + ' دقيقة (اتستلم ' + clock(o.received_at) + ')' });
+        list.push({ key: 'site:transfer:' + o.id, kind: 'siteTransfer', target: 'online', text: '⏳ أوردر موقع ماتحوّلش للفرع — #' + o.id + '\nمستني من ' + Math.round((now - o.received_at) / 60000) + ' دقيقة (اتستلم ' + clock(o.received_at) + ')' + more(o, false) });
       if (o.fulfillment === 'delivery' && o.transfer_at && !o.out_at && now - o.transfer_at > PREP_MIN * 60000)
-        list.push({ key: 'site:prep:' + o.id, kind: 'sitePrep', target: 'branches', branch: o.branch || null, text: '🟠 أوردر موقع لسه بيتجهز — ' + (o.branch || 'فرع غير معروف') + '\n#' + o.id + ' بقاله ' + Math.round((now - o.transfer_at) / 60000) + ' دقيقة من التحويل (' + clock(o.transfer_at) + ')' });
+        list.push({ key: 'site:prep:' + o.id, kind: 'sitePrep', target: 'branches', branch: o.branch || null, text: '🟠 أوردر موقع لسه بيتجهز — ' + (o.branch || 'فرع غير معروف') + '\n#' + o.id + ' بقاله ' + Math.round((now - o.transfer_at) / 60000) + ' دقيقة من التحويل (' + clock(o.transfer_at) + ')' + more(o, true) });
     }
     // Each warning is answered when the order moves on: transferred, out for delivery, delivered, or cancelled.
     const waiting = await db.prepare("SELECT l.key, l.kind, l.target, l.branch FROM telegram_log l WHERE (l.key LIKE 'site:transfer:%' OR l.key LIKE 'site:prep:%') AND l.created_at >= ? AND NOT EXISTS (SELECT 1 FROM telegram_log x WHERE x.key = 'resolved:' || l.key)").all(now - 12 * 3600000);
@@ -191,11 +197,11 @@ function setup(app) {
     }
     pairs.sort((x, y) => x.score - y.score);
     const usedO = new Set(), usedA = new Set(), matches = new Map();
-    for (const [id, a] of sure) { usedO.add(id); usedA.add(a.no); matches.set(id, { no: a.no, at: iso(a.t), user: names[a.user] || a.user || null, amount: a.amount ?? null, how: 'code' }); }
+    for (const [id, a] of sure) { usedO.add(id); usedA.add(a.no); matches.set(id, { no: a.no, sn: a.sn ?? null, at: iso(a.t), user: names[a.user] || a.user || null, amount: a.amount ?? null, branch: a.branch || null, how: 'code' }); }
     for (const p of pairs) {
       if (usedO.has(p.o) || usedA.has(p.a.no)) continue;
       usedO.add(p.o); usedA.add(p.a.no);
-      matches.set(p.o, { no: p.a.no, at: iso(p.a.t), user: names[p.a.user] || p.a.user || null, amount: p.a.amount ?? null });
+      matches.set(p.o, { no: p.a.no, sn: p.a.sn ?? null, at: iso(p.a.t), user: names[p.a.user] || p.a.user || null, amount: p.a.amount ?? null, branch: p.a.branch || null });
     }
     return { matches, apexCount: apex.length, unmatched: apex.filter(a => !usedA.has(a.no)).map(a => ({ no: a.no, at: iso(a.t), branch: a.branch, user: names[a.user] || a.user, amount: a.amount })), hasList: true };
   }

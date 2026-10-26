@@ -59,3 +59,19 @@ test('whatsapp: welcome on a new Talabat order, survey after the delay, numbers 
     assert.equal(t.app.db.raw.prepare('SELECT COUNT(*) n FROM wa_messages WHERE phone IS NOT NULL').get().n, 0);
   } finally { await t.close(); }
 });
+
+test('apexDetails: area, comments and the branch status the monitor sent, for the website and Talabat messages', async () => {
+  const t = await start();
+  try {
+    const admin = await t.admin();
+    const { token } = (await admin('POST', '/api/orders/token')).body;
+    await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': token }, body: { v: 1, day: '2026-10-22',
+      details: { '2648500': { loc: 'الحي السابع', note: 'رن قبل ما توصل', items: ['• 2× كفتة: بدون بصل'], msgs: [] } },
+      branchStatus: { 'مدينة نصر': '📊 حالة الفرع دلوقتي: 4 أوردر لسه ماخرجش' } } });
+    const d = await t.app.apexDetails('2026-10-22');
+    assert.equal(d.extra(2648500), '\n📍 المنطقة: الحي السابع\n💬 ملاحظة: رن قبل ما توصل\n🍽️ على الأصناف:\n• 2× كفتة: بدون بصل');
+    assert.equal(d.extra(1), '');
+    assert.equal(d.status('فرع مدينة نصر'), '\n📊 حالة الفرع دلوقتي: 4 أوردر لسه ماخرجش');
+    assert.equal(d.status('مدينتي'), '');
+  } finally { await t.close(); }
+});

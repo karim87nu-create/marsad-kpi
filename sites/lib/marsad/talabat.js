@@ -193,13 +193,14 @@ function setup(app) {
     const c = await db.prepare('SELECT rules FROM telegram_config WHERE id = 1').get();
     let r = {}; try { r = JSON.parse(c?.rules || '{}'); } catch {}
     const clock = t => new Date(t).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit' });
-    const out = [];
+    const out = [], det = app.apexDetails ? await app.apexDetails(day) : { extra: () => '', status: () => '' };
     for (const o of m.rows) {
       const store = o.store ? '\n' + o.store : '', ref = o.code ? '#' + o.code : o.id; // the short #code staff use; the long id only when there is no code
       if (m.hasApex && o.accepted_at && !m.matches.get(o.id) && o.status !== 'CANCELLED' && now - o.accepted_at > NOT_ENTERED_MIN * 60000 && now - o.accepted_at < 3 * 3600000)
         out.push({ key: 'talabat:notEntered:' + o.id, kind: 'talabatNotEntered', target: 'online', text: '⚠️ أوردر طلبات اتقبل ومش لاقيينه على Apex — ' + ref + store + '\nاتقبل ' + clock(o.accepted_at) + ' (من ' + Math.round((now - o.accepted_at) / 60000) + ' دقيقة)' + (o.subtotal ? ' · ' + Math.round(o.subtotal) + ' ج' : '') });
       if (o.status === 'CANCELLED' && o.cancelled_at && now - o.cancelled_at < 3 * 3600000)
-        out.push({ key: 'talabat:cancel:' + o.id, kind: 'talabatCancel', target: 'branches', branch: m.matches.get(o.id)?.branch || o.store || null, text: '❌ إلغاء على طلبات — ' + ref + store + '\nاتلغى ' + clock(o.cancelled_at) + (o.cancel_owner ? ' · ' + o.cancel_owner : '') + (o.cancel_reason ? '\nالسبب: ' + o.cancel_reason : '') + (o.subtotal ? '\n' + Math.round(o.subtotal) + ' ج' : '') });
+        out.push({ key: 'talabat:cancel:' + o.id, kind: 'talabatCancel', target: 'branches', branch: m.matches.get(o.id)?.branch || o.store || null, text: '❌ إلغاء على طلبات — ' + ref + store + '\nاتلغى ' + clock(o.cancelled_at) + (o.cancel_owner ? ' · ' + o.cancel_owner : '') + (o.cancel_reason ? '\nالسبب: ' + o.cancel_reason : '') + (o.subtotal ? '\n' + Math.round(o.subtotal) + ' ج' : '') +
+          (m.matches.get(o.id) ? '\nعلى Apex: أوردر ' + (m.matches.get(o.id).sn ?? m.matches.get(o.id).no) + det.extra(m.matches.get(o.id).no) : '') + det.status(m.matches.get(o.id)?.branch || o.store) });
     }
     // «Accepted and not on Apex»: answered when it is entered on Apex, or cancelled on Talabat first.
     const open = new Set((await db.prepare("SELECT l.key FROM telegram_log l WHERE l.key LIKE 'talabat:notEntered:%' AND l.created_at >= ? AND NOT EXISTS (SELECT 1 FROM telegram_log x WHERE x.key = 'resolved:' || l.key)").all(now - 12 * 3600000)).map(x => x.key));

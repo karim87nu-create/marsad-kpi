@@ -40,6 +40,25 @@ function setup(app) {
     return { token };
   });
 
+  // Area, comments and the branch's current status for an Apex order, as sent by the monitor — the same lines the
+  // monitor writes under its own branch messages, for the server's messages (website and Talabat orders).
+  const fuzzy = x => String(x || '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/^\s*(فرع|الدهان)[\s,،]*/g, '').trim();
+  app.apexDetails = async day => {
+    let d = null; try { const r = await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(day); d = r ? JSON.parse(r.data) : null; } catch {}
+    const det = d?.details || {}, st = d?.branchStatus || {};
+    const extra = no => {
+      const x = no == null ? null : det[String(no)]; if (!x) return '';
+      return (x.loc ? '\n📍 المنطقة: ' + x.loc : '') + (x.note ? '\n💬 ملاحظة: ' + x.note : '') +
+        (x.items?.length ? '\n🍽️ على الأصناف:\n' + x.items.join('\n') : '') + (x.msgs?.length ? '\n📨 كومنتات بعد الضرب:\n' + x.msgs.join('\n') : '');
+    };
+    const status = branch => {
+      if (!branch) return '';
+      const key = st[branch] ? branch : Object.keys(st).find(k => { const a = fuzzy(k), b = fuzzy(branch); return a && b && (a.includes(b.split(/[\s،,-]+/)[0]) || b.includes(a.split(/[\s،,-]+/)[0])); });
+      return key ? '\n' + st[key] : '';
+    };
+    return { extra, status };
+  };
+
   // ---- the monitor pushes the day ----
   app.route('POST', '/api/orders/push', async ctx => {
     const hash = await setting('orders_token_hash'), given = ctx.header('x-orders-token');
