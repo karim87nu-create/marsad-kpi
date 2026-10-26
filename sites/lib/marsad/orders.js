@@ -76,7 +76,7 @@ function setup(app) {
           if (issue && await app.learnedOk(entrySignature(issue))) { states[key] = { no, kind: a.kind, text, status: 'learned', version, target }; continue; }
         }
         alerts.push({ key, kind: a.kind, text, target, branch });
-        states[key] = { no, sn: findNo(no)?.sn ?? null, kind: a.kind, text, status, version, target, branch };
+        states[key] = { no, sn: a.sn ?? findNo(no)?.sn ?? null, kind: a.kind, text, status, version, target, branch };
       } else if (old.version !== version) {
         // Explicit state changes, including corrected entry errors, answer the original alert.
         // A changing duration in text alone is not a new state.
@@ -90,7 +90,9 @@ function setup(app) {
       const out = rows('lateOut').find(o => String(o.no) === old.no && o.out);
       const cancel = rows('cancels').find(o => String(o.no) === old.no);
       let text = null;
-      const shown = old.sn ?? out?.sn ?? cancel?.sn ?? old.no;
+      // The small serial staff use; the internal number only when the monitor never sent one.
+      if (old.sn == null) old.sn = out?.sn ?? cancel?.sn ?? findNo(old.no)?.sn ?? null;
+      const shown = old.sn ?? old.no;
       const clockOf = v => new Date(v).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit' });
       if (old.kind === 'ordersLate' && (out || cancel)) text = cancel
         ? '🔄 أوردر ' + shown + (cancel.kind ? ' · ' + cancel.kind : '') + ' اتلغى بعد تنبيه التأخير' + (cancel.reason ? ' — السبب: ' + cancel.reason : '')
