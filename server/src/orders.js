@@ -90,7 +90,8 @@ function setup(app) {
         // Explicit state changes, including corrected entry errors, answer the original alert.
         // A changing duration in text alone is not a new state.
         // A discount warning sent before its amount was tracked takes the current amount silently (no change seen).
-        const adopt = a.follow && old.status === 'active' && /^d-?\d+$/.test(status);
+        // An order cancelled on Apex: no message (only Talabat cancellations are sent); the warning is closed quietly.
+        const adopt = (a.follow && old.status === 'active' && /^d-?\d+$/.test(status)) || status === 'deleted';
         if (!adopt && (old.status !== status || a.changed === true)) alerts.push({ key: 'state:' + key + ':' + ((old.sequence || 0) + 1), kind: old.kind,
           text, replyTo: key, target: old.target, branch: old.branch });
         states[key] = { ...old, status, version, text, sequence: (old.sequence || 0) + (!adopt && (old.status !== status || a.changed === true) ? 1 : 0) };
@@ -106,9 +107,9 @@ function setup(app) {
       if (old.sn == null) old.sn = out?.sn ?? cancel?.sn ?? findNo(old.no)?.sn ?? null;
       const shown = old.sn ?? old.no;
       const clockOf = v => new Date(v).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit' });
-      if (old.kind === 'ordersLate' && (out || cancel)) text = cancel
-        ? '🔄 أوردر ' + shown + (cancel.kind ? ' · ' + cancel.kind : '') + ' اتلغى بعد تنبيه التأخير' + (cancel.reason ? ' — السبب: ' + cancel.reason : '')
-        : '✅ أوردر ' + shown + (out.kind ? ' · ' + out.kind : '') + ' خرج مع الطيار' + (out.pilot ? ' (' + out.pilot + ')' : '') + (out.wait != null ? ' بعد ' + out.wait + ' دقيقة من الضرب' : '') + (out.out ? ' — الساعة ' + clockOf(out.out) : '') + (out.sched ? '\nميعاده كان ' + clockOf(out.sched) : '');
+      // Cancelled on Apex: closed without a message (only Talabat cancellations are sent).
+      if (old.kind === 'ordersLate' && cancel && !out) { old.status = 'resolved'; continue; }
+      if (old.kind === 'ordersLate' && out) text = '✅ أوردر ' + shown + (out.kind ? ' · ' + out.kind : '') + ' خرج مع الطيار' + (out.pilot ? ' (' + out.pilot + ')' : '') + (out.wait != null ? ' بعد ' + out.wait + ' دقيقة من الضرب' : '') + (out.out ? ' — الساعة ' + clockOf(out.out) : '') + (out.sched ? '\nميعاده كان ' + clockOf(out.sched) : '');
       // Only a complete issues snapshot can prove that a recorded entry issue disappeared.
       if (old.kind === 'ordersEntry' && Array.isArray(b.issues) && Number.isInteger(b.totals?.issues) && b.totals.issues === b.issues.length &&
           old.observedIssue && !b.issues.some(o => String(o.no) === old.no)) text = '✅ أوردر ' + shown + ': مشكلة الضرب لم تعد موجودة في قراءة Apex الكاملة.';

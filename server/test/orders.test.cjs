@@ -156,7 +156,7 @@ test('orders: state replies stay in their original department, missing groups ne
   } finally {await t.close();tg.close();}
 });
 
-test('orders: every change answers its warning (very late, cancelled, discount changed), with the small serial', async () => {
+test('orders: every change answers its warning (very late, discount changed; an Apex cancellation closes it quietly), with the small serial', async () => {
   const t = await start();
   try {
     const admin = await t.admin();
@@ -178,7 +178,7 @@ test('orders: every change answers its warning (very late, cancelled, discount c
     await push({ open, alerts: [...follow, { key: 'late:3526805', kind: 'ordersLate', text: '🔄 أوردر 421 اتلغى', status: 'deleted', follow: true }] });
     l = log();
     assert.equal(l.find(x => x.text === 'disc now 50').reply_to, 'orders:2026-10-22:disc:3526806');
-    assert.equal(l.find(x => x.text === '🔄 أوردر 421 اتلغى').reply_to, 'orders:2026-10-22:late:3526805');
+    assert.ok(!l.some(x => x.text === '🔄 أوردر 421 اتلغى'), 'an Apex cancellation sends nothing');
     assert.ok(!l.some(x => x.text === 'never'));
     // A cancelled order is not answered a second time by the server's own «cancelled after the late warning».
     await push({ open: [], cancels: [{ no: 3526805, sn: 421, branch: 'التجمع', kind: 'Hotline' }] });
