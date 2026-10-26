@@ -193,11 +193,11 @@ function setup(app) {
     const clock = t => new Date(t).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit' });
     const out = [];
     for (const o of m.rows) {
-      const store = o.store ? '\n' + o.store : '';
+      const store = o.store ? '\n' + o.store : '', ref = o.code ? '#' + o.code : o.id; // the short #code staff use; the long id only when there is no code
       if (m.hasApex && o.accepted_at && !m.matches.get(o.id) && o.status !== 'CANCELLED' && now - o.accepted_at > NOT_ENTERED_MIN * 60000 && now - o.accepted_at < 3 * 3600000)
-        out.push({ key: 'talabat:notEntered:' + o.id, kind: 'talabatNotEntered', target: 'online', text: '⚠️ أوردر طلبات اتقبل ومش لاقيينه على Apex — ' + o.id + store + '\nاتقبل ' + clock(o.accepted_at) + ' (من ' + Math.round((now - o.accepted_at) / 60000) + ' دقيقة)' + (o.subtotal ? ' · ' + Math.round(o.subtotal) + ' ج' : '') });
+        out.push({ key: 'talabat:notEntered:' + o.id, kind: 'talabatNotEntered', target: 'online', text: '⚠️ أوردر طلبات اتقبل ومش لاقيينه على Apex — ' + ref + store + '\nاتقبل ' + clock(o.accepted_at) + ' (من ' + Math.round((now - o.accepted_at) / 60000) + ' دقيقة)' + (o.subtotal ? ' · ' + Math.round(o.subtotal) + ' ج' : '') });
       if (o.status === 'CANCELLED' && o.cancelled_at && now - o.cancelled_at < 3 * 3600000)
-        out.push({ key: 'talabat:cancel:' + o.id, kind: 'talabatCancel', target: 'branches', branch: m.matches.get(o.id)?.branch || o.store || null, text: '❌ إلغاء على طلبات — ' + o.id + store + '\nاتلغى ' + clock(o.cancelled_at) + (o.cancel_owner ? ' · ' + o.cancel_owner : '') + (o.cancel_reason ? '\nالسبب: ' + o.cancel_reason : '') + (o.subtotal ? '\n' + Math.round(o.subtotal) + ' ج' : '') });
+        out.push({ key: 'talabat:cancel:' + o.id, kind: 'talabatCancel', target: 'branches', branch: m.matches.get(o.id)?.branch || o.store || null, text: '❌ إلغاء على طلبات — ' + ref + store + '\nاتلغى ' + clock(o.cancelled_at) + (o.cancel_owner ? ' · ' + o.cancel_owner : '') + (o.cancel_reason ? '\nالسبب: ' + o.cancel_reason : '') + (o.subtotal ? '\n' + Math.round(o.subtotal) + ' ج' : '') });
     }
     // A dish on Talabat that is not what was entered on Apex (only for orders tied by the #code or by hand: sure links).
     const sent = new Set((await db.prepare("SELECT key FROM telegram_log WHERE (key LIKE 'talabat:items:%' OR key LIKE 'resolved:talabat:items:%') AND created_at >= ?").all(now - 6 * 3600000)).map(x => x.key));
@@ -205,10 +205,10 @@ function setup(app) {
       const a = m.matches.get(o.id), c = a?.items, key = 'talabat:items:' + o.id;
       if (!c || (a.how !== 'code' && a.how !== 'manual')) continue;
       if (!c.ok && !c.reviewedOk && !sent.has(key) && now - (o.accepted_at || o.placed_at || now) < 3 * 3600000)
-        out.push({ key, kind: 'talabatItems', target: 'online', text: '🍽️ صنف مضروب غلط محتمل — طلبات ' + (o.code ? '#' + o.code + ' · ' : '') + o.id + '\nأوردر Apex ' + (a.sn ?? a.no) + ' · ' + (a.branch || '') + (a.user ? ' · ضربه ' + a.user : '') +
+        out.push({ key, kind: 'talabatItems', target: 'online', text: '🍽️ صنف مضروب غلط محتمل — طلبات ' + (o.code ? '#' + o.code : o.id) + '\nأوردر Apex ' + (a.sn ?? a.no) + ' · ' + (a.branch || '') + (a.user ? ' · ضربه ' + a.user : '') +
           (c.missingOnApex.length ? '\nعلى طلبات ومش على Apex: ' + c.missingOnApex.join('، ') : '') + (c.extraOnApex.length ? '\nعلى Apex ومش على طلبات: ' + c.extraOnApex.join('، ') : '') });
       else if ((c.ok || c.reviewedOk) && sent.has(key) && !sent.has('resolved:' + key))
-        out.push({ key: 'resolved:' + key, kind: 'talabatItems', target: 'online', replyTo: key, text: '✅ أوردر طلبات ' + o.id + ': الأصناف بقت مطابقة على Apex' + (c.reviewedOk && !c.ok ? ' (اتراجع: مش غلط)' : '') });
+        out.push({ key: 'resolved:' + key, kind: 'talabatItems', target: 'online', replyTo: key, text: '✅ أوردر طلبات ' + (o.code ? '#' + o.code : o.id) + ': الأصناف بقت مطابقة على Apex' + (c.reviewedOk && !c.ok ? ' (اتراجع: مش غلط)' : '') });
     }
     if (out.length) await db.batch(out.map(a => db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, sent_at, target, reply_to, branch) VALUES (?,?,?,?,?,?,?,?,?)').bind(a.key, a.kind, null, a.text, now, r[a.kind] === false && !a.replyTo ? now : null, a.target, a.replyTo || null, a.branch || null)));
   }
