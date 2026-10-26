@@ -48,3 +48,30 @@ test('talabat: monitor key, orders with details, Apex match (auto and manual), a
     assert.deepEqual(kinds.map(k => k.kind + ':' + k.target), ['talabatCancel:branches']);
   } finally { await t.close(); }
 });
+
+test('talabat: the #code on Apex links for sure, even far in time; sure links teach the branch name; unknown values are kept', async () => {
+  const t0 = cairoToUtc(2026, 10, 22, 20, 0, 0), at = m => new Date(t0 + m * 60000).toISOString();
+  const t = await start({ at: t0 + 90 * 60000 });
+  try {
+    const admin = await t.admin();
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const push = body => t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body });
+    const ot = (await admin('POST', '/api/orders/token')).body.token;
+    const online = [];
+    for (let i = 0; i < 3; i++) online.push({ no: 8000 + i, kind: 'طلبات', branch: 'Tagamoa Branch', at: at(i * 10 + 70), user: 'u', amount: 100, tag: '#' + (2700 + i) });
+    await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': ot }, body: { v: 1, day: '2026-10-22', online } });
+    await push({ codes: [0, 1, 2].map(i => ({ id: '39770000' + i + '0', code: String(2700 + i), store: 'الدهان، التجمع الخامس' })) });
+    await push({ orders: [0, 1, 2].map(i => ({ id: '39770000' + i + '0', store: 'الدهان، التجمع الخامس', status: 'MYSTERY', placedAt: at(i * 10), detail: { receivedAt: at(i * 10), acceptedAt: at(i * 10 + 0.5), milestones: { DISPLAYED_AT_VENDOR: at(i * 10), RIDER_NEAR: at(i * 10 + 3) } } })) });
+    const d = (await admin('GET', '/api/talabat/day?day=2026-10-22')).body;
+    for (const o of d.orders) assert.equal(o.apex?.how, 'code', o.id);
+    const l = (await admin('GET', '/api/learned')).body;
+    assert.ok(l.facts.some(f => f.kind === 'branch:talabat' && f.a === 'الدهان، التجمع الخامس' && f.b === 'Tagamoa Branch' && f.evidence === 3), 'learned the branch name');
+    assert.ok(l.facts.some(f => f.kind === 'unknown' && f.b === 'حالة: MYSTERY'));
+    assert.ok(l.facts.some(f => f.kind === 'unknown' && f.b === 'خطوة: RIDER_NEAR'));
+    // Now a Talabat order with no #code: «Tagamoa Branch» is accepted as the same branch (names share no word).
+    await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': ot }, body: { v: 1, day: '2026-10-22', online: [...online, { no: 8100, kind: 'طلبات', branch: 'Tagamoa Branch', at: at(52), user: 'u', amount: 100 }] } });
+    await push({ orders: [{ id: '3977009990', store: 'الدهان، التجمع الخامس', status: 'ACCEPTED', placedAt: at(50), detail: { receivedAt: at(50), acceptedAt: at(50.3) } }] });
+    const d2 = (await admin('GET', '/api/talabat/day?day=2026-10-22')).body;
+    assert.equal(d2.orders.find(o => o.id === '3977009990').apex?.no, 8100);
+  } finally { await t.close(); }
+});

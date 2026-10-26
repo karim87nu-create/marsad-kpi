@@ -173,7 +173,7 @@ browser.runtime.onMessage.addListener(async (m, sender) => {
 });
 
 // ---------- شاشة مراقبة طلبات: only on the PC linked from the admin page ----------
-const TALABAT = 'talabatMonitor';
+const TALABAT = 'talabatMonitor', talabatTabs = {};
 const adminSender = sender => { try { const u = new URL(sender.url); return globalThis.MARSAD.ADMIN_ORIGINS.includes(u.origin) && (u.hostname !== 'karim87nu-create.github.io' || u.pathname.startsWith('/marsad-kpi/')); } catch { return false; } };
 const talabatSender = sender => { try { return !!sender.tab && new URL(sender.url).hostname === 'partner-app.talabat.com'; } catch { return false; } };
 async function talabatMessage(m, sender) {
@@ -186,10 +186,19 @@ async function talabatMessage(m, sender) {
   if (m.type === 'TALABAT_UNLINK' && adminSender(sender)) { await store.set(TALABAT, null); return { ok: true }; }
   if (!talabatSender(sender)) throw Error('invalid_sender');
   const t = await store.get(TALABAT, null);
-  if (m.type === 'TALABAT_ACTIVE') return { active: !!t };
+  if (m.type === 'TALABAT_ACTIVE') {
+    if (!t) return { active: false };
+    // Two tabs on the monitor: Order History (the times) and Live Orders (the short #codes). The second opens by itself.
+    const alive = id => browser.tabs.get(id).then(() => true, () => false), tabId = sender.tab.id;
+    for (const r of ['history', 'live']) if (talabatTabs[r] != null && talabatTabs[r] !== tabId && !(await alive(talabatTabs[r]))) delete talabatTabs[r];
+    let role = Object.keys(talabatTabs).find(r => talabatTabs[r] === tabId);
+    if (!role) { role = talabatTabs.history == null ? 'history' : talabatTabs.live == null ? 'live' : 'extra'; if (role !== 'extra') talabatTabs[role] = tabId; }
+    if (talabatTabs.history != null && talabatTabs.live == null) { const n = await browser.tabs.create({ url: 'https://partner-app.talabat.com/live-orders', active: false }); talabatTabs.live = n.id; }
+    return { active: true, role };
+  }
   if (m.type === 'TALABAT_PUSH') {
     if (!t) return { ok: false, error: 'not_linked' };
-    const r = await api('/api/talabat/push', { method: 'POST', headers: { 'content-type': 'application/json', 'x-talabat-token': t.token }, body: JSON.stringify({ orders: Array.isArray(m.orders) ? m.orders.slice(0, 800) : [] }), timeout: 30000 });
+    const r = await api('/api/talabat/push', { method: 'POST', headers: { 'content-type': 'application/json', 'x-talabat-token': t.token }, body: JSON.stringify({ orders: Array.isArray(m.orders) ? m.orders.slice(0, 800) : [], codes: Array.isArray(m.codes) ? m.codes.slice(0, 200) : [] }), timeout: 30000 });
     const d = r.json();
     return r.ok ? { ok: true, want: d.want || [] } : { ok: false, status: r.status, error: d.error };
   }

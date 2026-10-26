@@ -138,6 +138,7 @@ window.MarsadSite = function MarsadSite(ctx) {
     const delays = o.map(entryDelay).filter(x => x != null);
     $('talCards').replaceChildren(kpi('أوردرات طلبات', o.length, 'info', live.length ? live.length + ' لسه في الفرع' : ''), kpi('متوسط القبول', acc.length ? secs(Math.round(acc.reduce((n, x) => n + x.acceptSeconds, 0) / acc.length)) : '—'),
       kpi('من القبول للضرب على Apex', delays.length ? secs(Math.round(delays.reduce((n, x) => n + x, 0) / delays.length)) : '—', '', 'متوسط'),
+      kpi('متربطة بالهاشتاج', o.filter(x => x.apex?.how === 'code').length + ' من ' + o.filter(x => x.apex).length, '', 'الباقي بالوقت أو يدوي'),
       kpi('اتقبلت وماتضربتش', notIn.length, notIn.length ? 'bad' : 'good', 'أكتر من 10 دقايق'), kpi('اتلغت', canc.length, canc.length ? 'bad' : 'good', canc.filter(x => x.cancelOwner === 'Vendor').length + ' بسبب المطعم'));
     // Who entered Talabat orders on Apex, and how fast after acceptance.
     const by = new Map();
@@ -146,7 +147,7 @@ window.MarsadSite = function MarsadSite(ctx) {
       { title: 'بعد أكتر من 5 دقايق', get: x => x.slow, type: 'number', cls: x => x.slow ? 'warn' : '' }], [...by.values()].sort((a, b) => b.n - a.n), { empty: 'لسه مفيش أوردرات متربطة بـ Apex' });
     const linkCell = x => {
       if (!d.apexLinked) return '—';
-      const label = x.apex ? '#' + x.apex.no + ' · ' + t12(x.apex.at) + (x.apex.manual ? ' (يدوي)' : '') : 'مش لاقيينه';
+      const label = x.apex ? '#' + x.apex.no + ' · ' + t12(x.apex.at) + ({ code: ' ✓ بالهاشتاج', manual: ' (يدوي)', time: ' ≈ بالوقت' })[x.apex.how] : 'مش لاقيينه';
       if (!ctx.canWrite()) return label;
       const sel = h('select', { ariaLabel: 'أوردر Apex' }, h('option', { value: '', textContent: label }),
         ...(x.apex ? [h('option', { value: '__clear', textContent: 'رجّع الربط التلقائي' })] : []), h('option', { value: 'none', textContent: 'مالوش أوردر على Apex' }),
@@ -154,7 +155,7 @@ window.MarsadSite = function MarsadSite(ctx) {
       sel.onchange = async () => { try { await api('/api/talabat/link', { method: 'POST', body: { talabatId: x.id, apexNo: sel.value === '__clear' ? null : sel.value } }); renderTalabat(true); } catch (e) { ctx.showError(e); } };
       return sel;
     };
-    table('talOrders', [{ title: 'الأوردر', get: x => x.id }, { title: 'الفرع', get: x => x.store || '—' }, { title: 'وصل', get: x => x.receivedAt || x.placedAt, show: x => t12(x.receivedAt || x.placedAt), type: 'datetime' },
+    table('talOrders', [{ title: 'الأوردر', get: x => x.id, show: x => x.code ? x.id + ' (#' + x.code + ')' : x.id }, { title: 'الفرع', get: x => x.store || '—' }, { title: 'وصل', get: x => x.receivedAt || x.placedAt, show: x => t12(x.receivedAt || x.placedAt), type: 'datetime' },
       { title: 'القبول', get: x => x.acceptSeconds, show: x => secs(x.acceptSeconds), type: 'number', cls: x => x.acceptSeconds > 60 ? 'warn' : '' },
       { title: 'على Apex', get: x => x.apex?.at, show: linkCell }, { title: 'ضربه', get: x => x.apex?.user || '—' }, { title: 'من القبول للضرب', get: entryDelay, show: x => secs(entryDelay(x)), type: 'number', cls: x => entryDelay(x) > 300 ? 'warn' : '' },
       { title: 'خرج', get: x => x.pickedUpAt, show: x => t12(x.pickedUpAt), type: 'datetime' }, { title: 'الحالة', get: x => x.status, show: x => pill(STATUS[x.status] || x.status || '—', x.status === 'CANCELLED' ? 'bad' : x.final ? 'ok' : 'warn') },

@@ -9,7 +9,7 @@
   const bg = m => browser.runtime.sendMessage(m);
   let state;
   try { state = await bg({ type: 'TALABAT_ACTIVE' }); } catch { return; }
-  if (!state?.active) return;
+  if (!state?.active || state.role === 'extra') return;
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const T = id => document.querySelector('[data-testid="' + id + '"]');
@@ -38,6 +38,36 @@
   banner.style.cssText = 'position:fixed;left:10px;bottom:10px;z-index:2147483646;padding:6px 12px;border-radius:999px;background:#12233af2;border:1px solid #2dd4bf;color:#e2e8f0;font:13px Tahoma,Arial;pointer-events:none';
   const say = text => { banner.textContent = 'شاشة مراقبة طلبات — مرصد الدهان · ' + text; if (!banner.isConnected) document.documentElement.append(banner); };
   say('بتبدأ…');
+
+  // ---------- Live Orders tab: the short #code of each live order (what is written on Apex next to the customer) ----------
+  if (state.role === 'live') {
+    if (!location.pathname.startsWith('/live-orders')) { location.href = '/live-orders'; return; }
+    say('بيقرا أكواد الأوردرات اللايف');
+    const readCodes = () => {
+      const out = new Map(), walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      const codeIn = e => { const w = document.createTreeWalker(e, NodeFilter.SHOW_TEXT); for (let x; (x = w.nextNode());) { const m = x.nodeValue.trim().match(/^#\s*(\d{2,8})$/); if (m) return m[1]; } return ''; };
+      for (let n; (n = walk.nextNode());) {
+        const t = n.nodeValue.trim(); if (!/^\d{9,12}$/.test(t) || out.has(t)) continue;
+        let card = n.parentElement, code = '';
+        for (let i = 0; i < 6 && card && !(code = codeIn(card)); i++) card = card.parentElement;
+        if (code) out.set(t, { id: t, code, store: (card.innerText.split('\n').find(x => /الدهان/.test(x)) || '').trim() || null });
+      }
+      return [...out.values()];
+    };
+    let lastKey = '', lastAt = 0;
+    for (;;) {
+      try {
+        [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Got it')?.click();
+        const codes = readCodes(), key = JSON.stringify(codes);
+        if (codes.length && (key !== lastKey || Date.now() - lastAt > 60000)) {
+          const r = await bg({ type: 'TALABAT_PUSH', orders: [], codes }).catch(() => null);
+          if (r?.ok) { lastKey = key; lastAt = Date.now(); }
+        }
+        say(codes.length + ' أوردر لايف · ' + new Date().toLocaleTimeString('ar-EG-u-nu-latn', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+      } catch {}
+      await sleep(4000);
+    }
+  }
 
   // ---------- reading ----------
   function readList() {

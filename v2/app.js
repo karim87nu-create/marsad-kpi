@@ -595,6 +595,7 @@
     if (isAdmin()) renderTelegram().catch(e => say('tgNote', e.message));
     OR.renderKey(isAdmin()).catch(e => say('ordersKeyNote', e.message));
     renderDesks().catch(e => say('desksNote', e.message));
+    renderLearned().catch(() => {});
     SITE.renderKey(isAdmin()).catch(e => say('siteKeyNote', e.message));
     SITE.renderTalabatKey(isAdmin()).catch(e => say('talKeyNote', e.message));
     for (const f of ['addEmployee', 'addAdmin', 'messageForm']) $(f).hidden = f === 'messageForm' ? !canWrite() : !isAdmin();
@@ -660,6 +661,19 @@
     table('desksTable', [{ title: 'الموظف', get: e => e.name }, { title: 'اسمه في Apex', get: e => apexOf(e.id).join('، '), show: apexSel }], state.employees.filter(e => e.active));
     const left = d.apexSeen.filter(n => !taken.has(n));
     $('apexLeft').replaceChildren(left.length ? h('div', { className: 'inline' }, ...left.map(n => pill(n))) : h('p', { className: 'muted', textContent: d.apexSeen.length ? 'كل الأسماء متربطة' : 'الأسماء هتظهر هنا أول ما مرصد الأوردرات يبعت من جهاز الكاشير' }));
+  }
+
+  // ---------- اللي المرصد اتعلمه ----------
+  const LEARN_KIND = { 'branch:talabat': 'فرع طلبات ← فرع Apex', 'branch:site': 'فرع الموقع ← فرع Apex', unknown: 'حاجة جديدة ظهرت' };
+  async function renderLearned() {
+    const d = await api('/api/learned');
+    const delays = new Map(d.delays.map(x => [x.branch, x.evidence]));
+    table('learnedTable', [{ title: 'النوع', get: x => LEARN_KIND[x.kind] || x.kind }, { title: 'من', get: x => x.kind === 'unknown' ? ({ talabat: 'طلبات', site: 'الموقع' })[x.a] || x.a : x.a },
+      { title: 'اتعلم إنه', get: x => x.b }, { title: 'الأدلة', get: x => x.evidence, show: x => x.evidence + (x.kind === 'unknown' ? ' أوردر' : ' ربط أكيد'), type: 'number' },
+      { title: 'وقت الضرب المعتاد', get: x => delays.get(x.a) || 0, show: x => x.kind === 'branch:talabat' ? (delays.get(x.a) >= 10 ? 'اتعلمه من ' + delays.get(x.a) + ' أوردر' : 'لسه (' + (delays.get(x.a) || 0) + ' من 10)') : '—' },
+      { title: 'آخر مرة', get: x => x.last, show: x => stamp(x.last), type: 'datetime' },
+      { title: '', get: () => '', show: x => !isAdmin() || x.kind === 'unknown' ? '' : btn('انسى ده', async () => { if (!confirm('ينسى إن «' + x.a + '» هو «' + x.b + '»؟')) return; await api('/api/learned', { method: 'POST', body: { kind: x.kind, a: x.a, b: x.b } }); renderLearned(); }) }],
+      d.facts, { empty: 'لسه ماتعلمش حاجة. أول ما أوردرات طلبات تتربط بالهاشتاج هيبدأ يتعلم.' });
   }
 
   // ---------- تليجرام ----------

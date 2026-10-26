@@ -156,19 +156,28 @@ function setup(app) {
     const apex = (d?.online || []).filter(a => a.kind === 'الموقع' && a.at).map(a => ({ ...a, t: Date.parse(a.at) }));
     if (!apex.length) return { matches: new Map(), apexCount: 0, hasList: Array.isArray(d?.online) };
     const names = app.apexNameMap ? await app.apexNameMap() : {};
-    const pairs = [];
+    // Sure first: a #number written on Apex that is this website order's number.
+    const pairs = [], sure = new Map();
     for (const o of rows) {
-      if (!o.received_at || EXCLUDED.has(o.status)) continue;
+      const a = apex.find(x => x.tag && String(x.tag).replace(/\D/g, '') === String(o.id));
+      if (a) { sure.set(o.id, a); if (o.branch && a.branch) await app.learn?.record('branch:site', o.branch, a.branch, o.id); }
+    }
+    const learned = app.learn ? await app.learn.pairs('branch:site') : new Map();
+    const branchOk = (s, b) => { const k = learned.get(s); return k && [...k.values()].reduce((x, y) => x + y, 0) >= 3 ? k.has(b) : sameBranch(s, b); };
+    for (const o of rows) {
+      if (!o.received_at || EXCLUDED.has(o.status) || sure.has(o.id)) continue;
       const anchor = o.transfer_at || o.received_at;
       for (const a of apex) {
         if (a.t < o.received_at - 2 * 60000 || a.t > o.received_at + 90 * 60000) continue;
-        const b = sameBranch(o.branch, a.branch); if (b === false) continue;
+        if (sure.has(o.id) || [...sure.values()].includes(a)) continue;
+        const b = branchOk(o.branch, a.branch); if (b === false) continue;
         const money = o.total && a.amount ? Math.abs(o.total - a.amount) / Math.max(o.total, 1) : 0.5;
         pairs.push({ o: o.id, a, score: Math.abs(a.t - anchor) / 60000 + money * 20 });
       }
     }
     pairs.sort((x, y) => x.score - y.score);
     const usedO = new Set(), usedA = new Set(), matches = new Map();
+    for (const [id, a] of sure) { usedO.add(id); usedA.add(a.no); matches.set(id, { no: a.no, at: iso(a.t), user: names[a.user] || a.user || null, amount: a.amount ?? null, how: 'code' }); }
     for (const p of pairs) {
       if (usedO.has(p.o) || usedA.has(p.a.no)) continue;
       usedO.add(p.o); usedA.add(p.a.no);
