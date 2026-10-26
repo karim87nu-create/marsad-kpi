@@ -52,3 +52,22 @@ test('items: Talabat dishes compared with Apex lines; wrong dish alerted; unknow
     assert.equal((await admin('POST', '/api/cancels/owner', { key: 'x:1', owner: 'branch' })).status, 400);
   } finally { await t.close(); }
 });
+
+test('items: a Talabat dish entered with Apex\'s own «طلبات» item (known name, other number, fitting price) is learned and then matches', async () => {
+  const t0 = cairoToUtc(2026, 10, 22, 20, 0, 0), at = m => new Date(t0 + m * 60000).toISOString();
+  const t = await start({ at: t0 + 60 * 60000 });
+  try {
+    const admin = await t.admin();
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const ot = (await admin('POST', '/api/orders/token')).body.token;
+    const store = 'الدهان، التجمع الخامس';
+    const online = [1, 2, 3].map(i => ({ no: 9200 + i, kind: 'طلبات', branch: 'التجمع', at: at(i * 10 + 2), user: 'sara', amount: 222.94, tag: '#' + (2800 + i),
+      items: [{ no: '0116003', name: 'عرض نصف فراخ طلبات', qty: 1, price: 222.94 }] }));
+    await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': ot }, body: { v: 1, day: '2026-10-22', online } });
+    const push = body => t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body });
+    await push({ codes: [1, 2, 3].map(i => ({ id: '39772000' + i + '0', code: String(2800 + i), store })) });
+    await push({ orders: [1, 2, 3].map(i => ({ id: '39772000' + i + '0', store, status: 'ACCEPTED', placedAt: at(i * 10), detail: { receivedAt: at(i * 10), acceptedAt: at(i * 10 + 0.5), items: [{ qty: 1, name: 'Half grilled chicken on charcoal', price: 252 }], subtotal: 252 } })) });
+    const d = (await admin('GET', '/api/talabat/day?day=2026-10-22')).body, o = Object.fromEntries(d.orders.map(x => [x.id, x]));
+    assert.equal(o['3977200030'].apex.items.ok, true, 'learned from the first two orders');
+  } finally { await t.close(); }
+});

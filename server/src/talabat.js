@@ -64,13 +64,14 @@ function setup(app) {
     for (const o of list) {
       const id = String(o.id || '').replace(/\D/g, '').slice(0, 20);
       if (id.length < 6) continue;
-      const placed = ms(o.placedAt) || ms(o.receivedAt), d = o.detail || null;
+      // The exact time comes with the details; until then the time shown on the list row (to the minute).
+      const placed = ms(o.placedAt) || ms(o.receivedAt) || ms(o.listAt), d = o.detail || null;
       const items = d && Array.isArray(d.items) ? JSON.stringify(d.items.slice(0, 60).map(x => ({ qty: Number(x.qty) || 1, name: String(x.name || '').slice(0, 120), price: Number(x.price) || null }))) : null;
       writes.push(db.prepare(`INSERT INTO talabat_orders (id, day, vendor_id, store, status, billable, placed_at, total, received_at, accept_seconds, accepted_at, picked_up_at, delivered_at,
           cancelled_at, cancel_owner, cancel_reason, items, subtotal, delivery_type, milestones, detail_at, first_seen, updated_at)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        ON CONFLICT(id) DO UPDATE SET vendor_id = COALESCE(excluded.vendor_id, talabat_orders.vendor_id), store = COALESCE(excluded.store, talabat_orders.store),
-          status = excluded.status, billable = COALESCE(excluded.billable, talabat_orders.billable), placed_at = COALESCE(talabat_orders.placed_at, excluded.placed_at),
+        ON CONFLICT(id) DO UPDATE SET day = CASE WHEN excluded.placed_at IS NOT NULL THEN excluded.day ELSE talabat_orders.day END, vendor_id = COALESCE(excluded.vendor_id, talabat_orders.vendor_id), store = COALESCE(excluded.store, talabat_orders.store),
+          status = excluded.status, billable = COALESCE(excluded.billable, talabat_orders.billable), placed_at = CASE WHEN excluded.placed_at IS NOT NULL AND (talabat_orders.placed_at IS NULL OR talabat_orders.placed_at % 60000 = 0) THEN excluded.placed_at ELSE talabat_orders.placed_at END,
           total = COALESCE(excluded.total, talabat_orders.total), received_at = COALESCE(excluded.received_at, talabat_orders.received_at),
           accept_seconds = COALESCE(excluded.accept_seconds, talabat_orders.accept_seconds), accepted_at = COALESCE(excluded.accepted_at, talabat_orders.accepted_at),
           picked_up_at = COALESCE(excluded.picked_up_at, talabat_orders.picked_up_at), delivered_at = COALESCE(excluded.delivered_at, talabat_orders.delivered_at),
@@ -168,17 +169,19 @@ function setup(app) {
       const c = compareItems(ti, a.items, { learned: learnedItems, ratio });
       c.reviewedOk = okReviews.has(o.id);
       itemsOf.set(o.id, c);
-      if (!teach || !app.learn || !(how.get(o.id) === 'code' || how.get(o.id) === 'manual' || c.ok)) continue;
-      // Sure pairs teach the dish name and the price ratio; one left on each side with the same quantity and a fitting
-      // price is the same dish under a name not known yet (never over a name already known: that is a wrong item).
-      for (const p of c.pairs) {
+      const sure = how.get(o.id) === 'code' || how.get(o.id) === 'manual';
+      if (!teach || !app.learn || !(sure || c.ok || how.get(o.id) === 'time')) continue;
+      // Sure pairs teach the dish name and the price ratio. One left on each side with the same quantity and a fitting
+      // price is the same dish under another name — also when the name is known with another Apex item (Talabat orders
+      // are entered with Apex's own «طلبات» items); a wrong weight or dish has a price that does not fit, so it is never
+      // learned. It counts once two orders showed it.
+      if (sure || c.ok) for (const p of c.pairs) {
         await app.learn.record('item:talabat', itemKey(p.talabat), String(p.apexNo).trim(), o.id);
         if (p.ratio && p.how === 'known') await app.learn.record('ratio:talabat', '-', itemKey(p.talabat), o.id, p.ratio);
       }
-      const known = n => SEED[itemKey(n)] || learnedItems.has(itemKey(n));
       if (c.missingOnApex.length === 1 && c.extraOnApex.length === 1 && c.unmatched) {
         const [t] = c.unmatched.talabat, [x] = c.unmatched.apex;
-        if ((!known(t.name) || c.reviewedOk) && Math.abs((t.qty || 1) - (x.qty || 1)) < 0.01 && (!t.price || !x.price || Math.abs(t.price / (t.qty || 1) / x.price - ratio) / ratio < 0.08))
+        if (Math.abs((t.qty || 1) - (x.qty || 1)) < 0.01 && (c.reviewedOk || (t.price && x.price && Math.abs(t.price / (t.qty || 1) / x.price - ratio) / ratio < 0.08)))
           await app.learn.record('item:talabat', itemKey(t.name), String(x.no).trim(), o.id);
       }
     }

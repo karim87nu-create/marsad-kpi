@@ -99,3 +99,23 @@ test('talabat: «accepted and not on Apex» is answered when it is entered on Ap
     assert.ok(!rep.text.includes('3526900'), 'never the internal number');
   } finally { await t.close(); }
 });
+
+test('talabat: a list row counts with the time shown on it (yesterday stays yesterday); the exact time from the details wins', async () => {
+  const t0 = cairoToUtc(2026, 10, 22, 21, 0, 0), at = (h, m) => new Date(cairoToUtc(2026, 10, 22, h, m, 0)).toISOString();
+  const t = await start({ at: t0 });
+  try {
+    const admin = await t.admin();
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const push = orders => t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders } });
+    await push([{ id: '4676900101', status: 'PICKED UP', listAt: at(20, 31) }, { id: '4676900102', status: 'COMPLETED', listAt: new Date(cairoToUtc(2026, 10, 21, 23, 10, 0)).toISOString() }]);
+    const row = id => t.app.db.raw.prepare('SELECT day, placed_at FROM talabat_orders WHERE id = ?').get(id);
+    assert.equal(row('4676900101').day, '2026-10-22'); assert.equal(row('4676900102').day, '2026-10-21');
+    const d = (await admin('GET', '/api/talabat/day?day=2026-10-22')).body;
+    assert.deepEqual(d.orders.map(o => o.id), ['4676900101'], 'shown before its details were read');
+    const exact = cairoToUtc(2026, 10, 22, 20, 31, 17);
+    await push([{ id: '4676900101', status: 'PICKED UP', placedAt: new Date(exact).toISOString(), detail: { items: [] } }]);
+    assert.equal(row('4676900101').placed_at, exact);
+    await push([{ id: '4676900101', status: 'PICKED UP', listAt: at(20, 31) }]);
+    assert.equal(row('4676900101').placed_at, exact, 'the list minute never replaces the exact second');
+  } finally { await t.close(); }
+});

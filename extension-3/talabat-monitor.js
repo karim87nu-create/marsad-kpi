@@ -41,10 +41,13 @@
   // The time shown on a list row ("Today, 19:55", "Yesterday, 23:10", "Oct 24, 21:00"), as ms; null when there is none.
   const MON = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
   function rowTime(l) {
-    for (const x of l) {
-      const m = x.match(/^(.*?)[,،]?\s*(\d{1,2}):(\d{2})$/); if (!m) continue;
-      const p = parts(Date.now()), w = m[1].trim().toLowerCase();
-      let y = +p.year, mo = +p.month - 1, d = +p.day;
+    // Tolerant: the time may sit anywhere in a line, with invisible direction marks or an icon word before it.
+    for (const raw of l) {
+      const x = String(raw).replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069\u00a0\u202f]/g, ' ').toLowerCase();
+      const m = x.match(/(today|yesterday|اليوم|النهارده|أمس|امبارح|إمبارح|[a-z]{3,9}\.?\s+\d{1,2}(?:,?\s*\d{4})?|\d{1,2}\s+[a-z]{3,9}(?:,?\s*\d{4})?)\D{0,6}?(\d{1,2}):(\d{2})(?:\s*(am|pm|ص|م))?/);
+      if (!m) continue;
+      const p = parts(Date.now()), w = m[1].trim();
+      let y = +p.year, mo = +p.month - 1, d = +p.day, h = +m[2];
       if (/^(today|اليوم|النهارده)$/.test(w)) { /* today */ }
       else if (/^(yesterday|أمس|امبارح|إمبارح)$/.test(w)) { const t = new Date(Date.UTC(y, mo, d) - 864e5); y = t.getUTCFullYear(); mo = t.getUTCMonth(); d = t.getUTCDate(); }
       else {
@@ -52,10 +55,12 @@
         const mm = MON[a[1] || a[4]]; if (mm === undefined) continue;
         if (mm > mo) y--; mo = mm; d = +(a[2] || a[3]);
       }
-      return Date.UTC(y, mo, d, +m[2], +m[3]) - offsetAt(Date.now());
+      if (/pm|م/.test(m[4] || '') && h < 12) h += 12; if (/am|ص/.test(m[4] || '') && h === 12) h = 0;
+      return Date.UTC(y, mo, d, h, +m[3]) - offsetAt(Date.now());
     }
     return null;
   }
+
 
   // ---------- a small banner so nobody uses this window by hand ----------
   const banner = Object.assign(document.createElement('div'), { id: 'marsad-tal-banner', dir: 'rtl' });
@@ -108,7 +113,8 @@
       const id = String(row.dataset.id || '').split('|').pop();
       if (!/^\d{6,}$/.test(id)) continue;
       const l = lines(row);
-      out.push({ id, at: rowTime(l), status: (l[1] || '').toUpperCase(), store: (l.find(x => /الدهان|el ?dahan/i.test(x)) || '').replace(/^\|\s*/, '') || null, total: money(l.find(x => /E£|EGP|ج\.م/.test(x))) });
+      const at = rowTime(l);
+      out.push({ id, at, listAt: at == null ? null : new Date(at).toISOString(), status: (l[1] || '').toUpperCase(), store: (l.find(x => /الدهان|el ?dahan/i.test(x)) || '').replace(/^\|\s*/, '') || null, total: money(l.find(x => /E£|EGP|ج\.م/.test(x))) });
     }
     return out;
   }
@@ -206,7 +212,7 @@
     }
     if (T('details-order-id')) await closeDetail();
     const start = dayStart(), end = start + 864e5;
-    const inDay = o => o.at === null ? exact : o.at >= start - 60000 && o.at < end;
+    const inDay = o => o.at !== null && o.at >= start - 60000 && o.at < end;
     const older = () => { const t = readList().at(-1)?.at; return t != null && t < start - 60000; };
     // The list shows 50 at a time: on the first pass load the whole day, later only when an asked-for order is further down.
     const loadMore = () => [...document.querySelectorAll('button,div,span,p')].find(e => e.childElementCount === 0 && /^(Load more|عرض المزيد)$/i.test(e.textContent.trim()));
@@ -215,6 +221,8 @@
     const past = () => rows.some(o => o.at != null && o.at < start - 60000);
     for (let i = 0; i < 40 && loadMore() && !past() && (full || want.some(id => !rows.some(o => o.id === id))); i++) { say('بيحمّل أوردرات يوم التشغيل… ' + rows.filter(inDay).length); loadMore().click(); await sleep(1500); rows = await scan(); }
     const list = rows.filter(inDay);
+    const noTime = rows.filter(o => o.at === null);
+    if (!rows.length || (noTime.length === rows.length)) { say(rows.length ? 'مش قادر يقرا وقت الصفوف — الصف بيقول: ' + lines(rowEl(rows[0].id)).slice(0, 5).join(' | ') : 'سجل طلبات لسه محمّلش أوردرات؛ مستني ظهور الصفوف.'); return; }
     if (!list.length) { say('سجل طلبات لسه محمّلش أوردرات؛ مستني ظهور الصفوف. اللايف شغال في التبويب التاني.'); return; }
     // Sent: everything on a full pass; otherwise what is new or changed since this page loaded, plus the top of the list.
     const send = full ? list : list.filter((o, i) => i < 60 || known.get(o.id) !== o.status);
@@ -228,6 +236,7 @@
       if (d) await push([{ ...d, store: list.find(o => o.id === id)?.store, total: list.find(o => o.id === id)?.total }]);
     }
     if (failures) return; // Preserve the delivery error instead of overwriting it with a success banner.
+    if (noTime.length) { say('مش قادر يقرا وقت ' + noTime.length + ' صف من ' + rows.length + ' — الصف بيقول: ' + lines(rowEl(noTime[0].id)).slice(0, 5).join(' | ')); return; }
     say(list.length + ' أوردر النهارده' + (exact ? '' : ' (من فلتر طلبات، يوم التشغيل بس)') + ' · آخر قراءة ' + new Date().toLocaleTimeString('ar-EG-u-nu-latn', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
     // The list itself does not refresh on its own: reload it every minute when nothing is pending.
     if (!want.length && Date.now() - lastReload > 60000) { lastReload = Date.now(); location.reload(); }
