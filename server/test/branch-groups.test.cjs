@@ -40,10 +40,10 @@ test('telegram: each branch has its own group; its alerts and their replies go t
     const r51 = sent.filter(s => /أوردر 51/.test(s.text));
     assert.deepEqual(r51.map(s => s.chat).sort(), ['-300']);
     for (const r of r51) assert.equal(sent[r.reply - 1].chat, r.chat, 'replied in the same chat');
-    // A comment on an order goes to its branch's group too.
+    // A comment alone must never send a separate message.
     await push({ alerts: [{ key: 'note:51', kind: 'ordersComment', text: '💬 note 51', branch: 'التجمع' }] });
     await t.app.telegramTick();
-    assert.deepEqual(sent.filter(s => s.text === '💬 note 51').map(s => s.chat), ['-300']);
+    assert.deepEqual(sent.filter(s => s.text === '💬 note 51').map(s => s.chat), []);
     const log = (await admin('GET', '/api/telegram?log=1&date=2026-10-22')).body.log;
     assert.ok(log.some(l => l.group === 'فرع التجمع'));
     assert.ok(!log.some(l => l.group === 'الفروع' && /51/.test(l.text)), 'the routed copy is not listed twice');
