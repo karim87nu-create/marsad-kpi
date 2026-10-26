@@ -13,7 +13,15 @@ const KNOWN_STEP = new Set(['DISPLAYED_AT_VENDOR', 'ACCEPTED', 'PICKED_UP', 'DEL
 const KNOWN_OWNER = new Set(['Customer', 'Vendor', 'Platform', 'Transport', 'Rider']);
 const norm = x => String(x || '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/^\s*(فرع|الدهان)[\s,،]*/g, '').trim();
 // "الدهان، التجمع الخامس - البنفسج" ~ "التجمع"; "الدهان سيتي ستار مول" ~ "سيتي ستار".
+// Talabat store names → the Apex branch they are (the stores do not carry the branch's name).
+const STORE_AREA = [[/سيتي ستار|مكرم عبيد|makram|city ?stars|nasr|نصر/i, 'نصر'], [/مدينتي|madinaty|ساوث بارك/i, 'مدينتي'], [/التجمع|البنفسج|tagamo|banafseg|الخامس/i, 'التجمع']];
+const area = s => STORE_AREA.find(([re]) => re.test(String(s || '')))?.[1] || null;
+// One name per branch on the pages and in the messages (Talabat shows each store in Arabic and in English).
+const BRANCH_NAME = { 'نصر': 'مدينة نصر', 'مدينتي': 'مدينتي', 'التجمع': 'التجمع' };
+const storeName = s => BRANCH_NAME[area(s)] || s || null;
 function sameBranch(a, b) {
+  const ka = area(a), kb = area(b);
+  if (ka && kb) return ka === kb;
   const x = norm(a), y = norm(b);
   if (!x || !y) return null;
   const words = s => s.split(/[\s،,\-]+/).filter(w => w.length > 2);
@@ -126,9 +134,14 @@ function setup(app) {
       return Math.min(90, Math.max(15, p95 / 60 * 1.5)) * 60000;
     };
     const byNo = new Map(apex.map(a => [String(a.no), a])), usedA = new Set(), matches = new Map(), how = new Map();
-    // 1) the #code
-    for (const o of rows) {
-      const a = apex.find(x => x.tag && !usedA.has(String(x.no)) && (x.tag === o.code || x.tag === o.id || (o.id.endsWith(x.tag) && x.tag.length >= 6)));
+    // 1) the code written on Apex next to the customer: exact (#8403 / 8403 / the long number), else the same digits
+    // without the zeros («843» for 8403) at the same branch within 3 hours.
+    const z = s => String(s || '').replace(/0/g, '');
+    const codeOf = (x, o, loose) => x.tag && (x.tag === o.code || x.tag === o.id || (o.id.endsWith(x.tag) && x.tag.length >= 6) ||
+      (loose && o.code && x.tag.length >= 3 && z(x.tag) === z(o.code) && branchOk(o.store, x.branch) !== false && Math.abs(x.t - (o.accepted_at || o.placed_at || x.t)) < 3 * 3600000));
+    for (const loose of [false, true]) for (const o of rows) {
+      if (matches.has(o.id)) continue;
+      const a = apex.find(x => !usedA.has(String(x.no)) && codeOf(x, o, loose));
       if (a) { matches.set(o.id, a); usedA.add(String(a.no)); how.set(o.id, 'code'); }
     }
     // 2) manual
@@ -141,10 +154,12 @@ function setup(app) {
       if (!anchor) continue;
       const win = await windowFor(o.store);
       for (const a of apex) {
-        if (usedA.has(String(a.no)) || (a.tag && a.tag !== o.code) || a.t < anchor - 2 * 60000 || a.t > anchor + win) continue;
+        // An Apex order that carries another order's code is never taken by time.
+        if (usedA.has(String(a.no)) || (a.tag && !codeOf(a, o, true)) || a.t < anchor - 2 * 60000 || a.t > anchor + win) continue;
         if (branchOk(o.store, a.branch) === false) continue;
-        const money = o.subtotal && a.amount ? Math.min(1, Math.abs(o.subtotal - a.amount) / Math.max(o.subtotal, 1)) : 0.3;
-        pairs.push({ o: o.id, a, score: Math.abs(a.t - anchor) / 60000 + money * 15 });
+        // The amount weighs as much as the time: 10% apart counts like 6 minutes; an unknown amount like 4.5 minutes.
+        const money = o.subtotal && a.amount ? Math.min(1, Math.abs(o.subtotal - a.amount) / Math.max(o.subtotal, 1)) : 0.075;
+        pairs.push({ o: o.id, a, score: Math.abs(a.t - anchor) / 60000 + money * 60 });
       }
     }
     pairs.sort((x, y) => x.score - y.score);
@@ -170,12 +185,12 @@ function setup(app) {
       c.reviewedOk = okReviews.has(o.id);
       itemsOf.set(o.id, c);
       const sure = how.get(o.id) === 'code' || how.get(o.id) === 'manual';
-      if (!teach || !app.learn || !(sure || c.ok || how.get(o.id) === 'time')) continue;
+      if (!teach || !app.learn || !sure) continue;   // only orders linked for sure (the code, or by hand) teach
       // Sure pairs teach the dish name and the price ratio. One left on each side with the same quantity and a fitting
       // price is the same dish under another name — also when the name is known with another Apex item (Talabat orders
       // are entered with Apex's own «طلبات» items); a wrong weight or dish has a price that does not fit, so it is never
       // learned. It counts once two orders showed it.
-      if (sure || c.ok) for (const p of c.pairs) {
+      for (const p of c.pairs) {
         await app.learn.record('item:talabat', itemKey(p.talabat), String(p.apexNo).trim(), o.id);
         if (p.ratio && p.how === 'known') await app.learn.record('ratio:talabat', '-', itemKey(p.talabat), o.id, p.ratio);
       }
@@ -198,7 +213,7 @@ function setup(app) {
     const clock = t => new Date(t).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit' });
     const out = [], det = app.apexDetails ? await app.apexDetails(day) : { extra: () => '', status: () => '' };
     for (const o of m.rows) {
-      const store = o.store ? '\n' + o.store : '', ref = o.code ? '#' + o.code : o.id; // the short #code staff use; the long id only when there is no code
+      const store = o.store ? '\nالفرع: ' + storeName(o.store) : '', ref = o.code ? '#' + o.code : o.id; // the short #code staff use; the long id only when there is no code
       if (m.hasApex && o.accepted_at && !m.matches.get(o.id) && o.status !== 'CANCELLED' && now - o.accepted_at > NOT_ENTERED_MIN * 60000 && now - o.accepted_at < 3 * 3600000)
         out.push({ key: 'talabat:notEntered:' + o.id, kind: 'talabatNotEntered', target: 'online', text: '🛵 طلبات | ⚠️ أوردر اتقبل على طلبات ولسه ماتضربش على Apex\nرقم أوردر طلبات: ' + ref + store + '\nاتقبل الساعة ' + clock(o.accepted_at) + '، وبقاله ' + Math.round((now - o.accepted_at) / 60000) + ' دقيقة' + (o.subtotal ? '\nقيمة الأوردر: ' + Math.round(o.subtotal) + ' ج' : '') });
       if (o.status === 'CANCELLED' && o.cancelled_at && now - o.cancelled_at < 3 * 3600000)
@@ -238,7 +253,7 @@ function setup(app) {
     const m = await matchDay(day), last = Number(await setting('talabat_last_push')) || null;
     let parse = x => { try { return JSON.parse(x); } catch { return null; } };
     return { day, linked: !!await setting('talabat_token_hash'), lastPush: iso(last), stale: !last || ctx.now - last > STALE_MS, apexLinked: m.hasApex, serverNow: iso(ctx.now),
-      orders: m.rows.map(o => ({ id: o.id, store: o.store, status: o.status, billable: o.billable, placedAt: iso(o.placed_at), total: o.total, receivedAt: iso(o.received_at), acceptSeconds: o.accept_seconds,
+      orders: m.rows.map(o => ({ id: o.id, store: storeName(o.store), status: o.status, billable: o.billable, placedAt: iso(o.placed_at), total: o.total, receivedAt: iso(o.received_at), acceptSeconds: o.accept_seconds,
         acceptedAt: iso(o.accepted_at), pickedUpAt: iso(o.picked_up_at), deliveredAt: iso(o.delivered_at), cancelledAt: iso(o.cancelled_at), cancelOwner: o.cancel_owner, cancelReason: o.cancel_reason,
         code: o.code, steps: parse(o.milestones) || null, items: parse(o.items) || [], subtotal: o.subtotal, deliveryType: o.delivery_type, detailRead: !!o.detail_at, final: FINAL.has(o.status), apex: m.matches.get(o.id) || null })),
       unmatchedApex: m.unmatchedApex };

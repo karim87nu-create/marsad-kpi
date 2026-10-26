@@ -152,6 +152,25 @@ function setup(app) {
     return { ok: true, officer, follow: 1, kinds: KINDS, serverNow: iso(ctx.now) };
   }, { limit: 1024 * 1024 });
 
+  // ---- the Talabat codes of past days, sent once by the monitor from Apex's archive (so old days link right too) ----
+  app.route('POST', '/api/orders/tags', async ctx => {
+    const hash = await setting('orders_token_hash'), given = ctx.header('x-orders-token');
+    if (!hash || !given || sha256(given) !== hash) fail(401, 'مفتاح مرصد الأوردرات غير صحيح');
+    const b = ctx.body || {};
+    if (!validDate(String(b.day || ''))) fail(400, 'invalid_day');
+    const r = await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(b.day);
+    if (!r) return { ok: true, updated: 0 };
+    let d; try { d = JSON.parse(r.data); } catch { return { ok: true, updated: 0 }; }
+    const tags = b.tags && typeof b.tags === 'object' ? b.tags : {};
+    let updated = 0;
+    for (const list of ['online', 'cancels']) for (const o of Array.isArray(d[list]) ? d[list] : []) {
+      const tg = tags[String(o.no)]; if (!tg || !/^\d{3,12}$/.test(String(tg)) || o.tag === String(tg)) continue;
+      o.tag = String(tg); updated++;
+    }
+    if (updated) await db.prepare('UPDATE orders_days SET data = ? WHERE day = ?').run(JSON.stringify(d), b.day);
+    return { ok: true, updated };
+  });
+
   // ---- officer values (not sales) ----
   app.route('GET', '/api/orders/officer', async ctx => {
     await app.requireAdmin(ctx);

@@ -119,3 +119,28 @@ test('talabat: a list row counts with the time shown on it (yesterday stays yest
     assert.equal(row('4676900101').placed_at, exact, 'the list minute never replaces the exact second');
   } finally { await t.close(); }
 });
+
+test('talabat: codes written bare or cut («8698», «843» for 8403) link for sure; past days get their codes later; one name per branch', async () => {
+  const t0 = cairoToUtc(2026, 10, 22, 21, 0, 0), at = m => new Date(t0 + m * 60000).toISOString();
+  const t = await start({ at: t0 + 60 * 60000 });
+  try {
+    const admin = await t.admin();
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const ot = (await admin('POST', '/api/orders/token')).body.token;
+    const push = body => t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body });
+    // Two Nasr City orders a minute apart: by time alone they would be swapped; the codes decide.
+    await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': ot }, body: { v: 1, day: '2026-10-22', online: [
+      { no: 3526864, sn: 651, kind: 'طلبات', branch: 'مدينة نصر', at: at(1), user: 'a', amount: 700 },
+      { no: 3526865, sn: 653, kind: 'طلبات', branch: 'مدينة نصر', at: at(2), user: 'b', amount: 480 }] } });
+    await push({ codes: [{ id: '4676900301', code: '8698' }, { id: '4676900302', code: '8403' }] });
+    await push({ orders: [{ id: '4676900301', store: 'الدهان سيتي ستار مول، مكرم عبيد', status: 'ACCEPTED', placedAt: at(0), detail: { acceptedAt: at(0.2), subtotal: 480, items: [] } },
+      { id: '4676900302', store: 'El Dahan, Makram Ebeid', status: 'ACCEPTED', placedAt: at(0.5), detail: { acceptedAt: at(0.7), subtotal: 700, items: [] } }] });
+    // The codes come later (the monitor's archive pass): «8698» and «843».
+    const r = await t.call('POST', '/api/orders/tags', { headers: { 'x-orders-token': ot }, body: { day: '2026-10-22', tags: { 3526864: '843', 3526865: '8698' } } });
+    assert.equal(r.body.updated, 2);
+    const d = (await admin('GET', '/api/talabat/day?day=2026-10-22')).body, o = Object.fromEntries(d.orders.map(x => [x.id, x]));
+    assert.equal(o['4676900301'].apex.no, 3526865); assert.equal(o['4676900301'].apex.how, 'code');
+    assert.equal(o['4676900302'].apex.no, 3526864); assert.equal(o['4676900302'].apex.how, 'code');
+    assert.deepEqual([...new Set(d.orders.map(x => x.store))], ['مدينة نصر'], 'Arabic and English store names are one branch');
+  } finally { await t.close(); }
+});
