@@ -78,7 +78,7 @@ function setup(app) {
     const c = await config();
     if (ctx.query.log === '1') {
       const w = dayWindow(ctx.query.date || businessDay(ctx.now));
-      return { log: (await db.prepare('SELECT * FROM telegram_log WHERE created_at >= ? AND created_at < ? ORDER BY created_at DESC LIMIT 500').all(w.start, w.end))
+      return { log: (await db.prepare("SELECT * FROM telegram_log WHERE created_at >= ? AND created_at < ? AND IFNULL(error, '') <> 'routed:branch' ORDER BY created_at DESC LIMIT 500").all(w.start, w.end))
         .map(r => ({ kind: r.kind, group: r.target?.startsWith('branch:') ? 'فرع ' + r.target.slice(7) : r.target === 'branches' ? 'الفروع' : r.target === 'online' || r.kind.startsWith('orders') && !['ordersLate','ordersLate:resolved'].includes(r.kind) ? 'الأونلاين وضرب الأوردر' : 'المكالمات', label: RULE_LIST[r.kind] || RECOVERY_LABELS[r.kind.replace(':resolved', '')] || r.kind, text: r.text, createdAt: iso(r.created_at), sentAt: iso(r.sent_at), error: r.sent_at ? null : r.error })) };
     }
     return { configured: !!c.token, botName: c.bot_name || null, chat: c.chat_id ? { id: c.chat_id, title: c.chat_title } : null,
@@ -463,15 +463,20 @@ function setup(app) {
         }
         // A reply stays in the chat which actually received its parent, even after relinking.
         const parent = r.reply_to ? await db.prepare('SELECT * FROM telegram_log WHERE key = ?').get(r.reply_to) : null;
+        const target = r.target || (r.kind.startsWith('orders') ? (r.kind.split(':')[0] === 'ordersLate' ? 'branches' : 'online') : null);
+        // A branch alert goes to that branch's own group only (the managers' group gets it only while the branch has no group).
+        // A reply whose warning already went to the managers' group stays there under it.
+        if (target === 'branches' && r.branch && !parent?.message_id) {
+          const g = groups || (groups = await branchGroups()), name = await branchGroupOf(r.branch, g);
+          if (name) {
+            await db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, reply_to, sent_at, target, branch) VALUES (?,?,?,?,?,?,NULL,?,?)')
+              .run('b:' + r.key, r.kind, null, r.text, r.created_at, r.reply_to ? 'b:' + r.reply_to : null, 'branch:' + name, r.branch);
+            await db.prepare("UPDATE telegram_log SET sent_at = ?, error = 'routed:branch' WHERE id = ? AND sent_at IS NULL").run(now, r.id);
+            continue;
+          }
+        }
         if (r.reply_to && (!parent?.message_id || parent.error)) continue;
         const delivered = parent ? await db.prepare('SELECT value FROM settings WHERE key = ?').get('telegram_delivery:' + parent.key) : null;
-        const target = r.target || (r.kind.startsWith('orders') ? (r.kind.split(':')[0] === 'ordersLate' ? 'branches' : 'online') : null);
-        // A branch alert is also copied to that branch's own group (replies follow their parent there).
-        if (target === 'branches' && r.branch) {
-          const g = groups || (groups = await branchGroups()), name = await branchGroupOf(r.branch, g);
-          if (name) await db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, reply_to, sent_at, target, branch) VALUES (?,?,?,?,?,?,NULL,?,?)')
-            .run('b:' + r.key, r.kind, null, r.text, r.created_at, r.reply_to ? 'b:' + r.reply_to : null, 'branch:' + name, r.branch);
-        }
         const chat = delivered?.value || (target?.startsWith('branch:') ? (groups || (groups = await branchGroups()))[target.slice(7)]?.id : target === 'branches' ? c.branch_chat_id : target === 'online' ? c.online_chat_id : c.chat_id);
         if (!chat) continue; // Never fall back to a different department's group.
         const claim = await db.prepare('UPDATE telegram_log SET sent_at = ?, tries = tries + 1 WHERE id = ? AND sent_at IS NULL').run(app.now(), r.id);

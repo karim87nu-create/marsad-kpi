@@ -5,7 +5,7 @@ const http = require('node:http');
 const { start } = require('./helpers.cjs');
 const { cairoToUtc } = require('../src/time.js');
 
-test('telegram: each branch has its own group; its alerts and their replies go there too', async () => {
+test('telegram: each branch has its own group; its alerts and their replies go there only', async () => {
   const sent = [], fake = http.createServer((req, res) => {
     let body = ''; req.on('data', c => body += c); req.on('end', () => {
       const method = req.url.split('/').pop(), b = JSON.parse(body || '{}');
@@ -29,19 +29,20 @@ test('telegram: each branch has its own group; its alerts and their replies go t
     assert.equal((await admin('POST', '/api/telegram', { action: 'chat', chatId: '-300', title: 'فرع التجمع', target: 'branch', branch: 'التجمع' })).status, 200);
     assert.match(sent.pop().text, /كجروب فرع التجمع/);
     assert.deepEqual((await admin('GET', '/api/telegram')).body.branchGroups, { 'التجمع': { id: '-300', title: 'فرع التجمع' } });
-    // A late order at Tagamoa (to the managers' group and Tagamoa's), one at Madinaty (managers only).
+    // A late order at Tagamoa (Tagamoa's group only), one at Madinaty (no group yet: the managers' group).
     await push({ open: [{ no: 51, branch: 'التجمع', kind: 'Hotline', at: at(0), wait: 31 }, { no: 52, branch: 'مدينتي', kind: 'Hotline', at: at(0), wait: 31 }],
       alerts: [{ key: 'late:51', kind: 'ordersLate', text: 'late 51' }, { key: 'late:52', kind: 'ordersLate', text: 'late 52' }] });
     await t.app.telegramTick(); await t.app.telegramTick();
-    assert.deepEqual(sent.filter(s => s.text.startsWith('late')).map(s => s.chat + ' ' + s.text).sort(), ['-200 late 51', '-200 late 52', '-300 late 51']);
-    // It left: the reply goes to both, each under its own message.
+    assert.deepEqual(sent.filter(s => s.text.startsWith('late')).map(s => s.chat + ' ' + s.text).sort(), ['-200 late 52', '-300 late 51']);
+    // It left: the reply goes under the warning, in the same group.
     await push({ open: [], lateOut: [{ no: 51, branch: 'التجمع', kind: 'Hotline', out: at(35), wait: 35, pilot: 'p' }, { no: 52, branch: 'مدينتي', kind: 'Hotline', out: at(36), wait: 36 }] });
     await t.app.telegramTick(); await t.app.telegramTick();
     const r51 = sent.filter(s => /أوردر 51/.test(s.text));
-    assert.deepEqual(r51.map(s => s.chat).sort(), ['-200', '-300']);
+    assert.deepEqual(r51.map(s => s.chat).sort(), ['-300']);
     for (const r of r51) assert.equal(sent[r.reply - 1].chat, r.chat, 'replied in the same chat');
     const log = (await admin('GET', '/api/telegram?log=1&date=2026-10-22')).body.log;
     assert.ok(log.some(l => l.group === 'فرع التجمع'));
+    assert.ok(!log.some(l => l.group === 'الفروع' && /51/.test(l.text)), 'the routed copy is not listed twice');
     assert.equal((await admin('POST', '/api/telegram', { action: 'unlinkBranch', branch: 'التجمع' })).status, 200);
     assert.deepEqual((await admin('GET', '/api/telegram')).body.branchGroups, {});
   } finally { await t.close(); fake.close(); }

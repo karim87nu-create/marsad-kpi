@@ -696,7 +696,7 @@
     // One group per branch: each branch's delays and cancellations also go to its own group.
     const bg = t.branchGroups || {}, names = [...new Set([...(t.branchNames || []), ...Object.keys(bg)])].sort();
     tgBranchNames = names;
-    $('tgBranchGroups').replaceChildren(h('h3', { textContent: 'جروب لكل فرع' }), h('p', { className: 'muted', textContent: 'تأخير خروج أوردرات الفرع وإلغاءاته (Apex وطلبات والموقع) بتروح لجروب الفرع، وكمان لجروب إدارات الفروع. ضيف البوت لجروب الفرع وابعت فيه رسالة، ودوس «دور على الجروب» واختار الفرع.' }),
+    $('tgBranchGroups').replaceChildren(h('h3', { textContent: 'جروب لكل فرع' }), h('p', { className: 'muted', textContent: 'تأخير خروج أوردرات الفرع وإلغاءاته (Apex وطلبات والموقع) بتروح لجروب الفرع بس. الفرع اللي لسه مالوش جروب، تنبيهاته بتروح لجروب إدارات الفروع. ضيف البوت لجروب الفرع وابعت فيه رسالة، ودوس «دور على الجروب» واختار الفرع.' }),
       ...(names.length ? names.map(n => h('div', { className: 'tg-group' }, h('span', { className: 'muted', textContent: n }), bg[n] ? h('strong', { textContent: bg[n].title || bg[n].id }) : pill('مش مربوط', 'warn'),
         h('span', { className: 'inline' }, bg[n] ? btn('رسالة تجربة', async () => { try { await api('/api/telegram', { method: 'POST', body: { action: 'test', target: 'branch', branch: n } }); say('tgNote', 'اتبعتت رسالة تجربة لجروب فرع ' + n + '.'); } catch (x) { say('tgNote', x.message); } }) : null,
           bg[n] ? btn('فك الربط', async () => { if (!confirm('فك ربط جروب فرع ' + n + '؟')) return; try { await api('/api/telegram', { method: 'POST', body: { action: 'unlinkBranch', branch: n } }); renderTelegram(); } catch (x) { say('tgNote', x.message); } }) : null)))
