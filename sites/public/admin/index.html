@@ -341,7 +341,8 @@
         <p class="muted">1) اعمل بوت من BotFather وانسخ التوكن. 2) ضيف البوت للجروب وابعت فيه أي رسالة. 3) دوس «دور على الجروب» واختاره واربطه كجروب المكالمات أو الأونلاين وضرب الأوردر أو الفروع.</p>
         <div id="tgStatus" class="tg-groups"></div>
         <form id="tgToken" class="inline"><input aria-label="توكن البوت" name="token" placeholder="توكن البوت" autocomplete="off" required><button type="submit">ربط البوت</button></form>
-        <div class="inline" style="margin-top:8px"><button type="button" id="tgDiscover" class="ghost">دور على الجروب</button><select id="tgChats" aria-label="جروب تليجرام" hidden></select><button type="button" id="tgChoose" hidden>ربطه كجروب المكالمات</button><button type="button" id="tgChooseOnline" hidden>ربطه كجروب الأونلاين وضرب الأوردر</button><button type="button" id="tgChooseBranches" hidden>ربطه كجروب الفروع</button></div>
+        <div class="inline" style="margin-top:8px"><button type="button" id="tgDiscover" class="ghost">دور على الجروب</button><select id="tgChats" aria-label="جروب تليجرام" hidden></select><button type="button" id="tgChoose" hidden>ربطه كجروب المكالمات</button><button type="button" id="tgChooseOnline" hidden>ربطه كجروب الأونلاين وضرب الأوردر</button><button type="button" id="tgChooseBranches" hidden>ربطه كجروب الفروع</button><select id="tgBranchPick" aria-label="الفرع" hidden></select><button type="button" id="tgChooseBranch" hidden>ربطه كجروب الفرع ده</button></div>
+        <div id="tgBranchGroups"></div>
         <form id="tgSettings" class="stack" style="margin-top:10px"><label><input type="checkbox" name="enabled"> التنبيهات شغالة</label><div id="tgRules" class="stack"></div><button type="submit">حفظ</button></form>
         <p id="tgNote" class="muted" role="status"></p>
         <p class="muted">كل تنبيه يتبعه إشعار عند انتهاء الحالة أو تغيّرها، بدون تكرار. انقطاع البيانات لا يُعتبر انتهاءً للمشكلة.</p><h3>تنبيهات النهارده</h3><div id="tgLog"></div>
@@ -381,6 +382,6 @@
 <script src="orders.js?v=3"></script>
 <script src="site.js?v=8"></script>
 <script src="insights.js?v=2"></script>
-<script src="app.js?v=27"></script>
+<script src="app.js?v=28"></script>
 </body>
 </html>

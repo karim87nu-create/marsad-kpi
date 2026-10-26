@@ -246,6 +246,7 @@ async function migrate(db) {
   try { await db.prepare('SELECT total FROM site_orders LIMIT 0').all(); } catch { try { await db.prepare('ALTER TABLE site_orders ADD COLUMN total REAL').run(); } catch {} }
   // Two groups: the call center's (default) and the branch managers' (target = 'branches').
   try { await db.prepare('SELECT target FROM telegram_log LIMIT 0').all(); } catch { try { await db.prepare('ALTER TABLE telegram_log ADD COLUMN target TEXT').run(); } catch {} }
+  try { await db.prepare('SELECT branch FROM telegram_log LIMIT 0').all(); } catch { try { await db.prepare('ALTER TABLE telegram_log ADD COLUMN branch TEXT').run(); } catch {} }
   try { await db.prepare('SELECT branch_chat_id, branch_chat_title FROM telegram_config LIMIT 0').all(); } catch {
     for (const c of ['branch_chat_id TEXT', 'branch_chat_title TEXT']) { try { await db.prepare('ALTER TABLE telegram_config ADD COLUMN ' + c).run(); } catch {} }
   }

@@ -63,7 +63,7 @@ function setup(app) {
       // Evidence that names an employee wins over Talabat's own owner.
       ev.sort((x, y) => (y.owner === 'employee') - (x.owner === 'employee'));
       const s = suggest(o.cancel_reason, ev);
-      out.push({ key: 'talabat:' + o.id, source: 'talabat', ref: o.id, code: o.code, at: iso(o.cancelled_at), store: o.store, branch: a?.branch || null, apexNo: a?.no ?? null, user: a?.user || null,
+      out.push({ key: 'talabat:' + o.id, source: 'talabat', ref: o.id, code: o.code, at: iso(o.cancelled_at), store: o.store, branch: a?.branch || null, apexNo: a?.no ?? null, apexSn: a?.sn ?? null, user: a?.user || null,
         pilot: null, amount: o.subtotal ?? o.total ?? null, reason: [ownerTxt, o.cancel_reason].filter(Boolean).join(' — ') || null, reasonKey: reasonKey(o.cancel_reason), ...s });
     }
     // Apex cancellations (after the pilot took the order); a Talabat one already listed above is not listed twice.
@@ -75,7 +75,7 @@ function setup(app) {
       if (c.afterOut != null) ev.push({ text: 'اتلغى بعد خروجه مع الطيار بـ ' + c.afterOut + ' دقيقة' });
       const s = suggest(reasonText, ev);
       if (!s.owner && c.afterOut != null && c.afterOut >= LATE_OUT_MIN) { s.owner = 'pilot'; s.why.push('اتلغى بعد ' + c.afterOut + ' دقيقة مع الطيار'); }
-      out.push({ key: 'apex:' + c.no, source: 'apex', ref: String(c.no), kind: c.kind, at: c.at, branch: c.branch, apexNo: c.no, user: nm(c.user), by: nm(c.by), pilot: c.pilot || null,
+      out.push({ key: 'apex:' + c.no, source: 'apex', ref: String(c.no), kind: c.kind, at: c.at, branch: c.branch, apexNo: c.no, apexSn: c.sn ?? null, user: nm(c.user), by: nm(c.by), pilot: c.pilot || null,
         amount: c.amount ?? null, reason: reasonText || null, reasonKey: reasonKey(reasonText), ...s });
     }
     for (const x of out) {

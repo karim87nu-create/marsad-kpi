@@ -90,12 +90,12 @@ window.MarsadSite = function MarsadSite(ctx) {
       kpi('لسه ماتحوّلتش', all.filter(x => x.ongoing).length, all.some(x => x.ongoing && x.late) ? 'bad' : ''), kpi('متوسط مدة التحويل', waits.length ? minSec(waits.reduce((a, b) => a + b, 0) / waits.length) : '—'),
       ...(d.apex?.linked ? [kpi('اتربطت بأوردر Apex', all.filter(x => x.apex).length + ' من ' + all.length, all.some(x => !x.apex && !x.ongoing) ? 'warn' : 'good', 'ومنها اسم اللي ضربها'),
         kpi('على Apex من غير أوردر موقع', (d.apex.unmatched || []).length, (d.apex.unmatched || []).length ? 'warn' : '', 'متسجلة «الموقع» على Apex ومالقيناش لها أوردر')] : []));
-    table('siteTApex', [{ title: 'أوردر Apex', get: x => x.no, type: 'number' }, { title: 'الفرع', get: x => x.branch }, { title: 'اتضرب', get: x => x.at, show: x => t12(x.at), type: 'datetime' }, { title: 'ضربه', get: x => x.user || '—' }, { title: 'المبلغ', get: x => x.amount, type: 'number' }],
+    table('siteTApex', [{ title: 'أوردر Apex', get: x => x.sn ?? x.no, type: 'number' }, { title: 'الفرع', get: x => x.branch }, { title: 'اتضرب', get: x => x.at, show: x => t12(x.at), type: 'datetime' }, { title: 'ضربه', get: x => x.user || '—' }, { title: 'المبلغ', get: x => x.amount, type: 'number' }],
       (d.apex?.unmatched || []).filter(x => !pick || x.branch === pick), { empty: d.apex?.linked ? 'كل أوردرات الموقع على Apex ليها أوردر على الموقع' : 'بيظهر مع نسخة سكريبت الكاشير الجديدة' });
     table('siteTTable', [{ title: 'الأوردر', get: x => x.id, show: x => '#' + x.id, type: 'number' }, { title: 'وقت الاستلام', get: x => x.receivedAt, show: x => t12(x.receivedAt), type: 'datetime' },
       { title: 'وقت التحويل للفرع', get: x => x.transferAt, show: x => x.transferAt ? t12(x.transferAt) : 'لسه ماتحوّلش', type: 'datetime' },
       { title: 'مدة التحويل', get: x => x.wait, show: waitText, cls: x => x.late ? 'bad' : '' }, { title: 'الفرع', get: x => branchOf(x) },
-      { title: 'اتضرب على Apex', get: x => x.apex?.at, show: x => x.apex ? t12(x.apex.at) + ' · #' + x.apex.no : '—', type: 'datetime' }, { title: 'ضربه', get: x => x.apex?.user || '—' },
+      { title: 'اتضرب على Apex', get: x => x.apex?.at, show: x => x.apex ? t12(x.apex.at) + ' · #' + (x.apex.sn ?? x.apex.no) : '—', type: 'datetime' }, { title: 'ضربه', get: x => x.apex?.user || '—' },
       { title: 'المراجعة', get: x => x.late ? R().judge(R().items.siteTransfer(x, d.day)).status : '', show: x => h('span', { className: 'inline' }, x.transfers > 1 ? pill('اتحوّل بين ' + x.transfers + ' فروع', 'info') : '', x.late ? R().cell(R().items.siteTransfer(x, d.day)) : '') }], list.sort((a, b) => b.wait - a.wait), { empty: d.linked ? (only ? 'مفيش استثناءات' : 'مفيش أوردرات') : 'الموقع مش متربط لسه' });
   }
   function fillPick(id, rows) {
@@ -154,11 +154,11 @@ window.MarsadSite = function MarsadSite(ctx) {
       { title: 'بعد أكتر من 5 دقايق', get: x => x.slow, type: 'number', cls: x => x.slow ? 'warn' : '' }], [...by.values()].sort((a, b) => b.n - a.n), { empty: 'لسه مفيش أوردرات متربطة بـ Apex' });
     const linkCell = x => {
       if (!d.apexLinked) return '—';
-      const label = x.apex ? '#' + x.apex.no + ' · ' + t12(x.apex.at) + ({ code: ' ✓ بالهاشتاج', manual: ' (يدوي)', time: ' ≈ بالوقت' })[x.apex.how] : 'مش لاقيينه';
+      const label = x.apex ? '#' + (x.apex.sn ?? x.apex.no) + ' · ' + t12(x.apex.at) + ({ code: ' ✓ بالهاشتاج', manual: ' (يدوي)', time: ' ≈ بالوقت' })[x.apex.how] : 'مش لاقيينه';
       if (!ctx.canWrite()) return label;
       const sel = h('select', { ariaLabel: 'أوردر Apex' }, h('option', { value: '', textContent: label }),
         ...(x.apex ? [h('option', { value: '__clear', textContent: 'رجّع الربط التلقائي' })] : []), h('option', { value: 'none', textContent: 'مالوش أوردر على Apex' }),
-        ...d.unmatchedApex.filter(a => !x.store || !a.branch || x.store.includes(a.branch) || a.branch.includes((x.store.split(/[،,\-]/)[1] || '').trim().split(' ')[0])).map(a => h('option', { value: a.no, textContent: '#' + a.no + ' · ' + t12(a.at) + ' · ' + (a.user || '') + ' · ' + (a.amount ?? '') + ' ج' })));
+        ...d.unmatchedApex.filter(a => !x.store || !a.branch || x.store.includes(a.branch) || a.branch.includes((x.store.split(/[،,\-]/)[1] || '').trim().split(' ')[0])).map(a => h('option', { value: a.no, textContent: '#' + (a.sn ?? a.no) + ' · ' + t12(a.at) + ' · ' + (a.user || '') + ' · ' + (a.amount ?? '') + ' ج' })));
       sel.onchange = async () => { try { await api('/api/talabat/link', { method: 'POST', body: { talabatId: x.id, apexNo: sel.value === '__clear' ? null : sel.value } }); renderTalabat(true); } catch (e) { ctx.showError(e); } };
       return sel;
     };
@@ -189,7 +189,7 @@ window.MarsadSite = function MarsadSite(ctx) {
   function renderTalabatCancels(d, id, pick) {
     table(id, [{ title: 'الأوردر', get: x => x.id }, { title: 'الفرع', get: x => x.store || '—' }, { title: 'وصل', get: x => x.receivedAt || x.placedAt, show: x => t12(x.receivedAt || x.placedAt), type: 'datetime' },
       { title: 'اتلغى', get: x => x.cancelledAt, show: x => t12(x.cancelledAt), type: 'datetime' }, { title: 'على مين', get: x => OWNER[x.cancelOwner] || x.cancelOwner || '—', show: x => pill(OWNER[x.cancelOwner] || x.cancelOwner || '—', x.cancelOwner === 'Vendor' ? 'bad' : '') },
-      { title: 'السبب', get: x => x.cancelReason || '—', cls: () => 'wrap' }, { title: 'كان خرج', get: x => x.pickedUpAt ? 'أيوه' : 'لأ' }, { title: 'على Apex', get: x => x.apex ? '#' + x.apex.no + ' · ' + (x.apex.user || '') : '—' },
+      { title: 'السبب', get: x => x.cancelReason || '—', cls: () => 'wrap' }, { title: 'كان خرج', get: x => x.pickedUpAt ? 'أيوه' : 'لأ' }, { title: 'على Apex', get: x => x.apex ? '#' + (x.apex.sn ?? x.apex.no) + ' · ' + (x.apex.user || '') : '—' },
       { title: 'الأصناف', get: x => itemsText(x) || '—', cls: () => 'wrap' }, { title: 'مطابقة الأصناف', get: x => x.apex?.items ? (x.apex.items.ok ? 'مطابقة' : 'مختلفة') : '', show: itemsCell }, { title: 'المبلغ', get: x => x.subtotal ?? x.total, type: 'number' }],
       d.orders.filter(x => x.status === 'CANCELLED' && (!pick || x.store === pick)).reverse(), { empty: 'مفيش إلغاءات على طلبات' });
   }
@@ -200,7 +200,7 @@ window.MarsadSite = function MarsadSite(ctx) {
   function exportTalabat() {
     if (!tal) return;
     ctx.exportRows('أوردرات-طلبات', [{ title: 'الأوردر', get: x => x.id }, { title: 'الفرع', get: x => x.store }, { title: 'وصل', get: x => x.receivedAt || x.placedAt, type: 'datetime' }, { title: 'القبول (ث)', get: x => x.acceptSeconds, type: 'number' },
-      { title: 'اتقبل', get: x => x.acceptedAt, type: 'datetime' }, { title: 'أوردر Apex', get: x => x.apex?.no }, { title: 'اتضرب على Apex', get: x => x.apex?.at, type: 'datetime' }, { title: 'ضربه', get: x => x.apex?.user },
+      { title: 'اتقبل', get: x => x.acceptedAt, type: 'datetime' }, { title: 'أوردر Apex', get: x => x.apex?.sn ?? x.apex?.no }, { title: 'اتضرب على Apex', get: x => x.apex?.at, type: 'datetime' }, { title: 'ضربه', get: x => x.apex?.user },
       { title: 'من القبول للضرب (ث)', get: entryDelay, type: 'number' }, { title: 'خرج', get: x => x.pickedUpAt, type: 'datetime' }, { title: 'اتسلّم', get: x => x.deliveredAt, type: 'datetime' }, { title: 'الحالة', get: x => STATUS[x.status] || x.status },
       { title: 'اتلغى', get: x => x.cancelledAt, type: 'datetime' }, { title: 'الإلغاء على', get: x => OWNER[x.cancelOwner] || x.cancelOwner }, { title: 'السبب', get: x => x.cancelReason },
       { title: 'الأصناف', get: x => itemsText(x) }, { title: 'مطابقة الأصناف', get: x => x.apex?.items ? (x.apex.items.ok ? 'مطابقة' : 'مختلفة: ' + [...x.apex.items.missingOnApex, ...x.apex.items.extraOnApex].join('، ')) : '' },

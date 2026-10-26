@@ -110,9 +110,9 @@ function setup(app) {
       if (o.received_at && !o.transfer_at && now - o.received_at > TRANSFER_MIN * 60000)
         list.push({ key: 'site:transfer:' + o.id, kind: 'siteTransfer', target: 'online', text: '⏳ أوردر موقع ماتحوّلش للفرع — #' + o.id + '\nمستني من ' + Math.round((now - o.received_at) / 60000) + ' دقيقة (اتستلم ' + clock(o.received_at) + ')' });
       if (o.fulfillment === 'delivery' && o.transfer_at && !o.out_at && now - o.transfer_at > PREP_MIN * 60000)
-        list.push({ key: 'site:prep:' + o.id, kind: 'sitePrep', target: 'branches', text: '🟠 أوردر موقع لسه بيتجهز — ' + (o.branch || 'فرع غير معروف') + '\n#' + o.id + ' بقاله ' + Math.round((now - o.transfer_at) / 60000) + ' دقيقة من التحويل (' + clock(o.transfer_at) + ')' });
+        list.push({ key: 'site:prep:' + o.id, kind: 'sitePrep', target: 'branches', branch: o.branch || null, text: '🟠 أوردر موقع لسه بيتجهز — ' + (o.branch || 'فرع غير معروف') + '\n#' + o.id + ' بقاله ' + Math.round((now - o.transfer_at) / 60000) + ' دقيقة من التحويل (' + clock(o.transfer_at) + ')' });
     }
-    if (list.length) await db.batch(list.map(a => db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, sent_at, target) VALUES (?,?,?,?,?,?,?)').bind(a.key, a.kind, null, a.text, now, r[a.kind] === false ? now : null, a.target)));
+    if (list.length) await db.batch(list.map(a => db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, sent_at, target, branch) VALUES (?,?,?,?,?,?,?,?)').bind(a.key, a.kind, null, a.text, now, r[a.kind] === false ? now : null, a.target, a.branch || null)));
   }
 
   let lastRun = 0;

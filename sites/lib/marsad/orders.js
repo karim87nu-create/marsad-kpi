@@ -22,8 +22,8 @@ function setup(app) {
   const queue = async (alerts, now) => {
     if (!alerts.length) return;
     const on = await rulesOn();
-    await db.batch(alerts.map(a => db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, reply_to, sent_at, target) VALUES (?,?,?,?,?,?,?,?)')
-      .bind(a.key, a.kind, null, a.text, now, a.replyTo || null, on(a.kind) || a.replyTo ? null : now, a.target || (BRANCH_KINDS.has(a.kind) ? 'branches' : 'online'))));
+    await db.batch(alerts.map(a => db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, reply_to, sent_at, target, branch) VALUES (?,?,?,?,?,?,?,?,?)')
+      .bind(a.key, a.kind, null, a.text, now, a.replyTo || null, on(a.kind) || a.replyTo ? null : now, a.target || (BRANCH_KINDS.has(a.kind) ? 'branches' : 'online'), a.branch || null)));
   };
 
   // ---- the monitor's key: made once from the admin page, kept only as a hash ----
@@ -57,11 +57,14 @@ function setup(app) {
     const stateKey = 'orders_alert_states:' + b.day;
     let states = {}; try { states = JSON.parse(await setting(stateKey) || '{}'); } catch {}
     const rows = name => Array.isArray(b[name]) ? b[name] : [];
+    // The branch of an order, from any list of the day (for the branch's own Telegram group).
+    const findNo = no => no && ['open', 'lateOut', 'cancels', 'online', 'issues'].map(k => rows(k).find(o => String(o.no) === no)).find(Boolean);
+    const branchOfNo = no => no && ['open', 'lateOut', 'cancels', 'online', 'issues'].map(k => rows(k).find(o => String(o.no) === no)).find(Boolean)?.branch || null;
     const orderNo = a => String(a.orderNo ?? a.orderId ?? (/^(?:v?late|del|disc|pay|dup|entry|duplicate|cancel):([0-9]+)(?::|$)/.exec(String(a.key))?.[1] || ''));
     for (const a of (Array.isArray(b.alerts) ? b.alerts : []).slice(0, 50)) {
       if (!a || !KINDS.includes(a.kind) || a.kind === 'ordersStale' || !a.key || !a.text) continue;
       const key = 'orders:' + b.day + ':' + String(a.key).slice(0, 80), text = String(a.text).slice(0, 3500);
-      const old = states[key], no = orderNo(a);
+      const old = states[key], no = orderNo(a), branch = a.branch || branchOfNo(no);
       const target = BRANCH_KINDS.has(a.kind) ? 'branches' : 'online';
       const status = String(a.status || 'active').slice(0,80);
       const version = sha256(JSON.stringify([status, text]));
@@ -72,13 +75,13 @@ function setup(app) {
           const issue = rows('issues').find(i => String(i.no) === no);
           if (issue && await app.learnedOk(entrySignature(issue))) { states[key] = { no, kind: a.kind, text, status: 'learned', version, target }; continue; }
         }
-        alerts.push({ key, kind: a.kind, text, target });
-        states[key] = { no, kind: a.kind, text, status, version, target };
+        alerts.push({ key, kind: a.kind, text, target, branch });
+        states[key] = { no, sn: findNo(no)?.sn ?? null, kind: a.kind, text, status, version, target, branch };
       } else if (old.version !== version) {
         // Explicit state changes, including corrected entry errors, answer the original alert.
         // A changing duration in text alone is not a new state.
         if (old.status !== status || a.changed === true) alerts.push({ key: 'state:' + key + ':' + ((old.sequence || 0) + 1), kind: old.kind,
-          text, replyTo: key, target: old.target });
+          text, replyTo: key, target: old.target, branch: old.branch });
         states[key] = { ...old, status, version, text, sequence: (old.sequence || 0) + (old.status !== status || a.changed === true ? 1 : 0) };
       }
     }
@@ -87,15 +90,16 @@ function setup(app) {
       const out = rows('lateOut').find(o => String(o.no) === old.no && o.out);
       const cancel = rows('cancels').find(o => String(o.no) === old.no);
       let text = null;
+      const shown = old.sn ?? out?.sn ?? cancel?.sn ?? old.no;
       const clockOf = v => new Date(v).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit' });
       if (old.kind === 'ordersLate' && (out || cancel)) text = cancel
-        ? '🔄 أوردر ' + old.no + (cancel.kind ? ' · ' + cancel.kind : '') + ' اتلغى بعد تنبيه التأخير' + (cancel.reason ? ' — السبب: ' + cancel.reason : '')
-        : '✅ أوردر ' + old.no + (out.kind ? ' · ' + out.kind : '') + ' خرج مع الطيار' + (out.pilot ? ' (' + out.pilot + ')' : '') + (out.wait != null ? ' بعد ' + out.wait + ' دقيقة من الضرب' : '') + (out.out ? ' — الساعة ' + clockOf(out.out) : '');
+        ? '🔄 أوردر ' + shown + (cancel.kind ? ' · ' + cancel.kind : '') + ' اتلغى بعد تنبيه التأخير' + (cancel.reason ? ' — السبب: ' + cancel.reason : '')
+        : '✅ أوردر ' + shown + (out.kind ? ' · ' + out.kind : '') + ' خرج مع الطيار' + (out.pilot ? ' (' + out.pilot + ')' : '') + (out.wait != null ? ' بعد ' + out.wait + ' دقيقة من الضرب' : '') + (out.out ? ' — الساعة ' + clockOf(out.out) : '');
       // Only a complete issues snapshot can prove that a recorded entry issue disappeared.
       if (old.kind === 'ordersEntry' && Array.isArray(b.issues) && Number.isInteger(b.totals?.issues) && b.totals.issues === b.issues.length &&
-          old.observedIssue && !b.issues.some(o => String(o.no) === old.no)) text = '✅ أوردر ' + old.no + ': مشكلة الضرب لم تعد موجودة في قراءة Apex الكاملة.';
+          old.observedIssue && !b.issues.some(o => String(o.no) === old.no)) text = '✅ أوردر ' + shown + ': مشكلة الضرب لم تعد موجودة في قراءة Apex الكاملة.';
       if (old.kind === 'ordersEntry' && rows('issues').some(o => String(o.no) === old.no)) old.observedIssue = true;
-      if (text) { alerts.push({ key: 'resolved:' + key + ':' + ((old.sequence || 0) + 1), kind: old.kind, text, replyTo: key, target: old.target }); old.status = 'resolved'; old.sequence = (old.sequence || 0) + 1; }
+      if (text) { alerts.push({ key: 'resolved:' + key + ':' + ((old.sequence || 0) + 1), kind: old.kind, text, replyTo: key, target: old.target, branch: old.branch }); old.status = 'resolved'; old.sequence = (old.sequence || 0) + 1; }
     }
     // The monitor was reported stopped: say it is back, as a reply to that alert.
     if (previous) {

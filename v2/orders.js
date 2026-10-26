@@ -117,7 +117,7 @@ window.MarsadOrders = function MarsadOrders(ctx) {
     { title: 'المبيعات', get: x => Math.round(x.sales), show: x => money(x.sales), type: 'number' }, { title: 'الخصومات', get: x => Math.round(x.discounts), show: x => money(x.discounts), type: 'number', cls: x => x.discounts ? 'warn' : '' },
     { title: 'أخطاء إدخال محتملة', get: x => entry?.counted ? entry.counted.filter(i => i.user === x.name).length : x.issues, type: 'number', cls: x => (entry?.counted ? entry.counted.filter(i => i.user === x.name).length : x.issues) ? 'bad' : '' }, { title: 'ضربها واتلغت بعد التحميل', get: x => x.cancels, type: 'number', cls: x => x.cancels ? 'warn' : '' },
     { title: 'أول أوردر', get: x => x.first, show: x => hm(x.first), type: 'datetime' }, { title: 'آخر أوردر', get: x => x.last, show: x => hm(x.last), type: 'datetime' }];
-  const issueColumns = () => [...dayCol(), { title: 'النوع', get: x => x.type, show: x => pill(x.type === 'تكرار' ? 'أوردر متكرر' : 'طريقة الدفع', x.type === 'تكرار' ? 'warn' : 'bad') }, { title: 'الأوردر', get: x => x.no, type: 'number' },
+  const issueColumns = () => [...dayCol(), { title: 'النوع', get: x => x.type, show: x => pill(x.type === 'تكرار' ? 'أوردر متكرر' : 'طريقة الدفع', x.type === 'تكرار' ? 'warn' : 'bad') }, { title: 'الأوردر', get: x => x.sn ?? x.no, type: 'number' },
     { title: 'الفرع', get: x => x.branch }, { title: 'نوع الأوردر', get: x => x.kind }, { title: 'الموظف', get: x => x.user }, { title: 'الوقت', get: x => x.at, show: x => hm(x.at), type: 'datetime' }, { title: 'التفاصيل', get: x => x.detail, cls: () => 'wrap' }, ...(ctx.review ? [R().reviewColumn(R().items.entry)] : [])];
   const R = () => ctx.review();
   async function renderEntry(force) {
@@ -144,7 +144,7 @@ window.MarsadOrders = function MarsadOrders(ctx) {
     { title: 'خرجوا مع طيار', get: b => b.outCount, type: 'number' }, { title: 'متوسط وقت الخروج (د)', get: b => b.avgOut == null ? null : Math.round(b.avgOut * 10) / 10, type: 'number', cls: b => b.avgOut >= 30 ? 'bad' : b.avgOut >= 20 ? 'warn' : '' },
     { title: 'خرجوا بعد 30 د', get: b => b.outLate, type: 'number', cls: b => b.outLate ? 'warn' : '' }, { title: 'نسبة التأخير', get: b => b.lateRate == null ? null : Math.round(b.lateRate * 10) / 10, show: b => b.lateRate == null ? '—' : b.lateRate.toFixed(1) + '%', type: 'percent', cls: b => b.lateRate >= 15 ? 'bad' : b.lateRate >= 5 ? 'warn' : '' },
     { title: 'إلغاء بعد التحميل', get: b => b.cancels, type: 'number', cls: b => b.cancels ? 'bad' : '' }, { title: 'قيمة الإلغاء', get: b => Math.round(b.cancelSales), show: b => money(b.cancelSales), type: 'number' }];
-  const lateColumns = () => [...dayCol(), { title: 'الأوردر', get: x => x.no, type: 'number' }, { title: 'الفرع', get: x => x.branch }, { title: 'النوع', get: x => x.kind, show: x => kindPill(x.kind) },
+  const lateColumns = () => [...dayCol(), { title: 'الأوردر', get: x => x.sn ?? x.no, type: 'number' }, { title: 'الفرع', get: x => x.branch }, { title: 'النوع', get: x => x.kind, show: x => kindPill(x.kind) },
     { title: 'اتضرب', get: x => x.at, show: x => hm(x.at), type: 'datetime' }, { title: 'اتحمّل على الطيار', get: x => x.out, show: x => hm(x.out), type: 'datetime' },
     { title: 'وقت الخروج (د)', get: x => x.wait, type: 'number', cls: x => x.wait >= 45 ? 'bad' : 'warn' }, { title: 'الطيار', get: x => x.pilot }, { title: 'ضربه', get: x => x.user }, { title: 'المبلغ', get: x => Math.round(x.amount || 0), show: x => money(x.amount), type: 'number' }, ...(ctx.review ? [R().reviewColumn(R().items.lateOut)] : [])];
   const pickB = sel => x => !$(sel).value || (x.branch ?? x.name) === $(sel).value;
@@ -170,7 +170,7 @@ window.MarsadOrders = function MarsadOrders(ctx) {
 
   // ---------- الإلغاءات ----------
   let can = null;
-  const cancelColumns = () => [...dayCol(), { title: 'الأوردر', get: x => x.no, type: 'number' }, { title: 'الفرع', get: x => x.branch }, { title: 'النوع', get: x => x.kind, show: x => kindPill(x.kind) },
+  const cancelColumns = () => [...dayCol(), { title: 'الأوردر', get: x => x.sn ?? x.no, type: 'number' }, { title: 'الفرع', get: x => x.branch }, { title: 'النوع', get: x => x.kind, show: x => kindPill(x.kind) },
     { title: 'المبلغ', get: x => Math.round(x.amount || 0), show: x => money(x.amount), type: 'number' }, { title: 'الطيار', get: x => x.pilot }, { title: 'ضربه', get: x => x.user }, { title: 'لغاه', get: x => x.by },
     { title: 'وقت الإلغاء', get: x => x.at, show: x => hm(x.at), type: 'datetime' }, { title: 'بعد التحميل بـ (د)', get: x => x.afterOut, type: 'number' }, { title: 'السبب', get: x => x.reason || '—', cls: () => 'wrap' }];
   async function renderCancels(force) {
@@ -254,9 +254,9 @@ window.MarsadOrders = function MarsadOrders(ctx) {
         for (const o of list) {
           const t = el('article', 'ob-t'), tm = el('span', 'ob-timer'), bar = el('span', 'fill');
           const barBox = el('div', 'ob-bar'); barBox.append(bar, h('i', { className: 'tick', style: 'inset-inline-start:' + (s.late / s.veryLate * 100) + '%' }));
-          t.append(h('div', { className: 'ob-t-top' }, tm, kindPill(o.kind)), h('div', { className: 'ob-t-mid' }, el('b', '', '#' + o.no), el('span', 'muted', 'اتضرب ' + clockAt(o.at))), barBox,
+          t.append(h('div', { className: 'ob-t-top' }, tm, kindPill(o.kind)), h('div', { className: 'ob-t-mid' }, el('b', '', '#' + (o.sn ?? o.no)), el('span', 'muted', 'اتضرب ' + clockAt(o.at))), barBox,
             el('small', 'muted', [o.user, money(o.amount)].filter(x => x && x !== '—').join(' · ')));
-          t.title = 'أوردر ' + o.no + ' · ' + o.kind + ' · ' + n;
+          t.title = 'أوردر ' + (o.sn ?? o.no) + ' · ' + o.kind + ' · ' + n;
           lane.append(t); B.tickets.push({ o, t, tm, bar, col });
         }
         col.append(head, stats, lane); col._n = num; col._count = list.length;

@@ -153,7 +153,7 @@ window.MarsadInsights = function MarsadInsights(ctx) {
       parts.push(h('h3', { textContent: 'طلبات' }), h('div', { className: 'cards' }, kpi('أوردرات', o.length, 'info'), kpi('متوسط القبول', acc.length ? secs(acc.reduce((a, c) => a + c.acceptSeconds, 0) / acc.length) : '—'),
         kpi('اتلغت', cc.length, cc.length ? 'bad' : 'good', cc.filter(x => x.cancelOwner === 'Vendor').length + ' بسبب المطعم'), kpi('مش لاقيينها على Apex', ne.length, ne.length ? 'bad' : 'good')));
     }
-    const pending = [...lateCounted.map(x => ['خرج متأخر', '#' + x.no + ' · ' + x.wait + ' د', x]), ...issCounted.map(x => ['خطأ إدخال', '#' + x.no + ' · ' + x.detail, x])];
+    const pending = [...lateCounted.map(x => ['خرج متأخر', '#' + (x.sn ?? x.no) + ' · ' + x.wait + ' د', x]), ...issCounted.map(x => ['خطأ إدخال', '#' + (x.sn ?? x.no) + ' · ' + x.detail, x])];
     if (pending.length) parts.push(h('article', { className: 'panel' }, h('h2', { textContent: 'محتاج مراجعة' }), (() => { const box = h('div'); table(box, [{ title: 'النوع', get: p => p[0] }, { title: 'التفاصيل', get: p => p[1], cls: () => 'wrap' },
       { title: 'المراجعة', get: () => '', show: p => cell(p[0] === 'خطأ إدخال' ? items.entry(p[2]) : items.lateOut(p[2])) }], pending); return box; })()));
     body.replaceChildren(...parts);
@@ -173,7 +173,7 @@ window.MarsadInsights = function MarsadInsights(ctx) {
       box.replaceChildren(h('div', { className: 'cards' }, kpi('أوردرات ضربها', st?.orders ?? 0, 'info', st ? Object.entries(st.kinds).filter(([, v]) => v).map(([k, v]) => k + ' ' + v).join(' · ') : ''), kpi('مبيعاتها', money(st?.sales)),
         kpi('خصومات', money(st?.discounts), st?.discounts ? 'warn' : ''), kpi('أخطاء إدخال', cnt.length, cnt.length ? 'bad' : 'good', iss.length > cnt.length ? (iss.length - cnt.length) + ' اتراجعوا «مش غلط»' : ''),
         kpi('ضربها واتلغت بعد التحميل', st?.cancels ?? 0, st?.cancels ? 'warn' : ''), kpi('إلغاءات بسببه', mineC.length, mineC.length ? 'bad' : 'good', mineC.map(x => x.why[0]).filter(Boolean).slice(0, 2).join(' · ')), kpi('من قبول طلبات للضرب', delays.length ? secs(delays.reduce((a, c) => a + c, 0) / delays.length) : '—', '', delays.length ? 'متوسط ' + delays.length + ' أوردر' : '')),
-        ...(iss.length ? [(() => { const t = h('div'); table(t, [{ title: 'الأوردر', get: x => x.no }, { title: 'الفرع', get: x => x.branch }, { title: 'النوع', get: x => x.type }, { title: 'التفاصيل', get: x => x.detail, cls: () => 'wrap' }, reviewColumn(items.entry)], iss); return t; })()] : []));
+        ...(iss.length ? [(() => { const t = h('div'); table(t, [{ title: 'الأوردر', get: x => x.sn ?? x.no }, { title: 'الفرع', get: x => x.branch }, { title: 'النوع', get: x => x.type }, { title: 'التفاصيل', get: x => x.detail, cls: () => 'wrap' }, reviewColumn(items.entry)], iss); return t; })()] : []));
     } catch (e) { box.replaceChildren(h('p', { className: 'error', textContent: e.message })); }
   }
 
@@ -200,7 +200,7 @@ window.MarsadInsights = function MarsadInsights(ctx) {
     return box;
   }
   let ownersRows = [];
-  const ownerColumns = O => [{ title: 'اليوم', get: x => x.day }, { title: 'المصدر', get: x => x.source === 'talabat' ? 'طلبات' : 'Apex' }, { title: 'الأوردر', get: x => x.source === 'talabat' ? x.ref + (x.apexNo ? ' · Apex #' + x.apexNo : '') : '#' + x.ref },
+  const ownerColumns = O => [{ title: 'اليوم', get: x => x.day }, { title: 'المصدر', get: x => x.source === 'talabat' ? 'طلبات' : 'Apex' }, { title: 'الأوردر', get: x => x.source === 'talabat' ? x.ref + (x.apexNo ? ' · Apex #' + (x.apexSn ?? x.apexNo) : '') : '#' + (x.apexSn ?? x.ref) },
     { title: 'الفرع', get: x => x.branch || x.store || '—' }, { title: 'اتلغى', get: x => x.at, type: 'datetime' }, { title: 'ضربه', get: x => x.user || '—' }, { title: 'السبب', get: x => x.reason || '—', cls: () => 'wrap' },
     { title: 'المرصد شايف', get: x => x.why.join(' · ') || '—', cls: () => 'wrap muted' }, { title: 'على مين', get: x => x.final ? O[x.final] + (x.finalName ? ': ' + x.finalName : '') : 'مش واضح', show: x => ownerCell(x, O) },
     { title: 'المبلغ', get: x => x.amount, type: 'number' }];

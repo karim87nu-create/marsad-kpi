@@ -79,12 +79,12 @@ function setup(app) {
     if (ctx.query.log === '1') {
       const w = dayWindow(ctx.query.date || businessDay(ctx.now));
       return { log: (await db.prepare('SELECT * FROM telegram_log WHERE created_at >= ? AND created_at < ? ORDER BY created_at DESC LIMIT 500').all(w.start, w.end))
-        .map(r => ({ kind: r.kind, group: r.target === 'branches' ? 'الفروع' : r.target === 'online' || r.kind.startsWith('orders') && !['ordersLate','ordersLate:resolved'].includes(r.kind) ? 'الأونلاين وضرب الأوردر' : 'المكالمات', label: RULE_LIST[r.kind] || RECOVERY_LABELS[r.kind.replace(':resolved', '')] || r.kind, text: r.text, createdAt: iso(r.created_at), sentAt: iso(r.sent_at), error: r.sent_at ? null : r.error })) };
+        .map(r => ({ kind: r.kind, group: r.target?.startsWith('branch:') ? 'فرع ' + r.target.slice(7) : r.target === 'branches' ? 'الفروع' : r.target === 'online' || r.kind.startsWith('orders') && !['ordersLate','ordersLate:resolved'].includes(r.kind) ? 'الأونلاين وضرب الأوردر' : 'المكالمات', label: RULE_LIST[r.kind] || RECOVERY_LABELS[r.kind.replace(':resolved', '')] || r.kind, text: r.text, createdAt: iso(r.created_at), sentAt: iso(r.sent_at), error: r.sent_at ? null : r.error })) };
     }
     return { configured: !!c.token, botName: c.bot_name || null, chat: c.chat_id ? { id: c.chat_id, title: c.chat_title } : null,
       onlineChat: c.online_chat_id ? { id: c.online_chat_id, title: c.online_chat_title } : null,
       branchChat: c.branch_chat_id ? { id: c.branch_chat_id, title: c.branch_chat_title } : null, enabled: !!c.enabled,
-      rules: Object.entries(RULE_LIST).map(([key, label]) => ({ key, label, on: !!c.rules[key] })) };
+      rules: Object.entries(RULE_LIST).map(([key, label]) => ({ key, label, on: !!c.rules[key] })), branchGroups: await branchGroups(), branchNames: await apexBranches() };
   });
   app.route('POST', '/api/telegram', async ctx => {
     const who = await app.requireAdmin(ctx, 'admin'), b = ctx.body;
@@ -106,6 +106,15 @@ function setup(app) {
     if (b.action === 'chat') {
       const chatId = String(b.chatId || '');
       if (!/^-?\d+$/.test(chatId)) fail(400, 'اختار الجروب');
+      if (b.target === 'branch') {
+        const name = String(b.branch || '').trim().slice(0, 80);
+        if (!name) fail(400, 'اختار الفرع');
+        try { await call('sendMessage', { chat_id: chatId, text: '✅ مرصد الدهان اتربط بالجروب ده كجروب فرع ' + name + ': تأخير خروج أوردرات الفرع وإلغاءاته هتوصل هنا.' }); } catch (e) { fail(400, 'مقدرتش أبعت للجروب: ' + e.message); }
+        const g = await branchGroups(); g[name] = { id: chatId, title: String(b.title || '').slice(0, 100) };
+        await putSetting('telegram_branch_groups', JSON.stringify(g));
+        await app.audit('telegram_group_linked', null, { actor: who.name, chat: b.title, branch: name });
+        return { ok: true };
+      }
       const branches = b.target === 'branches', online = b.target === 'online';
       try { await call('sendMessage', { chat_id: chatId, text: branches ? '✅ مرصد الدهان اتربط بالجروب ده كجروب إدارات الفروع: تأخير خروج الأوردرات ومشاكل الفروع هتوصل هنا.' : online ? '✅ مرصد الدهان اتربط بالجروب ده: جروب الأونلاين وضرب الأوردرات وأخطائها وتأخيرها وتغيّر حالتها.' : '✅ مرصد الدهان اتربط بالجروب ده: جروب المكالمات والموظفين وتغيّر حالة التنبيهات.' }); } catch (e) { fail(400, 'مقدرتش أبعت للجروب: ' + e.message); }
       if (branches) await save({ branch_chat_id: chatId, branch_chat_title: String(b.title || '').slice(0, 100) });
@@ -122,12 +131,13 @@ function setup(app) {
       return { ok: true };
     }
     if (b.action === 'test') {
-      const c = await config(), chat = b.target === 'branches' ? c.branch_chat_id : b.target === 'online' ? c.online_chat_id : c.chat_id;
+      const c = await config(), chat = b.target === 'branch' ? (await branchGroups())[String(b.branch || '')]?.id : b.target === 'branches' ? c.branch_chat_id : b.target === 'online' ? c.online_chat_id : c.chat_id;
       if (!chat) fail(400, 'اربط الجروب الأول');
       await call('sendMessage', { chat_id: chat, text: '🔔 رسالة تجربة من مرصد الدهان — ' + clock(ctx.now) }); return { ok: true };
     }
     if (b.action === 'unlinkOnline') { await db.prepare("DELETE FROM settings WHERE key IN ('telegram_online_chat_id','telegram_online_chat_title')").run(); return { ok: true }; }
     if (b.action === 'unlinkBranches') { await save({ branch_chat_id: null, branch_chat_title: null }); return { ok: true }; }
+    if (b.action === 'unlinkBranch') { const g = await branchGroups(); delete g[String(b.branch || '')]; await putSetting('telegram_branch_groups', JSON.stringify(g)); return { ok: true }; }
     fail(400, 'invalid_action');
   });
 
@@ -403,6 +413,30 @@ function setup(app) {
     return alerts;
   }
 
+  // ---------- one group per branch (keyed by the Apex branch name) ----------
+  const putSetting = (k, v) => db.prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(k, v);
+  // The Apex branch names (from the last days the orders monitor pushed).
+  async function apexBranches() {
+    const out = new Set();
+    for (const r of await db.prepare('SELECT data FROM orders_days ORDER BY received_at DESC LIMIT 3').all()) { try { for (const b of JSON.parse(r.data).branches || []) if (b.name) out.add(b.name); } catch {} }
+    return [...out].sort();
+  }
+  async function branchGroups() { try { return JSON.parse((await db.prepare("SELECT value FROM settings WHERE key = 'telegram_branch_groups'").get())?.value || '{}') || {}; } catch { return {}; } }
+  // A Talabat store or a website branch name → the linked Apex branch: learned names first, then shared words.
+  const bnorm = x => String(x || '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/^\s*(فرع|الدهان)[\s,،]*/g, '').trim();
+  async function branchGroupOf(name, g) {
+    if (!name || !Object.keys(g).length) return null;
+    if (g[name]) return name;
+    if (app.learn) for (const kind of ['branch:talabat', 'branch:site']) {
+      const m = (await app.learn.pairs(kind)).get(name);
+      const best = m && [...m].sort((a, b) => b[1] - a[1]).find(([b]) => g[b]);
+      if (best) return best[0];
+    }
+    const words = s => bnorm(s).split(/[\s،,\-]+/).filter(w => w.length > 2), w = words(name);
+    const hits = Object.keys(g).filter(k => words(k).some(x => w.some(y => y.includes(x) || x.includes(y))));
+    return hits.length === 1 ? hits[0] : null;
+  }
+
   let busy = false;
   app.telegramTick = async function tick(now = app.now()) {
     if (busy) return 0;
@@ -419,6 +453,7 @@ function setup(app) {
           ? db.prepare(insert + "SELECT ?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM telegram_log l WHERE l.kind = 'gap' AND l.employee_id = ? AND NOT EXISTS (SELECT 1 FROM telegram_log x WHERE x.key = 'resolved:' || l.key))").bind(...values, a.employeeId)
           : db.prepare(insert + 'VALUES (?,?,?,?,?,?,?)').bind(...values);
       }));
+      let groups = null;
       for (const r of await db.prepare('SELECT * FROM telegram_log WHERE sent_at IS NULL AND tries < 5 AND created_at > ? ORDER BY id LIMIT 500').all(now - 3600000)) {
         if (sent >= 20) break;
         if (r.kind === 'gap' && await db.prepare("SELECT 1 FROM telegram_log l WHERE l.kind = 'gap' AND l.employee_id = ? AND l.id != ? AND l.message_id IS NOT NULL AND l.sent_at IS NOT NULL AND l.error IS NULL AND NOT EXISTS (SELECT 1 FROM telegram_log x WHERE x.key = 'resolved:' || l.key) LIMIT 1").get(r.employee_id, r.id)) {
@@ -431,7 +466,13 @@ function setup(app) {
         if (r.reply_to && (!parent?.message_id || parent.error)) continue;
         const delivered = parent ? await db.prepare('SELECT value FROM settings WHERE key = ?').get('telegram_delivery:' + parent.key) : null;
         const target = r.target || (r.kind.startsWith('orders') ? (r.kind.split(':')[0] === 'ordersLate' ? 'branches' : 'online') : null);
-        const chat = delivered?.value || (target === 'branches' ? c.branch_chat_id : target === 'online' ? c.online_chat_id : c.chat_id);
+        // A branch alert is also copied to that branch's own group (replies follow their parent there).
+        if (target === 'branches' && r.branch) {
+          const g = groups || (groups = await branchGroups()), name = await branchGroupOf(r.branch, g);
+          if (name) await db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, reply_to, sent_at, target, branch) VALUES (?,?,?,?,?,?,NULL,?,?)')
+            .run('b:' + r.key, r.kind, null, r.text, r.created_at, r.reply_to ? 'b:' + r.reply_to : null, 'branch:' + name, r.branch);
+        }
+        const chat = delivered?.value || (target?.startsWith('branch:') ? (groups || (groups = await branchGroups()))[target.slice(7)]?.id : target === 'branches' ? c.branch_chat_id : target === 'online' ? c.online_chat_id : c.chat_id);
         if (!chat) continue; // Never fall back to a different department's group.
         const claim = await db.prepare('UPDATE telegram_log SET sent_at = ?, tries = tries + 1 WHERE id = ? AND sent_at IS NULL').run(app.now(), r.id);
         if (!claim.changes) continue;
