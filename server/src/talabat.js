@@ -197,10 +197,10 @@ function setup(app) {
     for (const o of m.rows) {
       const store = o.store ? '\n' + o.store : '', ref = o.code ? '#' + o.code : o.id; // the short #code staff use; the long id only when there is no code
       if (m.hasApex && o.accepted_at && !m.matches.get(o.id) && o.status !== 'CANCELLED' && now - o.accepted_at > NOT_ENTERED_MIN * 60000 && now - o.accepted_at < 3 * 3600000)
-        out.push({ key: 'talabat:notEntered:' + o.id, kind: 'talabatNotEntered', target: 'online', text: '⚠️ أوردر طلبات اتقبل ومش لاقيينه على Apex — ' + ref + store + '\nاتقبل ' + clock(o.accepted_at) + ' (من ' + Math.round((now - o.accepted_at) / 60000) + ' دقيقة)' + (o.subtotal ? ' · ' + Math.round(o.subtotal) + ' ج' : '') });
+        out.push({ key: 'talabat:notEntered:' + o.id, kind: 'talabatNotEntered', target: 'online', text: '🛵 طلبات | ⚠️ أوردر اتقبل على طلبات ولسه ماتضربش على Apex\nرقم أوردر طلبات: ' + ref + store + '\nاتقبل الساعة ' + clock(o.accepted_at) + '، وبقاله ' + Math.round((now - o.accepted_at) / 60000) + ' دقيقة' + (o.subtotal ? '\nقيمة الأوردر: ' + Math.round(o.subtotal) + ' ج' : '') });
       if (o.status === 'CANCELLED' && o.cancelled_at && now - o.cancelled_at < 3 * 3600000)
-        out.push({ key: 'talabat:cancel:' + o.id, kind: 'talabatCancel', target: 'branches', branch: m.matches.get(o.id)?.branch || o.store || null, text: '❌ إلغاء على طلبات — ' + ref + store + '\nاتلغى ' + clock(o.cancelled_at) + (o.cancel_owner ? ' · ' + o.cancel_owner : '') + (o.cancel_reason ? '\nالسبب: ' + o.cancel_reason : '') + (o.subtotal ? '\n' + Math.round(o.subtotal) + ' ج' : '') +
-          (m.matches.get(o.id) ? '\nعلى Apex: أوردر ' + (m.matches.get(o.id).sn ?? m.matches.get(o.id).no) + det.extra(m.matches.get(o.id).no) : '') + det.status(m.matches.get(o.id)?.branch || o.store) });
+        out.push({ key: 'talabat:cancel:' + o.id, kind: 'talabatCancel', target: 'branches', branch: m.matches.get(o.id)?.branch || o.store || null, text: '🛵 طلبات | ❌ أوردر اتلغى على طلبات\nرقم أوردر طلبات: ' + ref + store + '\nاتلغى الساعة ' + clock(o.cancelled_at) + (o.cancel_owner ? '\nالإلغاء على: ' + o.cancel_owner : '') + (o.cancel_reason ? '\nالسبب: ' + o.cancel_reason : '') + (o.subtotal ? '\nقيمة الأوردر: ' + Math.round(o.subtotal) + ' ج' : '') +
+          (m.matches.get(o.id) ? '\nرقمه على Apex: ' + (m.matches.get(o.id).sn ?? m.matches.get(o.id).no) + det.extra(m.matches.get(o.id).no) : '') + det.status(m.matches.get(o.id)?.branch || o.store) });
     }
     // «Accepted and not on Apex»: answered when it is entered on Apex, or cancelled on Talabat first.
     const open = new Set((await db.prepare("SELECT l.key FROM telegram_log l WHERE l.key LIKE 'talabat:notEntered:%' AND l.created_at >= ? AND NOT EXISTS (SELECT 1 FROM telegram_log x WHERE x.key = 'resolved:' || l.key)").all(now - 12 * 3600000)).map(x => x.key));
@@ -208,9 +208,9 @@ function setup(app) {
       const key = 'talabat:notEntered:' + o.id; if (!open.has(key)) continue;
       const a = m.matches.get(o.id), ref = o.code ? '#' + o.code : o.id;
       let text = null;
-      if (a) text = '✅ أوردر طلبات ' + ref + ' اتضرب على Apex — أوردر ' + (a.sn ?? a.no) + ' · ' + (a.branch || '') + '\nالساعة ' + clock(Date.parse(a.at)) +
+      if (a) text = '🛵 طلبات | ✅ أوردر طلبات ' + ref + ' اتضرب على Apex — أوردر ' + (a.sn ?? a.no) + ' · ' + (a.branch || '') + '\nالساعة ' + clock(Date.parse(a.at)) +
         (o.accepted_at ? ' (بعد ' + Math.round((Date.parse(a.at) - o.accepted_at) / 60000) + ' دقيقة من القبول)' : '') + (a.user ? ' · ضربه ' + a.user : '');
-      else if (o.status === 'CANCELLED' || o.status === 'REJECTED') text = '🔄 أوردر طلبات ' + ref + ' اتلغى على طلبات قبل ما يتضرب على Apex' + (o.cancelled_at ? ' — الساعة ' + clock(o.cancelled_at) : '') + (o.cancel_reason ? '\nالسبب: ' + o.cancel_reason : '');
+      else if (o.status === 'CANCELLED' || o.status === 'REJECTED') text = '🛵 طلبات | 🔄 أوردر طلبات ' + ref + ' اتلغى على طلبات قبل ما يتضرب على Apex' + (o.cancelled_at ? ' — الساعة ' + clock(o.cancelled_at) : '') + (o.cancel_reason ? '\nالسبب: ' + o.cancel_reason : '');
       if (text) out.push({ key: 'resolved:' + key, kind: 'talabatNotEntered', target: 'online', replyTo: key, text });
     }
     // A dish on Talabat that is not what was entered on Apex (only for orders tied by the #code or by hand: sure links).
@@ -219,10 +219,10 @@ function setup(app) {
       const a = m.matches.get(o.id), c = a?.items, key = 'talabat:items:' + o.id;
       if (!c || (a.how !== 'code' && a.how !== 'manual')) continue;
       if (!c.ok && !c.reviewedOk && !sent.has(key) && now - (o.accepted_at || o.placed_at || now) < 3 * 3600000)
-        out.push({ key, kind: 'talabatItems', target: 'online', text: '🍽️ صنف مضروب غلط محتمل — طلبات ' + (o.code ? '#' + o.code : o.id) + '\nأوردر Apex ' + (a.sn ?? a.no) + ' · ' + (a.branch || '') + (a.user ? ' · ضربه ' + a.user : '') +
+        out.push({ key, kind: 'talabatItems', target: 'online', text: '🛵 طلبات | 🍽️ صنف ممكن يكون متضرب غلط على Apex\nرقم أوردر طلبات: ' + (o.code ? '#' + o.code : o.id) + '\nرقمه على Apex: ' + (a.sn ?? a.no) + ' · ' + (a.branch || '') + (a.user ? '\nاللي ضرب الأوردر: ' + a.user : '') +
           (c.missingOnApex.length ? '\nعلى طلبات ومش على Apex: ' + c.missingOnApex.join('، ') : '') + (c.extraOnApex.length ? '\nعلى Apex ومش على طلبات: ' + c.extraOnApex.join('، ') : '') });
       else if ((c.ok || c.reviewedOk) && sent.has(key) && !sent.has('resolved:' + key))
-        out.push({ key: 'resolved:' + key, kind: 'talabatItems', target: 'online', replyTo: key, text: '✅ أوردر طلبات ' + (o.code ? '#' + o.code : o.id) + ': الأصناف بقت مطابقة على Apex' + (c.reviewedOk && !c.ok ? ' (اتراجع: مش غلط)' : '') });
+        out.push({ key: 'resolved:' + key, kind: 'talabatItems', target: 'online', replyTo: key, text: '🛵 طلبات | ✅ أوردر طلبات ' + (o.code ? '#' + o.code : o.id) + ': الأصناف بقت مطابقة على Apex' + (c.reviewedOk && !c.ok ? ' (اتراجع: مش غلط)' : '') });
     }
     if (out.length) await db.batch(out.map(a => db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, sent_at, target, reply_to, branch) VALUES (?,?,?,?,?,?,?,?,?)').bind(a.key, a.kind, null, a.text, now, r[a.kind] === false && !a.replyTo ? now : null, a.target, a.replyTo || null, a.branch || null)));
   }

@@ -48,13 +48,13 @@ function setup(app) {
     const det = d?.details || {}, st = d?.branchStatus || {};
     const extra = no => {
       const x = no == null ? null : det[String(no)]; if (!x) return '';
-      return (x.loc ? '\n📍 المنطقة: ' + x.loc : '') + (x.note ? '\n💬 ملاحظة: ' + x.note : '') +
-        (x.items?.length ? '\n🍽️ على الأصناف:\n' + x.items.join('\n') : '') + (x.msgs?.length ? '\n📨 كومنتات بعد الضرب:\n' + x.msgs.join('\n') : '');
+      return (x.loc ? '\n📍 المنطقة: ' + x.loc : '') + (x.note ? '\n💬 ملاحظة الأوردر: ' + x.note : '') +
+        (x.items?.length ? '\n🍽️ تعليقات على الأصناف:\n' + x.items.join('\n') : '') + (x.msgs?.length ? '\n📨 كومنتات اتبعتت بعد الضرب:\n' + x.msgs.join('\n') : '');
     };
     const status = branch => {
       if (!branch) return '';
       const key = st[branch] ? branch : Object.keys(st).find(k => { const a = fuzzy(k), b = fuzzy(branch); return a && b && (a.includes(b.split(/[\s،,-]+/)[0]) || b.includes(a.split(/[\s،,-]+/)[0])); });
-      return key ? '\n' + st[key] : '';
+      return key ? '\n\n' + st[key] : '';
     };
     return { extra, status };
   };
@@ -140,10 +140,10 @@ function setup(app) {
       const clockOf = v => new Date(v).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit' });
       // Cancelled on Apex: closed without a message (only Talabat cancellations are sent).
       if (old.kind === 'ordersLate' && cancel && !out) { old.status = 'resolved'; continue; }
-      if (old.kind === 'ordersLate' && out) text = '✅ أوردر ' + shown + (out.kind ? ' · ' + out.kind : '') + ' خرج مع الطيار' + (out.pilot ? ' (' + out.pilot + ')' : '') + (out.wait != null ? ' بعد ' + out.wait + ' دقيقة من الضرب' : '') + (out.out ? ' — الساعة ' + clockOf(out.out) : '') + (out.sched ? '\nميعاده كان ' + clockOf(out.sched) : '');
+      if (old.kind === 'ordersLate' && out) text = '🖥️ Apex | ✅ أوردر ' + shown + ' خرج مع الطيار' + (out.pilot ? ' (' + out.pilot + ')' : '') + (out.out ? ' الساعة ' + clockOf(out.out) : '') + (out.wait != null ? '\nخرج بعد ' + out.wait + ' دقيقة من وقت الضرب' : '') + (out.sched ? '\nالميعاد المطلوب كان ' + clockOf(out.sched) : '');
       // Only a complete issues snapshot can prove that a recorded entry issue disappeared.
       if (old.kind === 'ordersEntry' && Array.isArray(b.issues) && Number.isInteger(b.totals?.issues) && b.totals.issues === b.issues.length &&
-          old.observedIssue && !b.issues.some(o => String(o.no) === old.no)) text = '✅ أوردر ' + shown + ': مشكلة الضرب لم تعد موجودة في قراءة Apex الكاملة.';
+          old.observedIssue && !b.issues.some(o => String(o.no) === old.no)) text = '🖥️ Apex | ✅ أوردر ' + shown + ': غلطة الضرب اتصلّحت على Apex';
       if (old.kind === 'ordersEntry' && rows('issues').some(o => String(o.no) === old.no)) old.observedIssue = true;
       if (text) { alerts.push({ key: 'resolved:' + key + ':' + ((old.sequence || 0) + 1), kind: old.kind, text, replyTo: key, target: old.target, branch: old.branch }); old.status = 'resolved'; old.sequence = (old.sequence || 0) + 1; }
     }
@@ -151,7 +151,7 @@ function setup(app) {
     if (previous) {
       const gone = await db.prepare('SELECT key FROM telegram_log WHERE key = ?').get('orders:stale:' + previous);
       if (gone) alerts.push({ key: 'resolved:' + gone.key, kind: 'ordersStale', replyTo: gone.key,
-        text: '✅ مرصد الأوردرات رجع يشتغل — كان واقف ' + Math.round((ctx.now - previous) / 60000) + ' دقيقة' });
+        text: '🖥️ Apex | ✅ مرصد الأوردرات رجع يقرا من Apex — كان واقف ' + Math.round((ctx.now - previous) / 60000) + ' دقيقة' });
     }
     for (const alert of alerts) {
       const no = states[alert.replyTo || alert.key]?.no;
@@ -205,7 +205,7 @@ function setup(app) {
     if (!last || now - last < STALE_MS || !isOperating(now)) return;
     if (await db.prepare('SELECT 1 FROM telegram_log WHERE key = ?').get('orders:stale:' + last)) return;
     const at = new Date(last).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit' });
-    await queue([{ key: 'orders:stale:' + last, kind: 'ordersStale', text: '⚠️ مرصد الأوردرات واقف من ' + at + ' (' + Math.round((now - last) / 60000) + ' دقيقة)\nاتأكد إن جهاز الكاشير شغال ومتوصل بالنت' }], now);
+    await queue([{ key: 'orders:stale:' + last, kind: 'ordersStale', text: '🖥️ Apex | ⚠️ مرصد الأوردرات مش بيقرا من Apex من ' + at + ' (' + Math.round((now - last) / 60000) + ' دقيقة)\nاتأكد إن جهاز الكاشير شغال ومتوصل بالنت' }], now);
   });
 }
 

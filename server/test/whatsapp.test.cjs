@@ -69,9 +69,9 @@ test('apexDetails: area, comments and the branch status the monitor sent, for th
       details: { '2648500': { loc: 'الحي السابع', note: 'رن قبل ما توصل', items: ['• 2× كفتة: بدون بصل'], msgs: [] } },
       branchStatus: { 'مدينة نصر': '📊 حالة الفرع دلوقتي: 4 أوردر لسه ماخرجش' } } });
     const d = await t.app.apexDetails('2026-10-22');
-    assert.equal(d.extra(2648500), '\n📍 المنطقة: الحي السابع\n💬 ملاحظة: رن قبل ما توصل\n🍽️ على الأصناف:\n• 2× كفتة: بدون بصل');
+    assert.equal(d.extra(2648500), '\n📍 المنطقة: الحي السابع\n💬 ملاحظة الأوردر: رن قبل ما توصل\n🍽️ تعليقات على الأصناف:\n• 2× كفتة: بدون بصل');
     assert.equal(d.extra(1), '');
-    assert.equal(d.status('فرع مدينة نصر'), '\n📊 حالة الفرع دلوقتي: 4 أوردر لسه ماخرجش');
+    assert.equal(d.status('فرع مدينة نصر'), '\n\n📊 حالة الفرع دلوقتي: 4 أوردر لسه ماخرجش');
     assert.equal(d.status('مدينتي'), '');
   } finally { await t.close(); }
 });

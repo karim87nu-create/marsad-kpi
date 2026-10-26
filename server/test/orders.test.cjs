@@ -69,7 +69,7 @@ test('orders: a switched-off kind is logged but not sent; the monitor stopping i
     assert.equal(stale.length, 1);
     await push(payload());
     const back = await t.app.db.prepare("SELECT text, reply_to FROM telegram_log WHERE key = ?").get('resolved:' + stale[0].key);
-    assert.match(back.text, /رجع يشتغل/);
+    assert.match(back.text, /رجع يقرا/);
     assert.equal(back.reply_to, stale[0].key);
   } finally { await t.close(); }
 });
@@ -137,17 +137,17 @@ test('orders: state replies stay in their original department, missing groups ne
     await admin('POST','/api/telegram',{action:'chat',chatId:'-400',title:'فرع التجمع الجديد',target:'branch',branch:'التجمع'});
     await push({lateOut:[{no:9,sn:484,out:'2026-10-22T10:10:00Z'}],issues:[]}); // incomplete snapshot cannot clear entry
     await t.app.telegramTick();
-    assert.equal(sent.filter(x=>x.text.includes('مشكلة الضرب')).length,0);
+    assert.equal(sent.filter(x=>x.text.includes('غلطة الضرب اتصلّحت')).length,0);
     const reply=sent.find(x=>x.text.includes('خرج مع الطيار'));
     assert.match(reply.text,/أوردر 484 /,'the state change shows the small serial, not the internal number');
     assert.equal(reply.chat_id,'-250','a reply stays where its warning went');assert.equal(reply.reply_parameters.message_id,branchId);
     await push({lateOut:[{no:9,out:'2026-10-22T10:10:00Z'}],issues:[],totals:{issues:0}});
     await t.app.telegramTick();
-    assert.equal(sent.find(x=>x.text.includes('مشكلة الضرب')).chat_id,'-300');
+    assert.equal(sent.find(x=>x.text.includes('غلطة الضرب اتصلّحت')).chat_id,'-300');
     await push({lateOut:[{no:9,out:'2026-10-22T10:10:00Z'}],issues:[],totals:{issues:0}});
     await t.app.telegramTick();
     assert.equal(sent.filter(x=>x.text.includes('خرج مع الطيار')).length,1);
-    assert.equal(sent.filter(x=>x.text.includes('مشكلة الضرب')).length,1);
+    assert.equal(sent.filter(x=>x.text.includes('غلطة الضرب اتصلّحت')).length,1);
     await push({alerts:[{key:'cancel:11',orderNo:11,kind:'ordersCancel',text:'cancel',branch:'التجمع'}]});
     await t.app.telegramTick();assert.equal(sent.find(x=>x.text==='cancel').chat_id,'-400');
     await push({alerts:[{key:'cancel:11',orderNo:11,kind:'ordersCancel',status:'resolved',text:'cancel changed',branch:'التجمع'}]});
@@ -210,7 +210,7 @@ test('orders: an order for a set time — reminders every 15 minutes under the w
     assert.deepEqual(l.map(x => x.text), ['⏰ 600 بقاله 210', '⏰ 600 بقاله 225'], 'one reminder per 15 minutes');
     await push({ open: [], lateOut: [{ no: 3526900, sn: 600, branch: 'التجمع', kind: 'Hotline', out: '2026-10-22T17:45:00Z', sched: '2026-10-22T18:00:00Z', wait: 165 }] });
     const out = log().find(x => /خرج مع الطيار/.test(x.text));
-    assert.match(out.text, /أوردر 600 /); assert.match(out.text, /ميعاده كان 09:00 م/);
+    assert.match(out.text, /أوردر 600 /); assert.match(out.text, /الميعاد المطلوب كان 09:00 م/);
   } finally { await t.close(); }
 });
 

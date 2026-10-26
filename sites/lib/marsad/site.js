@@ -110,13 +110,13 @@ function setup(app) {
     const day = businessDay(now), det = app.apexDetails ? await app.apexDetails(day) : { extra: () => '', status: () => '' };
     let mt = new Map(); try { mt = (await apexMatch(day, rows)).matches; } catch {}
     const more = (o, withStatus) => { const a = mt.get(o.id);
-      return (a ? '\nعلى Apex: أوردر ' + (a.sn ?? a.no) + (a.user ? ' · ضربه ' + a.user : '') + (a.at ? ' الساعة ' + clock(Date.parse(a.at)) : '') : '\nلسه مش لاقيينه على Apex') +
-        (o.total ? ' · ' + Math.round(o.total) + ' ج' : '') + (a ? det.extra(a.no) : '') + (withStatus ? det.status(a?.branch || o.branch) : ''); };
+      return (o.total ? '\nقيمة الأوردر: ' + Math.round(o.total) + ' ج' : '') +
+        (a ? '\nرقمه على Apex: ' + (a.sn ?? a.no) + (a.user ? '، ضربه ' + a.user : '') + (a.at ? ' الساعة ' + clock(Date.parse(a.at)) : '') : '\nلسه مش لاقيينه على Apex') + (a ? det.extra(a.no) : '') + (withStatus ? det.status(a?.branch || o.branch) : ''); };
     for (const o of rows) {
       if (o.received_at && !o.transfer_at && now - o.received_at > TRANSFER_MIN * 60000)
-        list.push({ key: 'site:transfer:' + o.id, kind: 'siteTransfer', target: 'online', text: '⏳ أوردر موقع ماتحوّلش للفرع — #' + o.id + '\nمستني من ' + Math.round((now - o.received_at) / 60000) + ' دقيقة (اتستلم ' + clock(o.received_at) + ')' + more(o, false) });
+        list.push({ key: 'site:transfer:' + o.id, kind: 'siteTransfer', target: 'online', text: '🌐 الموقع | ⏳ أوردر وصل على الموقع ولسه ماتحوّلش لأي فرع\nرقم أوردر الموقع: #' + o.id + '\nوصل الساعة ' + clock(o.received_at) + '، وبقاله ' + Math.round((now - o.received_at) / 60000) + ' دقيقة' + more(o, false) });
       if (o.fulfillment === 'delivery' && o.transfer_at && !o.out_at && now - o.transfer_at > PREP_MIN * 60000)
-        list.push({ key: 'site:prep:' + o.id, kind: 'sitePrep', target: 'branches', branch: o.branch || null, text: '🟠 أوردر موقع لسه بيتجهز — ' + (o.branch || 'فرع غير معروف') + '\n#' + o.id + ' بقاله ' + Math.round((now - o.transfer_at) / 60000) + ' دقيقة من التحويل (' + clock(o.transfer_at) + ')' + more(o, true) });
+        list.push({ key: 'site:prep:' + o.id, kind: 'sitePrep', target: 'branches', branch: o.branch || null, text: '🌐 الموقع | 🟠 أوردر عدّى 30 دقيقة من التحويل ولسه ماخرجش للتوصيل\nالفرع: ' + (o.branch || 'غير معروف') + '\nرقم أوردر الموقع: #' + o.id + '\nاتحوّل للفرع الساعة ' + clock(o.transfer_at) + '، وبقاله ' + Math.round((now - o.transfer_at) / 60000) + ' دقيقة' + more(o, true) });
     }
     // Each warning is answered when the order moves on: transferred, out for delivery, delivered, or cancelled.
     const waiting = await db.prepare("SELECT l.key, l.kind, l.target, l.branch FROM telegram_log l WHERE (l.key LIKE 'site:transfer:%' OR l.key LIKE 'site:prep:%') AND l.created_at >= ? AND NOT EXISTS (SELECT 1 FROM telegram_log x WHERE x.key = 'resolved:' || l.key)").all(now - 12 * 3600000);
@@ -124,10 +124,10 @@ function setup(app) {
       const o = await db.prepare('SELECT * FROM site_orders WHERE id = ?').get(Number(w.key.split(':')[2])); if (!o) continue;
       const mins = (a, b) => Math.round((b - a) / 60000);
       let text = null;
-      if (EXCLUDED.has(o.status)) text = '🔄 أوردر موقع #' + o.id + ' اتلغى على الموقع';
-      else if (w.kind === 'siteTransfer' && o.transfer_at) text = '✅ أوردر موقع #' + o.id + ' اتحوّل لـ ' + (o.branch || 'الفرع') + ' الساعة ' + clock(o.transfer_at) + (o.received_at ? ' (بعد ' + mins(o.received_at, o.transfer_at) + ' دقيقة من الاستلام)' : '');
-      else if (w.kind === 'sitePrep' && o.out_at) text = '✅ أوردر موقع #' + o.id + ' خرج للتوصيل الساعة ' + clock(o.out_at) + (o.transfer_at ? ' (بعد ' + mins(o.transfer_at, o.out_at) + ' دقيقة من التحويل)' : '') + (o.driver ? ' · ' + o.driver : '');
-      else if (w.kind === 'sitePrep' && o.delivered_at) text = '⚠️ أوردر موقع #' + o.id + ' اتقفل «تم التوصيل» الساعة ' + clock(o.delivered_at) + ' من غير «خروج للتوصيل» — محتاج مراجعة';
+      if (EXCLUDED.has(o.status)) text = '🌐 الموقع | 🔄 أوردر الموقع #' + o.id + ' اتلغى على الموقع';
+      else if (w.kind === 'siteTransfer' && o.transfer_at) text = '🌐 الموقع | ✅ أوردر الموقع #' + o.id + ' اتحوّل لـ ' + (o.branch || 'الفرع') + ' الساعة ' + clock(o.transfer_at) + (o.received_at ? ' (بعد ' + mins(o.received_at, o.transfer_at) + ' دقيقة من الاستلام)' : '');
+      else if (w.kind === 'sitePrep' && o.out_at) text = '🌐 الموقع | ✅ أوردر الموقع #' + o.id + ' خرج للتوصيل الساعة ' + clock(o.out_at) + (o.transfer_at ? ' (بعد ' + mins(o.transfer_at, o.out_at) + ' دقيقة من التحويل)' : '') + (o.driver ? ' · ' + o.driver : '');
+      else if (w.kind === 'sitePrep' && o.delivered_at) text = '🌐 الموقع | ⚠️ أوردر الموقع #' + o.id + ' اتقفل «تم التوصيل» الساعة ' + clock(o.delivered_at) + ' من غير «خروج للتوصيل» — محتاج مراجعة';
       if (text) list.push({ key: 'resolved:' + w.key, kind: w.kind, target: w.target, branch: w.branch, replyTo: w.key, text });
     }
     if (list.length) await db.batch(list.map(a => db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, sent_at, target, branch, reply_to) VALUES (?,?,?,?,?,?,?,?,?)').bind(a.key, a.kind, null, a.text, now, r[a.kind] === false && !a.replyTo ? now : null, a.target, a.branch || null, a.replyTo || null)));
