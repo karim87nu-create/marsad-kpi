@@ -61,15 +61,24 @@ function setup(app) {
     const findNo = no => no && ['open', 'lateOut', 'cancels', 'online', 'issues'].map(k => rows(k).find(o => String(o.no) === no)).find(Boolean);
     const branchOfNo = no => no && ['open', 'lateOut', 'cancels', 'online', 'issues'].map(k => rows(k).find(o => String(o.no) === no)).find(Boolean)?.branch || null;
     const orderNo = a => String(a.orderNo ?? a.orderId ?? (/^(?:v?late|del|disc|pay|dup|entry|duplicate|cancel):([0-9]+)(?::|$)/.exec(String(a.key))?.[1] || ''));
-    for (const a of (Array.isArray(b.alerts) ? b.alerts : []).slice(0, 50)) {
+    // New warnings first, then the monitor's follow-ups (the current state of orders already warned about).
+    for (const a of (Array.isArray(b.alerts) ? b.alerts : []).slice(0, 400).sort((x, y) => !!x?.follow - !!y?.follow)) {
       if (!a || !KINDS.includes(a.kind) || a.kind === 'ordersStale' || !a.key || !a.text) continue;
+      if (a.follow && String(a.status || 'active') === 'active') continue;
       const key = 'orders:' + b.day + ':' + String(a.key).slice(0, 80), text = String(a.text).slice(0, 3500);
       const old = states[key], no = orderNo(a), branch = a.branch || branchOfNo(no);
       const target = BRANCH_KINDS.has(a.kind) ? 'branches' : 'online';
       const status = String(a.status || 'active').slice(0,80);
       const version = sha256(JSON.stringify([status, text]));
       if (!old) {
-        if (status === 'resolved') continue; // No original warning to answer.
+        if (status === 'resolved' || a.follow) continue; // No original warning to answer.
+        // «Very late» answers the «late» warning of the same order instead of a new message.
+        const lateKey = /^vlate:/.test(String(a.key)) ? 'orders:' + b.day + ':' + String(a.key).replace(/^v/, '') : null;
+        if (lateKey && states[lateKey] && !['resolved', 'deleted'].includes(states[lateKey].status)) {
+          alerts.push({ key: 'state:' + key, kind: a.kind, text, replyTo: lateKey, target: states[lateKey].target, branch: states[lateKey].branch });
+          states[key] = { no, kind: a.kind, text, status: 'merged', version, target };
+          continue;
+        }
         // An entry issue whose pattern was answered «مش غلط» enough times is not alerted (it is still listed).
         if (a.kind === 'ordersEntry' && app.learnedOk) {
           const issue = rows('issues').find(i => String(i.no) === no);
@@ -86,7 +95,8 @@ function setup(app) {
       }
     }
     for (const [key, old] of Object.entries(states)) {
-      if (old.status === 'resolved' || old.status === 'learned' || !old.no) continue;
+      // 'deleted': the monitor already answered that the order was cancelled; 'merged': answered under the late warning.
+      if (['resolved', 'learned', 'deleted', 'merged'].includes(old.status) || !old.no) continue;
       const out = rows('lateOut').find(o => String(o.no) === old.no && o.out);
       const cancel = rows('cancels').find(o => String(o.no) === old.no);
       let text = null;

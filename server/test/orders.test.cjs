@@ -151,3 +151,34 @@ test('orders: state replies stay in their original department, missing groups ne
     assert.ok(sent.find(x=>x.text==='cancel changed').reply_parameters.message_id);
   } finally {await t.close();tg.close();}
 });
+
+test('orders: every change answers its warning (very late, cancelled, discount changed), with the small serial', async () => {
+  const t = await start();
+  try {
+    const admin = await t.admin();
+    const { token } = (await admin('POST', '/api/orders/token')).body;
+    const push = body => t.call('POST', '/api/orders/push', { body: payload(body), headers: { 'x-orders-token': token } });
+    const log = () => t.app.db.raw.prepare("SELECT key, text, reply_to FROM telegram_log WHERE kind LIKE 'orders%' ORDER BY id").all();
+    const open = [{ no: 3526805, sn: 421, branch: 'التجمع', kind: 'Hotline', at: '2026-10-22T09:00:00Z', wait: 31 }];
+    await push({ open, alerts: [{ key: 'late:3526805', kind: 'ordersLate', text: 'late 421', sn: 421 }, { key: 'disc:3526806', kind: 'ordersDiscount', text: 'disc 422', sn: 422, status: 'd100' }] });
+    await push({ open, alerts: [{ key: 'vlate:3526805', kind: 'ordersLate', text: 'very late 421', sn: 421 }] });
+    let l = log();
+    const vl = l.find(x => x.text === 'very late 421');
+    assert.equal(vl.reply_to, 'orders:2026-10-22:late:3526805', 'very late answers the late warning');
+    // The monitor's follow-ups: unchanged ones are quiet, a change is a reply; one never warned about is ignored.
+    const follow = [{ key: 'disc:3526806', kind: 'ordersDiscount', text: 'disc now 50', status: 'd100', follow: true },
+      { key: 'late:3526805', kind: 'ordersLate', text: 'x', status: 'active', follow: true }, { key: 'disc:999', kind: 'ordersDiscount', text: 'never', status: 'd1', follow: true }];
+    await push({ open, alerts: follow });
+    assert.equal(log().length, l.length, 'nothing changed');
+    follow[0].status = 'd50';
+    await push({ open, alerts: [...follow, { key: 'late:3526805', kind: 'ordersLate', text: '🔄 أوردر 421 اتلغى', status: 'deleted', follow: true }] });
+    l = log();
+    assert.equal(l.find(x => x.text === 'disc now 50').reply_to, 'orders:2026-10-22:disc:3526806');
+    assert.equal(l.find(x => x.text === '🔄 أوردر 421 اتلغى').reply_to, 'orders:2026-10-22:late:3526805');
+    assert.ok(!l.some(x => x.text === 'never'));
+    // A cancelled order is not answered a second time by the server's own «cancelled after the late warning».
+    await push({ open: [], cancels: [{ no: 3526805, sn: 421, branch: 'التجمع', kind: 'Hotline' }] });
+    assert.equal(log().length, l.length);
+    assert.ok(!log().some(x => /3526805/.test(x.text)), 'the internal number is never written');
+  } finally { await t.close(); }
+});

@@ -112,7 +112,19 @@ function setup(app) {
       if (o.fulfillment === 'delivery' && o.transfer_at && !o.out_at && now - o.transfer_at > PREP_MIN * 60000)
         list.push({ key: 'site:prep:' + o.id, kind: 'sitePrep', target: 'branches', branch: o.branch || null, text: '🟠 أوردر موقع لسه بيتجهز — ' + (o.branch || 'فرع غير معروف') + '\n#' + o.id + ' بقاله ' + Math.round((now - o.transfer_at) / 60000) + ' دقيقة من التحويل (' + clock(o.transfer_at) + ')' });
     }
-    if (list.length) await db.batch(list.map(a => db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, sent_at, target, branch) VALUES (?,?,?,?,?,?,?,?)').bind(a.key, a.kind, null, a.text, now, r[a.kind] === false ? now : null, a.target, a.branch || null)));
+    // Each warning is answered when the order moves on: transferred, out for delivery, delivered, or cancelled.
+    const waiting = await db.prepare("SELECT l.key, l.kind, l.target, l.branch FROM telegram_log l WHERE (l.key LIKE 'site:transfer:%' OR l.key LIKE 'site:prep:%') AND l.created_at >= ? AND NOT EXISTS (SELECT 1 FROM telegram_log x WHERE x.key = 'resolved:' || l.key)").all(now - 12 * 3600000);
+    for (const w of waiting) {
+      const o = await db.prepare('SELECT * FROM site_orders WHERE id = ?').get(Number(w.key.split(':')[2])); if (!o) continue;
+      const mins = (a, b) => Math.round((b - a) / 60000);
+      let text = null;
+      if (EXCLUDED.has(o.status)) text = '🔄 أوردر موقع #' + o.id + ' اتلغى على الموقع';
+      else if (w.kind === 'siteTransfer' && o.transfer_at) text = '✅ أوردر موقع #' + o.id + ' اتحوّل لـ ' + (o.branch || 'الفرع') + ' الساعة ' + clock(o.transfer_at) + (o.received_at ? ' (بعد ' + mins(o.received_at, o.transfer_at) + ' دقيقة من الاستلام)' : '');
+      else if (w.kind === 'sitePrep' && o.out_at) text = '✅ أوردر موقع #' + o.id + ' خرج للتوصيل الساعة ' + clock(o.out_at) + (o.transfer_at ? ' (بعد ' + mins(o.transfer_at, o.out_at) + ' دقيقة من التحويل)' : '') + (o.driver ? ' · ' + o.driver : '');
+      else if (w.kind === 'sitePrep' && o.delivered_at) text = '⚠️ أوردر موقع #' + o.id + ' اتقفل «تم التوصيل» الساعة ' + clock(o.delivered_at) + ' من غير «خروج للتوصيل» — محتاج مراجعة';
+      if (text) list.push({ key: 'resolved:' + w.key, kind: w.kind, target: w.target, branch: w.branch, replyTo: w.key, text });
+    }
+    if (list.length) await db.batch(list.map(a => db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, sent_at, target, branch, reply_to) VALUES (?,?,?,?,?,?,?,?,?)').bind(a.key, a.kind, null, a.text, now, r[a.kind] === false && !a.replyTo ? now : null, a.target, a.branch || null, a.replyTo || null)));
   }
 
   let lastRun = 0;

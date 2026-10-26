@@ -75,3 +75,27 @@ test('talabat: the #code on Apex links for sure, even far in time; sure links te
     assert.equal(d2.orders.find(o => o.id === '3977009990').apex?.no, 8100);
   } finally { await t.close(); }
 });
+
+test('talabat: «accepted and not on Apex» is answered when it is entered on Apex', async () => {
+  const t0 = cairoToUtc(2026, 10, 22, 20, 0, 0), at = m => new Date(t0 + m * 60000).toISOString();
+  const t = await start({ at: t0 + 60000 });
+  try {
+    const admin = await t.admin();
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const ot = (await admin('POST', '/api/orders/token')).body.token;
+    const push = orders => t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders } });
+    const apex = online => t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': ot }, body: { v: 1, day: '2026-10-22', online } });
+    await apex([]);
+    await push([{ id: '3977400009', store: 'الدهان، التجمع الخامس - البنفسج', status: 'ACCEPTED', placedAt: at(0), total: 300,
+      detail: { receivedAt: at(0), acceptSeconds: 30, acceptedAt: at(0.5), items: [], subtotal: 300 } }]);
+    t.advance(11 * 60000); await apex([]); await push([]);
+    assert.ok(t.app.db.raw.prepare("SELECT 1 FROM telegram_log WHERE key = 'talabat:notEntered:3977400009'").get());
+    t.advance(2 * 60000);
+    await apex([{ no: 3526900, sn: 512, kind: 'طلبات', branch: 'التجمع', at: at(12), user: 'sara.m', amount: 300 }]);
+    await push([]);
+    const rep = t.app.db.raw.prepare("SELECT text, reply_to FROM telegram_log WHERE key = 'resolved:talabat:notEntered:3977400009'").get();
+    assert.equal(rep.reply_to, 'talabat:notEntered:3977400009');
+    assert.match(rep.text, /اتضرب على Apex — أوردر 512 /); assert.match(rep.text, /بعد 12 دقيقة من القبول/);
+    assert.ok(!rep.text.includes('3526900'), 'never the internal number');
+  } finally { await t.close(); }
+});

@@ -73,5 +73,11 @@ test('site: key, sync of orders and notes, the day rows, alerts', async () => {
     assert.ok(site.calls.some(u => u.includes('/orders/102/notes')));
     assert.ok(!site.calls.some(u => u.includes('/orders/101/notes')), 'delivered order not re-read');
     assert.equal(t.app.db.raw.prepare("SELECT COUNT(*) n FROM telegram_log WHERE kind LIKE 'site%'").get().n, 1);
+    // It is sent to a branch: the warning gets a reply saying so.
+    site.notes[102].push({ date_created_gmt: g(site.m(33)), note: 'تم إرسال الطلب إلى فرع التجمع من لوحة التشغيل' });
+    t.advance(61000);
+    await admin('POST', '/api/site', { action: 'sync' });
+    const rep = t.app.db.raw.prepare("SELECT text, reply_to FROM telegram_log WHERE key = 'resolved:site:transfer:102'").get();
+    assert.equal(rep.reply_to, 'site:transfer:102'); assert.match(rep.text, /اتحوّل لـ التجمع/);
   } finally { await t.close(); }
 });
