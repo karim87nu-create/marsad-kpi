@@ -80,18 +80,9 @@ function setup(app) {
     const findNo = no => no && ['open', 'lateOut', 'cancels', 'online', 'issues'].map(k => rows(k).find(o => String(o.no) === no)).find(Boolean);
     const branchOfNo = no => no && ['open', 'lateOut', 'cancels', 'online', 'issues'].map(k => rows(k).find(o => String(o.no) === no)).find(Boolean)?.branch || null;
     const orderNo = a => String(a.orderNo ?? a.orderId ?? (/^(?:v?late|del|disc|pay|dup|entry|duplicate|cancel|note):([0-9]+)(?::|$)/.exec(String(a.key))?.[1] || ''));
-    // Comments are context only. Remember them across pushes, but never create a notification for them.
-    const comments = states['context:comments']?.values || {};
-    for (const a of Array.isArray(b.alerts) ? b.alerts : []) {
-      if (a?.kind !== 'ordersComment') continue;
-      const no = orderNo(a);
-      if (no) comments[no] = String(a.comment ?? a.note ?? a.text ?? '').slice(0, 2000);
-    }
-    for (const list of ['open', 'lateOut', 'cancels', 'online', 'issues']) for (const row of rows(list)) {
-      const note = row.comment ?? row.notes ?? row.note;
-      if (row.no != null && typeof note === 'string') comments[String(row.no)] = note.slice(0, 2000);
-    }
-    states['context:comments'] = { values: comments };
+    // Comments never make a message of their own: the monitor writes them inside its alerts (area, order comment,
+    // item comments, comments sent after entry). An «ordersComment» from an older monitor is ignored.
+    delete states['context:comments'];
     // New warnings first, then the monitor's follow-ups (the current state of orders already warned about).
     for (const a of (Array.isArray(b.alerts) ? b.alerts : []).slice(0, 400).sort((x, y) => !!x?.follow - !!y?.follow)) {
       if (!a || !KINDS.includes(a.kind) || ['ordersStale', 'ordersComment'].includes(a.kind) || !a.key || !a.text) continue;
@@ -152,11 +143,6 @@ function setup(app) {
       const gone = await db.prepare('SELECT key FROM telegram_log WHERE key = ?').get('orders:stale:' + previous);
       if (gone) alerts.push({ key: 'resolved:' + gone.key, kind: 'ordersStale', replyTo: gone.key,
         text: '🖥️ Apex | ✅ مرصد الأوردرات رجع يقرا من Apex — كان واقف ' + Math.round((ctx.now - previous) / 60000) + ' دقيقة' });
-    }
-    for (const alert of alerts) {
-      const no = states[alert.replyTo || alert.key]?.no;
-      const comment = no && comments[no];
-      if (comment && !alert.text.includes(comment)) alert.text = (alert.text + '\n💬 تعليق الأوردر:\n' + comment).slice(0, 3900);
     }
     await queue(alerts, ctx.now);
     await put(stateKey, JSON.stringify(states));

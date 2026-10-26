@@ -214,18 +214,15 @@ test('orders: an order for a set time — reminders every 15 minutes under the w
   } finally { await t.close(); }
 });
 
-test('orders: comments alone stay silent, enrich warnings and replies, and retain the latest comment', async()=>{
+test('orders: a comment alone never sends anything, and is never pasted under other messages (the monitor puts comments inside its alerts)', async()=>{
  const t=await start();try{
  const admin=await t.admin(),{token}=(await admin('POST','/api/orders/token')).body;
  const push=body=>t.call('POST','/api/orders/push',{headers:{'x-orders-token':token},body:payload(body)});
- await push({alerts:[{key:'note:55',orderNo:55,kind:'ordersComment',text:'بدون بصل'}]});
+ await push({alerts:[{key:'note:55',orderNo:55,kind:'ordersComment',text:'💬 أوردر عليه كومنت — قديم'}]});
  assert.equal((await t.app.db.prepare('SELECT COUNT(*) n FROM telegram_log').get()).n,0);
- await push({open:[{no:55,sn:7,branch:'التجمع'}],alerts:[{key:'late:55',orderNo:55,sn:7,kind:'ordersLate',text:'تأخير أوردر 7'}]});
- const warning=await t.app.db.prepare("SELECT * FROM telegram_log WHERE kind='ordersLate'").get();assert.match(warning.text,/بدون بصل/);
- await push({alerts:[{key:'note:55:new',orderNo:55,kind:'ordersComment',text:'الشطة بره'}]});
- assert.equal((await t.app.db.prepare('SELECT COUNT(*) n FROM telegram_log').get()).n,1,'comment change does not notify');
+ await push({open:[{no:55,sn:7,branch:'التجمع'}],alerts:[{key:'late:55',orderNo:55,sn:7,kind:'ordersLate',text:'تأخير أوردر 7\n💬 ملاحظة الأوردر: بدون بصل'}]});
+ const warning=await t.app.db.prepare("SELECT * FROM telegram_log WHERE kind='ordersLate'").get();assert.match(warning.text,/بدون بصل/);assert.doesNotMatch(warning.text,/قديم/);
  await push({lateOut:[{no:55,sn:7,branch:'التجمع',out:'2026-10-22T10:10:00Z',pilot:'P'}]});
- const reply=await t.app.db.prepare('SELECT * FROM telegram_log WHERE reply_to=?').get(warning.key);assert.ok(reply);assert.match(reply.text,/أوردر 7/);assert.match(reply.text,/الشطة بره/);
- assert.equal((await t.app.db.prepare("SELECT COUNT(*) n FROM telegram_log WHERE kind='ordersComment'").get()).n,0);
+ const reply=await t.app.db.prepare('SELECT * FROM telegram_log WHERE reply_to=?').get(warning.key);assert.ok(reply);assert.match(reply.text,/أوردر 7/);assert.doesNotMatch(reply.text,/قديم|كومنت/);
  }finally{await t.close();}
 });
