@@ -47,7 +47,8 @@
       const out = new Map(), walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
       const codeIn = e => { const w = document.createTreeWalker(e, NodeFilter.SHOW_TEXT); for (let x; (x = w.nextNode());) { const m = x.nodeValue.trim().match(/^#\s*(\d{2,8})$/); if (m) return m[1]; } return ''; };
       for (let n; (n = walk.nextNode());) {
-        const t = n.nodeValue.trim(); if (!/^\d{9,12}$/.test(t) || out.has(t)) continue;
+        const match = n.nodeValue.trim().match(/^(\d{9,12})(?=\s|[•·]|$)/);
+        const t = match?.[1]; if (!t || out.has(t)) continue;
         let card = n.parentElement, code = '';
         for (let i = 0; i < 6 && card && !(code = codeIn(card)); i++) card = card.parentElement;
         if (code) out.set(t, { id: t, code, store: (card.innerText.split('\n').find(x => /الدهان/.test(x)) || '').trim() || null });
@@ -140,13 +141,21 @@
   async function cycle() {
     // The "allow notifications" box covers the list.
     [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Got it')?.click();
-    if (location.pathname + location.search !== listUrl() && !T('details-order-id')) { location.href = listUrl(); return; }
+    if (location.pathname + location.search !== listUrl() && !T('details-order-id')) {
+      // Some Talabat accounts replace unknown URL date filters with Last 7 days.
+      // One attempt only: otherwise every cycle navigates again before the grid can load.
+      const navKey = 'marsadTalabatNavigate:' + day();
+      if (!sessionStorage.getItem(navKey)) { sessionStorage.setItem(navKey, '1'); location.href = listUrl(); return; }
+      say('طلبات غيّر فلتر التاريخ؛ اختار يوم التشغيل من فلتر التاريخ في Order History. مش هنكرر تحميل الصفحة.');
+      return;
+    }
     if (T('details-order-id')) await closeDetail();
     // The list shows 50 at a time: on the first pass load the whole day, later only when an asked-for order is further down.
     const loadMore = () => [...document.querySelectorAll('button,div,span,p')].find(e => e.childElementCount === 0 && /^(Load more|عرض المزيد)$/i.test(e.textContent.trim()));
     const full = Date.now() - fullAt() > 600000;
     for (let i = 0; i < 40 && loadMore() && (full || want.some(id => !readList().some(o => o.id === id))); i++) { loadMore().click(); await sleep(1500); }
     const list = readList();
+    if (!list.length) { say('سجل طلبات لسه محمّلش أوردرات؛ مستني ظهور الصفوف. اللايف شغال في التبويب التاني.'); return; }
     // Sent: everything on a full pass; otherwise what is new or changed since this page loaded, plus the top of the list.
     const send = full ? list : list.filter((o, i) => i < 60 || known.get(o.id) !== o.status);
     if (send.length && (full || send.some(o => known.get(o.id) !== o.status))) {
@@ -158,6 +167,7 @@
       await closeDetail();
       if (d) await push([{ ...d, store: list.find(o => o.id === id)?.store, total: list.find(o => o.id === id)?.total }]);
     }
+    if (failures) return; // Preserve the delivery error instead of overwriting it with a success banner.
     say(list.length + ' أوردر النهارده · آخر قراءة ' + new Date().toLocaleTimeString('ar-EG-u-nu-latn', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
     // The list itself does not refresh on its own: reload it every minute when nothing is pending.
     if (!want.length && Date.now() - lastReload > 60000) { lastReload = Date.now(); location.reload(); }
