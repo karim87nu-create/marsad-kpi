@@ -43,6 +43,7 @@
       <button data-view="missed"><svg class="ic" aria-hidden="true"><use href="#i-missed"/></svg>المكالمات الفائتة</button>
       <div class="navgroup">ضرب الأوردرات</div>
       <button data-view="entry"><svg class="ic" aria-hidden="true"><use href="#i-keypad"/></svg>ضرب الأوردرات</button>
+      <button data-view="talabat"><svg class="ic" aria-hidden="true"><use href="#i-store"/></svg>أوردرات طلبات</button>
       <button data-view="siteTransfer"><svg class="ic" aria-hidden="true"><use href="#i-globe"/></svg>تحويل أوردرات الموقع</button>
       </div>
       <div class="navsec" data-sec="branches" hidden>
@@ -216,6 +217,16 @@
       <div id="cancelCards" class="cards"></div>
       <article class="panel"><h2>الإلغاءات حسب الفرع</h2><div id="cancelRanks"></div></article>
       <article class="panel"><h2>كل الإلغاءات <button class="ghost small" data-export="cancels">تصدير Excel</button></h2><div id="cancelTable"></div></article>
+      <article class="panel" id="cancelTalabatPanel" hidden><h2>الإلغاءات على طلبات</h2><p class="muted">من شاشة مراقبة طلبات: وقت الإلغاء، والإلغاء على مين، والسبب.</p><div id="cancelTalabat"></div></article>
+    </section>
+
+    <section id="view-talabat" class="view" hidden>
+      <p id="talNote" class="note"></p>
+      <div class="filters"><select id="talPick" aria-label="الفرع"><option value="">كل الفروع</option></select><button class="ghost small" data-export="talabat">تصدير Excel</button></div>
+      <div id="talCards" class="cards"></div>
+      <article class="panel"><h2>مين ضرب أوردرات طلبات على Apex</h2><p class="muted">من وقت قبول الأوردر على طلبات لحد ما اتضرب على Apex.</p><div id="talStaff"></div></article>
+      <article class="panel"><h2>كل أوردرات طلبات</h2><p class="muted">الربط مع Apex بالفرع والوقت والأصناف. لو الربط غلط أو ناقص، اختار أوردر Apex الصح من الخانة.</p><div id="talOrders"></div></article>
+      <article class="panel"><h2>الإلغاءات على طلبات</h2><div id="talCancels"></div></article>
     </section>
 
     <section id="view-siteBranches" class="view" hidden>
@@ -317,6 +328,12 @@
         <form id="siteKeyForm" class="inline"><input name="key" placeholder="Consumer key (ck_…)" autocomplete="off" dir="ltr" required aria-label="Consumer key"><input name="secret" type="password" placeholder="Consumer secret (cs_…)" autocomplete="off" dir="ltr" required aria-label="Consumer secret"><button type="submit">ربط الموقع</button></form>
         <div class="inline" style="margin-top:8px"><button type="button" id="siteSync" class="ghost">اقرا دلوقتي</button><button type="button" id="siteUnlink" class="ghost">فك الربط</button></div>
         <p id="siteKeyNote" class="muted" role="status"></p>
+      </article>
+      <article class="panel" id="talKeyPanel"><h2>شاشة مراقبة طلبات</h2>
+        <p class="muted">جهاز واحد فاضل شغال، عليه فايرفوكس بإضافة المرصد ومتسجل فيه حساب الكول سنتر على طلبات (اللي شايف كل الفروع). افتح الصفحة دي على الجهاز ده ودوس ربط. الشاشة بتقرا Order History وتفاصيل كل أوردر لوحدها، ومش بتدوس على قبول أو رفض أو أي حاجة تغيّر الأوردر.</p>
+        <p id="talKeyStatus"></p>
+        <button type="button" id="talLink">ربط الجهاز ده كشاشة مراقبة طلبات</button>
+        <p id="talKeyNote" class="muted" role="status"></p>
       </article>
       <article class="panel" id="ordersKeyPanel"><h2>مرصد الأوردرات (جهاز الكاشير)</h2>
         <p class="muted">السكريبت اللي على جهاز الكاشير بيقرا Apex ويبعت هنا بالمفتاح ده. طلّع المفتاح، وشغّل setup.bat على جهاز الكاشير والصقه لما يطلبه. المفتاح بيظهر مرة واحدة بس؛ لو طلّعت مفتاح جديد القديم بيبطل.</p>

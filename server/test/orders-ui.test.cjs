@@ -70,6 +70,12 @@ test('admin page: مرصد الدهان sections, live branches board, reports, 
     assert.ok(doc.getElementById('tgChooseBranches'));
     assert.ok(doc.getElementById('tgChooseOnline'));
     assert.match(doc.getElementById('tgStatus').textContent, /جروب الكول سنتر — الأونلاين وضرب الأوردر/);
+    const tt = (await t.call('POST', '/api/talabat/token', { headers: { 'x-admin-password': token } })).body.token;
+    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': tt }, body: { orders: [{ id: '3977407954', store: 'الدهان, مدينتي - ساوث بارك', status: 'CANCELLED', placedAt: ago(40), total: 323,
+      detail: { receivedAt: ago(40), acceptSeconds: 9, acceptedAt: ago(39), pickedUpAt: ago(35), cancelledAt: ago(5), cancelOwner: 'Customer', cancelReason: 'Unable to find or reach customer', items: [{ qty: 1, name: 'Stuffed Pigeon', price: 323 }], subtotal: 323 } }] } });
+    doc.querySelector('[data-view="talabat"]').click();
+    await until(() => doc.getElementById('talOrders').textContent.includes('3977407954') && doc.getElementById('talCancels').textContent.includes('Unable to find'), 'talabat view');
+    assert.match(doc.getElementById('talCancels').textContent, /العميل/);
     for (const [v, id, text] of [['siteTransfer', 'siteTTable', 'الموقع مش متربط']]) {
       doc.querySelector('[data-view="' + v + '"]').click();
       await until(() => doc.getElementById(id).textContent.includes(text), v);

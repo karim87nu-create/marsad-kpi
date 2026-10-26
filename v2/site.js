@@ -117,9 +117,90 @@ window.MarsadSite = function MarsadSite(ctx) {
       rows: list.map(x => [{ v: '#' + x.id }, { v: t12(x.receivedAt) }, { v: x.transferAt ? t12(x.transferAt) : 'لسه ماتحوّلش' }, { v: waitText(x), fill: x.late ? 'red' : 'green' }, { v: branchOf(x) }]) })));
   }
   function exportKind(kind) {
-    if (kind === 'siteBranches') exportBranches(); else if (kind === 'siteTransfer') exportTransfer(); else return false;
+    if (kind === 'siteBranches') exportBranches(); else if (kind === 'siteTransfer') exportTransfer(); else if (kind === 'talabat') exportTalabat(); else return false;
     return true;
   }
+
+  // ---------- طلبات: every order, its times on Talabat, and its Apex order (who entered it) ----------
+  const OWNER = { Customer: 'العميل', Vendor: 'المطعم', Platform: 'طلبات', Transport: 'التوصيل', Rider: 'الطيار' };
+  const STATUS = { NEW: 'جديد', ACCEPTED: 'مقبول', READY: 'جاهز', 'READY FOR PICKUP': 'جاهز', 'PICKED UP': 'خرج', COMPLETED: 'اتسلّم', DELIVERED: 'اتسلّم', CANCELLED: 'اتلغى', REJECTED: 'مرفوض' };
+  const secs = v => v == null ? '—' : v < 60 ? v + ' ث' : Math.floor(v / 60) + ' د ' + (v % 60) + ' ث';
+  let tal = null;
+  const entryDelay = x => x.apex && x.acceptedAt ? Math.round((Date.parse(x.apex.at) - Date.parse(x.acceptedAt)) / 1000) : null;
+  async function renderTalabat(force) {
+    const d = tal = await api('/api/talabat/day?day=' + state.day), now = serverNow();
+    $('talNote').textContent = !d.linked ? 'شاشة مراقبة طلبات مش متربطة لسه: من «الإدارة» ← «شاشة مراقبة طلبات».' : (d.stale ? 'شاشة المراقبة مش بتبعت من ' + (d.lastPush ? t12(d.lastPush) : '—') + ' — اتأكد إن الجهاز وفايرفوكس شغالين' : 'لايف من شاشة المراقبة · آخر قراءة ' + t12(d.lastPush)) + (d.apexLinked ? '' : ' · الربط مع Apex بيبدأ مع نسخة سكريبت الكاشير الجديدة') + (state.day !== state.to ? ' · ليوم واحد: أول يوم في الفترة' : '');
+    const pick = $('talPick').value, o = d.orders.filter(x => !pick || x.store === pick);
+    const names = [...new Set(d.orders.map(x => x.store).filter(Boolean))].sort(); const v = $('talPick').value;
+    $('talPick').replaceChildren(h('option', { value: '', textContent: 'كل الفروع' }), ...names.map(n => h('option', { value: n, textContent: n }))); $('talPick').value = names.includes(v) ? v : '';
+    const acc = o.filter(x => x.acceptSeconds != null), canc = o.filter(x => x.status === 'CANCELLED'), live = o.filter(x => !x.final && x.status !== 'PICKED UP');
+    const notIn = d.apexLinked ? o.filter(x => !x.apex && x.acceptedAt && x.status !== 'CANCELLED' && now - Date.parse(x.acceptedAt) > 10 * 60000) : [];
+    const delays = o.map(entryDelay).filter(x => x != null);
+    $('talCards').replaceChildren(kpi('أوردرات طلبات', o.length, 'info', live.length ? live.length + ' لسه في الفرع' : ''), kpi('متوسط القبول', acc.length ? secs(Math.round(acc.reduce((n, x) => n + x.acceptSeconds, 0) / acc.length)) : '—'),
+      kpi('من القبول للضرب على Apex', delays.length ? secs(Math.round(delays.reduce((n, x) => n + x, 0) / delays.length)) : '—', '', 'متوسط'),
+      kpi('اتقبلت وماتضربتش', notIn.length, notIn.length ? 'bad' : 'good', 'أكتر من 10 دقايق'), kpi('اتلغت', canc.length, canc.length ? 'bad' : 'good', canc.filter(x => x.cancelOwner === 'Vendor').length + ' بسبب المطعم'));
+    // Who entered Talabat orders on Apex, and how fast after acceptance.
+    const by = new Map();
+    for (const x of o) { if (!x.apex) continue; const k = x.apex.user || '—', y = by.get(k) || { name: k, n: 0, sum: 0, cnt: 0, slow: 0 }; y.n++; const e = entryDelay(x); if (e != null) { y.sum += e; y.cnt++; if (e > 300) y.slow++; } by.set(k, y); }
+    table('talStaff', [{ title: 'الموظف (Apex)', get: x => x.name }, { title: 'ضرب', get: x => x.n, type: 'number' }, { title: 'متوسط من القبول للضرب', get: x => x.cnt ? Math.round(x.sum / x.cnt) : null, show: x => x.cnt ? secs(Math.round(x.sum / x.cnt)) : '—', type: 'number' },
+      { title: 'بعد أكتر من 5 دقايق', get: x => x.slow, type: 'number', cls: x => x.slow ? 'warn' : '' }], [...by.values()].sort((a, b) => b.n - a.n), { empty: 'لسه مفيش أوردرات متربطة بـ Apex' });
+    const linkCell = x => {
+      if (!d.apexLinked) return '—';
+      const label = x.apex ? '#' + x.apex.no + ' · ' + t12(x.apex.at) + (x.apex.manual ? ' (يدوي)' : '') : 'مش لاقيينه';
+      if (!ctx.canWrite()) return label;
+      const sel = h('select', { ariaLabel: 'أوردر Apex' }, h('option', { value: '', textContent: label }),
+        ...(x.apex ? [h('option', { value: '__clear', textContent: 'رجّع الربط التلقائي' })] : []), h('option', { value: 'none', textContent: 'مالوش أوردر على Apex' }),
+        ...d.unmatchedApex.filter(a => !x.store || !a.branch || x.store.includes(a.branch) || a.branch.includes((x.store.split(/[،,\-]/)[1] || '').trim().split(' ')[0])).map(a => h('option', { value: a.no, textContent: '#' + a.no + ' · ' + t12(a.at) + ' · ' + (a.user || '') + ' · ' + (a.amount ?? '') + ' ج' })));
+      sel.onchange = async () => { try { await api('/api/talabat/link', { method: 'POST', body: { talabatId: x.id, apexNo: sel.value === '__clear' ? null : sel.value } }); renderTalabat(true); } catch (e) { ctx.showError(e); } };
+      return sel;
+    };
+    table('talOrders', [{ title: 'الأوردر', get: x => x.id }, { title: 'الفرع', get: x => x.store || '—' }, { title: 'وصل', get: x => x.receivedAt || x.placedAt, show: x => t12(x.receivedAt || x.placedAt), type: 'datetime' },
+      { title: 'القبول', get: x => x.acceptSeconds, show: x => secs(x.acceptSeconds), type: 'number', cls: x => x.acceptSeconds > 60 ? 'warn' : '' },
+      { title: 'على Apex', get: x => x.apex?.at, show: linkCell }, { title: 'ضربه', get: x => x.apex?.user || '—' }, { title: 'من القبول للضرب', get: entryDelay, show: x => secs(entryDelay(x)), type: 'number', cls: x => entryDelay(x) > 300 ? 'warn' : '' },
+      { title: 'خرج', get: x => x.pickedUpAt, show: x => t12(x.pickedUpAt), type: 'datetime' }, { title: 'الحالة', get: x => x.status, show: x => pill(STATUS[x.status] || x.status || '—', x.status === 'CANCELLED' ? 'bad' : x.final ? 'ok' : 'warn') },
+      { title: 'الأصناف', get: x => x.items.reduce((n, i) => n + i.qty, 0), show: x => x.items.map(i => i.qty + '× ' + i.name).join('، ') || '—', cls: () => 'wrap' }, { title: 'الإجمالي', get: x => x.subtotal ?? x.total, type: 'number' }],
+      [...o].reverse(), { empty: d.linked ? 'مفيش أوردرات طلبات لليوم ده' : 'شاشة مراقبة طلبات مش متربطة لسه' });
+    renderTalabatCancels(d, 'talCancels', pick);
+  }
+  // Talabat cancellations: time, who it is on, the reason (also shown in the branches' الإلغاءات).
+  function renderTalabatCancels(d, id, pick) {
+    table(id, [{ title: 'الأوردر', get: x => x.id }, { title: 'الفرع', get: x => x.store || '—' }, { title: 'وصل', get: x => x.receivedAt || x.placedAt, show: x => t12(x.receivedAt || x.placedAt), type: 'datetime' },
+      { title: 'اتلغى', get: x => x.cancelledAt, show: x => t12(x.cancelledAt), type: 'datetime' }, { title: 'على مين', get: x => OWNER[x.cancelOwner] || x.cancelOwner || '—', show: x => pill(OWNER[x.cancelOwner] || x.cancelOwner || '—', x.cancelOwner === 'Vendor' ? 'bad' : '') },
+      { title: 'السبب', get: x => x.cancelReason || '—', cls: () => 'wrap' }, { title: 'كان خرج', get: x => x.pickedUpAt ? 'أيوه' : 'لأ' }, { title: 'على Apex', get: x => x.apex ? '#' + x.apex.no + ' · ' + (x.apex.user || '') : '—' },
+      { title: 'الأصناف', get: x => x.items.map(i => i.qty + '× ' + i.name).join('، ') || '—', cls: () => 'wrap' }, { title: 'المبلغ', get: x => x.subtotal ?? x.total, type: 'number' }],
+      d.orders.filter(x => x.status === 'CANCELLED' && (!pick || x.store === pick)).reverse(), { empty: 'مفيش إلغاءات على طلبات' });
+  }
+  async function renderBranchTalabatCancels() {
+    try { const d = await api('/api/talabat/day?day=' + state.day); $('cancelTalabatPanel').hidden = !d.linked; if (d.linked) renderTalabatCancels(d, 'cancelTalabat'); } catch { $('cancelTalabatPanel').hidden = true; }
+  }
+  $('talPick').onchange = () => renderTalabat().catch(ctx.showError);
+  function exportTalabat() {
+    if (!tal) return;
+    ctx.exportRows('أوردرات-طلبات', [{ title: 'الأوردر', get: x => x.id }, { title: 'الفرع', get: x => x.store }, { title: 'وصل', get: x => x.receivedAt || x.placedAt, type: 'datetime' }, { title: 'القبول (ث)', get: x => x.acceptSeconds, type: 'number' },
+      { title: 'اتقبل', get: x => x.acceptedAt, type: 'datetime' }, { title: 'أوردر Apex', get: x => x.apex?.no }, { title: 'اتضرب على Apex', get: x => x.apex?.at, type: 'datetime' }, { title: 'ضربه', get: x => x.apex?.user },
+      { title: 'من القبول للضرب (ث)', get: entryDelay, type: 'number' }, { title: 'خرج', get: x => x.pickedUpAt, type: 'datetime' }, { title: 'اتسلّم', get: x => x.deliveredAt, type: 'datetime' }, { title: 'الحالة', get: x => STATUS[x.status] || x.status },
+      { title: 'اتلغى', get: x => x.cancelledAt, type: 'datetime' }, { title: 'الإلغاء على', get: x => OWNER[x.cancelOwner] || x.cancelOwner }, { title: 'السبب', get: x => x.cancelReason },
+      { title: 'الأصناف', get: x => x.items.map(i => i.qty + '× ' + i.name).join('، ') }, { title: 'الإجمالي', get: x => x.subtotal ?? x.total, type: 'number' }, { title: 'نوع التوصيل', get: x => x.deliveryType }], tal.orders);
+  }
+
+  // ---------- الإدارة: شاشة مراقبة طلبات ----------
+  async function renderTalabatKey(isAdmin) {
+    $('talKeyPanel').hidden = !isAdmin;
+    if (!isAdmin) return;
+    const k = await api('/api/talabat/token'), ext = await ctx.extensionCall({ type: 'TALABAT_STATUS' }, 1500);
+    $('talKeyStatus').replaceChildren(k.lastPush ? h('span', { className: k.ageSeconds < 120 ? 'ok' : 'error', textContent: 'آخر قراءة من شاشة المراقبة ' + t12(k.lastPush) + (k.ageSeconds < 120 ? ' — شغالة' : ' — واقفة') }) : h('span', { className: 'muted', textContent: 'لسه مفيش جهاز متربط' }),
+      ' · ', h('span', { className: 'muted', textContent: ext ? (ext.linked ? 'الجهاز ده هو شاشة المراقبة' : 'الإضافة موجودة على الجهاز ده (نسخة ' + ext.version + ')') : 'الإضافة مش على الجهاز ده (أو نسخة قديمة)' }));
+  }
+  $('talLink').onclick = async () => {
+    $('talKeyNote').textContent = 'جارٍ الربط…';
+    if (!await ctx.extensionCall({ type: 'TALABAT_STATUS' }, 2000)) { $('talKeyNote').textContent = 'إضافة المرصد (3.1.0 أو أحدث) مش على الجهاز ده.'; return; }
+    try {
+      const { token } = await api('/api/talabat/token', { method: 'POST' });
+      const r = await ctx.extensionCall({ type: 'LINK_TALABAT', token });
+      $('talKeyNote').textContent = r?.ok ? 'اتربط. افتح في فايرفوكس partner-app.talabat.com بحساب الكول سنتر، والشاشة هتشتغل لوحدها. أي جهاز تاني كان متربط وقف.' : 'الإضافة رفضت الربط: ' + (r?.error || 'بدون رد');
+      renderTalabatKey(true);
+    } catch (e) { $('talKeyNote').textContent = e.message; }
+  };
 
   // ---------- الإدارة: the WooCommerce key ----------
   async function renderKey(isAdmin) {
@@ -140,5 +221,5 @@ window.MarsadSite = function MarsadSite(ctx) {
   $('siteSync').onclick = async () => { try { const r = await api('/api/site', { method: 'POST', body: { action: 'sync' } }); $('siteKeyNote').textContent = r.sync?.error ? 'فشلت: ' + r.sync.error : 'اتقرا ' + (r.sync?.orders ?? 0) + ' أوردر اتغير.'; renderKey(true); } catch (x) { $('siteKeyNote').textContent = x.message; } };
   $('siteUnlink').onclick = async () => { if (!confirm('فك ربط الموقع؟ المرصد هيبطل يقرا الأوردرات الجديدة.')) return; try { await api('/api/site', { method: 'POST', body: { action: 'unlink' } }); renderKey(true); } catch (x) { $('siteKeyNote').textContent = x.message; } };
 
-  return { renderBranches, renderTransfer, exportKind, renderKey, branchRows, transferRows, perBranch };
+  return { renderBranches, renderTransfer, renderTalabat, renderBranchTalabatCancels, renderTalabatKey, exportKind, renderKey, branchRows, transferRows, perBranch };
 };

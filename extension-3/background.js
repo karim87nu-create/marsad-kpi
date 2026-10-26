@@ -129,6 +129,7 @@ browser.runtime.onMessage.addListener(async (m, sender) => {
     if (!fromArabicss(sender) || !/^\/themes\/arabicssReportsInclude\//i.test(new URL(sender.url).pathname) || typeof m.html !== 'string' || m.html.length > 1000000) throw Error('invalid_sender');
     return nativeLive(m.html);
   }
+  if (m?.type?.startsWith('TALABAT_')) return talabatMessage(m, sender);
   if (!fromArabicss(sender)) throw Error('invalid_sender');
   const tabId = String(sender.tab.id);
   await startup;
@@ -170,6 +171,30 @@ browser.runtime.onMessage.addListener(async (m, sender) => {
     case 'STATUS': return { pending: (await store.get(OUTBOX, [])).filter(e => e.token === m.token).length, rejected: (await store.get(REJECTED, [])).length };
   }
 });
+
+// ---------- شاشة مراقبة طلبات: only on the PC linked from the admin page ----------
+const TALABAT = 'talabatMonitor';
+const adminSender = sender => { try { const u = new URL(sender.url); return globalThis.MARSAD.ADMIN_ORIGINS.includes(u.origin) && (u.hostname !== 'karim87nu-create.github.io' || u.pathname.startsWith('/marsad-kpi/')); } catch { return false; } };
+const talabatSender = sender => { try { return !!sender.tab && new URL(sender.url).hostname === 'partner-app.talabat.com'; } catch { return false; } };
+async function talabatMessage(m, sender) {
+  if (m.type === 'TALABAT_LINK' && adminSender(sender)) {
+    if (typeof m.token !== 'string' || !/^tal_[a-f0-9]{48}$/.test(m.token)) throw Error('invalid_link');
+    await store.set(TALABAT, { token: m.token, linkedAt: new Date().toISOString() });
+    return { ok: true };
+  }
+  if (m.type === 'TALABAT_STATUS' && adminSender(sender)) return { linked: !!(await store.get(TALABAT, null)), version: VERSION };
+  if (m.type === 'TALABAT_UNLINK' && adminSender(sender)) { await store.set(TALABAT, null); return { ok: true }; }
+  if (!talabatSender(sender)) throw Error('invalid_sender');
+  const t = await store.get(TALABAT, null);
+  if (m.type === 'TALABAT_ACTIVE') return { active: !!t };
+  if (m.type === 'TALABAT_PUSH') {
+    if (!t) return { ok: false, error: 'not_linked' };
+    const r = await api('/api/talabat/push', { method: 'POST', headers: { 'content-type': 'application/json', 'x-talabat-token': t.token }, body: JSON.stringify({ orders: Array.isArray(m.orders) ? m.orders.slice(0, 800) : [] }), timeout: 30000 });
+    const d = r.json();
+    return r.ok ? { ok: true, want: d.want || [] } : { ok: false, status: r.status, error: d.error };
+  }
+  throw Error('invalid_type');
+}
 
 // ---------- collector: Arabicss history and live queue (supervisor's PC only) ----------
 let collectorState = { message: '', lastHistory: null, lastLive: null, historyError: null, liveError: null, historyDays: [] };

@@ -1,0 +1,149 @@
+// طلبات: one monitor screen (Firefox on a PC that stays on, signed in with the call center's Talabat account that sees
+// every branch) reads Order History and each order's details, and pushes them here. Per order we keep the times
+// (received, accepted and how fast, picked up, delivered, cancelled), the cancellation owner and reason, the items and
+// the subtotal. No customer data. Each order is then tied to its Apex order (who entered it and when).
+import { businessDay, iso, validDate } from './time.js';
+import { sha256, randomToken } from './security.js';
+
+const NOT_ENTERED_MIN = 10, STALE_MS = 5 * 60000;
+const FINAL = new Set(['COMPLETED', 'CANCELLED', 'REJECTED', 'DELIVERED']);
+const norm = x => String(x || '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/^\s*(فرع|الدهان)[\s,،]*/g, '').trim();
+// "الدهان، التجمع الخامس - البنفسج" ~ "التجمع"; "الدهان سيتي ستار مول" ~ "سيتي ستار".
+function sameBranch(a, b) {
+  const x = norm(a), y = norm(b);
+  if (!x || !y) return null;
+  const words = s => s.split(/[\s،,\-]+/).filter(w => w.length > 2);
+  return words(x).some(w => y.includes(w)) || words(y).some(w => x.includes(w));
+}
+
+function setup(app) {
+  const { db, fail } = app;
+  const setting = async k => (await db.prepare('SELECT value FROM settings WHERE key = ?').get(k))?.value ?? null;
+  const put = (k, v) => db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(k, String(v));
+  const ms = v => { const t = Date.parse(v); return Number.isFinite(t) ? t : null; };
+
+  // ---- the monitor screen's key (made from the admin page, handed to the extension on that PC) ----
+  app.route('GET', '/api/talabat/token', async ctx => {
+    await app.requireAdmin(ctx);
+    const last = Number(await setting('talabat_last_push')) || null;
+    return { linked: !!await setting('talabat_token_hash'), lastPush: iso(last), ageSeconds: last ? Math.round((ctx.now - last) / 1000) : null };
+  });
+  app.route('POST', '/api/talabat/token', async ctx => {
+    const who = await app.requireAdmin(ctx, 'admin');
+    const token = 'tal_' + randomToken(24);
+    await put('talabat_token_hash', sha256(token));
+    await app.audit('talabat_token_created', null, { actor: who.name });
+    return { token };
+  });
+
+  // ---- the monitor pushes what it read ----
+  app.route('POST', '/api/talabat/push', async ctx => {
+    const hash = await setting('talabat_token_hash'), given = ctx.header('x-talabat-token');
+    if (!hash || !given || sha256(given) !== hash) fail(401, 'مفتاح شاشة طلبات غير صحيح');
+    const now = ctx.now, list = (Array.isArray(ctx.body?.orders) ? ctx.body.orders : []).slice(0, 800), writes = [];
+    for (const o of list) {
+      const id = String(o.id || '').replace(/\D/g, '').slice(0, 20);
+      if (id.length < 6) continue;
+      const placed = ms(o.placedAt) || ms(o.receivedAt), d = o.detail || null;
+      const items = d && Array.isArray(d.items) ? JSON.stringify(d.items.slice(0, 60).map(x => ({ qty: Number(x.qty) || 1, name: String(x.name || '').slice(0, 120), price: Number(x.price) || null }))) : null;
+      writes.push(db.prepare(`INSERT INTO talabat_orders (id, day, vendor_id, store, status, billable, placed_at, total, received_at, accept_seconds, accepted_at, picked_up_at, delivered_at,
+          cancelled_at, cancel_owner, cancel_reason, items, subtotal, delivery_type, detail_at, first_seen, updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET vendor_id = COALESCE(excluded.vendor_id, talabat_orders.vendor_id), store = COALESCE(excluded.store, talabat_orders.store),
+          status = excluded.status, billable = COALESCE(excluded.billable, talabat_orders.billable), placed_at = COALESCE(talabat_orders.placed_at, excluded.placed_at),
+          total = COALESCE(excluded.total, talabat_orders.total), received_at = COALESCE(excluded.received_at, talabat_orders.received_at),
+          accept_seconds = COALESCE(excluded.accept_seconds, talabat_orders.accept_seconds), accepted_at = COALESCE(excluded.accepted_at, talabat_orders.accepted_at),
+          picked_up_at = COALESCE(excluded.picked_up_at, talabat_orders.picked_up_at), delivered_at = COALESCE(excluded.delivered_at, talabat_orders.delivered_at),
+          cancelled_at = COALESCE(excluded.cancelled_at, talabat_orders.cancelled_at), cancel_owner = COALESCE(excluded.cancel_owner, talabat_orders.cancel_owner),
+          cancel_reason = COALESCE(excluded.cancel_reason, talabat_orders.cancel_reason), items = COALESCE(excluded.items, talabat_orders.items),
+          subtotal = COALESCE(excluded.subtotal, talabat_orders.subtotal), delivery_type = COALESCE(excluded.delivery_type, talabat_orders.delivery_type),
+          detail_at = CASE WHEN excluded.detail_at IS NOT NULL THEN excluded.detail_at WHEN excluded.status IS NOT talabat_orders.status THEN NULL ELSE talabat_orders.detail_at END,
+          updated_at = excluded.updated_at`)
+        .bind(id, businessDay(placed || now), o.vendorId ? String(o.vendorId).slice(0, 20) : null, o.store ? String(o.store).slice(0, 160) : null, String(o.status || '').toUpperCase().slice(0, 40) || null,
+          d?.billable ? String(d.billable).slice(0, 40) : null, placed, Number(o.total) || null, ms(d?.receivedAt), Number.isFinite(d?.acceptSeconds) ? d.acceptSeconds : null, ms(d?.acceptedAt),
+          ms(d?.pickedUpAt), ms(d?.deliveredAt), ms(d?.cancelledAt), d?.cancelOwner ? String(d.cancelOwner).slice(0, 60) : null, d?.cancelReason ? String(d.cancelReason).slice(0, 300) : null,
+          items, Number(d?.subtotal) || null, d?.deliveryType ? String(d.deliveryType).slice(0, 60) : null, d ? now : null, now, now));
+    }
+    if (writes.length) await db.batch(writes);
+    await put('talabat_last_push', now);
+    // What the monitor should open next: orders never read in detail or whose status changed since, and orders still
+    // waiting at the branch (new / accepted / ready) read over a minute ago.
+    const want = await db.prepare(`SELECT id FROM talabat_orders WHERE updated_at >= ? AND (detail_at IS NULL OR (status NOT IN ('COMPLETED','CANCELLED','REJECTED','DELIVERED','PICKED UP') AND detail_at < ?)) ORDER BY detail_at IS NOT NULL, placed_at DESC LIMIT 20`)
+      .all(now - 12 * 3600000, now - 60000);
+    await alerts(now);
+    return { ok: true, want: want.map(r => r.id), serverNow: iso(now) };
+  }, { limit: 1024 * 1024 });
+
+  // ---- Talabat order ↔ Apex order: same branch, entered on Apex from 2 minutes before acceptance to 45 after,
+  // closest in time, the items' subtotal as tie-breaker (the platform total has discounts and fees). Manual links win. ----
+  async function matchDay(day) {
+    const rows = await db.prepare('SELECT * FROM talabat_orders WHERE day = ? ORDER BY placed_at').all(day);
+    const r = await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(day);
+    let d = null; try { d = r ? JSON.parse(r.data) : null; } catch {}
+    const apex = (d?.online || []).filter(a => a.kind === 'طلبات' && a.at).map(a => ({ ...a, t: Date.parse(a.at) }));
+    const manual = new Map((await db.prepare('SELECT talabat_id, apex_no FROM talabat_links WHERE day = ?').all(day)).map(x => [x.talabat_id, x.apex_no]));
+    const names = app.apexNameMap ? await app.apexNameMap() : {};
+    const byNo = new Map(apex.map(a => [String(a.no), a])), usedA = new Set(), matches = new Map();
+    for (const [tid, no] of manual) if (no != null && byNo.has(String(no))) { matches.set(tid, { ...byNo.get(String(no)), manual: true }); usedA.add(String(no)); }
+    const pairs = [];
+    for (const o of rows) {
+      if (manual.has(o.id) || o.status === 'REJECTED') continue;
+      const anchor = o.accepted_at || o.received_at || o.placed_at;
+      if (!anchor) continue;
+      for (const a of apex) {
+        if (usedA.has(String(a.no)) || a.t < anchor - 2 * 60000 || a.t > anchor + 45 * 60000) continue;
+        if (sameBranch(o.store, a.branch) === false) continue;
+        const money = o.subtotal && a.amount ? Math.min(1, Math.abs(o.subtotal - a.amount) / Math.max(o.subtotal, 1)) : 0.3;
+        pairs.push({ o: o.id, a, score: Math.abs(a.t - anchor) / 60000 + money * 15 });
+      }
+    }
+    pairs.sort((x, y) => x.score - y.score);
+    for (const p of pairs) { if (matches.has(p.o) || usedA.has(String(p.a.no))) continue; matches.set(p.o, p.a); usedA.add(String(p.a.no)); }
+    const shape = a => a && { no: a.no, at: iso(a.t), user: names[a.user] || a.user || null, branch: a.branch, amount: a.amount ?? null, manual: !!a.manual };
+    return { rows, matches: new Map([...matches].map(([k, a]) => [k, shape(a)])), hasApex: Array.isArray(d?.online), unmatchedApex: apex.filter(a => !usedA.has(String(a.no))).map(shape) };
+  }
+
+  // ---- alerts: accepted and still not on Apex after 10 minutes (online group); cancelled (branches group) ----
+  async function alerts(now) {
+    const day = businessDay(now), m = await matchDay(day);
+    const c = await db.prepare('SELECT rules FROM telegram_config WHERE id = 1').get();
+    let r = {}; try { r = JSON.parse(c?.rules || '{}'); } catch {}
+    const clock = t => new Date(t).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit' });
+    const out = [];
+    for (const o of m.rows) {
+      const store = o.store ? '\n' + o.store : '';
+      if (m.hasApex && o.accepted_at && !m.matches.get(o.id) && o.status !== 'CANCELLED' && now - o.accepted_at > NOT_ENTERED_MIN * 60000 && now - o.accepted_at < 3 * 3600000)
+        out.push({ key: 'talabat:notEntered:' + o.id, kind: 'talabatNotEntered', target: 'online', text: '⚠️ أوردر طلبات اتقبل ومش لاقيينه على Apex — ' + o.id + store + '\nاتقبل ' + clock(o.accepted_at) + ' (من ' + Math.round((now - o.accepted_at) / 60000) + ' دقيقة)' + (o.subtotal ? ' · ' + Math.round(o.subtotal) + ' ج' : '') });
+      if (o.status === 'CANCELLED' && o.cancelled_at && now - o.cancelled_at < 3 * 3600000)
+        out.push({ key: 'talabat:cancel:' + o.id, kind: 'talabatCancel', target: 'branches', text: '❌ إلغاء على طلبات — ' + o.id + store + '\nاتلغى ' + clock(o.cancelled_at) + (o.cancel_owner ? ' · ' + o.cancel_owner : '') + (o.cancel_reason ? '\nالسبب: ' + o.cancel_reason : '') + (o.subtotal ? '\n' + Math.round(o.subtotal) + ' ج' : '') });
+    }
+    if (out.length) await db.batch(out.map(a => db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, sent_at, target) VALUES (?,?,?,?,?,?,?)').bind(a.key, a.kind, null, a.text, now, r[a.kind] === false ? now : null, a.target)));
+  }
+
+  // ---- the admin page ----
+  app.route('GET', '/api/talabat/day', async ctx => {
+    await app.requireAdmin(ctx);
+    const day = validDate(String(ctx.query.day || '')) ? ctx.query.day : businessDay(ctx.now);
+    const m = await matchDay(day), last = Number(await setting('talabat_last_push')) || null;
+    let parse = x => { try { return JSON.parse(x); } catch { return null; } };
+    return { day, linked: !!await setting('talabat_token_hash'), lastPush: iso(last), stale: !last || ctx.now - last > STALE_MS, apexLinked: m.hasApex, serverNow: iso(ctx.now),
+      orders: m.rows.map(o => ({ id: o.id, store: o.store, status: o.status, billable: o.billable, placedAt: iso(o.placed_at), total: o.total, receivedAt: iso(o.received_at), acceptSeconds: o.accept_seconds,
+        acceptedAt: iso(o.accepted_at), pickedUpAt: iso(o.picked_up_at), deliveredAt: iso(o.delivered_at), cancelledAt: iso(o.cancelled_at), cancelOwner: o.cancel_owner, cancelReason: o.cancel_reason,
+        items: parse(o.items) || [], subtotal: o.subtotal, deliveryType: o.delivery_type, detailRead: !!o.detail_at, final: FINAL.has(o.status), apex: m.matches.get(o.id) || null })),
+      unmatchedApex: m.unmatchedApex };
+  });
+  app.route('POST', '/api/talabat/link', async ctx => {
+    const who = await app.requireAdmin(ctx, 'write');
+    const id = String(ctx.body.talabatId || ''), no = ctx.body.apexNo == null || ctx.body.apexNo === '' ? null : String(ctx.body.apexNo);
+    const o = await db.prepare('SELECT day FROM talabat_orders WHERE id = ?').get(id);
+    if (!o) fail(404, 'الأوردر مش موجود');
+    // null clears a manual link; 'none' marks it as having no Apex order.
+    if (no === null) await db.prepare('DELETE FROM talabat_links WHERE talabat_id = ?').run(id);
+    else await db.prepare('INSERT INTO talabat_links (talabat_id, day, apex_no, set_by, set_at) VALUES (?,?,?,?,?) ON CONFLICT(talabat_id) DO UPDATE SET apex_no = excluded.apex_no, set_by = excluded.set_by, set_at = excluded.set_at')
+      .run(id, o.day, no === 'none' ? null : no, who.name, ctx.now);
+    await app.audit('talabat_link', null, { actor: who.name, talabatId: id, apexNo: no });
+    return { ok: true };
+  });
+}
+
+export { setup, sameBranch };
