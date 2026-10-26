@@ -217,6 +217,11 @@ CREATE TABLE IF NOT EXISTS desk_pins (employee_id INTEGER NOT NULL, desk TEXT NO
 CREATE UNIQUE INDEX IF NOT EXISTS desk_pins_lookup ON desk_pins(desk, pin_lookup);
 CREATE TABLE IF NOT EXISTS desk_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, employee_id INTEGER NOT NULL, desk TEXT NOT NULL, device TEXT, place TEXT, started_at INTEGER NOT NULL, last_seen INTEGER NOT NULL, ended_at INTEGER, end_reason TEXT);
 CREATE INDEX IF NOT EXISTS desk_sessions_time ON desk_sessions(started_at);
+CREATE TABLE IF NOT EXISTS site_orders (id INTEGER PRIMARY KEY, day TEXT NOT NULL, status TEXT, fulfillment TEXT, created_at INTEGER NOT NULL, modified_at INTEGER, notes_at INTEGER, received_at INTEGER, transfer_at INTEGER, branch TEXT, out_at INTEGER, driver TEXT, delivered_at INTEGER, scheduled INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS site_orders_day ON site_orders(day);
+CREATE INDEX IF NOT EXISTS site_orders_created ON site_orders(created_at);
+CREATE TABLE IF NOT EXISTS talabat_orders (id TEXT PRIMARY KEY, code TEXT, day TEXT NOT NULL, account TEXT, store TEXT, first_seen INTEGER NOT NULL, new_seen INTEGER, accepted_seen INTEGER, accepted_by INTEGER, accepted_session INTEGER, ready_seen INTEGER, last_seen INTEGER NOT NULL, last_column TEXT, gone_at INTEGER);
+CREATE INDEX IF NOT EXISTS talabat_orders_day ON talabat_orders(day);
 CREATE TABLE IF NOT EXISTS apex_names (apex_name TEXT PRIMARY KEY, employee_id INTEGER NOT NULL, set_at INTEGER NOT NULL);
 `;
 

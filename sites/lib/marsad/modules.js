@@ -14,6 +14,8 @@ import * as ops from './ops.js';
 import * as range from './range.js';
 import * as orders from './orders.js';
 import * as desks from './desks.js';
+import * as site from './site.js';
+import * as talabat from './talabat.js';
 
-const MODULES = [admin, employees, sessions, dashboard, breaks, messages, shifts, history, engine, telegram, importRows, ops, range, orders, desks];
+const MODULES = [admin, employees, sessions, dashboard, breaks, messages, shifts, history, engine, telegram, importRows, ops, range, orders, desks, site, talabat];
 export { MODULES };

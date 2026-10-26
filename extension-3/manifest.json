@@ -1,14 +1,16 @@
 {
   "manifest_version": 2,
   "name": "Arabicss KPI Connector",
-  "version": "3.0.7",
-  "description": "يربط جلسات ومكالمات وبريكات أرابيكس بمرصد الأداء",
+  "version": "3.1.0",
+  "description": "يربط أرابيكس وطلبات والموقع بمرصد الدهان",
   "permissions": [
     "storage",
     "notifications",
     "*://41.38.207.218/*",
     "https://41.38.207.218:11594/*",
-    "https://marsad-v2.karim87nu.chatgpt.site/*"
+    "https://marsad-v2.karim87nu.chatgpt.site/*",
+    "https://partner-app.talabat.com/*",
+    "https://eldahan.com.eg/wp-admin/*"
   ],
   "content_scripts": [
     {
@@ -47,6 +49,21 @@
         "admin-link.js"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://partner-app.talabat.com/*",
+        "https://eldahan.com.eg/wp-admin/*",
+        "https://www.eldahan.com.eg/wp-admin/*"
+      ],
+      "js": [
+        "config.js",
+        "desk.js"
+      ],
+      "css": [
+        "desk.css"
+      ],
+      "run_at": "document_end"
     }
   ],
   "web_accessible_resources": [

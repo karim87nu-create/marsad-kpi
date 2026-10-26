@@ -30,7 +30,7 @@ test('admin page: مرصد الدهان sections, live branches board, reports, 
     dom = new JSDOM(fs.readFileSync(path.join(root, 'index.html'), 'utf8'), { url: 'http://localhost/admin/', runScripts: 'outside-only', pretendToBeVisual: true });
     const w = dom.window, doc = w.document; w.sessionStorage.setItem('marsadAdminToken', token); w.MARSAD_API = t.base; w.fetch = (u, o) => fetch(u, { ...o, signal: undefined }); // Node fetch needs its own AbortSignal realm.
     w.confirm = () => true; w.alert = x => { throw Error(x); };
-    for (const f of ['charts.js', 'now-arc.js', 'xlsx.js', 'orders.js', 'app.js']) w.eval(fs.readFileSync(path.join(root, f), 'utf8'));
+    for (const f of ['charts.js', 'now-arc.js', 'xlsx.js', 'orders.js', 'site.js', 'app.js']) w.eval(fs.readFileSync(path.join(root, f), 'utf8'));
     const until = async (f, what) => { for (let i = 0; i < 300; i++) { if (f()) return; await new Promise(r => setTimeout(r, 10)); } throw Error('UI did not finish: ' + what + ' ' + doc.getElementById('error').textContent + ' / ' + doc.getElementById('title').textContent + ' / ' + doc.getElementById('boardRoot').textContent.slice(0, 300)); };
     await until(() => !doc.getElementById('app').hidden && doc.getElementById('title').textContent === 'الآن' && doc.getElementById('sync').textContent.includes('آخر تحديث'), 'login');
     assert.equal(doc.title.includes('مرصد الدهان'), true);
@@ -70,6 +70,13 @@ test('admin page: مرصد الدهان sections, live branches board, reports, 
     assert.ok(doc.getElementById('tgChooseBranches'));
     assert.ok(doc.getElementById('tgChooseOnline'));
     assert.match(doc.getElementById('tgStatus').textContent, /جروب الكول سنتر — الأونلاين وضرب الأوردر/);
+    for (const [v, id, text] of [['talabat', 'talOrders', 'مفيش أوردرات طلبات'], ['siteTransfer', 'siteTTable', 'الموقع مش متربط']]) {
+      doc.querySelector('[data-view="' + v + '"]').click();
+      await until(() => doc.getElementById(id).textContent.includes(text), v);
+    }
+    doc.querySelector('[data-section="branches"]').click(); await until(() => !doc.querySelector('[data-sec="branches"]').hidden, 'branches');
+    doc.querySelector('[data-view="siteBranches"]').click();
+    await until(() => doc.getElementById('siteBTable').textContent.includes('الموقع مش متربط'), 'siteBranches');
     assert.equal(doc.getElementById('error').hidden, true, doc.getElementById('error').textContent);
   } finally { await new Promise(r => setTimeout(r, 150)); dom?.window.close(); await t.close(); }
 });

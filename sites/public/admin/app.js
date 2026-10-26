@@ -116,6 +116,7 @@
   function showError(e) { $('error').hidden = !e; $('error').textContent = e ? e.message || String(e) : ''; }
   // الفروع وضرب الأوردرات (orders.js).
   const OR = window.MarsadOrders({ api, h, $, table, kpi, pill, C, exportRows, serverNow, cairoToday, state, hm: v => hm(v), showError });
+  const SITE = window.MarsadSite({ api, h, $, table, kpi, pill, serverNow, state, showError });
 
   // ---------- الآن ----------
   let arc = null;
@@ -594,6 +595,7 @@
     if (isAdmin()) renderTelegram().catch(e => say('tgNote', e.message));
     OR.renderKey(isAdmin()).catch(e => say('ordersKeyNote', e.message));
     renderDesks().catch(e => say('desksNote', e.message));
+    SITE.renderKey(isAdmin()).catch(e => say('siteKeyNote', e.message));
     for (const f of ['addEmployee', 'addAdmin', 'messageForm']) $(f).hidden = f === 'messageForm' ? !canWrite() : !isAdmin();
     $('linkCollector').hidden = !canWrite();
   }
@@ -721,7 +723,7 @@
     const kind = e.target.closest('[data-export]')?.dataset.export;
     if (!kind) return;
     try {
-      if (OR.exportKind(kind)) return;
+      if (OR.exportKind(kind) || SITE.exportKind(kind)) return;
       if (kind === 'queues') exportRows('انواع-الطلبات', queueColumns, (await dayHistory()).queues || []);
       if (kind === 'team') exportRows('اداء-الموظفين', teamColumns, teamRows(await dayData()));
       if (kind === 'calls') exportRows('المكالمات', callColumns, filteredCalls(await dayData()));
@@ -741,10 +743,11 @@
   // ---------- navigation ----------
   const VIEWS = { now: ['الآن', null], day: ['ملخص اليوم', renderDay], hours: ['على مدار اليوم', renderHours], team: ['أداء الموظفين', renderTeam], profile: ['ملف الموظف', renderProfile], requests: ['طلبات البريك', refreshRequests], attendance: ['الحضور والبريك', renderAttendance],
     shifts: ['نهاية الشيفت والرجوع للشغل', renderShifts], calls: ['المكالمات', renderCalls], missed: ['المكالمات الفائتة', renderMissed], followup: ['المتابعة والتقارير', renderFollowup], system: ['حالة النظام', renderSystem], manage: ['الإدارة', renderManage], guide: ['طريقة حساب الأرقام', async () => {}],
-    entry: ['ضرب الأوردرات', () => OR.renderEntry()], branchesNow: ['الفروع الآن', null], branches: ['أداء الفروع', () => OR.renderBranches()], cancels: ['الإلغاءات بعد التحميل', () => OR.renderCancels()] };
-  const DAY_VIEWS = ['day', 'hours', 'team', 'profile', 'attendance', 'shifts', 'calls', 'missed', 'followup', 'entry', 'branches', 'cancels'];
+    entry: ['ضرب الأوردرات', () => OR.renderEntry()], branchesNow: ['الفروع الآن', null], branches: ['أداء الفروع', () => OR.renderBranches()], cancels: ['الإلغاءات بعد التحميل', () => OR.renderCancels()],
+    siteBranches: ['تقرير أداء الموقع للفروع', () => SITE.renderBranches()], siteTransfer: ['تحويل أوردرات الموقع للفروع', () => SITE.renderTransfer()], talabat: ['قبول أوردرات طلبات', () => SITE.renderTalabat()] };
+  const DAY_VIEWS = ['day', 'hours', 'team', 'profile', 'attendance', 'shifts', 'calls', 'missed', 'followup', 'entry', 'branches', 'cancels', 'siteBranches', 'siteTransfer', 'talabat'];
   // Two sections, each with its own views; the system views are shared and keep the section you came from.
-  const SECTION_OF = { branchesNow: 'branches', branches: 'branches', cancels: 'branches' };
+  const SECTION_OF = { branchesNow: 'branches', branches: 'branches', cancels: 'branches', siteBranches: 'branches' };
   const SHARED = ['followup', 'system', 'manage', 'guide'];
   const lastIn = { calls: 'now', branches: 'branchesNow' };
   function setSection(sec) {
