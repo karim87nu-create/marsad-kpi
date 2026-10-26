@@ -73,7 +73,7 @@ window.MarsadSite = function MarsadSite(ctx) {
     table('siteBTable', [{ title: 'الأوردر', get: x => x.id, show: x => '#' + x.id, type: 'number' }, { title: 'الفرع', get: x => branchOf(x) },
       { title: 'وقت استلام الفرع', get: x => x.transferAt, show: x => t12(x.transferAt), type: 'datetime' },
       { title: 'وقت التجهيز', get: x => x.prep, show: prepText, cls: x => x.prepLate ? 'bad' : '' }, { title: 'وقت التوصيل', get: x => x.delivery, show: delText, cls: x => x.delLate ? 'bad' : x.fast ? 'warn' : '' },
-      { title: 'اسم الطيار', get: x => x.driver || '—' }], list.sort((a, b) => b.worst - a.worst), { empty: d.linked ? (only ? 'مفيش استثناءات' : 'مفيش أوردرات دليفري') : 'الموقع مش متربط لسه' });
+      { title: 'اسم الطيار', get: x => x.driver || '—' }, { title: 'ضربه على Apex', get: x => x.apex?.user || '—' }], list.sort((a, b) => b.worst - a.worst), { empty: d.linked ? (only ? 'مفيش استثناءات' : 'مفيش أوردرات دليفري') : 'الموقع مش متربط لسه' });
   }
   async function renderTransfer(force) {
     const d = await load(force), rows = transferRows(d); lastTransfer = d;
@@ -82,10 +82,15 @@ window.MarsadSite = function MarsadSite(ctx) {
     const all = rows.filter(x => !pick || branchOf(x) === pick), list = all.filter(x => !only || x.late);
     const late = all.filter(x => x.late), waits = all.filter(x => !x.ongoing).map(x => x.wait);
     $('siteTCards').replaceChildren(kpi('أوردرات الموقع', all.length, 'info', 'من غير المجدولة'), kpi('اتحوّلت بعد أكتر من 5 دقايق', late.filter(x => !x.ongoing).length, late.length ? 'bad' : 'good'),
-      kpi('لسه ماتحوّلتش', all.filter(x => x.ongoing).length, all.some(x => x.ongoing && x.late) ? 'bad' : ''), kpi('متوسط مدة التحويل', waits.length ? minSec(waits.reduce((a, b) => a + b, 0) / waits.length) : '—'));
+      kpi('لسه ماتحوّلتش', all.filter(x => x.ongoing).length, all.some(x => x.ongoing && x.late) ? 'bad' : ''), kpi('متوسط مدة التحويل', waits.length ? minSec(waits.reduce((a, b) => a + b, 0) / waits.length) : '—'),
+      ...(d.apex?.linked ? [kpi('اتربطت بأوردر Apex', all.filter(x => x.apex).length + ' من ' + all.length, all.some(x => !x.apex && !x.ongoing) ? 'warn' : 'good', 'ومنها اسم اللي ضربها'),
+        kpi('على Apex من غير أوردر موقع', (d.apex.unmatched || []).length, (d.apex.unmatched || []).length ? 'warn' : '', 'متسجلة «الموقع» على Apex ومالقيناش لها أوردر')] : []));
+    table('siteTApex', [{ title: 'أوردر Apex', get: x => x.no, type: 'number' }, { title: 'الفرع', get: x => x.branch }, { title: 'اتضرب', get: x => x.at, show: x => t12(x.at), type: 'datetime' }, { title: 'ضربه', get: x => x.user || '—' }, { title: 'المبلغ', get: x => x.amount, type: 'number' }],
+      (d.apex?.unmatched || []).filter(x => !pick || x.branch === pick), { empty: d.apex?.linked ? 'كل أوردرات الموقع على Apex ليها أوردر على الموقع' : 'بيظهر مع نسخة سكريبت الكاشير الجديدة' });
     table('siteTTable', [{ title: 'الأوردر', get: x => x.id, show: x => '#' + x.id, type: 'number' }, { title: 'وقت الاستلام', get: x => x.receivedAt, show: x => t12(x.receivedAt), type: 'datetime' },
       { title: 'وقت التحويل للفرع', get: x => x.transferAt, show: x => x.transferAt ? t12(x.transferAt) : 'لسه ماتحوّلش', type: 'datetime' },
-      { title: 'مدة التحويل', get: x => x.wait, show: waitText, cls: x => x.late ? 'bad' : '' }, { title: 'الفرع', get: x => branchOf(x) }], list.sort((a, b) => b.wait - a.wait), { empty: d.linked ? (only ? 'مفيش استثناءات' : 'مفيش أوردرات') : 'الموقع مش متربط لسه' });
+      { title: 'مدة التحويل', get: x => x.wait, show: waitText, cls: x => x.late ? 'bad' : '' }, { title: 'الفرع', get: x => branchOf(x) },
+      { title: 'اتضرب على Apex', get: x => x.apex?.at, show: x => x.apex ? t12(x.apex.at) + ' · #' + x.apex.no : '—', type: 'datetime' }, { title: 'ضربه', get: x => x.apex?.user || '—' }], list.sort((a, b) => b.wait - a.wait), { empty: d.linked ? (only ? 'مفيش استثناءات' : 'مفيش أوردرات') : 'الموقع مش متربط لسه' });
   }
   function fillPick(id, rows) {
     const sel = $(id), v = sel.value, names = [...new Set(rows.map(branchOf))].sort((a, b) => a.localeCompare(b, 'ar'));
@@ -116,27 +121,6 @@ window.MarsadSite = function MarsadSite(ctx) {
     return true;
   }
 
-  // ---------- طلبات: accept speed and who accepted (from the Live Orders screens) ----------
-  let tal = null;
-  const secs = v => v == null ? '—' : v < 60 ? v + ' ث' : Math.floor(v / 60) + ' د ' + (v % 60) + ' ث';
-  async function renderTalabat() {
-    const d = tal = await api('/api/talabat/day?day=' + state.day), now = serverNow();
-    const o = d.orders, acc = o.filter(x => x.acceptSeconds != null), slow = acc.filter(x => x.acceptSeconds > 60);
-    const waiting = o.filter(x => x.column === 'new' && !x.goneAt && !x.acceptedSeen);
-    $('talNote').textContent = 'يوم ' + dmy(d.day) + ' · من شاشات Live Orders اللي عليها إضافة المرصد ومسجل عليها موظف. سرعة القبول من أول ما الأوردر ظهر في New لحد ما ظهر في Accepted.' + (state.day !== state.to ? ' · ليوم واحد: أول يوم في الفترة' : '');
-    $('talCards').replaceChildren(kpi('أوردرات ظهرت', o.length, 'info'), kpi('متوسط القبول', acc.length ? secs(Math.round(acc.reduce((n, x) => n + x.acceptSeconds, 0) / acc.length)) : '—', acc.length ? (acc.reduce((n, x) => n + x.acceptSeconds, 0) / acc.length > 60 ? 'warn' : 'good') : ''),
-      kpi('اتقبلت بعد أكتر من دقيقة', slow.length, slow.length ? 'warn' : 'good'), kpi('مستنية قبول دلوقتي', waiting.length, waiting.length ? 'bad' : 'good', waiting.length ? 'أقدم واحد من ' + secs(Math.round((now - Math.min(...waiting.map(x => Date.parse(x.newSeen || x.firstSeen)))) / 1000)) : ''));
-    const by = new Map();
-    for (const x of acc) { const k = x.acceptedBy || 'من غير موظف'; const y = by.get(k) || { name: k, n: 0, sum: 0, slow: 0, max: 0 }; y.n++; y.sum += x.acceptSeconds; y.max = Math.max(y.max, x.acceptSeconds); if (x.acceptSeconds > 60) y.slow++; by.set(k, y); }
-    table('talStaff', [{ title: 'الموظف', get: x => x.name }, { title: 'قبل', get: x => x.n, type: 'number' }, { title: 'متوسط القبول', get: x => Math.round(x.sum / x.n), show: x => secs(Math.round(x.sum / x.n)), type: 'number' },
-      { title: 'أبطأ قبول', get: x => x.max, show: x => secs(x.max), type: 'number' }, { title: 'بعد أكتر من دقيقة', get: x => x.slow, type: 'number', cls: x => x.slow ? 'warn' : '' }], [...by.values()].sort((a, b) => b.n - a.n), { empty: 'لسه محدش قبل أوردرات على شاشة عليها المرصد' });
-    table('talOrders', [{ title: 'الأوردر', get: x => x.id }, { title: 'الكود', get: x => x.code ? '#' + x.code : '—' }, { title: 'الحساب', get: x => x.store || x.account || '—' },
-      { title: 'ظهر', get: x => x.newSeen || x.firstSeen, show: x => t12(x.newSeen || x.firstSeen), type: 'datetime' }, { title: 'اتقبل', get: x => x.acceptedSeen, show: x => t12(x.acceptedSeen), type: 'datetime' },
-      { title: 'وقت القبول', get: x => x.acceptSeconds, show: x => secs(x.acceptSeconds), type: 'number', cls: x => x.acceptSeconds > 60 ? 'warn' : '' }, { title: 'قبله', get: x => x.acceptedBy || '—' },
-      { title: 'الحالة', get: x => x.goneAt ? 'خرج من الشاشة' : x.column, show: x => pill(x.goneAt ? 'خرج من الشاشة' : ({ new: 'مستني قبول', accepted: 'مقبول', ready: 'جاهز' })[x.column] || x.column, x.column === 'new' && !x.goneAt ? 'bad' : '') }],
-      [...o].reverse(), { empty: 'مفيش أوردرات طلبات متسجلة لليوم ده' });
-  }
-
   // ---------- الإدارة: the WooCommerce key ----------
   async function renderKey(isAdmin) {
     $('siteKeyPanel').hidden = !isAdmin;
@@ -156,5 +140,5 @@ window.MarsadSite = function MarsadSite(ctx) {
   $('siteSync').onclick = async () => { try { const r = await api('/api/site', { method: 'POST', body: { action: 'sync' } }); $('siteKeyNote').textContent = r.sync?.error ? 'فشلت: ' + r.sync.error : 'اتقرا ' + (r.sync?.orders ?? 0) + ' أوردر اتغير.'; renderKey(true); } catch (x) { $('siteKeyNote').textContent = x.message; } };
   $('siteUnlink').onclick = async () => { if (!confirm('فك ربط الموقع؟ المرصد هيبطل يقرا الأوردرات الجديدة.')) return; try { await api('/api/site', { method: 'POST', body: { action: 'unlink' } }); renderKey(true); } catch (x) { $('siteKeyNote').textContent = x.message; } };
 
-  return { renderBranches, renderTransfer, renderTalabat, exportKind, renderKey, branchRows, transferRows, perBranch };
+  return { renderBranches, renderTransfer, exportKind, renderKey, branchRows, transferRows, perBranch };
 };

@@ -43,7 +43,6 @@
       <button data-view="missed"><svg class="ic" aria-hidden="true"><use href="#i-missed"/></svg>المكالمات الفائتة</button>
       <div class="navgroup">ضرب الأوردرات</div>
       <button data-view="entry"><svg class="ic" aria-hidden="true"><use href="#i-keypad"/></svg>ضرب الأوردرات</button>
-      <button data-view="talabat"><svg class="ic" aria-hidden="true"><use href="#i-store"/></svg>قبول أوردرات طلبات</button>
       <button data-view="siteTransfer"><svg class="ic" aria-hidden="true"><use href="#i-globe"/></svg>تحويل أوردرات الموقع</button>
       </div>
       <div class="navsec" data-sec="branches" hidden>
@@ -219,13 +218,6 @@
       <article class="panel"><h2>كل الإلغاءات <button class="ghost small" data-export="cancels">تصدير Excel</button></h2><div id="cancelTable"></div></article>
     </section>
 
-    <section id="view-talabat" class="view" hidden>
-      <p id="talNote" class="note"></p>
-      <div id="talCards" class="cards"></div>
-      <article class="panel"><h2>سرعة القبول لكل موظف</h2><div id="talStaff"></div></article>
-      <article class="panel"><h2>كل أوردرات طلبات</h2><div id="talOrders"></div></article>
-    </section>
-
     <section id="view-siteBranches" class="view" hidden>
       <p id="siteBNote" class="note"></p>
       <div class="filters"><select id="siteBPick" aria-label="الفرع"><option value="">كل الفروع</option></select><label class="inline"><input type="checkbox" id="siteBOnly" checked> الاستثناءات بس (أكتر من 30 دقيقة)</label><button class="ghost small" data-export="siteBranches">Excel للفروع</button></div>
@@ -238,6 +230,7 @@
       <div class="filters"><select id="siteTPick" aria-label="الفرع"><option value="">كل الفروع</option></select><label class="inline"><input type="checkbox" id="siteTOnly" checked> الاستثناءات بس (أكتر من 5 دقايق)</label><button class="ghost small" data-export="siteTransfer">Excel للفروع</button></div>
       <div id="siteTCards" class="cards"></div>
       <article class="panel"><h2>من استلام الأوردر لحد تحويله للفرع</h2><p class="muted">كل أوردرات الموقع من غير المجدولة والملغية. ملف Excel فيه شيت لكل فرع بنفس شكل تقرير الكول سنتر.</p><div id="siteTTable"></div></article>
+      <article class="panel"><h2>على Apex «الموقع» ومالهاش أوردر على الموقع</h2><div id="siteTApex"></div></article>
     </section>
 
     <section id="view-guide" class="view guide" hidden>
@@ -276,11 +269,10 @@
         <p id="employeeMessage" class="muted" role="status"></p>
         <div id="employeesTable"></div>
       </article>
-      <article class="panel" id="desksPanel"><h2>طلبات والموقع وأسماء Apex</h2>
-        <p class="muted">كل موظف بيدخل على شاشة طلبات أو الموقع بباسورد خاص بالقسم ده. وقدام كل موظف اختار اسمه في Apex، عشان الأوردرات اللي ضربها تتحسب باسمه في كل التقارير.</p>
+      <article class="panel" id="desksPanel"><h2>توحيد الأسماء مع Apex</h2>
+        <p class="muted">قدام كل موظف اختار اسمه في Apex، عشان الأوردرات اللي ضربها تتنسب له في كل التقارير (ضرب الأوردرات، والإلغاءات، وأوردرات الموقع).</p>
         <div id="desksTable"></div>
         <p id="desksNote" class="muted" role="status"></p>
-        <h3>مين داخل على طلبات والموقع</h3><div id="deskSessions"></div>
         <h3>أسماء في Apex لسه مش متربطة بموظف</h3><div id="apexLeft"></div>
       </article>
       <article class="panel"><h2>رسالة للموظفين</h2>

@@ -66,7 +66,7 @@ function setup(app) {
       const after = new Date(last - 5 * 60000).toISOString().slice(0, 19);
       const changed = [];
       for (let page = 1; page <= 6; page++) {
-        const list = await wc(c, 'orders', { per_page: 50, page, modified_after: after, dates_are_gmt: 'true', orderby: 'modified', order: 'asc', _fields: 'id,status,date_created_gmt,date_modified_gmt,meta_data' });
+        const list = await wc(c, 'orders', { per_page: 50, page, modified_after: after, dates_are_gmt: 'true', orderby: 'modified', order: 'asc', _fields: 'id,status,total,date_created_gmt,date_modified_gmt,meta_data' });
         if (!Array.isArray(list)) throw Error('رد غير متوقع من الموقع');
         changed.push(...list);
         if (list.length < 50) break;
@@ -76,8 +76,8 @@ function setup(app) {
         const ful = (o.meta_data || []).find(m => m.key === '_eldahan_app_fulfillment')?.value || null;
         const created = Date.parse(String(o.date_created_gmt) + 'Z');
         if (!Number.isFinite(created)) continue;
-        upsert.push(db.prepare('INSERT INTO site_orders (id, day, status, fulfillment, created_at, modified_at, notes_at) VALUES (?,?,?,?,?,?,NULL) ON CONFLICT(id) DO UPDATE SET status = excluded.status, fulfillment = excluded.fulfillment, modified_at = excluded.modified_at, notes_at = CASE WHEN excluded.modified_at > IFNULL(site_orders.modified_at, 0) THEN NULL ELSE site_orders.notes_at END')
-          .bind(o.id, businessDay(created), String(o.status), ful ? String(ful) : null, created, Date.parse(String(o.date_modified_gmt) + 'Z') || created));
+        upsert.push(db.prepare('INSERT INTO site_orders (id, day, status, fulfillment, total, created_at, modified_at, notes_at) VALUES (?,?,?,?,?,?,?,NULL) ON CONFLICT(id) DO UPDATE SET status = excluded.status, fulfillment = excluded.fulfillment, total = excluded.total, modified_at = excluded.modified_at, notes_at = CASE WHEN excluded.modified_at > IFNULL(site_orders.modified_at, 0) THEN NULL ELSE site_orders.notes_at END')
+          .bind(o.id, businessDay(created), String(o.status), ful ? String(ful) : null, Number(o.total) || null, created, Date.parse(String(o.date_modified_gmt) + 'Z') || created));
       }
       if (upsert.length) await db.batch(upsert);
       // Notes: orders never read since they changed first, then open orders (their notes change without a status change).
@@ -145,14 +145,47 @@ function setup(app) {
     fail(400, 'invalid_action');
   });
 
+  // ---- each site order matched to its Apex order (the monitor's list of online orders): who entered it and when ----
+  // Same day, entered on Apex between 2 minutes before the site received it and 90 minutes after; the closest in time to
+  // the branch transfer wins, with the branch and the amount as tie-breakers. One Apex order per site order.
+  const norm = x => String(x || '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/^(فرع|الدهان)\s*/g, '').trim();
+  const sameBranch = (a, b) => { const x = norm(a), y = norm(b); if (!x || !y) return null; const fx = x.split(/[\s،,-]+/)[0], fy = y.split(/[\s،,-]+/)[0]; return x.includes(fy) || y.includes(fx); };
+  async function apexMatch(day, rows) {
+    const r = await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(day);
+    let d = null; try { d = r ? JSON.parse(r.data) : null; } catch {}
+    const apex = (d?.online || []).filter(a => a.kind === 'الموقع' && a.at).map(a => ({ ...a, t: Date.parse(a.at) }));
+    if (!apex.length) return { matches: new Map(), apexCount: 0, hasList: Array.isArray(d?.online) };
+    const names = app.apexNameMap ? await app.apexNameMap() : {};
+    const pairs = [];
+    for (const o of rows) {
+      if (!o.received_at || EXCLUDED.has(o.status)) continue;
+      const anchor = o.transfer_at || o.received_at;
+      for (const a of apex) {
+        if (a.t < o.received_at - 2 * 60000 || a.t > o.received_at + 90 * 60000) continue;
+        const b = sameBranch(o.branch, a.branch); if (b === false) continue;
+        const money = o.total && a.amount ? Math.abs(o.total - a.amount) / Math.max(o.total, 1) : 0.5;
+        pairs.push({ o: o.id, a, score: Math.abs(a.t - anchor) / 60000 + money * 20 });
+      }
+    }
+    pairs.sort((x, y) => x.score - y.score);
+    const usedO = new Set(), usedA = new Set(), matches = new Map();
+    for (const p of pairs) {
+      if (usedO.has(p.o) || usedA.has(p.a.no)) continue;
+      usedO.add(p.o); usedA.add(p.a.no);
+      matches.set(p.o, { no: p.a.no, at: iso(p.a.t), user: names[p.a.user] || p.a.user || null, amount: p.a.amount ?? null });
+    }
+    return { matches, apexCount: apex.length, unmatched: apex.filter(a => !usedA.has(a.no)).map(a => ({ no: a.no, at: iso(a.t), branch: a.branch, user: names[a.user] || a.user, amount: a.amount })), hasList: true };
+  }
+
   // ---- the day's rows for the two reports ----
   app.route('GET', '/api/site/day', async ctx => {
     await app.requireAdmin(ctx);
     const day = validDate(String(ctx.query.day || '')) ? ctx.query.day : businessDay(ctx.now);
     const rows = await db.prepare('SELECT * FROM site_orders WHERE day = ? ORDER BY id').all(day);
-    return { day, linked: !!await creds(), lastSync: iso(Number(await setting('site_sync_at')) || null), error: await setting('site_error'), live: day === businessDay(ctx.now),
+    const m = await apexMatch(day, rows);
+    return { day, apex: { linked: m.hasList, count: m.apexCount, unmatched: m.unmatched || [] }, linked: !!await creds(), lastSync: iso(Number(await setting('site_sync_at')) || null), error: await setting('site_error'), live: day === businessDay(ctx.now),
       orders: rows.map(o => ({ id: o.id, status: o.status, fulfillment: o.fulfillment, excluded: EXCLUDED.has(o.status), scheduled: !!o.scheduled, branch: o.branch, driver: o.driver,
-        createdAt: iso(o.created_at), receivedAt: iso(o.received_at), transferAt: iso(o.transfer_at), outAt: iso(o.out_at), deliveredAt: iso(o.delivered_at), notesRead: !!o.notes_at })),
+        total: o.total, apex: m.matches.get(o.id) || null, createdAt: iso(o.created_at), receivedAt: iso(o.received_at), transferAt: iso(o.transfer_at), outAt: iso(o.out_at), deliveredAt: iso(o.delivered_at), notesRead: !!o.notes_at })),
       rules: { prep: PREP_MIN, delivery: DELIVERY_MIN, transfer: TRANSFER_MIN }, serverNow: iso(ctx.now) };
   });
   app.siteSync = sync;

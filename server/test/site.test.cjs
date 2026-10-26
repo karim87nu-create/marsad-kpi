@@ -9,7 +9,7 @@ const g = ms => new Date(ms).toISOString().slice(0, 19);
 function fakeSite(t0) {
   const m = min => t0 + min * 60000;
   const orders = [
-    { id: 101, status: 'completed', date_created_gmt: g(m(0)), date_modified_gmt: g(m(60)), meta_data: [{ key: '_eldahan_app_fulfillment', value: 'delivery' }, { key: '_billing_phone', value: '010' }] },
+    { id: 101, status: 'completed', total: '255.00', date_created_gmt: g(m(0)), date_modified_gmt: g(m(60)), meta_data: [{ key: '_eldahan_app_fulfillment', value: 'delivery' }, { key: '_billing_phone', value: '010' }] },
     { id: 102, status: 'processing', date_created_gmt: g(m(10)), date_modified_gmt: g(m(12)), meta_data: [{ key: '_eldahan_app_fulfillment', value: 'delivery' }] },
     { id: 103, status: 'cancelled', date_created_gmt: g(m(5)), date_modified_gmt: g(m(6)), meta_data: [] },
   ];
@@ -51,6 +51,19 @@ test('site: key, sync of orders and notes, the day rows, alerts', async () => {
     assert.equal(Date.parse(o[101].outAt) - Date.parse(o[101].transferAt), 37 * 60000);
     assert.ok(o[101].deliveredAt); assert.equal(o[103].excluded, true);
     assert.equal(JSON.stringify(d).includes('010'), false, 'no customer data');
+    // Apex: the monitor's online orders; the site order is tied to the Apex order and to who entered it.
+    const emp = await t.employee(admin, { name: 'سارة', code: 'E1', pin: '1' });
+    await admin('PUT', '/api/apex-names', { apexName: 'sara.m', employeeId: emp.id });
+    const ot = (await admin('POST', '/api/orders/token')).body.token;
+    await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': ot }, body: { v: 1, day: '2026-10-22', online: [
+      { no: 5001, kind: 'الموقع', branch: 'فرع مدينة نصر', at: new Date(site.m(4)).toISOString(), user: 'sara.m', amount: 250 },
+      { no: 5002, kind: 'الموقع', branch: 'التجمع', at: new Date(site.m(5)).toISOString(), user: 'ahmed', amount: 99 },
+      { no: 5003, kind: 'طلبات', branch: 'مدينة نصر', at: new Date(site.m(4)).toISOString(), user: 'x', amount: 255 }] } });
+    const d2 = (await admin('GET', '/api/site/day?day=2026-10-22')).body;
+    const o2 = Object.fromEntries(d2.orders.map(x => [x.id, x]));
+    assert.deepEqual(o2[101].apex, { no: 5001, at: new Date(site.m(4)).toISOString(), user: 'سارة', amount: 250 });
+    assert.equal(o2[102].apex, null);
+    assert.deepEqual(d2.apex.unmatched.map(x => x.no), [5002]);
     // Order 102: received at 13:10 and not sent to a branch → after 5 minutes one alert for the online group.
     const a = t.app.db.raw.prepare("SELECT kind, target FROM telegram_log WHERE kind LIKE 'site%'").all();
     assert.deepEqual(a, [{ kind: 'siteTransfer', target: 'online' }]);

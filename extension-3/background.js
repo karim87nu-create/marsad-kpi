@@ -129,7 +129,6 @@ browser.runtime.onMessage.addListener(async (m, sender) => {
     if (!fromArabicss(sender) || !/^\/themes\/arabicssReportsInclude\//i.test(new URL(sender.url).pathname) || typeof m.html !== 'string' || m.html.length > 1000000) throw Error('invalid_sender');
     return nativeLive(m.html);
   }
-  if (m?.type?.startsWith('DESK_')) return deskMessage(m, sender);
   if (!fromArabicss(sender)) throw Error('invalid_sender');
   const tabId = String(sender.tab.id);
   await startup;
@@ -171,36 +170,6 @@ browser.runtime.onMessage.addListener(async (m, sender) => {
     case 'STATUS': return { pending: (await store.get(OUTBOX, [])).filter(e => e.token === m.token).length, rejected: (await store.get(REJECTED, [])).length };
   }
 });
-
-// ---------- طلبات والموقع: the desk sign-in, kept in memory only (closing the browser signs the desk out) ----------
-const desks = {};
-const deskSender = (sender, desk) => { try { const u = new URL(sender.url); return !!sender.tab && (desk === 'talabat' ? u.hostname === 'partner-app.talabat.com' : desk === 'site' && /(^|\.)eldahan\.com\.eg$/.test(u.hostname) && u.pathname.startsWith('/wp-admin')); } catch { return false; } };
-async function deskApi(path, body, token) {
-  const r = await api(path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-device-token': globalThis.MARSAD.DEVICE_TOKEN, ...(token ? { 'x-desk-session': token } : {}) }, body: JSON.stringify(body || {}) });
-  return { ok: r.ok, status: r.status, data: r.json() };
-}
-const DESK_ERRORS = { invalid_password: 'الباسورد غلط أو مالوش باسورد للقسم ده', rate_limited: 'محاولات كتير؛ استنى شوية وجرب تاني', invalid_device: 'الجهاز ده مش متسجل في المرصد' };
-async function deskMessage(m, sender) {
-  const desk = m.desk;
-  if (!deskSender(sender, desk)) throw Error('invalid_sender');
-  const s = desks[desk];
-  const ended = r => { if (r.status === 401) { delete desks[desk]; return { signedOut: true }; } return { ok: r.ok }; };
-  switch (m.type) {
-    case 'DESK_WHO': return s ? s.who : null;
-    case 'DESK_LOGIN': {
-      const r = await deskApi('/api/desks/login', { desk, pin: String(m.pin || ''), place: String(m.place || ''), device: (await deviceId()) + ':' + desk });
-      if (!r.ok) return { ok: false, error: DESK_ERRORS[r.data.error] || r.data.error || 'تعذر الدخول (' + r.status + ')' };
-      desks[desk] = { token: r.data.token, who: { id: r.data.employee.id, name: r.data.employee.name } };
-      return { ok: true, who: desks[desk].who };
-    }
-    case 'DESK_LOGOUT': if (s) { delete desks[desk]; await deskApi('/api/desks/logout', { reason: 'logout' }, s.token).catch(() => {}); } return { ok: true };
-    case 'DESK_BEAT': if (!s) return { signedOut: true }; return ended(await deskApi('/api/desks/beat', { place: String(m.place || '') }, s.token));
-    case 'DESK_TALABAT': if (!s || desk !== 'talabat') return { signedOut: true }; return ended(await deskApi('/api/talabat/push', { account: m.account, orders: m.orders }, s.token));
-  }
-  throw Error('invalid_type');
-}
-// One id per browser profile, so the server can tell screens apart.
-async function deviceId() { let id = await store.get('deviceId', null); if (!id) { id = crypto.randomUUID().slice(0, 13); await store.set('deviceId', id); } return id; }
 
 // ---------- collector: Arabicss history and live queue (supervisor's PC only) ----------
 let collectorState = { message: '', lastHistory: null, lastLive: null, historyError: null, liveError: null, historyDays: [] };

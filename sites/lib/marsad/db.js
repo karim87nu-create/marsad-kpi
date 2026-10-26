@@ -213,15 +213,9 @@ CREATE INDEX IF NOT EXISTS telegram_log_time ON telegram_log(created_at);
 CREATE INDEX IF NOT EXISTS events_employee_time ON events(employee_id, occurred_at);
 CREATE TABLE IF NOT EXISTS call_assignments (call_key TEXT PRIMARY KEY, employee_id INTEGER NOT NULL, decided_at INTEGER NOT NULL, decided_by TEXT, note TEXT);
 CREATE TABLE IF NOT EXISTS orders_days (day TEXT PRIMARY KEY, data TEXT NOT NULL, received_at INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS desk_pins (employee_id INTEGER NOT NULL, desk TEXT NOT NULL, pin_hash TEXT NOT NULL, pin_lookup TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (employee_id, desk));
-CREATE UNIQUE INDEX IF NOT EXISTS desk_pins_lookup ON desk_pins(desk, pin_lookup);
-CREATE TABLE IF NOT EXISTS desk_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, employee_id INTEGER NOT NULL, desk TEXT NOT NULL, device TEXT, place TEXT, started_at INTEGER NOT NULL, last_seen INTEGER NOT NULL, ended_at INTEGER, end_reason TEXT);
-CREATE INDEX IF NOT EXISTS desk_sessions_time ON desk_sessions(started_at);
-CREATE TABLE IF NOT EXISTS site_orders (id INTEGER PRIMARY KEY, day TEXT NOT NULL, status TEXT, fulfillment TEXT, created_at INTEGER NOT NULL, modified_at INTEGER, notes_at INTEGER, received_at INTEGER, transfer_at INTEGER, branch TEXT, out_at INTEGER, driver TEXT, delivered_at INTEGER, scheduled INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS site_orders (id INTEGER PRIMARY KEY, day TEXT NOT NULL, status TEXT, fulfillment TEXT, total REAL, created_at INTEGER NOT NULL, modified_at INTEGER, notes_at INTEGER, received_at INTEGER, transfer_at INTEGER, branch TEXT, out_at INTEGER, driver TEXT, delivered_at INTEGER, scheduled INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS site_orders_day ON site_orders(day);
 CREATE INDEX IF NOT EXISTS site_orders_created ON site_orders(created_at);
-CREATE TABLE IF NOT EXISTS talabat_orders (id TEXT PRIMARY KEY, code TEXT, day TEXT NOT NULL, account TEXT, store TEXT, first_seen INTEGER NOT NULL, new_seen INTEGER, accepted_seen INTEGER, accepted_by INTEGER, accepted_session INTEGER, ready_seen INTEGER, last_seen INTEGER NOT NULL, last_column TEXT, gone_at INTEGER);
-CREATE INDEX IF NOT EXISTS talabat_orders_day ON talabat_orders(day);
 CREATE TABLE IF NOT EXISTS apex_names (apex_name TEXT PRIMARY KEY, employee_id INTEGER NOT NULL, set_at INTEGER NOT NULL);
 `;
 
@@ -239,6 +233,7 @@ async function migrate(db) {
   try { await db.prepare('SELECT reply_to, message_id FROM telegram_log LIMIT 0').all(); } catch {
     for (const c of ['reply_to TEXT', 'message_id INTEGER']) { try { await db.prepare('ALTER TABLE telegram_log ADD COLUMN ' + c).run(); } catch {} }
   }
+  try { await db.prepare('SELECT total FROM site_orders LIMIT 0').all(); } catch { try { await db.prepare('ALTER TABLE site_orders ADD COLUMN total REAL').run(); } catch {} }
   // Two groups: the call center's (default) and the branch managers' (target = 'branches').
   try { await db.prepare('SELECT target FROM telegram_log LIMIT 0').all(); } catch { try { await db.prepare('ALTER TABLE telegram_log ADD COLUMN target TEXT').run(); } catch {} }
   try { await db.prepare('SELECT branch_chat_id, branch_chat_title FROM telegram_config LIMIT 0').all(); } catch {

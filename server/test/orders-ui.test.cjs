@@ -70,7 +70,7 @@ test('admin page: مرصد الدهان sections, live branches board, reports, 
     assert.ok(doc.getElementById('tgChooseBranches'));
     assert.ok(doc.getElementById('tgChooseOnline'));
     assert.match(doc.getElementById('tgStatus').textContent, /جروب الكول سنتر — الأونلاين وضرب الأوردر/);
-    for (const [v, id, text] of [['talabat', 'talOrders', 'مفيش أوردرات طلبات'], ['siteTransfer', 'siteTTable', 'الموقع مش متربط']]) {
+    for (const [v, id, text] of [['siteTransfer', 'siteTTable', 'الموقع مش متربط']]) {
       doc.querySelector('[data-view="' + v + '"]').click();
       await until(() => doc.getElementById(id).textContent.includes(text), v);
     }
