@@ -142,19 +142,28 @@
     if (d.receivedAt && Number.isFinite(placed) && Math.abs(Date.parse(d.receivedAt) - Math.floor(placed / 60000) * 60000) < 60000) d.receivedAt = new Date(placed).toISOString();
     if (d.receivedAt && Number.isFinite(d.acceptSeconds)) d.acceptedAt = new Date(Date.parse(d.receivedAt) + d.acceptSeconds * 1000).toISOString();
     d.subtotal = money(lines(T('subtotal')).find(x => /E£|EGP/.test(x)));
+    // The customer's number: read only while the restaurant's WhatsApp messages are on (the server says so).
+    let phone = null;
+    if (phonesWanted) {
+      // Only inside this order's details panel (never a number elsewhere on the page, e.g. the branch's).
+      let box = T('details-order-id'); while (box && !box.querySelector('[data-testid^="milestone-for__"]')) box = box.parentElement;
+      const tel = box?.querySelector('a[href^="tel:"]')?.getAttribute('href');
+      const m = String(tel || box?.innerText || '').replace(/[٠-٩]/g, c => String(c.charCodeAt(0) - 0x660)).match(/(?:\+?20|0)\s*1[0125](?:[\s-]?\d){8}/);
+      phone = m ? m[0].replace(/[^\d+]/g, '') : null;
+    }
     d.deliveryType = lines(T('prop-delivery-type'))[1] || null;
-    return { id, vendorId, placedAt: Number.isFinite(placed) ? new Date(placed).toISOString() : null, status: d.status, detail: d };
+    return { id, vendorId, placedAt: Number.isFinite(placed) ? new Date(placed).toISOString() : null, status: d.status, detail: d, ...(phone ? { phone } : {}) };
   }
 
   // ---------- one cycle ----------
   const known = new Map();        // id -> status last sent
   // The page reloads every minute; the whole day is loaded and sent again only every 10 minutes (kept across reloads).
   const FULL = 'marsadTalabatFull', fullAt = () => { try { return Number(sessionStorage.getItem(FULL)) || 0; } catch { return 0; } };
-  let want = [], lastReload = Date.now(), failures = 0;
+  let want = [], lastReload = Date.now(), failures = 0, phonesWanted = false;
   async function push(orders) {
     const r = await bg({ type: 'TALABAT_PUSH', orders }).catch(e => ({ ok: false, error: e.message }));
     if (!r?.ok) { failures++; say('مش قادر يبعت للمرصد (' + (r?.error || r?.status || '?') + ')'); return false; }
-    failures = 0; want = r.want || []; return true;
+    failures = 0; want = r.want || []; phonesWanted = !!r.phones; return true;
   }
   // The table only draws the rows on screen: scroll it from the top to the bottom and gather every row on the way.
   const rowEl = id => [...document.querySelectorAll('.MuiDataGrid-row')].find(r => String(r.dataset.id || '').endsWith('|' + id));

@@ -224,6 +224,8 @@ CREATE TABLE IF NOT EXISTS exception_reviews (key TEXT PRIMARY KEY, source TEXT,
 CREATE INDEX IF NOT EXISTS exception_reviews_day ON exception_reviews(day);
 CREATE TABLE IF NOT EXISTS cancel_owners (key TEXT PRIMARY KEY, day TEXT NOT NULL, source TEXT, ref TEXT, owner TEXT NOT NULL, name TEXT, reason_key TEXT, by_name TEXT, at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS cancel_owners_day ON cancel_owners(day);
+CREATE TABLE IF NOT EXISTS wa_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, talabat_id TEXT UNIQUE NOT NULL, day TEXT NOT NULL, phone TEXT, created_at INTEGER NOT NULL, welcome_at INTEGER, survey_at INTEGER, tries INTEGER NOT NULL DEFAULT 0, error TEXT);
+CREATE INDEX IF NOT EXISTS wa_messages_day ON wa_messages(day);
 CREATE TABLE IF NOT EXISTS apex_names (apex_name TEXT PRIMARY KEY, employee_id INTEGER NOT NULL, set_at INTEGER NOT NULL);
 `;
 

@@ -245,5 +245,26 @@ window.MarsadSite = function MarsadSite(ctx) {
   $('siteSync').onclick = async () => { try { const r = await api('/api/site', { method: 'POST', body: { action: 'sync' } }); $('siteKeyNote').textContent = r.sync?.error ? 'فشلت: ' + r.sync.error : 'اتقرا ' + (r.sync?.orders ?? 0) + ' أوردر اتغير.'; renderKey(true); } catch (x) { $('siteKeyNote').textContent = x.message; } };
   $('siteUnlink').onclick = async () => { if (!confirm('فك ربط الموقع؟ المرصد هيبطل يقرا الأوردرات الجديدة.')) return; try { await api('/api/site', { method: 'POST', body: { action: 'unlink' } }); renderKey(true); } catch (x) { $('siteKeyNote').textContent = x.message; } };
 
-  return { renderBranches, renderTransfer, renderTalabat, renderBranchTalabatCancels, renderTalabatKey, exportKind, renderKey, branchRows, transferRows, perBranch };
+  // ---------- الإدارة: WhatsApp for Talabat customers ----------
+  async function renderWhatsApp(isAdmin) {
+    $('waPanel').hidden = !isAdmin;
+    if (!isAdmin) return;
+    const s = await api('/api/whatsapp'), f = $('waForm');
+    $('waStatus').replaceChildren(s.configured ? pill('متربط · Phone ID ينتهي بـ ' + s.phoneIdEnd, 'ok') : pill('مش متربط', 'warn'), ' ', s.enabled ? pill('الإرسال شغال', 'ok') : pill('الإرسال واقف', 'warn'), ' ',
+      h('span', { className: 'muted', textContent: 'النهارده: ' + s.today.orders + ' أوردر · اتبعت ترحيب ' + s.today.welcome + ' · استطلاع ' + s.today.survey + ' · مستني ' + s.today.waiting }));
+    if (s.configured) { f.elements.welcome.value = s.welcome; f.elements.survey.value = s.survey; f.elements.lang.value = s.lang; f.elements.delay.value = s.delay; f.elements.token.placeholder = 'Access token (متسجل — سيبه فاضي لو مش هتغيره)'; }
+    $('waOn').hidden = !s.configured || s.enabled; $('waOff').hidden = !s.enabled; $('waRemove').hidden = $('waTestW').hidden = $('waTestS').hidden = $('waTestTo').hidden = !s.configured;
+    $('waErrors').replaceChildren(...(s.errors.length ? [h('h3', { textContent: 'اللي ماتبعتش النهارده' }), ...s.errors.map(e => h('p', { className: 'muted', textContent: t12(e.at) + ' · أوردر ' + e.order + ' · ' + e.error }))] : []));
+  }
+  const waDo = async (body, ok) => { try { const r = await api('/api/whatsapp', { method: 'POST', body }); $('waNote').textContent = ok(r); renderWhatsApp(true); } catch (x) { $('waNote').textContent = x.message; } };
+  $('waForm').onsubmit = e => { e.preventDefault(); const f = e.target, v = n => f.elements[n].value.trim();
+    $('waNote').textContent = 'بجرب الربط مع واتساب…';
+    waDo({ action: 'config', phoneId: v('phoneId'), token: v('token'), welcome: v('welcome'), survey: v('survey'), lang: v('lang'), delay: Number(v('delay')) }, r => { f.elements.token.value = ''; return 'اتربط' + (r.number ? ' على الرقم ' + r.number : '') + '. دوس «شغّل الإرسال» لما تكون جاهز.'; }); };
+  $('waOn').onclick = () => waDo({ action: 'enable', on: true }, () => 'الإرسال اشتغل لأوردرات طلبات الجديدة.');
+  $('waOff').onclick = () => waDo({ action: 'enable', on: false }, () => 'الإرسال وقف، والأرقام اللي كانت مستنية اتمسحت.');
+  $('waTestW').onclick = () => waDo({ action: 'test', which: 'welcome', to: $('waTestTo').value }, () => 'اتبعتت رسالة الترحيب للتجربة.');
+  $('waTestS').onclick = () => waDo({ action: 'test', which: 'survey', to: $('waTestTo').value }, () => 'اتبعتت رسالة الاستطلاع للتجربة.');
+  $('waRemove').onclick = () => { if (confirm('فك ربط واتساب؟ الإرسال هيقف والأرقام هتتمسح.')) waDo({ action: 'remove' }, () => 'اتفك الربط.'); };
+
+  return { renderBranches, renderTransfer, renderTalabat, renderBranchTalabatCancels, renderTalabatKey, exportKind, renderKey, renderWhatsApp, branchRows, transferRows, perBranch };
 };

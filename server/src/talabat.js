@@ -91,7 +91,9 @@ function setup(app) {
     const want = await db.prepare(`SELECT id FROM talabat_orders WHERE updated_at >= ? AND (detail_at IS NULL OR (status NOT IN ('COMPLETED','CANCELLED','REJECTED','DELIVERED','PICKED UP') AND detail_at < ?)) ORDER BY detail_at IS NOT NULL, placed_at DESC LIMIT 20`)
       .all(now - 12 * 3600000, now - 60000);
     await alerts(now);
-    return { ok: true, want: want.map(r => r.id), serverNow: iso(now) };
+    // WhatsApp (when on): the customers' numbers for the welcome and the survey; «phones» tells the screen to read them.
+    await app.whatsapp?.take(list, now);
+    return { ok: true, want: want.map(r => r.id), phones: !!await app.whatsapp?.wantPhones(), serverNow: iso(now) };
   }, { limit: 1024 * 1024 });
 
   // ---- Talabat order ↔ Apex order ----

@@ -19,6 +19,7 @@ import * as reviews from './reviews.js';
 import * as site from './site.js';
 import * as talabat from './talabat.js';
 import * as cancels from './cancels.js';
+import * as whatsapp from './whatsapp.js';
 
-const MODULES = [admin, employees, sessions, dashboard, breaks, messages, shifts, history, engine, telegram, importRows, ops, range, orders, names, learn, reviews, site, talabat, cancels];
+const MODULES = [admin, employees, sessions, dashboard, breaks, messages, shifts, history, engine, telegram, importRows, ops, range, orders, names, learn, reviews, site, talabat, cancels, whatsapp];
 export { MODULES };

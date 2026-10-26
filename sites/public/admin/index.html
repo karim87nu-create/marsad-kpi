@@ -354,6 +354,16 @@
         <div class="inline" style="margin-top:8px"><button type="button" id="siteSync" class="ghost">اقرا دلوقتي</button><button type="button" id="siteUnlink" class="ghost">فك الربط</button></div>
         <p id="siteKeyNote" class="muted" role="status"></p>
       </article>
+      <article class="panel" id="waPanel"><h2>واتساب لعملاء طلبات</h2>
+        <p class="muted">رسالة ترحيب أول ما أوردر طلبات يوصل، ورسالة استطلاع رأي بعد المدة اللي تحددها، من رقم المطعم عن طريق WhatsApp Business Platform الرسمي (Meta) بقوالب Meta وافقت عليها. شاشة طلبات بتقرا رقم العميل بس والإرسال شغال، والرقم بيتمسح أول ما الاستطلاع يتبعت أو الأوردر يتلغى أو بعد 12 ساعة، ومش بيظهر هنا.</p>
+        <p id="waStatus"></p>
+        <form id="waForm" class="stack"><div class="inline"><input name="phoneId" placeholder="Phone number ID" autocomplete="off" dir="ltr" aria-label="Phone number ID"><input name="token" type="password" placeholder="Access token (دائم)" autocomplete="off" dir="ltr" aria-label="Access token"></div>
+          <div class="inline"><input name="welcome" placeholder="اسم قالب الترحيب" autocomplete="off" dir="ltr" aria-label="اسم قالب الترحيب"><input name="survey" placeholder="اسم قالب الاستطلاع" autocomplete="off" dir="ltr" aria-label="اسم قالب الاستطلاع"><input name="lang" value="ar" style="max-width:6em" dir="ltr" aria-label="لغة القالب"><label>الاستطلاع بعد <input name="delay" type="number" min="10" max="600" value="75" style="max-width:5em" aria-label="الاستطلاع بعد كام دقيقة"> دقيقة</label></div>
+          <button type="submit">حفظ وتجربة الربط</button></form>
+        <div class="inline" style="margin-top:8px"><button type="button" id="waOn">شغّل الإرسال</button><button type="button" id="waOff" class="ghost">وقّف الإرسال</button><input id="waTestTo" placeholder="رقم للتجربة 01…" dir="ltr" aria-label="رقم للتجربة" style="max-width:12em"><button type="button" id="waTestW" class="ghost">جرّب الترحيب</button><button type="button" id="waTestS" class="ghost">جرّب الاستطلاع</button><button type="button" id="waRemove" class="ghost">فك الربط</button></div>
+        <p id="waNote" class="muted" role="status"></p>
+        <div id="waErrors"></div>
+      </article>
       <article class="panel" id="talKeyPanel"><h2>شاشة مراقبة طلبات</h2>
         <p class="muted">جهاز واحد فاضل شغال، عليه فايرفوكس بإضافة المرصد ومتسجل فيه حساب الكول سنتر على طلبات (اللي شايف كل الفروع). افتح الصفحة دي على الجهاز ده ودوس ربط. الشاشة بتقرا Order History وتفاصيل كل أوردر لوحدها، ومش بتدوس على قبول أو رفض أو أي حاجة تغيّر الأوردر.</p>
         <p id="talKeyStatus"></p>
@@ -380,7 +390,7 @@
 <script src="charts.js?v=4"></script>
 <script src="now-arc.js?v=3"></script>
 <script src="orders.js?v=4"></script>
-<script src="site.js?v=8"></script>
+<script src="site.js?v=9"></script>
 <script src="insights.js?v=2"></script>
 <script src="app.js?v=32"></script>
 </body>

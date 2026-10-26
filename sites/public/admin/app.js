@@ -605,6 +605,7 @@
     renderLearned().catch(() => {});
     SITE.renderKey(isAdmin()).catch(e => say('siteKeyNote', e.message));
     SITE.renderTalabatKey(isAdmin()).catch(e => say('talKeyNote', e.message));
+    SITE.renderWhatsApp(isAdmin()).catch(e => say('waNote', e.message));
     for (const f of ['addEmployee', 'addAdmin', 'messageForm']) $(f).hidden = f === 'messageForm' ? !canWrite() : !isAdmin();
     $('linkCollector').hidden = !canWrite();
   }
