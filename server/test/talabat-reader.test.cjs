@@ -38,3 +38,22 @@ test('Talabat history: the list never asks for a future date', () => {
   assert.equal(at('2026-10-26T17:56:00Z'), '/orders?from=2026-10-26&to=2026-10-26');   // 20:56 Cairo
   assert.equal(at('2026-10-26T22:30:00Z'), '/orders?from=2026-10-26&to=2026-10-27');   // 01:30 Cairo, still the 26th's operating day
 });
+test('Talabat history: a table that only draws the rows on screen is scrolled through and every row is read', async () => {
+  const s = fs.readFileSync(path.join(__dirname, '../../extension-3/talabat-monitor.js'), 'utf8');
+  const code = s.slice(s.indexOf('  const sleep ='), s.indexOf('\n', s.indexOf('  const sleep ='))) + '\n' +
+    s.slice(s.indexOf('  const lines ='), s.indexOf('  // ---------- a small banner')) +
+    s.slice(s.indexOf('  function readList()'), s.indexOf('  function readDetail(')) +
+    s.slice(s.indexOf('  // The table only draws the rows on screen'), s.indexOf('  async function openDetail('));
+  const dom = new JSDOM('<main><div class="MuiDataGrid-virtualScroller"><div id="rows"></div></div></main>', { runScripts: 'outside-only' });
+  const w = dom.window, sc = w.document.querySelector('.MuiDataGrid-virtualScroller'), box = w.document.getElementById('rows');
+  Object.defineProperty(w.HTMLElement.prototype, 'innerText', { get() { return [...this.childNodes].map(n => n.textContent).join('\n'); } });
+  let top = 0;
+  const draw = () => { box.innerHTML = ''; const first = Math.floor(top / 25); for (let i = first; i < Math.min(40, first + 4); i++) box.insertAdjacentHTML('beforeend', `<div class="MuiDataGrid-row" data-id="x|46769${String(10000 + i)}"><span>x</span><span>PICKED UP</span><span>Today, 20:${String(i).padStart(2, '0')}</span><span>E£10.00</span></div>`); };
+  Object.defineProperty(sc, 'clientHeight', { get: () => 100 }); Object.defineProperty(sc, 'scrollHeight', { get: () => 1000 });
+  Object.defineProperty(sc, 'scrollTop', { get: () => top, set: v => { top = Math.max(0, Math.min(900, v)); draw(); } });
+  draw();
+  try {
+    const rows = await w.eval('(async()=>{' + code + ';return JSON.stringify((await scan()).map(o => o.id));})()');
+    assert.equal(JSON.parse(rows).length, 40, 'all 40 rows, not only the 4 drawn on screen');
+  } finally { w.close(); }
+});

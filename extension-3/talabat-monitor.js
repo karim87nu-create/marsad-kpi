@@ -154,9 +154,24 @@
     if (!r?.ok) { failures++; say('مش قادر يبعت للمرصد (' + (r?.error || r?.status || '?') + ')'); return false; }
     failures = 0; want = r.want || []; return true;
   }
+  // The table only draws the rows on screen: scroll it from the top to the bottom and gather every row on the way.
+  const rowEl = id => [...document.querySelectorAll('.MuiDataGrid-row')].find(r => String(r.dataset.id || '').endsWith('|' + id));
+  async function scan(stop) {
+    const sc = document.querySelector('.MuiDataGrid-virtualScroller');
+    const box = sc && sc.scrollHeight > sc.clientHeight + 5 ? sc : (document.scrollingElement || document.documentElement);
+    const all = new Map(), take = () => { for (const o of readList()) if (!all.has(o.id)) all.set(o.id, o); };
+    box.scrollTop = 0; await sleep(250); take();
+    for (let i = 0; i < 300 && !(stop && stop([...all.values()])); i++) {
+      if (box.scrollTop + box.clientHeight >= box.scrollHeight - 2) break;
+      box.scrollTop = box.scrollTop + Math.max(40, Math.floor(box.clientHeight * 0.7)); await sleep(200); take();
+    }
+    return [...all.values()];
+  }
   async function openDetail(id) {
-    const row = [...document.querySelectorAll('.MuiDataGrid-row')].find(r => String(r.dataset.id || '').endsWith('|' + id));
+    let row = rowEl(id);
+    if (!row) { await scan(() => !!rowEl(id)); row = rowEl(id); }
     if (!row) return null;
+    row.scrollIntoView?.({ block: 'center' }); await sleep(150);
     row.click();
     for (let i = 0; i < 40; i++) { await sleep(200); const d = readDetail(id); if (d && document.querySelector('[data-testid^="milestone-for__"]')) { await sleep(400); return readDetail(id); } }
     return null;
@@ -185,8 +200,10 @@
     // The list shows 50 at a time: on the first pass load the whole day, later only when an asked-for order is further down.
     const loadMore = () => [...document.querySelectorAll('button,div,span,p')].find(e => e.childElementCount === 0 && /^(Load more|عرض المزيد)$/i.test(e.textContent.trim()));
     const full = Date.now() - fullAt() > 600000;
-    for (let i = 0; i < 40 && loadMore() && !older() && (full || want.some(id => !readList().some(o => o.id === id))); i++) { say('بيحمّل أوردرات يوم التشغيل… ' + readList().length); loadMore().click(); await sleep(1500); }
-    const list = readList().filter(inDay);
+    let rows = await scan();
+    const past = () => rows.some(o => o.at != null && o.at < start - 60000);
+    for (let i = 0; i < 40 && loadMore() && !past() && (full || want.some(id => !rows.some(o => o.id === id))); i++) { say('بيحمّل أوردرات يوم التشغيل… ' + rows.filter(inDay).length); loadMore().click(); await sleep(1500); rows = await scan(); }
+    const list = rows.filter(inDay);
     if (!list.length) { say('سجل طلبات لسه محمّلش أوردرات؛ مستني ظهور الصفوف. اللايف شغال في التبويب التاني.'); return; }
     // Sent: everything on a full pass; otherwise what is new or changed since this page loaded, plus the top of the list.
     const send = full ? list : list.filter((o, i) => i < 60 || known.get(o.id) !== o.status);
