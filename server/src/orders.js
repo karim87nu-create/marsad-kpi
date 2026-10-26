@@ -125,7 +125,8 @@ function setup(app) {
     await put(stateKey, JSON.stringify(states));
     // Payment / service / platform values the admin marked as officer: the monitor keeps them out of every total.
     let officer = []; try { officer = JSON.parse(await setting('officer_values') || '[]'); } catch {}
-    return { ok: true, officer, serverNow: iso(ctx.now) };
+    // follow: this server answers warnings from the monitor's follow-ups (status changes, reminders).
+    return { ok: true, officer, follow: 1, serverNow: iso(ctx.now) };
   }, { limit: 1024 * 1024 });
 
   // ---- officer values (not sales) ----
