@@ -50,7 +50,7 @@ window.MarsadOrders = function MarsadOrders(ctx) {
     if (days.length > 31) throw Error('تقارير الفروع لحد 31 يوم في المرة');
     const got = await Promise.all(days.map(d => dayOf(d, force)));
     const m = { days, missing: [], linked: got.some(g => g.linked), lastPush: got[0]?.lastPush, receivedAt: null, totals: { orders: 0, sales: 0, kinds: {}, outCount: 0, outLate: 0, cancels: 0, cancelSales: 0, discounts: 0, issues: 0, open: 0, late: 0 },
-      branches: new Map(), staff: new Map(), cancels: [], issues: [], lateOut: [], hours: new Map(), hasLateOut: false, settings: { late: 30, veryLate: 45 } };
+      branches: new Map(), staff: new Map(), cancels: [], issues: [], lateOut: [], hours: new Map(), hasLateOut: false, settings: { late: 30, veryLate: 45 }, sales: new Map(), officer: { orders: 0, sales: 0 } };
     let outSum = 0;
     got.forEach((g, i) => {
       const d = g.data ? named(g.data, g.apexNames) : null, day = days[i];
@@ -79,6 +79,11 @@ window.MarsadOrders = function MarsadOrders(ctx) {
         x.days++; m.staff.set(s.name, x);
       }
       for (const c of d.cancels || []) m.cancels.push({ ...c, kind: kindOf(c.kind), day });
+      for (const r of d.sales || []) {
+        const k = [r.branch, kindOf(r.kind), r.pay || '', r.trans || ''].join('|'), x = m.sales.get(k) || { branch: r.branch, kind: kindOf(r.kind), pay: r.pay || '', trans: r.trans || '', orders: 0, sales: 0, discounts: 0 };
+        x.orders += Number(r.orders) || 0; x.sales += Number(r.sales) || 0; x.discounts += Number(r.discounts) || 0; m.sales.set(k, x);
+      }
+      if (d.officer) { m.officer.orders += Number(d.officer.orders) || 0; m.officer.sales += Number(d.officer.sales) || 0; }
       for (const c of d.issues || []) m.issues.push({ ...c, kind: kindOf(c.kind), day });
       if (Array.isArray(d.lateOut)) { m.hasLateOut = true; for (const c of d.lateOut) m.lateOut.push({ ...c, kind: kindOf(c.kind), day }); }
       for (const x of d.hours || []) {
@@ -90,6 +95,7 @@ window.MarsadOrders = function MarsadOrders(ctx) {
     m.totals.avgOut = m.totals.outCount ? outSum / m.totals.outCount : null;
     m.branches = [...m.branches.values()].map(b => ({ ...b, avgOut: b.outCount ? b.outSum / b.outCount : null, lateRate: b.outCount ? b.outLate / b.outCount * 100 : null }));
     m.staff = [...m.staff.values()];
+    m.sales = [...m.sales.values()];
     m.hours = [...m.hours.values()].sort((a, b) => (a.h - 9 + 24) % 24 - (b.h - 9 + 24) % 24);
     return m;
   }
@@ -109,17 +115,20 @@ window.MarsadOrders = function MarsadOrders(ctx) {
   let entry = null;
   const staffColumns = () => [{ title: 'الموظف', get: x => x.name }, { title: 'الأوردرات', get: x => x.orders, type: 'number' }, ...kindColumns(entry?.staff || []),
     { title: 'المبيعات', get: x => Math.round(x.sales), show: x => money(x.sales), type: 'number' }, { title: 'الخصومات', get: x => Math.round(x.discounts), show: x => money(x.discounts), type: 'number', cls: x => x.discounts ? 'warn' : '' },
-    { title: 'أخطاء إدخال محتملة', get: x => x.issues, type: 'number', cls: x => x.issues ? 'bad' : '' }, { title: 'ضربها واتلغت بعد التحميل', get: x => x.cancels, type: 'number', cls: x => x.cancels ? 'warn' : '' },
+    { title: 'أخطاء إدخال محتملة', get: x => entry?.counted ? entry.counted.filter(i => i.user === x.name).length : x.issues, type: 'number', cls: x => (entry?.counted ? entry.counted.filter(i => i.user === x.name).length : x.issues) ? 'bad' : '' }, { title: 'ضربها واتلغت بعد التحميل', get: x => x.cancels, type: 'number', cls: x => x.cancels ? 'warn' : '' },
     { title: 'أول أوردر', get: x => x.first, show: x => hm(x.first), type: 'datetime' }, { title: 'آخر أوردر', get: x => x.last, show: x => hm(x.last), type: 'datetime' }];
   const issueColumns = () => [...dayCol(), { title: 'النوع', get: x => x.type, show: x => pill(x.type === 'تكرار' ? 'أوردر متكرر' : 'طريقة الدفع', x.type === 'تكرار' ? 'warn' : 'bad') }, { title: 'الأوردر', get: x => x.no, type: 'number' },
-    { title: 'الفرع', get: x => x.branch }, { title: 'نوع الأوردر', get: x => x.kind }, { title: 'الموظف', get: x => x.user }, { title: 'الوقت', get: x => x.at, show: x => hm(x.at), type: 'datetime' }, { title: 'التفاصيل', get: x => x.detail, cls: () => 'wrap' }];
+    { title: 'الفرع', get: x => x.branch }, { title: 'نوع الأوردر', get: x => x.kind }, { title: 'الموظف', get: x => x.user }, { title: 'الوقت', get: x => x.at, show: x => hm(x.at), type: 'datetime' }, { title: 'التفاصيل', get: x => x.detail, cls: () => 'wrap' }, ...(ctx.review ? [R().reviewColumn(R().items.entry)] : [])];
+  const R = () => ctx.review();
   async function renderEntry(force) {
-    const m = entry = await period(force), t = m.totals;
+    const [m] = await Promise.all([period(force), R().reviews()]), t = m.totals; entry = m;
+    const counted = m.issues.filter(x => R().counts(R().items.entry(x)));
+    m.counted = counted;
     periodNote('entryNote', m);
     const online = t.orders - (t.kinds.Hotline || 0);
     $('entryCards').replaceChildren(kpi('الأوردرات اللي اتضربت', t.orders, 'info'), kpi('Hotline', t.kinds.Hotline || 0, '', t.orders ? Math.round((t.kinds.Hotline || 0) / t.orders * 100) + '% من الأوردرات' : ''),
       kpi('أونلاين', online, '', KINDS.slice(1).map(k => k + ' ' + (t.kinds[k] || 0)).join(' · ')), kpi('موظفين ضربوا أوردرات', m.staff.length),
-      kpi('أخطاء إدخال محتملة', m.issues.length, m.issues.length ? 'bad' : 'good'), kpi('إجمالي الخصومات', money(t.discounts), t.discounts ? 'warn' : ''));
+      kpi('أخطاء إدخال محتملة', counted.length, counted.length ? 'bad' : 'good', m.issues.length > counted.length ? (m.issues.length - counted.length) + ' اتراجعت «مش غلط»' : 'راجعها من الجدول تحت'), kpi('إجمالي الخصومات', money(t.discounts), t.discounts ? 'warn' : ''));
     table('entryStaff', staffColumns(), [...m.staff].sort((a, b) => b.orders - a.orders), { empty: m.linked ? 'مفيش أوردرات في الفترة دي' : 'مرصد الأوردرات مش متربط لسه' });
     const sel = $('entryWho'), v = sel.value, names = [...new Set(m.issues.map(x => x.user))].filter(Boolean).sort();
     sel.replaceChildren(h('option', { value: '', textContent: 'كل الموظفين' }), ...names.map(n => h('option', { value: n, textContent: n }))); sel.value = names.includes(v) ? v : '';
@@ -137,10 +146,10 @@ window.MarsadOrders = function MarsadOrders(ctx) {
     { title: 'إلغاء بعد التحميل', get: b => b.cancels, type: 'number', cls: b => b.cancels ? 'bad' : '' }, { title: 'قيمة الإلغاء', get: b => Math.round(b.cancelSales), show: b => money(b.cancelSales), type: 'number' }];
   const lateColumns = () => [...dayCol(), { title: 'الأوردر', get: x => x.no, type: 'number' }, { title: 'الفرع', get: x => x.branch }, { title: 'النوع', get: x => x.kind, show: x => kindPill(x.kind) },
     { title: 'اتضرب', get: x => x.at, show: x => hm(x.at), type: 'datetime' }, { title: 'اتحمّل على الطيار', get: x => x.out, show: x => hm(x.out), type: 'datetime' },
-    { title: 'وقت الخروج (د)', get: x => x.wait, type: 'number', cls: x => x.wait >= 45 ? 'bad' : 'warn' }, { title: 'الطيار', get: x => x.pilot }, { title: 'ضربه', get: x => x.user }, { title: 'المبلغ', get: x => Math.round(x.amount || 0), show: x => money(x.amount), type: 'number' }];
+    { title: 'وقت الخروج (د)', get: x => x.wait, type: 'number', cls: x => x.wait >= 45 ? 'bad' : 'warn' }, { title: 'الطيار', get: x => x.pilot }, { title: 'ضربه', get: x => x.user }, { title: 'المبلغ', get: x => Math.round(x.amount || 0), show: x => money(x.amount), type: 'number' }, ...(ctx.review ? [R().reviewColumn(R().items.lateOut)] : [])];
   const pickB = sel => x => !$(sel).value || (x.branch ?? x.name) === $(sel).value;
   async function renderBranches(force) {
-    const m = rep = await period(force);
+    const [m] = await Promise.all([period(force), R().reviews()]); rep = m;
     periodNote('branchNote', m); fillBranches($('branchPick'), m);
     const list = m.branches.filter(pickB('branchPick')), sum = k => list.reduce((n, b) => n + (b[k] || 0), 0);
     const outCount = sum('outCount'), outSum = list.reduce((n, b) => n + b.outSum, 0), ks = {};
@@ -329,5 +338,5 @@ window.MarsadOrders = function MarsadOrders(ctx) {
     catch { $('ordersKeyValue').select(); $('ordersKeyNote').textContent = 'علّم المفتاح وانسخه بـ Ctrl+C.'; }
   };
 
-  return { renderEntry, renderBranches, renderCancels, refreshBoard, drawBoard, tickBoard, exportKind, renderKey, kindOf, clear: () => cache.clear() };
+  return { renderEntry, renderBranches, renderCancels, refreshBoard, drawBoard, tickBoard, exportKind, renderKey, kindOf, period, clear: () => cache.clear() };
 };

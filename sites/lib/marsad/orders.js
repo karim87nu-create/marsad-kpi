@@ -3,6 +3,7 @@
 // department group, including replies when an alert changes state (each kind can be switched off from the Telegram settings).
 import { businessDay, dayWindow, isOperating, iso, validDate } from './time.js';
 import { sha256, randomToken } from './security.js';
+import { entrySignature } from './reviews.js';
 
 const KINDS = ['ordersLate', 'ordersCancel', 'ordersDiscount', 'ordersEntry', 'ordersEntryLate', 'ordersStale'];
 const STALE_MS = 3 * 60000, CHECK_MS = 60000;
@@ -56,7 +57,7 @@ function setup(app) {
     const stateKey = 'orders_alert_states:' + b.day;
     let states = {}; try { states = JSON.parse(await setting(stateKey) || '{}'); } catch {}
     const rows = name => Array.isArray(b[name]) ? b[name] : [];
-    const orderNo = a => String(a.orderNo ?? a.orderId ?? (/^(?:late|del|disc|pay|entry|duplicate|cancel):([0-9]+)(?::|$)/.exec(String(a.key))?.[1] || ''));
+    const orderNo = a => String(a.orderNo ?? a.orderId ?? (/^(?:v?late|del|disc|pay|dup|entry|duplicate|cancel):([0-9]+)(?::|$)/.exec(String(a.key))?.[1] || ''));
     for (const a of (Array.isArray(b.alerts) ? b.alerts : []).slice(0, 50)) {
       if (!a || !KINDS.includes(a.kind) || a.kind === 'ordersStale' || !a.key || !a.text) continue;
       const key = 'orders:' + b.day + ':' + String(a.key).slice(0, 80), text = String(a.text).slice(0, 3500);
@@ -66,6 +67,11 @@ function setup(app) {
       const version = sha256(JSON.stringify([status, text]));
       if (!old) {
         if (status === 'resolved') continue; // No original warning to answer.
+        // An entry issue whose pattern was answered «مش غلط» enough times is not alerted (it is still listed).
+        if (a.kind === 'ordersEntry' && app.learnedOk) {
+          const issue = rows('issues').find(i => String(i.no) === no);
+          if (issue && await app.learnedOk(entrySignature(issue))) { states[key] = { no, kind: a.kind, text, status: 'learned', version, target }; continue; }
+        }
         alerts.push({ key, kind: a.kind, text, target });
         states[key] = { no, kind: a.kind, text, status, version, target };
       } else if (old.version !== version) {
@@ -77,11 +83,14 @@ function setup(app) {
       }
     }
     for (const [key, old] of Object.entries(states)) {
-      if (old.status === 'resolved' || !old.no) continue;
+      if (old.status === 'resolved' || old.status === 'learned' || !old.no) continue;
       const out = rows('lateOut').find(o => String(o.no) === old.no && o.out);
       const cancel = rows('cancels').find(o => String(o.no) === old.no);
       let text = null;
-      if (old.kind === 'ordersLate' && (out || cancel)) text = cancel ? '🔄 أوردر ' + old.no + ' اتلغى بعد تنبيه تأخير الخروج.' : '✅ أوردر ' + old.no + ' خرج مع الطيار بعد تنبيه التأخير — وقت الخروج: ' + out.out;
+      const clockOf = v => new Date(v).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit' });
+      if (old.kind === 'ordersLate' && (out || cancel)) text = cancel
+        ? '🔄 أوردر ' + old.no + (cancel.kind ? ' · ' + cancel.kind : '') + ' اتلغى بعد تنبيه التأخير' + (cancel.reason ? ' — السبب: ' + cancel.reason : '')
+        : '✅ أوردر ' + old.no + (out.kind ? ' · ' + out.kind : '') + ' خرج مع الطيار' + (out.pilot ? ' (' + out.pilot + ')' : '') + (out.wait != null ? ' بعد ' + out.wait + ' دقيقة من الضرب' : '') + (out.out ? ' — الساعة ' + clockOf(out.out) : '');
       // Only a complete issues snapshot can prove that a recorded entry issue disappeared.
       if (old.kind === 'ordersEntry' && Array.isArray(b.issues) && Number.isInteger(b.totals?.issues) && b.totals.issues === b.issues.length &&
           old.observedIssue && !b.issues.some(o => String(o.no) === old.no)) text = '✅ أوردر ' + old.no + ': مشكلة الضرب لم تعد موجودة في قراءة Apex الكاملة.';
@@ -96,8 +105,24 @@ function setup(app) {
     }
     await queue(alerts, ctx.now);
     await put(stateKey, JSON.stringify(states));
-    return { ok: true, serverNow: iso(ctx.now) };
+    // Payment / service / platform values the admin marked as officer: the monitor keeps them out of every total.
+    let officer = []; try { officer = JSON.parse(await setting('officer_values') || '[]'); } catch {}
+    return { ok: true, officer, serverNow: iso(ctx.now) };
   }, { limit: 1024 * 1024 });
+
+  // ---- officer values (not sales) ----
+  app.route('GET', '/api/orders/officer', async ctx => {
+    await app.requireAdmin(ctx);
+    let v = []; try { v = JSON.parse(await setting('officer_values') || '[]'); } catch {}
+    return { values: v };
+  });
+  app.route('PUT', '/api/orders/officer', async ctx => {
+    const who = await app.requireAdmin(ctx, 'admin');
+    const values = [...new Set((Array.isArray(ctx.body.values) ? ctx.body.values : []).map(x => String(x).trim()).filter(Boolean).map(x => x.slice(0, 60)))].slice(0, 30);
+    await put('officer_values', JSON.stringify(values));
+    await app.audit('officer_values', null, { actor: who.name, values });
+    return { ok: true, values };
+  });
 
   // ---- the admin page ----
   app.route('GET', '/api/orders/live', async ctx => {

@@ -24,6 +24,8 @@ function readNotes(notes) {
     driver: outNote?.text.match(/مع (.*?)\. وقت/)?.[1]?.trim() || null,
     delivered: first(n => /أكد المندوب تسليم|تم التوصيل/.test(n.text)),
     scheduled: list.some(n => n.text.includes('موعد التوصيل')),
+    // Sent to more than one branch (moved between branches): how many different branches it went to.
+    transfers: new Set(list.filter(n => n.text.includes('تم إرسال الطلب إلى')).map(n => n.text.match(/إلى (?:فرع )?(.*?) (?:من )?لوحة/)?.[1]?.trim() || n.text)).size,
   };
 }
 
@@ -86,8 +88,8 @@ function setup(app) {
       for (const { id } of due) {
         const notes = await wc(c, 'orders/' + id + '/notes', { per_page: 100, _fields: 'date_created_gmt,note' });
         const x = readNotes(Array.isArray(notes) ? notes : []);
-        await db.prepare('UPDATE site_orders SET received_at = ?, transfer_at = ?, branch = ?, out_at = ?, driver = ?, delivered_at = ?, scheduled = ?, notes_at = ? WHERE id = ?')
-          .run(x.received, x.transfer, x.branch, x.out, x.driver, x.delivered, x.scheduled ? 1 : 0, now, id);
+        await db.prepare('UPDATE site_orders SET received_at = ?, transfer_at = ?, branch = ?, out_at = ?, driver = ?, delivered_at = ?, scheduled = ?, transfers = ?, notes_at = ? WHERE id = ?')
+          .run(x.received, x.transfer, x.branch, x.out, x.driver, x.delivered, x.scheduled ? 1 : 0, x.transfers, now, id);
       }
       await put('site_sync_at', now); await put('site_error', null);
       await alerts(now);
@@ -194,7 +196,7 @@ function setup(app) {
     const m = await apexMatch(day, rows);
     return { day, apex: { linked: m.hasList, count: m.apexCount, unmatched: m.unmatched || [] }, linked: !!await creds(), lastSync: iso(Number(await setting('site_sync_at')) || null), error: await setting('site_error'), live: day === businessDay(ctx.now),
       orders: rows.map(o => ({ id: o.id, status: o.status, fulfillment: o.fulfillment, excluded: EXCLUDED.has(o.status), scheduled: !!o.scheduled, branch: o.branch, driver: o.driver,
-        total: o.total, apex: m.matches.get(o.id) || null, createdAt: iso(o.created_at), receivedAt: iso(o.received_at), transferAt: iso(o.transfer_at), outAt: iso(o.out_at), deliveredAt: iso(o.delivered_at), notesRead: !!o.notes_at })),
+        total: o.total, transfers: o.transfers || 0, apex: m.matches.get(o.id) || null, createdAt: iso(o.created_at), receivedAt: iso(o.received_at), transferAt: iso(o.transfer_at), outAt: iso(o.out_at), deliveredAt: iso(o.delivered_at), notesRead: !!o.notes_at })),
       rules: { prep: PREP_MIN, delivery: DELIVERY_MIN, transfer: TRANSFER_MIN }, serverNow: iso(ctx.now) };
   });
   app.siteSync = sync;

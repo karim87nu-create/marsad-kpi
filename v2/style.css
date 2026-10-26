@@ -365,3 +365,8 @@ th[aria-sort=ascending]::after{border-bottom:6px solid var(--accent)}th[aria-sor
 .panel h2 select{min-height:30px;padding:3px 8px;font-size:13px;font-weight:400}
 .pill.chip{display:inline-flex;align-items:center;gap:2px;padding-inline-end:2px}.pill.chip button{min-height:20px;width:20px;padding:0;border:0;font-size:13px}
 #desksTable select{min-height:30px;padding:2px 8px;font-size:13px}
+.review{gap:6px}.review select{min-height:28px;padding:2px 6px;font-size:12px}
+td.total{font-weight:700;background:var(--panel2)}
+.chipcheck{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border:1px solid var(--line2);border-radius:var(--r-pill);font-size:13px}
+.chipcheck input{min-height:0;width:16px;height:16px;margin:0}
+#branchFileBody>h3{margin:var(--sp-4) 0 0;color:var(--accent);font-size:16px}

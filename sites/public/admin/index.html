@@ -4,7 +4,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>مرصد الدهان — الإدارة</title>
 <link rel="preload" href="fonts/plex-arabic-arabic-400.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="style.css?v=10">
+<link rel="stylesheet" href="style.css?v=11">
 </head>
 <body>
 <!-- Icons: drawn in one stroke style (after Lucide, ISC license). -->
@@ -50,6 +50,8 @@
       <div class="navgroup">مباشر</div>
       <button data-view="branchesNow"><svg class="ic" aria-hidden="true"><use href="#i-store"/></svg>الفروع الآن<span class="badge" id="lateBadge" hidden></span></button>
       <div class="navgroup">التقارير</div>
+      <button data-view="branchFile"><svg class="ic" aria-hidden="true"><use href="#i-store"/></svg>ملف الفرع</button>
+      <button data-view="sales"><svg class="ic" aria-hidden="true"><use href="#i-hours"/></svg>المبيعات</button>
       <button data-view="branches"><svg class="ic" aria-hidden="true"><use href="#i-report"/></svg>أداء الفروع</button>
       <button data-view="cancels"><svg class="ic" aria-hidden="true"><use href="#i-cancel"/></svg>الإلغاءات</button>
       <button data-view="siteBranches"><svg class="ic" aria-hidden="true"><use href="#i-globe"/></svg>أداء الموقع للفروع</button>
@@ -229,6 +231,23 @@
       <article class="panel"><h2>الإلغاءات على طلبات</h2><div id="talCancels"></div></article>
     </section>
 
+    <section id="view-branchFile" class="view" hidden>
+      <div class="filters"><select id="branchFile" aria-label="الفرع"></select></div>
+      <p class="note">الفرع من كل المصادر مع بعض: Apex، والموقع، وطلبات. أسماء الفروع على الموقع وطلبات بتتربط باسمها على Apex من اللي المرصد اتعلمه.</p>
+      <div id="branchFileBody"></div>
+    </section>
+
+    <section id="view-sales" class="view" hidden>
+      <p id="salesNote" class="note"></p>
+      <div class="filters"><select id="salesBranch" data-all="كل الفروع" aria-label="الفرع"></select><select id="salesKind" data-all="كل المنصات" aria-label="المنصة"></select><select id="salesPay" data-all="كل طرق الدفع" aria-label="طريقة الدفع"></select><button class="ghost small" data-export="sales">تصدير Excel</button></div>
+      <div id="salesCards" class="cards"></div>
+      <article class="panel"><h2>المبيعات: الفرع × المنصة</h2><div id="salesByKind"></div></article>
+      <article class="panel"><h2>المبيعات: الفرع × طريقة الدفع</h2><div id="salesByPay"></div></article>
+      <article class="panel"><h2>المبيعات: الفرع × نوع الخدمة</h2><div id="salesByTrans"></div></article>
+      <article class="panel"><h2>التفاصيل</h2><div id="salesDetail"></div></article>
+      <article class="panel" id="officerPanel" hidden><h2>الأوفيسر</h2><p class="muted">أي أوردر طريقة دفعه أو نوع خدمته من دول بيتحسب أوفيسر: مش داخل في عدد الأوردرات ولا المبيعات ولا أي إجمالي. اللي فيه كلمة Officer أو أوفيسر بيتشال لوحده.</p><div id="officerValues" class="inline"></div></article>
+    </section>
+
     <section id="view-siteBranches" class="view" hidden>
       <p id="siteBNote" class="note"></p>
       <div class="filters"><select id="siteBPick" aria-label="الفرع"><option value="">كل الفروع</option></select><label class="inline"><input type="checkbox" id="siteBOnly" checked> الاستثناءات بس (أكتر من 30 دقيقة)</label><button class="ghost small" data-export="siteBranches">Excel للفروع</button></div>
@@ -358,8 +377,9 @@
 <script src="xlsx.js?v=3"></script>
 <script src="charts.js?v=4"></script>
 <script src="now-arc.js?v=3"></script>
-<script src="orders.js?v=2"></script>
-<script src="site.js?v=1"></script>
-<script src="app.js?v=22"></script>
+<script src="orders.js?v=3"></script>
+<script src="site.js?v=7"></script>
+<script src="insights.js?v=1"></script>
+<script src="app.js?v=26"></script>
 </body>
 </html>

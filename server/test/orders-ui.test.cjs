@@ -23,6 +23,8 @@ test('admin page: مرصد الدهان sections, live branches board, reports, 
       hours: [{ h: 13, orders: 3, kinds: k(2, 1) }, { h: 14, orders: 2, kinds: k(1, 1) }],
       cancels: [{ no: 99, branch: 'التجمع', kind: 'Hotline', amount: 300, user: 'سارة', by: 'المدير', pilot: 'طيار 1', at: ago(20), afterOut: 12, reason: 'العميل رفض' }],
       issues: [{ type: 'دفع', no: 102, branch: 'التجمع', kind: 'طلبات', user: 'سارة', at: ago(5), detail: 'مسجل TALABAT VISA وطريقة الدفع Cash' }],
+      sales: [{ branch: 'التجمع', kind: 'Hotline', pay: 'Cash', trans: 'Delivery', orders: 2, sales: 600, discounts: 0 }, { branch: 'التجمع', kind: 'طلبات', pay: 'Visa', trans: 'Delivery', orders: 1, sales: 300, discounts: 50 },
+        { branch: 'مدينتي', kind: 'طلبات', pay: 'Cash', trans: 'Takeaway', orders: 2, sales: 600, discounts: 0 }], officer: { orders: 1, sales: 80 },
       lateOut: [{ no: 88, branch: 'التجمع', kind: 'Hotline', at: ago(100), out: ago(60), wait: 40, pilot: 'طيار 2', user: 'سارة', amount: 180 }] };
     assert.equal((await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': push }, body: payload })).status, 200);
 
@@ -52,12 +54,24 @@ test('admin page: مرصد الدهان sections, live branches board, reports, 
     doc.querySelector('[data-view="cancels"]').click();
     await until(() => doc.getElementById('cancelTable').textContent.includes('العميل رفض'), 'cancels');
 
+    // Sales and the branch file.
+    doc.querySelector('[data-view="sales"]').click();
+    await until(() => doc.getElementById('salesByKind').textContent.includes('مدينتي'), 'sales pivot');
+    assert.match(doc.getElementById('salesCards').textContent, /1,500/);
+    assert.match(doc.getElementById('salesByPay').textContent, /Visa/);
+    doc.querySelector('[data-view="branchFile"]').click();
+    await until(() => /المبيعات حسب المنصة/.test(doc.getElementById('branchFileBody').textContent), 'branch file');
     // Call center: order entry.
     doc.querySelector('[data-section="calls"]').click();
     await until(() => doc.getElementById('title').textContent === 'الآن', 'back to calls');
     doc.querySelector('[data-view="entry"]').click();
     await until(() => doc.getElementById('entryStaff').textContent.includes('أحمد'), 'entry staff');
     assert.match(doc.getElementById('entryIssues').textContent, /TALABAT VISA/);
+    // Answer the entry issue «مش غلط — تحويل»: it stops counting.
+    const sel = doc.querySelector('#entryIssues select');
+    sel.value = 'transfer'; sel.dispatchEvent(new w.Event('change'));
+    await until(() => /مش غلط: تحويل بين الفروع/.test(doc.getElementById('entryIssues').textContent), 'review saved');
+    await until(() => /اتراجعت/.test(doc.getElementById('entryCards').textContent), 'not counted');
 
     // Manage: the monitor key and the branch group.
     doc.querySelector('[data-view="manage"]').click();

@@ -7,7 +7,7 @@ test('one monitoring-gap group; ending a stale shift from admin removes that emp
  const root=path.join(__dirname,'../../sites/public/admin');dom=new JSDOM(fs.readFileSync(path.join(root,'index.html'),'utf8'),{url:'http://localhost/admin/',runScripts:'outside-only',pretendToBeVisual:true});const w=dom.window;
  // Node fetch does not accept jsdom's AbortSignal; the real browser does.
  w.MARSAD_API=t.base;w.fetch=(u,o)=>fetch(u,{...o,signal:undefined});w.sessionStorage.setItem('marsadAdminToken',await t.login());w.prompt=()=> 'Shift finished';w.alert=x=>{throw Error(x)};w.crypto.randomUUID=()=>crypto.randomUUID();
- for(const f of ['charts.js','xlsx.js','orders.js','site.js','app.js'])w.eval(fs.readFileSync(path.join(root,f),'utf8'));
+ for(const f of ['charts.js','xlsx.js','orders.js','site.js','insights.js','app.js'])w.eval(fs.readFileSync(path.join(root,f),'utf8'));
  const until=async f=>{for(let i=0;i<300;i++){if(f())return;await new Promise(r=>setTimeout(r,10));}throw Error('UI did not finish: '+w.document.getElementById('error').textContent+' sync='+w.document.getElementById('sync').textContent+' staff='+w.document.getElementById('staffNow').textContent)};
  const gaps=()=>[...w.document.querySelectorAll('#staffNow h3')].filter(x=>x.textContent.startsWith('انقطاع رصد'));
  await until(()=>gaps().length===1);assert.match(gaps()[0].textContent,/2/);assert.equal(w.document.querySelectorAll('#staffNow .tile').length,2);
