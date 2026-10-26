@@ -197,8 +197,9 @@ function setup(app) {
 
     // ---- follow-ups: each problem we alerted about gets one reply when it is over ----
     // Only notifications actually sent are followed up; unknown/stale observations never prove a problem ended.
-    const unresolved = await db.prepare(`SELECT l.* FROM telegram_log l WHERE l.sent_at IS NOT NULL AND l.kind IN ('breakStart','breakOver','longCall','gap','breakRequest','queueNobody','logout','waitSla','source','notBound')
+    const unresolved = await db.prepare(`SELECT l.* FROM telegram_log l WHERE (l.sent_at IS NOT NULL OR l.kind = 'gap') AND l.kind IN ('breakStart','breakOver','longCall','gap','breakRequest','queueNobody','logout','waitSla','source','notBound')
       AND NOT EXISTS (SELECT 1 FROM telegram_log r WHERE r.key = 'resolved:' || l.key) ORDER BY l.id LIMIT 500`).all();
+    const closedGaps = new Set();
     const closedBreaks = new Set();   // employee:breakStartTime already followed up in this check
     for (const old of unresolved) {
       let text = null, silent = false;
@@ -221,7 +222,13 @@ function setup(app) {
         else if (['ready', 'break'].includes(current) && person.since && Date.parse(person.since) > old.created_at) text = '✅ ' + name(old.employee_id) + ' خلّص المكالمة — حالته دلوقتي ' + statusLabel[current];
       } else if (old.kind === 'gap') {
         const from = Date.parse(old.key.split(':').slice(2).join(':'));
-        if (['ready', 'on_call', 'break'].includes(current)) text = '✅ ' + name(old.employee_id) + ' رجع الرصد — ' + clock(now) + (Number.isFinite(from) ? ' — الانقطاع استمر ' + fmt((now - from) / 1000) : '') + ' — حالته دلوقتي ' + statusLabel[current];
+        // Transport checks or a moving live-window timestamp do not prove recovery.
+        if (['ready', 'on_call', 'break'].includes(current) && person.lastEvidence &&
+            Date.parse(person.lastEvidence) >= old.created_at && Date.parse(person.lastEvidence) <= now && now - Date.parse(person.lastEvidence) < RULES.presenceStaleMs) {
+          silent = !old.message_id || !!old.error || closedGaps.has(old.employee_id);
+          if (!silent) closedGaps.add(old.employee_id);
+          text = '✅ ' + name(old.employee_id) + ' رجع الرصد — ' + clock(now) + (Number.isFinite(from) ? ' — الانقطاع استمر ' + fmt((now - from) / 1000) : '') + ' — حالته دلوقتي ' + statusLabel[current];
+        }
       } else if (old.kind === 'breakRequest') {
         const req = await db.prepare('SELECT * FROM break_requests WHERE id = ?').get(old.key.slice(4));
         if (req && req.status !== 'pending') {
@@ -304,7 +311,9 @@ function setup(app) {
       }
       if (p.state === 'on_call' && on('longCall') && since(p) > RULES.callAlertSeconds)
         addNew('call:' + p.employeeId + ':' + (p.callId || p.since), 'longCall', p.employeeId, '📞 مكالمة طويلة: ' + p.name + ' بقاله ' + fmt(since(p)) + (p.phone ? ' مع ' + p.phone : '') + ' — تحويلة ' + p.extension);
-      if (p.state === 'unknown' && on('gap') && since(p) > 180)
+      // One outstanding incident per employee, independent of the sliding p.since value.
+      const activeGap = p.state === 'unknown' && on('gap') && since(p) > 180 && await db.prepare("SELECT 1 FROM telegram_log l WHERE l.kind = 'gap' AND l.employee_id = ? AND NOT EXISTS (SELECT 1 FROM telegram_log r WHERE r.key = 'resolved:' || l.key) LIMIT 1").get(p.employeeId);
+      if (p.state === 'unknown' && on('gap') && since(p) > 180 && !activeGap)
         addNew('gap:' + p.employeeId + ':' + p.since, 'gap', p.employeeId, '📡 انقطاع رصد: ' + p.name + ' مفيش إشارة من جهازه من ' + clock(Date.parse(p.since)) + ' (' + fmt(since(p)) + ') — تحويلة ' + p.extension);
     }
     if (on('breakRequest')) for (const r of await db.prepare("SELECT r.*, e.name FROM break_requests r JOIN employees e ON e.id = r.employee_id WHERE r.status = 'pending' AND r.created_at > ?").all(now - 1800000))
@@ -398,9 +407,20 @@ function setup(app) {
       const c = await config();
       if (!c.enabled || !c.token) return 0;
       const alerts = await collect(c, now);
-      if (alerts.length) await db.batch(alerts.map(a => db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, reply_to, sent_at) VALUES (?,?,?,?,?,?,?)').bind(a.key, a.kind, a.employeeId, a.text, now, a.replyTo, a.silent ? now : null)));
+      if (alerts.length) await db.batch(alerts.map(a => {
+        const insert = 'INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, reply_to, sent_at) ';
+        const values = [a.key, a.kind, a.employeeId, a.text, now, a.replyTo, a.silent ? now : null];
+        return a.kind === 'gap'
+          ? db.prepare(insert + "SELECT ?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM telegram_log l WHERE l.kind = 'gap' AND l.employee_id = ? AND NOT EXISTS (SELECT 1 FROM telegram_log x WHERE x.key = 'resolved:' || l.key))").bind(...values, a.employeeId)
+          : db.prepare(insert + 'VALUES (?,?,?,?,?,?,?)').bind(...values);
+      }));
       for (const r of await db.prepare('SELECT * FROM telegram_log WHERE sent_at IS NULL AND tries < 5 AND created_at > ? ORDER BY id LIMIT 500').all(now - 3600000)) {
         if (sent >= 20) break;
+        if (r.kind === 'gap' && await db.prepare("SELECT 1 FROM telegram_log l WHERE l.kind = 'gap' AND l.employee_id = ? AND l.id != ? AND l.message_id IS NOT NULL AND l.sent_at IS NOT NULL AND l.error IS NULL AND NOT EXISTS (SELECT 1 FROM telegram_log x WHERE x.key = 'resolved:' || l.key) LIMIT 1").get(r.employee_id, r.id)) {
+          // Historical duplicates already queued by the old collector are silent, too.
+          await db.prepare('UPDATE telegram_log SET sent_at = ?, error = NULL WHERE id = ? AND sent_at IS NULL').run(now, r.id);
+          continue;
+        }
         // A reply stays in the chat which actually received its parent, even after relinking.
         const parent = r.reply_to ? await db.prepare('SELECT * FROM telegram_log WHERE key = ?').get(r.reply_to) : null;
         if (r.reply_to && (!parent?.message_id || parent.error)) continue;
