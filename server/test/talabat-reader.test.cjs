@@ -21,3 +21,20 @@ test('Talabat history: row times are read in Cairo time and only the operating d
   assert.equal(iso(rowTime(['DELIVERED', '4676600000', 'Oct 24, 21:00'])), '2026-10-24T18:00:00.000Z');
   assert.equal(rowTime(['ACCEPTED', '4676765944', 'E£728.25']), null);
 });
+test('Talabat live: cards whose #code and number are split into pieces, several cards in one list', () => {
+  const s = fs.readFileSync(path.join(__dirname, '../../extension-3/talabat-monitor.js'), 'utf8');
+  const reader = s.slice(s.indexOf('    const readCodes = () => {'), s.indexOf('    let lastKey'));
+  const card = (code, id) => `<div class="card"><div><h3><span>#</span><span>${code}</span></h3><p><span>${id}</span><span> • </span><span>1 item</span></p></div><div><span>customer</span><button>Ready</button></div></div>`;
+  const dom = new JSDOM('<main><section>' + card('8403', '4676931567') + card('8404', '4676934244') + card('8405', '4676935878') + '</section></main>', { runScripts: 'outside-only' });
+  try {
+    const r = JSON.parse(JSON.stringify(dom.window.eval('(()=>{' + reader + ';return readCodes();})()')));
+    assert.deepEqual(r.map(x => x.id + ':' + x.code), ['4676931567:8403', '4676934244:8404', '4676935878:8405']);
+  } finally { dom.window.close(); }
+});
+test('Talabat history: the list never asks for a future date', () => {
+  const s = fs.readFileSync(path.join(__dirname, '../../extension-3/talabat-monitor.js'), 'utf8');
+  const code = s.slice(s.indexOf('  const cairo ='), s.indexOf('  // Talabat refuses')) + s.slice(s.indexOf('  const listUrl'), s.indexOf('\n', s.indexOf('  const listUrl')));
+  const at = iso => { const N = Date.parse(iso); class D extends Date { constructor(...a) { super(...(a.length ? a : [N])); } static now() { return N; } } return new Function('Date', code + ';return listUrl();')(D); };
+  assert.equal(at('2026-10-26T17:56:00Z'), '/orders?from=2026-10-26&to=2026-10-26');   // 20:56 Cairo
+  assert.equal(at('2026-10-26T22:30:00Z'), '/orders?from=2026-10-26&to=2026-10-27');   // 01:30 Cairo, still the 26th's operating day
+});

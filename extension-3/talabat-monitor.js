@@ -22,7 +22,8 @@
   const ymd = ms => { const p = parts(ms); return p.year + '-' + p.month + '-' + p.day; };
   const day = () => { const p = parts(Date.now()); const d = p.year + '-' + p.month + '-' + p.day; return +p.hour < 9 ? ymd(Date.parse(d + 'T12:00:00Z') - 864e5) : d; };
   const next = d => new Date(Date.parse(d + 'T12:00:00Z') + 864e5).toISOString().slice(0, 10);
-  const listUrl = () => '/orders?from=' + day() + '&to=' + next(day());
+  // Talabat refuses a date in the future and falls back to «Last 7 days»: the list ends today (Cairo), never tomorrow.
+  const listUrl = () => '/orders?from=' + day() + '&to=' + ymd(Date.now());
   // A Cairo wall-clock "HH:MM" on or after the order's placed time, as an ISO time.
   const offsetAt = ms => { const p = parts(ms); return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute) - Math.floor(ms / 60000) * 60000; };
   function clockAfter(hhmm, placedMs) {
@@ -64,15 +65,22 @@
   if (state.role === 'live') {
     if (!location.pathname.startsWith('/live-orders')) { location.href = '/live-orders'; return; }
     say('بيقرا أكواد الأوردرات اللايف');
+    // Each live card: the long order number and the short #code (both may be split into several pieces on the page).
+    // The card is the smallest block around the number that holds exactly one long number and a #code.
     const readCodes = () => {
       const out = new Map(), walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-      const codeIn = e => { const w = document.createTreeWalker(e, NodeFilter.SHOW_TEXT); for (let x; (x = w.nextNode());) { const m = x.nodeValue.trim().match(/^#\s*(\d{2,8})$/); if (m) return m[1]; } return ''; };
+      const ids = txt => txt.match(/(?<!\d)\d{9,12}(?!\d)/g) || [];
+      // Every piece of text on its own line, so neighbouring numbers never run together.
+      const textOf = el => { const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), a = []; for (let x; (x = w.nextNode());) a.push(x.nodeValue); return a.join('\n'); };
       for (let n; (n = walk.nextNode());) {
-        const match = n.nodeValue.trim().match(/^(\d{9,12})(?=\s|[•·]|$)/);
-        const t = match?.[1]; if (!t || out.has(t)) continue;
-        let card = n.parentElement, code = '';
-        for (let i = 0; i < 6 && card && !(code = codeIn(card)); i++) card = card.parentElement;
-        if (code) out.set(t, { id: t, code, store: (card.innerText.split('\n').find(x => /الدهان/.test(x)) || '').trim() || null });
+        const t = ids(n.nodeValue)[0]; if (!t || out.has(t)) continue;
+        let card = n.parentElement;
+        for (let i = 0; i < 8 && card; i++, card = card.parentElement) {
+          const txt = textOf(card);
+          if (new Set(ids(txt)).size > 1) break;
+          const m = txt.match(/#\s*(\d{2,8})(?!\d)/);
+          if (m) { out.set(t, { id: t, code: m[1], store: (txt.split('\n').find(x => /الدهان/.test(x)) || '').trim() || null }); break; }
+        }
       }
       return [...out.values()];
     };
@@ -166,7 +174,7 @@
     if (!exact && !T('details-order-id')) {
       // Some Talabat accounts replace the URL date filter with their own (e.g. yesterday–today).
       // One attempt only: otherwise every cycle navigates again before the grid can load.
-      const navKey = 'marsadTalabatNavigate:' + day();
+      const navKey = 'marsadTalabatNav2:' + day();
       if (!sessionStorage.getItem(navKey)) { sessionStorage.setItem(navKey, '1'); location.href = listUrl(); return; }
       // Otherwise the list is read as it is, and only the operating day's rows (by the time on each row) are taken.
     }
@@ -177,7 +185,7 @@
     // The list shows 50 at a time: on the first pass load the whole day, later only when an asked-for order is further down.
     const loadMore = () => [...document.querySelectorAll('button,div,span,p')].find(e => e.childElementCount === 0 && /^(Load more|عرض المزيد)$/i.test(e.textContent.trim()));
     const full = Date.now() - fullAt() > 600000;
-    for (let i = 0; i < 40 && loadMore() && !older() && (full || want.some(id => !readList().some(o => o.id === id))); i++) { loadMore().click(); await sleep(1500); }
+    for (let i = 0; i < 40 && loadMore() && !older() && (full || want.some(id => !readList().some(o => o.id === id))); i++) { say('بيحمّل أوردرات يوم التشغيل… ' + readList().length); loadMore().click(); await sleep(1500); }
     const list = readList().filter(inDay);
     if (!list.length) { say('سجل طلبات لسه محمّلش أوردرات؛ مستني ظهور الصفوف. اللايف شغال في التبويب التاني.'); return; }
     // Sent: everything on a full pass; otherwise what is new or changed since this page loaded, plus the top of the list.
