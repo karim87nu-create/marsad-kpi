@@ -36,9 +36,9 @@ test('items: Talabat dishes compared with Apex lines; wrong dish alerted; unknow
     assert.equal(log.length, 1); assert.equal(log[0].target, 'online'); assert.match(log[0].text, /Kofta/); assert.match(log[0].text, /9002/);
     // Roqaq: one dish each side, same quantity, price fits (339 / 300 = 1.13): learned from two orders, then known.
     const l = (await admin('GET', '/api/learned')).body;
-    assert.ok(l.facts.some(f => f.kind === 'item:talabat' && f.a === 'roqaq with meat' && f.b === '0199001' && f.evidence === 2));
+    assert.ok(!l.facts.some(f => f.kind === 'match-v2:item:talabat' && f.a === 'roqaq with meat'), 'unknown dishes do not teach by price alone');
     d = (await admin('GET', '/api/talabat/day?day=2026-10-22')).body; o = Object.fromEntries(d.orders.map(x => [x.id, x]));
-    assert.equal(o['3977100003'].apex.items.ok, true, 'known now');
+    assert.equal(o['3977100003'].apex.items.ok, false, 'unknown item stays unresolved');
     // Cancellations: the Talabat one is on the employee who entered the wrong dish; the Apex one on the customer.
     let c = (await admin('GET', '/api/cancels/owners?from=2026-10-22')).body.list, byKey = Object.fromEntries(c.map(x => [x.key, x]));
     assert.equal(byKey['talabat:3977100002'].owner, 'employee'); assert.equal(byKey['talabat:3977100002'].finalName, 'sara');
@@ -68,6 +68,6 @@ test('items: a Talabat dish entered with Apex\'s own «طلبات» item (known 
     await push({ codes: [1, 2, 3].map(i => ({ id: '39772000' + i + '0', code: String(2800 + i), store })) });
     await push({ orders: [1, 2, 3].map(i => ({ id: '39772000' + i + '0', store, status: 'ACCEPTED', placedAt: at(i * 10), detail: { receivedAt: at(i * 10), acceptedAt: at(i * 10 + 0.5), items: [{ qty: 1, name: 'Half grilled chicken on charcoal', price: 252 }], subtotal: 252 } })) });
     const d = (await admin('GET', '/api/talabat/day?day=2026-10-22')).body, o = Object.fromEntries(d.orders.map(x => [x.id, x]));
-    assert.equal(o['3977200030'].apex.items.ok, true, 'learned from the first two orders');
+    assert.equal(o['3977200030'].apex.items.ok, false, 'a differently named dish needs review before learning');
   } finally { await t.close(); }
 });

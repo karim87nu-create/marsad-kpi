@@ -35,7 +35,9 @@ test('talabat: monitor key, orders with details, Apex match (auto and manual), a
       { no: 7002, kind: 'طلبات', branch: 'مدينتي', at: at(-5), user: 'ahmed', amount: 999 }] } });
     let d = (await admin('GET', '/api/talabat/day?day=2026-10-22')).body;
     let o = Object.fromEntries(d.orders.map(x => [x.id, x]));
-    assert.equal(o['3977400001'].apex.no, 7001); assert.equal(o['3977400001'].apex.user, 'سارة');
+    assert.equal(o['3977400001'].apex, null, 'time and money alone are not confirmation');
+    assert.equal(o['3977400001'].matching.state, 'tentative');
+    await admin('POST', '/api/talabat/link', { talabatId: '3977400001', apexNo: 7001 });
     assert.equal(o['3977400002'].apex, null, '7002 was entered before the order existed');
     assert.equal(o['3977400003'].cancelReason, 'Unable to find or reach customer');
     assert.deepEqual(o['3977400001'].items, [{ qty: 2, name: 'Kofta', price: 280 }]);
@@ -66,14 +68,14 @@ test('talabat: the #code on Apex links for sure, even far in time; sure links te
     const d = (await admin('GET', '/api/talabat/day?day=2026-10-22')).body;
     for (const o of d.orders) assert.equal(o.apex?.how, 'code', o.id);
     const l = (await admin('GET', '/api/learned')).body;
-    assert.ok(l.facts.some(f => f.kind === 'branch:talabat' && f.a === 'الدهان، التجمع الخامس' && f.b === 'Tagamoa Branch' && f.evidence === 3), 'learned the branch name');
+    assert.ok(l.facts.some(f => f.kind === 'match-v2:branch:talabat' && f.a === 'الدهان، التجمع الخامس' && f.b === 'Tagamoa Branch' && f.evidence === 3), 'learned the branch name');
     assert.ok(l.facts.some(f => f.kind === 'unknown' && f.b === 'حالة: MYSTERY'));
     assert.ok(l.facts.some(f => f.kind === 'unknown' && f.b === 'خطوة: RIDER_NEAR'));
     // Now a Talabat order with no #code: «Tagamoa Branch» is accepted as the same branch (names share no word).
     await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': ot }, body: { v: 1, day: '2026-10-22', online: [...online, { no: 8100, kind: 'طلبات', branch: 'Tagamoa Branch', at: at(52), user: 'u', amount: 100 }] } });
     await push({ orders: [{ id: '3977009990', store: 'الدهان، التجمع الخامس', status: 'ACCEPTED', placedAt: at(50), detail: { receivedAt: at(50), acceptedAt: at(50.3) } }] });
     const d2 = (await admin('GET', '/api/talabat/day?day=2026-10-22')).body;
-    assert.equal(d2.orders.find(o => o.id === '3977009990').apex?.no, 8100);
+    assert.equal(d2.orders.find(o => o.id === '3977009990').apex, null, 'learned branch alone cannot confirm identity');
   } finally { await t.close(); }
 });
 
@@ -92,7 +94,7 @@ test('talabat: «accepted and not on Apex» is answered when it is entered on Ap
     t.advance(11 * 60000); await apex([]); await push([]);
     assert.ok(t.app.db.raw.prepare("SELECT 1 FROM telegram_log WHERE key = 'talabat:notEntered:3977400009'").get());
     t.advance(2 * 60000);
-    await apex([{ no: 3526900, sn: 512, kind: 'طلبات', branch: 'التجمع', at: at(12), user: 'sara.m', amount: 300 }]);
+    await apex([{ no: 3526900, sn: 512, kind: 'طلبات', branch: 'التجمع', at: at(12), user: 'sara.m', amount: 300, tag: '3977400009' }]);
     await push([]);
     const rep = t.app.db.raw.prepare("SELECT text, reply_to FROM telegram_log WHERE key = 'resolved:talabat:notEntered:3977400009'").get();
     assert.equal(rep.reply_to, 'talabat:notEntered:3977400009');
@@ -141,7 +143,8 @@ test('talabat: codes written bare or cut («8698», «843» for 8403) link for s
     assert.equal(r.body.updated, 2);
     const d = (await admin('GET', '/api/talabat/day?day=2026-10-22')).body, o = Object.fromEntries(d.orders.map(x => [x.id, x]));
     assert.equal(o['4676900301'].apex.no, 3526865); assert.equal(o['4676900301'].apex.how, 'code');
-    assert.equal(o['4676900302'].apex.no, 3526864); assert.equal(o['4676900302'].apex.how, 'code');
+    assert.equal(o['4676900302'].apex, null, 'zero-stripped code alone is tentative');
+    assert.ok(['tentative','ambiguous'].includes(o['4676900302'].matching.state));
     assert.deepEqual([...new Set(d.orders.map(x => x.store))], ['مدينة نصر'], 'Arabic and English store names are one branch');
   } finally { await t.close(); }
 });

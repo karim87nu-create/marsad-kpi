@@ -35,10 +35,10 @@ const ar = s => String(s || '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').
 const key = s => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 // How well an English dish name fits an Arabic item name, 0..1, by translated words.
 function wordScore(en, arName) {
-  const words = key(en).split(/[^a-z]+/).filter(w => w.length > 2 && WORDS[w]);
+  const words = key(en).split(/[^a-z]+/).filter(w => w.length > 2 && !['with','and','the','for','from'].includes(w));
   if (!words.length) return 0;
   const a = ar(arName);
-  return words.filter(w => a.includes(ar(WORDS[w]).slice(0, Math.max(3, ar(WORDS[w]).length - 1)))).length / words.length;
+  return words.filter(w => WORDS[w] && a.includes(ar(WORDS[w]).slice(0, Math.max(3, ar(WORDS[w]).length - 1)))).length / words.length;
 }
 
 // talabat: [{ qty, name, price (line total with tax) }], apex: [{ no, name, qty, price (unit, before tax) }]
@@ -50,19 +50,21 @@ function compareItems(talabat, apex, { learned = new Map(), ratio = 1.13 } = {})
   // Each Talabat line: a known dish number with the same quantity and a fitting price, else the best translated name.
   for (const pass of ['known', 'words']) for (const t of T) {
     if (pairs.some(p => p.t === t)) continue;
-    let best = null, bestScore = 0;
+    let best = null, bestScore = 0, tied = false;
     for (const a of A) {
       if (usedA.has(a.i) || Math.abs((a.qty || 1) - (t.qty || 1)) > 0.01) continue;
       const k = known(t).includes(String(a.no).trim());
       const s = pass === 'known' ? (k && priceOk(t, a) ? 2 : 0) : (wordScore(t.name, a.name) * (priceOk(t, a) ? 1 : 0.4));
-      if (s > bestScore) { best = a; bestScore = s; }
+      if (s > bestScore) { best = a; bestScore = s; tied = false; }
+      else if (s > 0 && s === bestScore && String(a.no) !== String(best?.no)) tied = true;
     }
-    if (best && (pass === 'known' || bestScore >= 0.5)) { usedA.add(best.i); pairs.push({ t, a: best, how: pass }); }
+    if (best && !tied && (pass === 'known' || bestScore >= 0.65)) { usedA.add(best.i); pairs.push({ t, a: best, how: pass }); }
   }
   const missingOnApex = T.filter(t => !pairs.some(p => p.t === t)), extraOnApex = A.filter(a => !usedA.has(a.i));
   // Quantities: the same dishes in other counts.
   const qty = (l, k) => l.reduce((n, x) => n + (Number(x[k]) || 1), 0);
-  return { ok: !missingOnApex.length && !extraOnApex.length, pairs: pairs.map(p => ({ talabat: p.t.name, apex: p.a.name, apexNo: p.a.no, how: p.how, ratio: p.t.unit && p.a.price ? p.t.unit / p.a.price : null })),
+  const uncertain = missingOnApex.some(t => !known(t).length && !A.some(a => wordScore(t.name, a.name) >= 0.65));
+  return { ok: !missingOnApex.length && !extraOnApex.length, uncertain, pairs: pairs.map(p => ({ talabat: p.t.name, apex: p.a.name, apexNo: p.a.no, how: p.how, ratio: p.t.unit && p.a.price ? p.t.unit / p.a.price : null })),
     missingOnApex: missingOnApex.map(t => t.qty + '× ' + t.name), extraOnApex: extraOnApex.map(a => (a.qty || 1) + '× ' + a.name),
     countTalabat: qty(talabat, 'qty'), countApex: qty(apex, 'qty'),
     unmatched: { talabat: missingOnApex.map(({ qty, name, price }) => ({ qty, name, price })), apex: extraOnApex.map(({ no, name, qty, price }) => ({ no, name, qty, price })) } };

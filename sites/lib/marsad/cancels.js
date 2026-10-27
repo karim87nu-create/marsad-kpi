@@ -50,7 +50,7 @@ function setup(app) {
       const a = m.matches.get(o.id), ev = [];
       if (a) usedApex.add(String(a.no));
       const ownerTxt = String(o.cancel_owner || '').replace(/^Owner:\s*/i, '');
-      if (a?.items && !a.items.ok && !a.items.reviewedOk) ev.push({ owner: 'employee', text: 'الأصناف على Apex مش زي طلبات: ' + [...a.items.missingOnApex, ...a.items.extraOnApex].slice(0, 4).join('، ') });
+      if (a?.items && !a.items.ok && !a.items.uncertain && !a.items.reviewedOk) ev.push({ owner: 'employee', text: 'الأصناف على Apex مش زي طلبات: ' + [...a.items.missingOnApex, ...a.items.extraOnApex].slice(0, 4).join('، ') });
       if (a && o.accepted_at && Date.parse(a.at) - o.accepted_at > LATE_ENTRY_MIN * 60000) ev.push({ owner: 'employee', text: 'اتضرب على Apex بعد ' + Math.round((Date.parse(a.at) - o.accepted_at) / 60000) + ' دقيقة من القبول' });
       if (!a && o.accepted_at && o.status === 'CANCELLED') ev.push({ owner: 'employee', text: 'اتقبل على طلبات ومالقيناهوش على Apex' });
       const lo = a && lateOut.get(String(a.no));

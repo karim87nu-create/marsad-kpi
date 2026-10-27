@@ -1,10 +1,11 @@
 // طلبات: one monitor screen (Firefox on a PC that stays on, signed in with the call center's Talabat account that sees
 // every branch) reads Order History and each order's details, and pushes them here. Per order we keep the times
 // (received, accepted and how fast, picked up, delivered, cancelled), the cancellation owner and reason, the items and
-// the subtotal. No customer data. Each order is then tied to its Apex order (who entered it and when).
+// the subtotal. Customer matching fields are kept separately, for matching only. Each order is then tied to its Apex order (who entered it and when).
 import { businessDay, iso, validDate } from './time.js';
 import { sha256, randomToken } from './security.js';
 import { compareItems, itemKey, SEED } from './items.js';
+import { resolveOrders, customerOf, parseJson } from './order-match.js';
 
 const NOT_ENTERED_MIN = 10, STALE_MS = 5 * 60000, WINDOW_MIN = 45;
 const FINAL = new Set(['COMPLETED', 'CANCELLED', 'REJECTED', 'DELIVERED']);
@@ -74,6 +75,12 @@ function setup(app) {
       if (id.length < 6) continue;
       // The exact time comes with the details; until then the time shown on the list row (to the minute).
       const placed = ms(o.placedAt) || ms(o.receivedAt) || ms(o.listAt), d = o.detail || null;
+      const customer = customerOf({ ...(o.customer || {}), ...(d?.customer || {}), phone: d?.customer?.phone || o.customer?.phone || o.phone || '' });
+      if (Object.values(customer).some(Boolean)) {
+        const old = parseJson((await db.prepare("SELECT data FROM match_profiles WHERE source = 'talabat' AND ref = ?").get(id))?.data, {});
+        for (const [k, v] of Object.entries(customer)) if (v) old[k] = v;
+        writes.push(db.prepare("INSERT INTO match_profiles (source, ref, data) VALUES ('talabat',?,?) ON CONFLICT(source, ref) DO UPDATE SET data = excluded.data").bind(id, JSON.stringify(old)));
+      }
       const items = d && Array.isArray(d.items) ? JSON.stringify(d.items.slice(0, 60).map(x => ({ qty: Number(x.qty) || 1, name: String(x.name || '').slice(0, 120), price: Number(x.price) || null }))) : null;
       writes.push(db.prepare(`INSERT INTO talabat_orders (id, day, vendor_id, store, status, billable, placed_at, total, received_at, accept_seconds, accepted_at, picked_up_at, delivered_at,
           cancelled_at, cancel_owner, cancel_reason, items, subtotal, delivery_type, milestones, detail_at, first_seen, updated_at)
@@ -106,76 +113,47 @@ function setup(app) {
   }, { limit: 1024 * 1024 });
 
   // ---- Talabat order ↔ Apex order ----
-  // 1) Sure: the #code written on Apex next to the customer (the short code, or the full number) — always wins.
-  // 2) A supervisor's manual link.
-  // 3) Otherwise by branch and time: entered on Apex from 2 minutes before acceptance until the window this branch
-  //    usually needs (learned; 45 minutes until there is enough evidence), closest in time, the items' subtotal as
-  //    tie-breaker (the platform total has discounts and fees).
-  // Every sure or manual link teaches which Apex branch name each Talabat store is, and how long the branch takes.
+  // Manual reservations first, then unique exact codes or strong multi-field evidence.
+  // Time-only and partial-code candidates remain unconfirmed and cannot teach.
   async function matchDay(day, { teach = false } = {}) {
     const rows = await db.prepare('SELECT * FROM talabat_orders WHERE day = ? AND (placed_at IS NOT NULL OR received_at IS NOT NULL) ORDER BY placed_at').all(day);
     const r = await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(day);
     let d = null; try { d = r ? JSON.parse(r.data) : null; } catch {}
     // Apex orders of طلبات, and the ones deleted after the pilot took them (a Talabat order cancelled late is one of them).
     const apex = [...(d?.online || []).filter(a => a.kind === 'طلبات' && a.at), ...(d?.cancels || []).filter(a => a.kind === 'طلبات' && a.entry).map(a => ({ ...a, at: a.entry, cancelled: true }))]
-      .map(a => ({ ...a, t: Date.parse(a.at), tag: a.tag ? String(a.tag).replace(/\D/g, '') : null }));
+      .map(a => ({ ...a, t: Date.parse(a.at), tag: a.tag || null }));
     const manual = new Map((await db.prepare('SELECT talabat_id, apex_no FROM talabat_links WHERE day = ?').all(day)).map(x => [x.talabat_id, x.apex_no]));
     const names = app.apexNameMap ? await app.apexNameMap() : {};
-    const aliases = app.learn ? await app.learn.pairs('branch:talabat') : new Map();
+    const aliases = app.learn ? await app.learn.pairs('match-v2:branch:talabat') : new Map();
     const branchOk = (store, apexBranch) => {
       const known = aliases.get(store);
       if (known && [...known.values()].reduce((a, b) => a + b, 0) >= 3) return known.has(apexBranch);
       return sameBranch(store, apexBranch);
     };
     const windowFor = async store => {
-      const v = app.learn ? await app.learn.values('delay:talabat', store) : [];
+      const v = app.learn ? await app.learn.values('match-v2:delay:talabat', store) : [];
       if (v.length < 10) return WINDOW_MIN * 60000;
       const s = [...v].sort((a, b) => a - b), p95 = s[Math.floor(s.length * 0.95)];
       return Math.min(90, Math.max(15, p95 / 60 * 1.5)) * 60000;
     };
-    const byNo = new Map(apex.map(a => [String(a.no), a])), usedA = new Set(), matches = new Map(), how = new Map();
-    // 1) the code written on Apex next to the customer: exact (#8403 / 8403 / the long number), else the same digits
-    // without the zeros («843» for 8403) at the same branch within 3 hours.
-    const z = s => String(s || '').replace(/0/g, '');
-    const codeOf = (x, o, loose) => x.tag && (x.tag === o.code || x.tag === o.id || (o.id.endsWith(x.tag) && x.tag.length >= 6) ||
-      (loose && o.code && x.tag.length >= 3 && z(x.tag) === z(o.code) && branchOk(o.store, x.branch) !== false && Math.abs(x.t - (o.accepted_at || o.placed_at || x.t)) < 3 * 3600000));
-    for (const loose of [false, true]) for (const o of rows) {
-      if (matches.has(o.id)) continue;
-      const a = apex.find(x => !usedA.has(String(x.no)) && codeOf(x, o, loose));
-      if (a) { matches.set(o.id, a); usedA.add(String(a.no)); how.set(o.id, 'code'); }
-    }
-    // 2) manual
-    for (const [tid, no] of manual) if (!matches.has(tid) && no != null && byNo.has(String(no)) && !usedA.has(String(no))) { matches.set(tid, byNo.get(String(no))); usedA.add(String(no)); how.set(tid, 'manual'); }
-    // 3) branch and time
-    const pairs = [];
-    for (const o of rows) {
-      if (matches.has(o.id) || manual.has(o.id) || o.status === 'REJECTED') continue;
-      const anchor = o.accepted_at || o.received_at || o.placed_at;
-      if (!anchor) continue;
-      const win = await windowFor(o.store);
-      for (const a of apex) {
-        // An Apex order that carries another order's code is never taken by time.
-        if (usedA.has(String(a.no)) || (a.tag && !codeOf(a, o, true)) || a.t < anchor - 2 * 60000 || a.t > anchor + win) continue;
-        if (branchOk(o.store, a.branch) === false) continue;
-        // The amount weighs as much as the time: 10% apart counts like 6 minutes; an unknown amount like 4.5 minutes.
-        const money = o.subtotal && a.amount ? Math.min(1, Math.abs(o.subtotal - a.amount) / Math.max(o.subtotal, 1)) : 0.075;
-        pairs.push({ o: o.id, a, score: Math.abs(a.t - anchor) / 60000 + money * 60 });
-      }
-    }
-    pairs.sort((x, y) => x.score - y.score);
-    for (const p of pairs) { if (matches.has(p.o) || usedA.has(String(p.a.no))) continue; matches.set(p.o, p.a); usedA.add(String(p.a.no)); how.set(p.o, 'time'); }
+    const learnedItems = new Map(), itemPairs = app.learn ? await app.learn.pairs('match-v2:item:talabat') : new Map();
+    for (const [n, m] of itemPairs) { const ok = new Map([...m].filter(([, c]) => c >= 2)); if (ok.size) learnedItems.set(n, ok); }
+    const ratios = app.learn ? await app.learn.values('match-v2:ratio:talabat', '-') : [], ratio = ratios.length >= 5 ? [...ratios].sort((x, y) => x - y)[Math.floor(ratios.length / 2)] : 1.13;
+    const profiles = new Map((await db.prepare("SELECT ref, data FROM match_profiles WHERE source = 'talabat' AND ref IN (SELECT id FROM talabat_orders WHERE day = ?)").all(day)).map(x => [x.ref, parseJson(x.data, {})]));
+    const windows = new Map(); for (const o of rows) if (!windows.has(o.store)) windows.set(o.store, await windowFor(o.store));
+    const decision = resolveOrders(rows.map(o => ({ ...o, branch: o.store, anchor: o.accepted_at || o.received_at || o.placed_at,
+      amount: o.total || o.subtotal, customer: profiles.get(o.id), items: parseJson(o.items, []), excluded: o.status === 'REJECTED' })), apex,
+      { manual, branchOk, windowFor: o => windows.get(o.store), learned: learnedItems, ratio });
+    const { matches, how } = decision, usedA = decision.used;
     // Learning from the sure links.
     if (teach && app.learn) for (const o of rows) {
       const a = matches.get(o.id), h = how.get(o.id);
       if (!a || (h !== 'code' && h !== 'manual')) continue;
-      if (o.store && a.branch) await app.learn.record('branch:talabat', o.store, a.branch, o.id);
+      if (o.store && a.branch) await app.learn.record('match-v2:branch:talabat', o.store, a.branch, o.id);
       const anchor = o.accepted_at || o.received_at;
-      if (o.store && anchor) await app.learn.record('delay:talabat', o.store, '-', o.id, Math.max(0, (a.t - anchor) / 1000));
+      if (o.store && anchor) await app.learn.record('match-v2:delay:talabat', o.store, '-', o.id, Math.max(0, (a.t - anchor) / 1000));
     }
     // The items: what Talabat received against what was entered on Apex (translated, same quantity, a fitting price).
-    const learnedItems = new Map(), itemPairs = app.learn ? await app.learn.pairs('item:talabat') : new Map();
-    for (const [n, m] of itemPairs) { const ok = new Map([...m].filter(([, c]) => c >= 2)); if (ok.size) learnedItems.set(n, ok); }
-    const ratios = app.learn ? await app.learn.values('ratio:talabat', '-') : [], ratio = ratios.length >= 5 ? [...ratios].sort((x, y) => x - y)[Math.floor(ratios.length / 2)] : 1.13;
     const okReviews = new Set((await db.prepare("SELECT ref FROM exception_reviews WHERE source = 'talabatItems' AND day = ? AND verdict = 'ok'").all(day)).map(r => r.ref));
     const itemsOf = new Map();
     for (const o of rows) {
@@ -185,24 +163,20 @@ function setup(app) {
       c.reviewedOk = okReviews.has(o.id);
       itemsOf.set(o.id, c);
       const sure = how.get(o.id) === 'code' || how.get(o.id) === 'manual';
-      if (!teach || !app.learn || !sure) continue;   // only orders linked for sure (the code, or by hand) teach
+      if (!teach || !app.learn || !sure || !c.ok) continue;   // only orders linked for sure (the code, or by hand) teach
       // Sure pairs teach the dish name and the price ratio. One left on each side with the same quantity and a fitting
       // price is the same dish under another name — also when the name is known with another Apex item (Talabat orders
       // are entered with Apex's own «طلبات» items); a wrong weight or dish has a price that does not fit, so it is never
       // learned. It counts once two orders showed it.
       for (const p of c.pairs) {
-        await app.learn.record('item:talabat', itemKey(p.talabat), String(p.apexNo).trim(), o.id);
-        if (p.ratio && p.how === 'known') await app.learn.record('ratio:talabat', '-', itemKey(p.talabat), o.id, p.ratio);
+        await app.learn.record('match-v2:item:talabat', itemKey(p.talabat), String(p.apexNo).trim(), o.id);
+        if (p.ratio && p.how === 'known') await app.learn.record('match-v2:ratio:talabat', '-', itemKey(p.talabat), o.id, p.ratio);
       }
-      if (c.missingOnApex.length === 1 && c.extraOnApex.length === 1 && c.unmatched) {
-        const [t] = c.unmatched.talabat, [x] = c.unmatched.apex;
-        if (Math.abs((t.qty || 1) - (x.qty || 1)) < 0.01 && (c.reviewedOk || (t.price && x.price && Math.abs(t.price / (t.qty || 1) / x.price - ratio) / ratio < 0.08)))
-          await app.learn.record('item:talabat', itemKey(t.name), String(x.no).trim(), o.id);
-      }
+
     }
     const shape = (a, h, id) => a && { no: a.no, sn: a.sn ?? null, at: iso(a.t), user: names[a.user] || a.user || null, branch: a.branch, amount: a.amount ?? null, manual: h === 'manual', how: h || null, cancelled: !!a.cancelled,
       items: id && itemsOf.get(id) || null };
-    return { rows, matches: new Map([...matches].map(([k, a]) => [k, shape(a, how.get(k), k)])), hasApex: Array.isArray(d?.online), unmatchedApex: apex.filter(a => !usedA.has(String(a.no))).map(a => shape(a)) };
+    return { rows, matches: new Map([...matches].map(([k, a]) => [k, shape(a, how.get(k), k)])), states: decision.states, hasApex: Array.isArray(d?.online), unmatchedApex: apex.filter(a => !usedA.has(String(a.no))).map(a => shape(a)) };
   }
 
   // ---- alerts: accepted and still not on Apex after 10 minutes (online group); cancelled (branches group) ----
@@ -236,7 +210,7 @@ function setup(app) {
     for (const o of m.rows) {
       const a = m.matches.get(o.id), c = a?.items, key = 'talabat:items:' + o.id;
       if (!c || (a.how !== 'code' && a.how !== 'manual')) continue;
-      if (!c.ok && !c.reviewedOk && !sent.has(key) && now - (o.accepted_at || o.placed_at || now) < 3 * 3600000)
+      if (!c.ok && !c.uncertain && !c.reviewedOk && !sent.has(key) && now - (o.accepted_at || o.placed_at || now) < 3 * 3600000)
         out.push({ key, kind: 'talabatItems', target: 'online', text: '🛵 طلبات | 🍽️ صنف ممكن يكون متضرب غلط على Apex\nرقم أوردر طلبات: ' + (o.code ? '#' + o.code : o.id) + '\nرقمه على Apex: ' + (a.sn ?? a.no) + ' · ' + (a.branch || '') + (a.user ? '\nاللي ضرب الأوردر: ' + a.user : '') +
           (c.missingOnApex.length ? '\nعلى طلبات ومش على Apex: ' + c.missingOnApex.join('، ') : '') + (c.extraOnApex.length ? '\nعلى Apex ومش على طلبات: ' + c.extraOnApex.join('، ') : '') });
       else if ((c.ok || c.reviewedOk) && sent.has(key) && !sent.has('resolved:' + key))
@@ -255,7 +229,7 @@ function setup(app) {
     return { day, linked: !!await setting('talabat_token_hash'), lastPush: iso(last), stale: !last || ctx.now - last > STALE_MS, apexLinked: m.hasApex, serverNow: iso(ctx.now),
       orders: m.rows.map(o => ({ id: o.id, store: storeName(o.store), status: o.status, billable: o.billable, placedAt: iso(o.placed_at), total: o.total, receivedAt: iso(o.received_at), acceptSeconds: o.accept_seconds,
         acceptedAt: iso(o.accepted_at), pickedUpAt: iso(o.picked_up_at), deliveredAt: iso(o.delivered_at), cancelledAt: iso(o.cancelled_at), cancelOwner: o.cancel_owner, cancelReason: o.cancel_reason,
-        code: o.code, steps: parse(o.milestones) || null, items: parse(o.items) || [], subtotal: o.subtotal, deliveryType: o.delivery_type, detailRead: !!o.detail_at, final: FINAL.has(o.status), apex: m.matches.get(o.id) || null })),
+        code: o.code, steps: parse(o.milestones) || null, items: parse(o.items) || [], subtotal: o.subtotal, deliveryType: o.delivery_type, detailRead: !!o.detail_at, final: FINAL.has(o.status), apex: m.matches.get(o.id) || null, matching: m.states.get(o.id) || null })),
       unmatchedApex: m.unmatchedApex };
   });
   app.route('POST', '/api/talabat/link', async ctx => {
@@ -263,6 +237,11 @@ function setup(app) {
     const id = String(ctx.body.talabatId || ''), no = ctx.body.apexNo == null || ctx.body.apexNo === '' ? null : String(ctx.body.apexNo);
     const o = await db.prepare('SELECT day FROM talabat_orders WHERE id = ?').get(id);
     if (!o) fail(404, 'الأوردر مش موجود');
+    if (no != null && no !== 'none') {
+      const snap = parseJson((await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(o.day))?.data, {});
+      if (![...(snap.online || []), ...(snap.cancels || [])].some(a => String(a.no) === no && a.kind === 'طلبات')) fail(400, 'أوردر Apex غير موجود في نفس اليوم والمصدر');
+      if (await db.prepare('SELECT talabat_id FROM talabat_links WHERE day = ? AND apex_no = ? AND talabat_id != ?').get(o.day, no, id)) fail(409, 'أوردر Apex مربوط يدويًا بأوردر آخر');
+    }
     // null clears a manual link; 'none' marks it as having no Apex order.
     if (no === null) await db.prepare('DELETE FROM talabat_links WHERE talabat_id = ?').run(id);
     else await db.prepare('INSERT INTO talabat_links (talabat_id, day, apex_no, set_by, set_at) VALUES (?,?,?,?,?) ON CONFLICT(talabat_id) DO UPDATE SET apex_no = excluded.apex_no, set_by = excluded.set_by, set_at = excluded.set_at')
