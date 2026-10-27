@@ -24,9 +24,9 @@ jobs:
           base64 --decode deployment/repair/marsad-repairs.patch.gz.b64 > /tmp/marsad-repairs.patch.gz
           gzip -t /tmp/marsad-repairs.patch.gz
           gzip -dc /tmp/marsad-repairs.patch.gz > /tmp/marsad-repairs.patch
-          git apply --check --whitespace=nowarn /tmp/marsad-repairs.patch
+          git apply --check --ignore-space-change --ignore-whitespace /tmp/marsad-repairs.patch
       - name: Apply repairs
-        run: git apply --whitespace=nowarn /tmp/marsad-repairs.patch
+        run: git apply --ignore-space-change --ignore-whitespace /tmp/marsad-repairs.patch
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
