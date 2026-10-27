@@ -2,7 +2,7 @@
 // شاشة مراقبة طلبات: runs only on the one PC linked from the admin page (الإدارة ← شاشة مراقبة طلبات), in a Firefox
 // window signed in with the call center's Talabat account. It keeps Order History open on the operating day, reads the
 // list every few seconds, and opens each order the server asks for to read its timeline, cancellation and items.
-// It never accepts, rejects or changes an order, and it does not read customer details.
+// It never accepts, rejects or changes an order, and it reads available customer matching fields inside the current order only.
 (async () => {
   if (location.hostname !== 'partner-app.talabat.com' || window.top !== window || window.__marsadTalabat) return;
   window.__marsadTalabat = true;
@@ -148,15 +148,23 @@
     if (d.receivedAt && Number.isFinite(placed) && Math.abs(Date.parse(d.receivedAt) - Math.floor(placed / 60000) * 60000) < 60000) d.receivedAt = new Date(placed).toISOString();
     if (d.receivedAt && Number.isFinite(d.acceptSeconds)) d.acceptedAt = new Date(Date.parse(d.receivedAt) + d.acceptSeconds * 1000).toISOString();
     d.subtotal = money(lines(T('subtotal')).find(x => /E£|EGP/.test(x)));
-    // The customer's number: read only while the restaurant's WhatsApp messages are on (the server says so).
-    let phone = null;
-    if (phonesWanted) {
-      // Only inside this order's details panel (never a number elsewhere on the page, e.g. the branch's).
-      let box = T('details-order-id'); while (box && !box.querySelector('[data-testid^="milestone-for__"]')) box = box.parentElement;
-      const tel = box?.querySelector('a[href^="tel:"]')?.getAttribute('href');
-      const m = String(tel || box?.innerText || '').replace(/[٠-٩]/g, c => String(c.charCodeAt(0) - 0x660)).match(/(?:\+?20|0)\s*1[0125](?:[\s-]?\d){8}/);
-      phone = m ? m[0].replace(/[^\d+]/g, '') : null;
-    }
+    // Matching never depends on the WhatsApp setting. Read explicit customer labels only;
+    // do not guess a name/address from arbitrary order text or a masked phone number.
+    let box = T('details-order-id'); while (box && !box.querySelector('[data-testid^="milestone-for__"]')) box = box.parentElement;
+    const customerLines = lines(box).filter(Boolean);
+    const field = re => {
+      const i = customerLines.findIndex(x => re.test(x)); if (i < 0) return '';
+      const inline = customerLines[i].replace(re, '').replace(/^\s*[:：]\s*/, '').trim();
+      if (inline) return inline;
+      const next = customerLines[i + 1] || '';
+      return /^(?:customer|phone|mobile|address|اسم العميل|رقم الهاتف|العنوان)\s*[:：]?$/i.test(next) ? '' : next;
+    };
+    const name = field(/^(?:customer name|اسم العميل)\s*[:：]?\s*/i);
+    const address = field(/^(?:delivery address|customer address|عنوان العميل|عنوان التوصيل)\s*[:：]?\s*/i);
+    const rawPhone = field(/^(?:customer phone|phone number|رقم هاتف العميل|رقم الهاتف)\s*[:：]?\s*/i);
+    const normalized = rawPhone.replace(/[٠-٩]/g, c => String(c.charCodeAt(0) - 0x660));
+    const phone = !/[x*•…]/i.test(normalized) && /^(?:\+?20|0)?1[0125](?:[\s-]?\d){8}$/.test(normalized) ? normalized.replace(/[^\d+]/g, '') : null;
+    d.customer = { name: name.slice(0, 160), address: address.slice(0, 360), phone: phone || '' };
     d.deliveryType = lines(T('prop-delivery-type'))[1] || null;
     return { id, vendorId, placedAt: Number.isFinite(placed) ? new Date(placed).toISOString() : null, status: d.status, detail: d, ...(phone ? { phone } : {}) };
   }

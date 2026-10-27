@@ -218,6 +218,8 @@ CREATE INDEX IF NOT EXISTS site_orders_day ON site_orders(day);
 CREATE INDEX IF NOT EXISTS site_orders_created ON site_orders(created_at);
 CREATE TABLE IF NOT EXISTS talabat_orders (id TEXT PRIMARY KEY, day TEXT NOT NULL, vendor_id TEXT, store TEXT, status TEXT, billable TEXT, placed_at INTEGER, total REAL, received_at INTEGER, accept_seconds INTEGER, accepted_at INTEGER, picked_up_at INTEGER, delivered_at INTEGER, cancelled_at INTEGER, cancel_owner TEXT, cancel_reason TEXT, items TEXT, subtotal REAL, delivery_type TEXT, code TEXT, milestones TEXT, detail_at INTEGER, first_seen INTEGER NOT NULL, updated_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS talabat_orders_day ON talabat_orders(day);
+CREATE TABLE IF NOT EXISTS match_profiles (source TEXT NOT NULL, ref TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(source, ref));
+CREATE TABLE IF NOT EXISTS site_links (site_id INTEGER PRIMARY KEY, day TEXT NOT NULL, apex_no TEXT, set_by TEXT, set_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS talabat_links (talabat_id TEXT PRIMARY KEY, day TEXT NOT NULL, apex_no TEXT, set_by TEXT, set_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS learned (kind TEXT NOT NULL, a TEXT NOT NULL, b TEXT NOT NULL, ref TEXT NOT NULL, value REAL, at INTEGER NOT NULL, PRIMARY KEY (kind, a, b, ref));
 CREATE TABLE IF NOT EXISTS exception_reviews (key TEXT PRIMARY KEY, source TEXT, ref TEXT, day TEXT NOT NULL, verdict TEXT NOT NULL, reason TEXT, note TEXT, signature TEXT, by_name TEXT, at INTEGER NOT NULL);

@@ -1,5 +1,19 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),{JSDOM}=require('jsdom');
+test('Talabat detail matching fields stay within the current order and ignore masked phones', () => {
+ const s=fs.readFileSync(path.join(__dirname,'../../extension-3/talabat-monitor.js'),'utf8');
+ const code=s.slice(s.indexOf('  const T ='),s.indexOf('  // ---------- the operating day'))+'\n'+s.slice(s.indexOf('  function readDetail('),s.indexOf('  // ---------- one cycle'));
+ const dom=new JSDOM('<aside>Customer name\nOther Person\nPhone number\n01111111111</aside><section><b data-testid="details-order-id">10000001</b><div data-testid="milestone-for__ACCEPTED">12:01</div><div>Customer name\nAhmed Ali\nDelivery address\nNasr Street 20\nPhone number\n01012345678</div></section>',{runScripts:'outside-only',url:'https://partner-app.talabat.com/orders?placedAt=2026-10-22T12:00:00Z'});
+ const w=dom.window;
+ try {
+  Object.defineProperty(w.HTMLElement.prototype,'innerText',{get(){return [...this.childNodes].map(n=>n.textContent).join('\n');}});
+  const run=()=>JSON.parse(w.eval('(()=>{'+code+';const clockAfter=()=>null;return JSON.stringify(readDetail("10000001"));})()'));
+  let r=run();assert.deepEqual(r.detail.customer,{name:'Ahmed Ali',address:'Nasr Street 20',phone:'01012345678'});
+  w.document.querySelector('section div:last-child').textContent='Customer name\nAhmed Ali\nPhone number\n010***45678';
+  r=run();assert.equal(r.detail.customer.phone,'');assert.equal(r.phone,undefined);
+  assert.equal(w.eval('(()=>{'+code+';return readDetail("99999999");})()'),null);
+ }finally{w.close();}
+});
 test('Talabat live: ID next to item count is read without customer details',()=>{
  const s=fs.readFileSync(path.join(__dirname,'../../extension-3/talabat-monitor.js'),'utf8');
  const reader=s.slice(s.indexOf('    const readCodes = () => {'),s.indexOf('    let lastKey'));
