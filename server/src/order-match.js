@@ -41,18 +41,9 @@ export function resolveOrders(rows, apex, { manual = new Map(), branchOk = () =>
   learned = new Map(), ratio = 1.13 } = {}) {
   apex = [...new Map(apex.map(a => [String(a.no), a])).values()];
   const matches = new Map(), how = new Map(), states = new Map(), used = new Set();
-  const byNo = new Map(apex.map(a => [String(a.no), a]));
-  const owners = new Map();
-  for (const [id, no] of manual) if (no != null) { const k = String(no); owners.set(k, [...(owners.get(k) || []), String(id)]); }
-  for (const o of rows) if (manual.has(o.id)) {
-    const no = manual.get(o.id), a = byNo.get(String(no));
-    if (no != null) used.add(String(no));
-    if (a && owners.get(String(no))?.length === 1) { matches.set(o.id, a); how.set(o.id, 'manual'); states.set(o.id, { state: 'confirmed', how: 'manual' }); }
-    else states.set(o.id, { state: no == null ? 'manual-none' : 'manual-conflict' });
-  }
   const pairs = [];
   for (const o of rows) {
-    if (manual.has(o.id) || o.excluded || !Number.isFinite(o.anchor)) continue;
+    if (o.excluded || !Number.isFinite(o.anchor)) continue;
     const c = customerOf(o.customer), cp = new Set([c.phone, c.mobile].filter(Boolean));
     for (const a of apex) {
       if (used.has(String(a.no))) continue;
@@ -86,7 +77,6 @@ export function resolveOrders(rows, apex, { manual = new Map(), branchOk = () =>
   const listO = id => sorted.filter(p => p.o === id), listA = no => sorted.filter(p => String(p.a.no) === String(no));
   // Require a clear winner on BOTH sides before any assignment; do not break ties by iteration order.
   for (const o of rows) {
-    if (manual.has(o.id)) continue;
     const candidates = listO(o.id), best = candidates[0];
     if (!best) { states.set(o.id, { state: 'unmatched', candidates: [] }); continue; }
     const rivals = listA(best.a.no), margin = candidates[1] ? best.score - candidates[1].score : Infinity;
@@ -96,6 +86,21 @@ export function resolveOrders(rows, apex, { manual = new Map(), branchOk = () =>
       used.add(String(best.a.no)); matches.set(o.id, best.a); how.set(o.id, best.exact ? 'code' : 'evidence');
       states.set(o.id, { state: 'confirmed', how: how.get(o.id), evidence: best.reasons });
     } else states.set(o.id, { state: clear && !best.conflict ? 'tentative' : 'ambiguous', candidates: candidates.slice(0, 3).map(p => ({ no: p.a.no, sn: p.a.sn ?? null, score: Math.round(p.score), evidence: p.reasons })) });
+  }
+  // A human proposal is retained as evidence, never a reservation or shortcut to certainty.
+  for (const o of rows) {
+    const st = states.get(o.id) || { state: 'unmatched', candidates: [] };
+    if (manual.has(o.id)) {
+      const proposed = manual.get(o.id), actual = matches.get(o.id);
+      st.manualProposal = proposed;
+      if (actual && (proposed == null || String(actual.no) !== String(proposed))) {
+        used.delete(String(actual.no)); matches.delete(o.id); how.delete(o.id);
+        st.state = 'ambiguous'; st.manualConflict = true;
+        st.candidates = [{ no: actual.no, evidence: st.evidence }];
+      }
+    }
+    st.confidence = ({ confirmed: 'SURE', tentative: 'PROBABLE', ambiguous: 'AMBIGUOUS', unmatched: 'NO MATCH' })[st.state] || 'AMBIGUOUS';
+    states.set(o.id, st);
   }
   return { matches, how, states, used };
 }

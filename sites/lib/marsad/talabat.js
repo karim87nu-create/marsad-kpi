@@ -8,6 +8,8 @@ import { compareItems, itemKey, SEED } from './items.js';
 import { resolveOrders, customerOf, parseJson } from './order-match.js';
 
 const NOT_ENTERED_MIN = 10, STALE_MS = 5 * 60000, WINDOW_MIN = 45;
+const cancelReady = o => o.status === 'CANCELLED' && !!o.cancelled_at && !!o.store && !!o.cancel_owner?.trim() && !!o.cancel_reason?.trim();
+const statusRank = s => ({ NEW: 0, 'PREORDER ACCEPTED': 1, ACCEPTED: 1, READY: 2, 'READY FOR PICKUP': 2, 'PICKED UP': 3, 'IN DELIVERY': 3, COMPLETED: 4, DELIVERED: 4, CANCELLED: 5, REJECTED: 5 })[s];
 const FINAL = new Set(['COMPLETED', 'CANCELLED', 'REJECTED', 'DELIVERED']);
 const KNOWN_STATUS = new Set([...FINAL, 'NEW', 'ACCEPTED', 'READY', 'READY FOR PICKUP', 'PICKED UP', 'IN DELIVERY', 'PREORDER ACCEPTED']);
 const KNOWN_STEP = new Set(['DISPLAYED_AT_VENDOR', 'ACCEPTED', 'PICKED_UP', 'DELIVERED', 'COMPLETED', 'CANCELLED', 'REJECTED']);
@@ -64,29 +66,44 @@ function setup(app) {
     // Anything the screen showed that is not known yet is kept (listed under «اللي المرصد اتعلمه»), never dropped.
     const unknown = [];
     for (const o of list) {
+      if (!o || typeof o !== 'object') continue;
       const st = String(o.status || '').toUpperCase();
       if (st && !KNOWN_STATUS.has(st)) unknown.push(['talabat', 'حالة: ' + st, o.id]);
       for (const k of Object.keys(o.detail?.milestones || {})) if (!KNOWN_STEP.has(k)) unknown.push(['talabat', 'خطوة: ' + k, o.id]);
       if (o.detail?.cancelOwner && !KNOWN_OWNER.has(o.detail.cancelOwner)) unknown.push(['talabat', 'الإلغاء على: ' + o.detail.cancelOwner, o.id]);
     }
     for (const u of unknown.slice(0, 20)) await app.learn?.unknown(...u, now);
+    const accepted = [];
     for (const o of list) {
+      if (!o || typeof o !== 'object') continue;
       const id = String(o.id || '').replace(/\D/g, '').slice(0, 20);
       if (id.length < 6) continue;
+      const prior = await db.prepare('SELECT status FROM talabat_orders WHERE id = ?').get(id);
+      const meta = await db.prepare("SELECT * FROM order_ingest WHERE source = 'talabat' AND ref = ?").get(id);
+      const observed = ms(o.observedAt);
+      if (o.observedAt && (!observed || observed > now + 300000)) continue;
+      if (meta?.observed_at && (!observed || observed < meta.observed_at)) continue;
+      const incoming = String(o.status || '').toUpperCase();
+      if (prior?.status && incoming && statusRank(incoming) != null && statusRank(prior.status) != null && statusRank(incoming) < statusRank(prior.status)) continue;
+      if (FINAL.has(prior?.status) && incoming && incoming !== prior.status) continue;
+      // Optimistic guard makes the observation + order + profile one atomic update.
+      const guard = "NOT EXISTS (SELECT 1 FROM order_ingest WHERE source = 'talabat' AND ref = ? AND COALESCE(observed_at, 0) > ?)";
+      const orderWrites = [];
+      const guardTime = observed || meta?.observed_at || 0;
       // The exact time comes with the details; until then the time shown on the list row (to the minute).
       const placed = ms(o.placedAt) || ms(o.receivedAt) || ms(o.listAt), d = o.detail || null;
       const customer = customerOf({ ...(o.customer || {}), ...(d?.customer || {}), phone: d?.customer?.phone || o.customer?.phone || o.phone || '' });
       if (Object.values(customer).some(Boolean)) {
         const old = parseJson((await db.prepare("SELECT data FROM match_profiles WHERE source = 'talabat' AND ref = ?").get(id))?.data, {});
         for (const [k, v] of Object.entries(customer)) if (v) old[k] = v;
-        writes.push(db.prepare("INSERT INTO match_profiles (source, ref, data) VALUES ('talabat',?,?) ON CONFLICT(source, ref) DO UPDATE SET data = excluded.data").bind(id, JSON.stringify(old)));
+        orderWrites.push(db.prepare("INSERT INTO match_profiles (source, ref, data) SELECT 'talabat',?,? WHERE " + guard + " ON CONFLICT(source, ref) DO UPDATE SET data = excluded.data").bind(id, JSON.stringify(old), id, guardTime));
       }
       const items = d && Array.isArray(d.items) ? JSON.stringify(d.items.slice(0, 60).map(x => ({ qty: Number(x.qty) || 1, name: String(x.name || '').slice(0, 120), price: Number(x.price) || null }))) : null;
-      writes.push(db.prepare(`INSERT INTO talabat_orders (id, day, vendor_id, store, status, billable, placed_at, total, received_at, accept_seconds, accepted_at, picked_up_at, delivered_at,
+      orderWrites.push(db.prepare(`INSERT INTO talabat_orders (id, day, vendor_id, store, status, billable, placed_at, total, received_at, accept_seconds, accepted_at, picked_up_at, delivered_at,
           cancelled_at, cancel_owner, cancel_reason, items, subtotal, delivery_type, milestones, detail_at, first_seen, updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE ${guard}
         ON CONFLICT(id) DO UPDATE SET day = CASE WHEN excluded.placed_at IS NOT NULL THEN excluded.day ELSE talabat_orders.day END, vendor_id = COALESCE(excluded.vendor_id, talabat_orders.vendor_id), store = COALESCE(excluded.store, talabat_orders.store),
-          status = excluded.status, billable = COALESCE(excluded.billable, talabat_orders.billable), placed_at = CASE WHEN excluded.placed_at IS NOT NULL AND (talabat_orders.placed_at IS NULL OR talabat_orders.placed_at % 60000 = 0) THEN excluded.placed_at ELSE talabat_orders.placed_at END,
+          status = COALESCE(excluded.status, talabat_orders.status), billable = COALESCE(excluded.billable, talabat_orders.billable), placed_at = CASE WHEN excluded.placed_at IS NOT NULL AND (talabat_orders.placed_at IS NULL OR talabat_orders.placed_at % 60000 = 0) THEN excluded.placed_at ELSE talabat_orders.placed_at END,
           total = COALESCE(excluded.total, talabat_orders.total), received_at = COALESCE(excluded.received_at, talabat_orders.received_at),
           accept_seconds = COALESCE(excluded.accept_seconds, talabat_orders.accept_seconds), accepted_at = COALESCE(excluded.accepted_at, talabat_orders.accepted_at),
           picked_up_at = COALESCE(excluded.picked_up_at, talabat_orders.picked_up_at), delivered_at = COALESCE(excluded.delivered_at, talabat_orders.delivered_at),
@@ -98,17 +115,27 @@ function setup(app) {
         .bind(id, businessDay(placed || now), o.vendorId ? String(o.vendorId).slice(0, 20) : null, o.store ? String(o.store).slice(0, 160) : null, String(o.status || '').toUpperCase().slice(0, 40) || null,
           d?.billable ? String(d.billable).slice(0, 40) : null, placed, Number(o.total) || null, ms(d?.receivedAt), Number.isFinite(d?.acceptSeconds) ? d.acceptSeconds : null, ms(d?.acceptedAt),
           ms(d?.pickedUpAt), ms(d?.deliveredAt), ms(d?.cancelledAt), d?.cancelOwner ? String(d.cancelOwner).slice(0, 60) : null, d?.cancelReason ? String(d.cancelReason).slice(0, 300) : null,
-          items, Number(d?.subtotal) || null, d?.deliveryType ? String(d.deliveryType).slice(0, 60) : null, d?.milestones ? JSON.stringify(d.milestones).slice(0, 2000) : null, d ? now : null, now, now));
+          items, Number(d?.subtotal) || null, d?.deliveryType ? String(d.deliveryType).slice(0, 60) : null, d?.milestones ? JSON.stringify(d.milestones).slice(0, 2000) : null, d ? now : null, now, now, id, guardTime));
+      orderWrites.push(db.prepare("INSERT INTO order_ingest (source, ref, observed_at, updated_at) VALUES ('talabat',?,?,?) ON CONFLICT(source, ref) DO UPDATE SET observed_at = MAX(COALESCE(order_ingest.observed_at,0),COALESCE(excluded.observed_at,0)), updated_at = excluded.updated_at").bind(id, observed, now));
+      const committed = await db.batch(orderWrites);
+      if (committed[committed.length - 2].changes) accepted.push(o);
     }
     if (writes.length) await db.batch(writes);
     await put('talabat_last_push', now);
     // What the monitor should open next: orders never read in detail or whose status changed since, and orders still
     // waiting at the branch (new / accepted / ready) read over a minute ago.
-    const want = await db.prepare(`SELECT id FROM talabat_orders WHERE updated_at >= ? AND (detail_at IS NULL OR (status NOT IN ('COMPLETED','CANCELLED','REJECTED','DELIVERED','PICKED UP') AND detail_at < ?)) ORDER BY detail_at IS NOT NULL, placed_at DESC LIMIT 20`)
-      .all(now - 12 * 3600000, now - 60000);
+    const cancellationPending = "t.status = 'CANCELLED' AND (t.cancelled_at IS NULL OR NULLIF(TRIM(t.store),'') IS NULL OR NULLIF(TRIM(t.cancel_owner),'') IS NULL OR NULLIF(TRIM(t.cancel_reason),'') IS NULL)";
+    const want = await db.prepare(`SELECT t.id FROM talabat_orders t LEFT JOIN order_ingest i ON i.source = 'talabat' AND i.ref = t.id
+      WHERE t.updated_at >= ? AND (((${cancellationPending}) AND COALESCE(i.detail_attempts,0) < 5 AND COALESCE(i.detail_retry_at,0) <= ?)
+      OR (t.status IS NOT 'CANCELLED' AND (t.detail_at IS NULL OR (t.status NOT IN ('COMPLETED','REJECTED','DELIVERED','PICKED UP') AND t.detail_at < ?))))
+      ORDER BY t.status = 'CANCELLED' DESC, t.detail_at IS NOT NULL, t.placed_at DESC LIMIT 4`).all(now - 12 * 3600000, now, now - 60000);
+    // Retry only requested incomplete cancellations, bounded and persisted across restarts.
+    if (want.length) await db.batch(want.map(({ id }) => db.prepare(`INSERT INTO order_ingest (source,ref,detail_attempts,detail_retry_at,updated_at)
+      SELECT 'talabat',id,1,?,? FROM talabat_orders WHERE id=? AND status='CANCELLED'
+      ON CONFLICT(source,ref) DO UPDATE SET detail_attempts=order_ingest.detail_attempts+1, detail_retry_at=excluded.detail_retry_at, updated_at=excluded.updated_at`).bind(now + 60000, now, id)));
     await alerts(now);
     // WhatsApp (when on): the customers' numbers for the welcome and the survey; «phones» tells the screen to read them.
-    await app.whatsapp?.take(list, now);
+    await app.whatsapp?.take(accepted, now);
     return { ok: true, want: want.map(r => r.id), phones: !!await app.whatsapp?.wantPhones(), serverNow: iso(now) };
   }, { limit: 1024 * 1024 });
 
@@ -145,13 +172,15 @@ function setup(app) {
       amount: o.total || o.subtotal, customer: profiles.get(o.id), items: parseJson(o.items, []), excluded: o.status === 'REJECTED' })), apex,
       { manual, branchOk, windowFor: o => windows.get(o.store), learned: learnedItems, ratio });
     const { matches, how } = decision, usedA = decision.used;
-    // Learning from the sure links.
+    const evidence = new Map(rows.map(o => [o.id, []]));
+    const record = (kind,a,b,ref,value=null) => evidence.get(ref)?.push({kind,a,b,value});
+    // Learning from independently confirmed links.
     if (teach && app.learn) for (const o of rows) {
       const a = matches.get(o.id), h = how.get(o.id);
       if (!a || (h !== 'code' && h !== 'manual')) continue;
-      if (o.store && a.branch) await app.learn.record('match-v2:branch:talabat', o.store, a.branch, o.id);
+      if (o.store && a.branch) record('match-v2:branch:talabat', o.store, a.branch, o.id);
       const anchor = o.accepted_at || o.received_at;
-      if (o.store && anchor) await app.learn.record('match-v2:delay:talabat', o.store, '-', o.id, Math.max(0, (a.t - anchor) / 1000));
+      if (o.store && anchor) record('match-v2:delay:talabat', o.store, '-', o.id, Math.max(0, (a.t - anchor) / 1000));
     }
     // The items: what Talabat received against what was entered on Apex (translated, same quantity, a fitting price).
     const okReviews = new Set((await db.prepare("SELECT ref FROM exception_reviews WHERE source = 'talabatItems' AND day = ? AND verdict = 'ok'").all(day)).map(r => r.ref));
@@ -169,11 +198,12 @@ function setup(app) {
       // are entered with Apex's own «طلبات» items); a wrong weight or dish has a price that does not fit, so it is never
       // learned. It counts once two orders showed it.
       for (const p of c.pairs) {
-        await app.learn.record('match-v2:item:talabat', itemKey(p.talabat), String(p.apexNo).trim(), o.id);
-        if (p.ratio && p.how === 'known') await app.learn.record('match-v2:ratio:talabat', '-', itemKey(p.talabat), o.id, p.ratio);
+        record('match-v2:item:talabat', itemKey(p.talabat), String(p.apexNo).trim(), o.id);
+        if (p.ratio && p.how === 'known') record('match-v2:ratio:talabat', '-', itemKey(p.talabat), o.id, p.ratio);
       }
 
     }
+    if (teach && app.learn) for (const [id,facts] of evidence) await app.learn.replace('talabat',id,facts);
     const shape = (a, h, id) => a && { no: a.no, sn: a.sn ?? null, at: iso(a.t), user: names[a.user] || a.user || null, branch: a.branch, amount: a.amount ?? null, manual: h === 'manual', how: h || null, cancelled: !!a.cancelled,
       items: id && itemsOf.get(id) || null };
     return { rows, matches: new Map([...matches].map(([k, a]) => [k, shape(a, how.get(k), k)])), states: decision.states, hasApex: Array.isArray(d?.online), unmatchedApex: apex.filter(a => !usedA.has(String(a.no))).map(a => shape(a)) };
@@ -190,7 +220,7 @@ function setup(app) {
       const store = o.store ? '\nالفرع: ' + storeName(o.store) : '', ref = o.code ? '#' + o.code : o.id; // the short #code staff use; the long id only when there is no code
       if (m.hasApex && o.accepted_at && !m.matches.get(o.id) && o.status !== 'CANCELLED' && now - o.accepted_at > NOT_ENTERED_MIN * 60000 && now - o.accepted_at < 3 * 3600000)
         out.push({ key: 'talabat:notEntered:' + o.id, kind: 'talabatNotEntered', target: 'online', text: '🛵 طلبات | ⚠️ أوردر اتقبل على طلبات ولسه ماتضربش على Apex\nرقم أوردر طلبات: ' + ref + store + '\nاتقبل الساعة ' + clock(o.accepted_at) + '، وبقاله ' + Math.round((now - o.accepted_at) / 60000) + ' دقيقة' + (o.subtotal ? '\nقيمة الأوردر: ' + Math.round(o.subtotal) + ' ج' : '') });
-      if (o.status === 'CANCELLED' && o.cancelled_at && now - o.cancelled_at < 3 * 3600000)
+      if (cancelReady(o) && now - o.cancelled_at < 3 * 3600000)
         out.push({ key: 'talabat:cancel:' + o.id, kind: 'talabatCancel', target: 'branches', branch: m.matches.get(o.id)?.branch || o.store || null, text: '🛵 طلبات | ❌ أوردر اتلغى على طلبات\nرقم أوردر طلبات: ' + ref + store + '\nاتلغى الساعة ' + clock(o.cancelled_at) + (o.cancel_owner ? '\nالإلغاء على: ' + o.cancel_owner : '') + (o.cancel_reason ? '\nالسبب: ' + o.cancel_reason : '') + (o.subtotal ? '\nقيمة الأوردر: ' + Math.round(o.subtotal) + ' ج' : '') +
           (m.matches.get(o.id) ? '\nرقمه على Apex: ' + (m.matches.get(o.id).sn ?? m.matches.get(o.id).no) + det.extra(m.matches.get(o.id).no) : '') });
     }
@@ -225,9 +255,10 @@ function setup(app) {
     await app.requireAdmin(ctx);
     const day = validDate(String(ctx.query.day || '')) ? ctx.query.day : businessDay(ctx.now);
     const m = await matchDay(day), last = Number(await setting('talabat_last_push')) || null;
+    const ingestion = new Map((await db.prepare("SELECT ref, detail_attempts, detail_retry_at FROM order_ingest WHERE source = 'talabat' AND ref IN (SELECT id FROM talabat_orders WHERE day = ?)").all(day)).map(r => [r.ref,r]));
     let parse = x => { try { return JSON.parse(x); } catch { return null; } };
     return { day, linked: !!await setting('talabat_token_hash'), lastPush: iso(last), stale: !last || ctx.now - last > STALE_MS, apexLinked: m.hasApex, serverNow: iso(ctx.now),
-      orders: m.rows.map(o => ({ id: o.id, store: storeName(o.store), status: o.status, billable: o.billable, placedAt: iso(o.placed_at), total: o.total, receivedAt: iso(o.received_at), acceptSeconds: o.accept_seconds,
+      orders: m.rows.map(o => ({ id: o.id, cancellationReadiness: o.status !== 'CANCELLED' ? null : cancelReady(o) ? 'READY' : (ingestion.get(o.id)?.detail_attempts >= 5 ? 'FAILED' : 'PENDING'), detailAttempts: ingestion.get(o.id)?.detail_attempts || 0, store: storeName(o.store), status: o.status, billable: o.billable, placedAt: iso(o.placed_at), total: o.total, receivedAt: iso(o.received_at), acceptSeconds: o.accept_seconds,
         acceptedAt: iso(o.accepted_at), pickedUpAt: iso(o.picked_up_at), deliveredAt: iso(o.delivered_at), cancelledAt: iso(o.cancelled_at), cancelOwner: o.cancel_owner, cancelReason: o.cancel_reason,
         code: o.code, steps: parse(o.milestones) || null, items: parse(o.items) || [], subtotal: o.subtotal, deliveryType: o.delivery_type, detailRead: !!o.detail_at, final: FINAL.has(o.status), apex: m.matches.get(o.id) || null, matching: m.states.get(o.id) || null })),
       unmatchedApex: m.unmatchedApex };
@@ -242,11 +273,12 @@ function setup(app) {
       if (![...(snap.online || []), ...(snap.cancels || [])].some(a => String(a.no) === no && a.kind === 'طلبات')) fail(400, 'أوردر Apex غير موجود في نفس اليوم والمصدر');
       if (await db.prepare('SELECT talabat_id FROM talabat_links WHERE day = ? AND apex_no = ? AND talabat_id != ?').get(o.day, no, id)) fail(409, 'أوردر Apex مربوط يدويًا بأوردر آخر');
     }
+    const before = await db.prepare('SELECT apex_no, set_by, set_at FROM talabat_links WHERE talabat_id = ?').get(id);
     // null clears a manual link; 'none' marks it as having no Apex order.
     if (no === null) await db.prepare('DELETE FROM talabat_links WHERE talabat_id = ?').run(id);
     else await db.prepare('INSERT INTO talabat_links (talabat_id, day, apex_no, set_by, set_at) VALUES (?,?,?,?,?) ON CONFLICT(talabat_id) DO UPDATE SET apex_no = excluded.apex_no, set_by = excluded.set_by, set_at = excluded.set_at')
       .run(id, o.day, no === 'none' ? null : no, who.name, ctx.now);
-    await app.audit('talabat_link', null, { actor: who.name, talabatId: id, apexNo: no });
+    await app.audit('talabat_link', null, { actor: who.name, talabatId: id, apexNo: no, before: before || null, after: no, reason: String(ctx.body.reason || '').slice(0,500) || null });
     await matchDay(o.day, { teach: true });
     return { ok: true };
   });

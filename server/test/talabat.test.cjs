@@ -44,8 +44,9 @@ test('talabat: monitor key, orders with details, Apex match (auto and manual), a
     // Manual link.
     assert.equal((await admin('POST', '/api/talabat/link', { talabatId: '3977400002', apexNo: 7002 })).status, 200);
     d = (await admin('GET', '/api/talabat/day?day=2026-10-22')).body; o = Object.fromEntries(d.orders.map(x => [x.id, x]));
-    assert.equal(o['3977400002'].apex.no, 7002); assert.equal(o['3977400002'].apex.manual, true);
-    assert.equal(d.unmatchedApex.length, 0);
+    assert.equal(o['3977400002'].apex, null, 'manual proposal alone does not prove an order entered before acceptance');
+    assert.equal(o['3977400002'].matching.manualProposal, '7002');
+    assert.equal(d.unmatchedApex.length, 2);
     // Alerts: the cancellation to the branches group; 3977400002 was unmatched > 10 min at the earlier push.
     const kinds = t.app.db.raw.prepare("SELECT kind, target FROM telegram_log WHERE kind LIKE 'talabat%' ORDER BY kind").all();
     assert.deepEqual(kinds.map(k => k.kind + ':' + k.target), ['talabatCancel:branches']);

@@ -25,7 +25,7 @@
     const icon = document.querySelector('footer [data-icon="send"], footer [data-icon="wds-ic-send-filled"], [data-icon="send"], [data-icon="wds-ic-send-filled"]');
     return icon?.closest('button,[role="button"]') || document.querySelector('footer button[aria-label="Send"], footer button[aria-label="إرسال"], button[aria-label="Send"], button[aria-label="إرسال"]');
   };
-  const report = async (j, ok, error, invalid) => { await bg({ type: 'TALABAT_WA_RESULT', id: j.id, kind: j.kind, ok, error, invalid: !!invalid }).catch(() => null); job.set(null); };
+  const report = async (j, ok, error, invalid) => { await bg({ type: 'TALABAT_WA_RESULT', id: j.id, kind: j.kind, claimToken: j.claimToken, ok, error, invalid: !!invalid }).catch(() => null); job.set(null); };
 
   // A message in progress: this page is its send link. Wait for the chat to open with the text, press send, check.
   async function finish(j) {

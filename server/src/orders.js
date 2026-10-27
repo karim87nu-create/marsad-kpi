@@ -63,14 +63,32 @@ function setup(app) {
   app.route('POST', '/api/orders/push', async ctx => {
     const hash = await setting('orders_token_hash'), given = ctx.header('x-orders-token');
     if (!hash || !given || sha256(given) !== hash) fail(401, 'مفتاح مرصد الأوردرات غير صحيح');
-    const b = ctx.body;
+    let b = ctx.body;
     if (!validDate(String(b.day || ''))) fail(400, 'invalid_day');
+    const existing = await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(b.day);
+    let before = {}; try { before = JSON.parse(existing?.data || '{}'); } catch {}
+    const replay = b.replayAlerts === true;
+    if (replay) {
+      if (!existing) fail(409, 'snapshot_required_before_alert_replay');
+      b = { ...before, day: b.day, alerts: b.alerts };
+    }
+    const sourceAt = Date.parse(b.generatedAt || ''), previousAt = Date.parse(before.generatedAt || '');
+    if (b.generatedAt && !Number.isFinite(sourceAt)) fail(400, 'invalid_snapshot_time');
+    if (Number.isFinite(previousAt) && (!Number.isFinite(sourceAt) || sourceAt < previousAt))
+      return { ok: true, ignored: 'older_snapshot' };
+    // A legacy lightweight retry omits items. Absence is not an empty basket.
+    if (Array.isArray(b.online)) {
+      const old = new Map((before.online || []).map(o => [String(o.no), o]));
+      b.online = b.online.map(o => !Object.hasOwn(o, 'items') && old.get(String(o.no))?.items
+        ? { ...o, items: old.get(String(o.no)).items } : o);
+    }
     const data = JSON.stringify({ ...b, alerts: undefined });
     if (data.length > 900000) fail(413, 'payload_too_large');
     const previous = Number(await setting('orders_last_push')) || null;
-    await db.prepare('INSERT INTO orders_days (day, data, received_at) VALUES (?, ?, ?) ON CONFLICT(day) DO UPDATE SET data = excluded.data, received_at = excluded.received_at')
-      .run(b.day, data, ctx.now);
-    await put('orders_last_push', ctx.now);
+    const stored = replay ? { changes: 1 } : await db.prepare('INSERT INTO orders_days (day, data, received_at) VALUES (?, ?, ?) ON CONFLICT(day) DO UPDATE SET data = excluded.data, received_at = excluded.received_at WHERE orders_days.data = ?')
+      .run(b.day, data, ctx.now, existing?.data ?? null);
+    if (!stored.changes) fail(409, 'snapshot_changed_retry');
+    if (!replay) await put('orders_last_push', ctx.now);
     const alerts = [];
     // Persist each alert's last state per Apex day. A retry must not create a second reply.
     const stateKey = 'orders_alert_states:' + b.day;
@@ -139,7 +157,7 @@ function setup(app) {
       if (text) { alerts.push({ key: 'resolved:' + key + ':' + ((old.sequence || 0) + 1), kind: old.kind, text, replyTo: key, target: old.target, branch: old.branch }); old.status = 'resolved'; old.sequence = (old.sequence || 0) + 1; }
     }
     // The monitor was reported stopped: say it is back, as a reply to that alert.
-    if (previous) {
+    if (previous && !replay) {
       const gone = await db.prepare('SELECT key FROM telegram_log WHERE key = ?').get('orders:stale:' + previous);
       if (gone) alerts.push({ key: 'resolved:' + gone.key, kind: 'ordersStale', replyTo: gone.key,
         text: '🖥️ Apex | ✅ مرصد الأوردرات رجع يقرا من Apex — كان واقف ' + Math.round((ctx.now - previous) / 60000) + ' دقيقة' });
@@ -149,7 +167,8 @@ function setup(app) {
     // Payment / service / platform values the admin marked as officer: the monitor keeps them out of every total.
     let officer = []; try { officer = JSON.parse(await setting('officer_values') || '[]'); } catch {}
     // follow: this server answers warnings from the monitor's follow-ups (status changes, reminders).
-    return { ok: true, officer, follow: 1, kinds: KINDS, serverNow: iso(ctx.now) };
+    return { ok: true, officer, follow: 1, kinds: KINDS, serverNow: iso(ctx.now),
+      acknowledgedAlerts: (Array.isArray(b.alerts) ? b.alerts : []).slice(0, 400).map(a => a?.key).filter(Boolean) };
   }, { limit: 1024 * 1024 });
 
   // ---- the Talabat codes of past days, sent once by the monitor from Apex's archive (so old days link right too) ----

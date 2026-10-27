@@ -36,18 +36,15 @@ function setup(app) {
       const had = (await db.prepare('SELECT COUNT(*) n FROM history_calls WHERE report_id = ?').get(last.id)).n;
       if (rows.length < had) fail(409, 'الملف فيه ' + rows.length + ' مكالمة بس، والمحفوظ لنفس اليوم ' + had + ' مكالمة؛ متغيرش');
     }
-    // The report header goes in first; its calls follow in one atomic batch, then older copies of the date are removed.
-    const r = await db.prepare('INSERT INTO history_reports (date, imported_at, source, verified_total, expected_count, header, fingerprint) VALUES (?,?,?,?,?,?,?)')
-      .run(date, now, source, verified ? 1 : 0, expected ?? null, JSON.stringify(header), fingerprint);
-    const id = Number(r.lastInsertRowid), writes = [];
-    for (let i = 0; i < rows.length; i += 30) {
-      const part = rows.slice(i, i + 30);
-      writes.push(db.prepare('INSERT INTO history_calls (report_id, idx, raw) VALUES ' + part.map(() => '(?,?,?)').join(',')).bind(...part.flatMap((row, k) => [id, i + k, JSON.stringify(row)])));
+    // Publish header and calls atomically. Keep previous versions as evidence; readers select the latest.
+    const writes = [db.prepare('INSERT INTO history_reports (date, imported_at, source, verified_total, expected_count, header, fingerprint) VALUES (?,?,?,?,?,?,?)')
+      .bind(date, now, source, verified ? 1 : 0, expected ?? null, JSON.stringify(header), fingerprint)];
+    for (let i = 0; i < rows.length; i += 20) {
+      const part = rows.slice(i, i + 20);
+      writes.push(db.prepare('INSERT INTO history_calls (report_id,idx,raw) VALUES ' + part.map(() => '((SELECT id FROM history_reports WHERE date=? AND fingerprint=? ORDER BY id DESC LIMIT 1),?,?)').join(','))
+        .bind(...part.flatMap((row,k) => [date,fingerprint,i+k,JSON.stringify(row)])));
     }
-    writes.push(db.prepare('DELETE FROM history_calls WHERE report_id IN (SELECT id FROM history_reports WHERE date = ? AND id <> ?)').bind(date, id),
-      db.prepare('DELETE FROM history_reports WHERE date = ? AND id <> ?').bind(date, id));
-    try { await db.batch(writes); }
-    catch (e) { await db.prepare('DELETE FROM history_reports WHERE id = ?').run(id); throw e; }
+    const result = await db.batch(writes), id = Number(result[0].lastInsertRowid);
     cache.clear();
     return { id, duplicate: false };
   }

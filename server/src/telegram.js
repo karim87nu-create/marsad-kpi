@@ -2,6 +2,7 @@
 // each alert once. Rules can be switched on and off from the admin page.
 import { businessDay, dayWindow, iso, RULES } from './time.js';
 import { outKind } from './attendance-rules.js';
+import { branchMessage } from './branch-message.js';
 import * as A from './arabicss.js';
 import { sha256Bytes, randomBytes, b64, fromB64 } from './security.js';
 
@@ -68,7 +69,8 @@ function setup(app) {
     if (!token) fail(400, 'اربط البوت الأول');
     const r = await fetch(API + '/bot' + token + '/' + method, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}), signal: AbortSignal.timeout(15000) });
     const d = await r.json().catch(() => ({}));
-    if (!d.ok) { const e = Error(d.description || 'تليجرام رفض الطلب'); e.status = r.status; throw e; }
+    if (!d.ok) { const e = Error(d.description || 'تليجرام رفض الطلب'); e.status = r.status; e.definitiveRejection = d.ok === false; throw e; }
+    if (method === 'sendMessage' && !d.result?.message_id) throw Error('delivery_unconfirmed');
     return d.result;
   }
 
@@ -486,11 +488,16 @@ function setup(app) {
         const claim = await db.prepare('UPDATE telegram_log SET sent_at = ?, tries = tries + 1 WHERE id = ? AND sent_at IS NULL').run(app.now(), r.id);
         if (!claim.changes) continue;
         try {
-          const m = await call('sendMessage', { chat_id: chat, text: r.text, ...(parent?.message_id ? { reply_parameters: { message_id: parent.message_id, allow_sending_without_reply: true } } : {}) }, c.token);
+          const text = target === 'branches' || target?.startsWith('branch:') ? branchMessage(r.text) : r.text;
+          const m = await call('sendMessage', { chat_id: chat, text, ...(parent?.message_id ? { reply_parameters: { message_id: parent.message_id, allow_sending_without_reply: true } } : {}) }, c.token);
           await db.prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('telegram_delivery:' + r.key, String(chat));
           await db.prepare('UPDATE telegram_log SET error = NULL, message_id = ? WHERE id = ?').run(m?.message_id ?? null, r.id); sent++;
         }
-        catch (e) { await db.prepare('UPDATE telegram_log SET sent_at = NULL, error = ? WHERE id = ?').run(String(e.message).slice(0, 300), r.id); }
+        catch (e) {
+          // An explicit rejection is retryable. A lost response may follow a successful send.
+          if (e.definitiveRejection) await db.prepare('UPDATE telegram_log SET sent_at = NULL, error = ? WHERE id = ?').run(String(e.message).slice(0, 300), r.id);
+          else await db.prepare("UPDATE telegram_log SET error = 'delivery_unconfirmed' WHERE id = ?").run(r.id);
+        }
       }
       }
     } finally { busy = false; }

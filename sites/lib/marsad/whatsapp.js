@@ -7,7 +7,7 @@
 // The customer's number is read by the Talabat monitor screen only while this is on, kept only until the survey is
 // sent (or the order is cancelled, or 12 hours pass), then erased. Numbers are never shown on the admin page.
 import { businessDay, iso } from './time.js';
-import { sha256, sha256Bytes, randomBytes, b64, fromB64 } from './security.js';
+import { sha256, sha256Bytes, randomToken, randomBytes, b64, fromB64 } from './security.js';
 
 const TICK_MS = 30000, GRAPH = 'https://graph.facebook.com/v21.0', KEEP_MS = 12 * 3600000, WELCOME_WINDOW_MS = 2 * 3600000;
 const DEAD = new Set(['CANCELLED', 'REJECTED']);
@@ -60,12 +60,46 @@ function setup(app) {
         const id = String(o.id || '').replace(/\D/g, '').slice(0, 20);
         if (id.length < 6 || !o.phone) continue;
         const phone = egMobile(o.phone);
+        // Current 3.1.9 reads these fields from a detail panel whose order ID it checks.
+        // A phone-only list row is not proof of customer/order identity.
+        const detailPhone = egMobile(o.detail?.customer?.phone);
+        const verified = phone && detailPhone === phone;
+        if (verified) rows.push(db.prepare('INSERT INTO wa_identity (talabat_id,phone_hash,verified_at) VALUES (?,?,?) ON CONFLICT(talabat_id) DO UPDATE SET phone_hash=excluded.phone_hash,verified_at=excluded.verified_at').bind(id,sha256(phone),now));
         rows.push(db.prepare('INSERT OR IGNORE INTO wa_messages (talabat_id, day, phone, created_at, error) VALUES (?,?,?,?,?)')
-          .bind(id, businessDay(now), phone, now, phone ? null : 'الرقم مش موبايل مصري'));
+          .bind(id, businessDay(now), phone, now, phone ? verified ? null : 'customer_identity_pending' : 'الرقم مش موبايل مصري'));
+        if (verified) rows.push(db.prepare('UPDATE wa_messages SET phone=?,error=NULL WHERE talabat_id=? AND welcome_at IS NULL AND sending_at IS NULL').bind(phone,id));
       }
       if (rows.length) await db.batch(rows);
     },
   };
+
+  const identityReady = async r => {
+    const identity = await db.prepare('SELECT phone_hash FROM wa_identity WHERE talabat_id=?').get(r.talabat_id);
+    const order = await db.prepare('SELECT status FROM talabat_orders WHERE id=?').get(r.talabat_id);
+    if (!r.phone || !order?.status || DEAD.has(order.status) || identity?.phone_hash !== sha256(r.phone)) {
+      await db.prepare("UPDATE wa_messages SET error='customer_identity_pending' WHERE id=?").run(r.id); return false;
+    }
+    return true;
+  };
+  async function claim(r, kind, now, protocol) {
+    if (!await identityReady(r)) return null;
+    const token = randomToken(24);
+    const got = await db.prepare(`INSERT INTO wa_claims (message_id,kind,token,claimed_at,state,protocol) VALUES (?,?,?,?,'claimed',?)
+      ON CONFLICT(message_id) DO UPDATE SET kind=excluded.kind,token=excluded.token,claimed_at=excluded.claimed_at,state='claimed',protocol=excluded.protocol
+      WHERE wa_claims.state='done' AND wa_claims.kind='welcome' AND excluded.kind='survey'`).run(r.id,kind,token,now,protocol);
+    if (!got.changes) return null;
+    await db.prepare('UPDATE wa_messages SET sending_at=? WHERE id=?').run(now,r.id);
+    return token;
+  }
+  async function settle(id, kind, token, ok, invalid, now) {
+    const guard = "EXISTS (SELECT 1 FROM wa_claims WHERE message_id=? AND token=? AND kind=? AND state='claimed')";
+    const field = kind === 'survey' ? 'survey_at' : 'welcome_at';
+    await db.batch([
+      ok ? db.prepare(`UPDATE wa_messages SET ${field}=?,sending_at=NULL,error=NULL${kind==='survey'?',phone=NULL':''} WHERE id=? AND ${guard}`).bind(now,id,id,token,kind)
+        : db.prepare(`UPDATE wa_messages SET error=?,tries=CASE WHEN ? THEN 3 ELSE tries END,phone=CASE WHEN ? THEN NULL ELSE phone END WHERE id=? AND ${guard}`).bind(invalid?'الرقم مش على واتساب':'delivery_unconfirmed',invalid?1:0,invalid?1:0,id,id,token,kind),
+      db.prepare("UPDATE wa_claims SET state=? WHERE message_id=? AND token=? AND kind=? AND state='claimed'").bind(ok?'done':'unknown',id,token,kind),
+    ]);
+  }
 
   // ---- sending: the welcome first, the survey after the delay; numbers erased when done ----
   let busy = false, last = 0;
@@ -80,8 +114,9 @@ function setup(app) {
       for (const r of await db.prepare('SELECT * FROM wa_messages WHERE phone IS NOT NULL AND welcome_at IS NULL AND tries < 3 AND created_at > ? ORDER BY created_at LIMIT 10').all(now - WELCOME_WINDOW_MS)) {
         const s = await status(r.talabat_id);
         if (DEAD.has(s.status)) { await db.prepare('UPDATE wa_messages SET phone = NULL, error = ? WHERE id = ?').run('الأوردر اتلغى', r.id); continue; }
-        try { await sendTemplate(c, r.phone, c.welcome); await db.prepare('UPDATE wa_messages SET welcome_at = ?, error = NULL WHERE id = ?').run(now, r.id); sent++; }
-        catch (e) { await db.prepare('UPDATE wa_messages SET tries = tries + 1, error = ? WHERE id = ?').run(String(e.message).slice(0, 300), r.id); }
+        const token=await claim(r,'welcome',now,2); if (!token) continue;
+        try { await sendTemplate(c,r.phone,c.welcome); await settle(r.id,'welcome',token,true,false,now); sent++; }
+        catch { await settle(r.id,'welcome',token,false,false,now); }
       }
       const delay = Math.max(10, Math.min(600, Number(c.delay) || 75)) * 60000;
       for (const r of await db.prepare('SELECT * FROM wa_messages WHERE phone IS NOT NULL AND welcome_at IS NOT NULL AND survey_at IS NULL AND tries < 6 ORDER BY created_at LIMIT 10').all()) {
@@ -89,8 +124,9 @@ function setup(app) {
         if (DEAD.has(s.status)) { await db.prepare('UPDATE wa_messages SET phone = NULL, error = ? WHERE id = ?').run('الأوردر اتلغى — مفيش استطلاع', r.id); continue; }
         if (now - base < delay) continue;
         if (!c.survey) { await db.prepare('UPDATE wa_messages SET phone = NULL WHERE id = ?').run(r.id); continue; }
-        try { await sendTemplate(c, r.phone, c.survey); await db.prepare('UPDATE wa_messages SET survey_at = ?, phone = NULL, error = NULL WHERE id = ?').run(now, r.id); sent++; }
-        catch (e) { await db.prepare('UPDATE wa_messages SET tries = tries + 1, error = ? WHERE id = ?').run(String(e.message).slice(0, 300), r.id); }
+        const token=await claim(r,'survey',now,2); if (!token) continue;
+        try { await sendTemplate(c,r.phone,c.survey); await settle(r.id,'survey',token,true,false,now); sent++; }
+        catch { await settle(r.id,'survey',token,false,false,now); }
       }
     } finally { busy = false; }
     return sent;
@@ -113,19 +149,21 @@ function setup(app) {
     const free = 'phone IS NOT NULL AND tries < 3 AND (sending_at IS NULL OR sending_at < ' + (now - 180000) + ')';
     const status = async id => (await db.prepare('SELECT status, accepted_at FROM talabat_orders WHERE id = ?').get(id)) || {};
     const pick = async (kind, r) => {
-      await db.prepare('UPDATE wa_messages SET sending_at = ? WHERE id = ?').run(now, r.id); await put('wa_web_last', now);
+      const token = await claim(r,kind,now,ctx.body?.protocol === 2 ? 2 : 1);
+      if (!token) return null;
+      await put('wa_web_last', now);
       const text = (kind === 'survey' ? c.surveyText : c.welcomeText).replace(/\{code\}/g, r.code || '').replace(/\{branch\}/g, r.store || '').trim();
-      return { ok: true, on: true, message: { id: r.id, kind, phone: r.phone, text } };
+      return { ok: true, on: true, message: { id: r.id, kind, phone: r.phone, text, claimToken: token } };
     };
     for (const r of await db.prepare('SELECT w.*, t.code, t.store FROM wa_messages w LEFT JOIN talabat_orders t ON t.id = w.talabat_id WHERE ' + free.replace(/(phone|tries|sending_at)/g, 'w.$1') + ' AND w.welcome_at IS NULL AND w.created_at > ? ORDER BY w.created_at LIMIT 5').all(now - WELCOME_WINDOW_MS)) {
       if (DEAD.has((await status(r.talabat_id)).status)) { await db.prepare('UPDATE wa_messages SET phone = NULL, error = ? WHERE id = ?').run('الأوردر اتلغى', r.id); continue; }
-      return pick('welcome', r);
+      const picked=await pick('welcome',r); if (picked) return picked;
     }
     if (c.surveyText) for (const r of await db.prepare('SELECT w.*, t.code, t.store FROM wa_messages w LEFT JOIN talabat_orders t ON t.id = w.talabat_id WHERE ' + free.replace(/(phone|tries|sending_at)/g, 'w.$1') + ' AND w.welcome_at IS NOT NULL AND w.survey_at IS NULL ORDER BY w.created_at LIMIT 20').all()) {
       const s = await status(r.talabat_id);
       if (DEAD.has(s.status)) { await db.prepare('UPDATE wa_messages SET phone = NULL, error = ? WHERE id = ?').run('الأوردر اتلغى — مفيش استطلاع', r.id); continue; }
       if (now - (s.accepted_at || r.created_at) < delay) continue;
-      return pick('survey', r);
+      const picked=await pick('survey',r); if (picked) return picked;
     }
     return { ok: true, on: true, message: null };
   });
@@ -133,15 +171,14 @@ function setup(app) {
     await monitorAuth(ctx);
     const b = ctx.body || {}, id = Number(b.id), now = ctx.now;
     if (!Number.isInteger(id)) fail(400, 'invalid_id');
-    if (b.ok) {
-      if (b.kind === 'survey') await db.prepare('UPDATE wa_messages SET survey_at = ?, phone = NULL, sending_at = NULL, error = NULL WHERE id = ?').run(now, id);
-      else await db.prepare('UPDATE wa_messages SET welcome_at = ?, sending_at = NULL, error = NULL WHERE id = ?').run(now, id);
-      const c = await config(); if (b.kind !== 'survey' && c && !c.surveyText) await db.prepare('UPDATE wa_messages SET phone = NULL WHERE id = ?').run(id);
-    } else {
-      const err = String(b.error || 'ماتبعتش').slice(0, 300);
-      // A number that is not on WhatsApp will never work: dropped at once.
-      await db.prepare('UPDATE wa_messages SET tries = CASE WHEN ? THEN 3 ELSE tries + 1 END, sending_at = NULL, error = ?, phone = CASE WHEN ? THEN NULL ELSE phone END WHERE id = ?').run(b.invalid ? 1 : 0, err, b.invalid ? 1 : 0, id);
-    }
+    if (!['welcome','survey'].includes(b.kind)) fail(400,'invalid_kind');
+    const current = await db.prepare('SELECT * FROM wa_claims WHERE message_id=?').get(id);
+    if (!current || current.kind !== b.kind || (current.protocol===2 && b.claimToken!==current.token)) fail(409,'stale_claim');
+    if (current.state==='done') return {ok:true,duplicate:true};
+    if (current.state!=='claimed') fail(409,'delivery_unconfirmed');
+    await settle(id,b.kind,current.token,!!b.ok,!!b.invalid,now);
+    const c=await config();
+    if (b.ok && b.kind==='welcome' && c && !c.surveyText) await db.prepare('UPDATE wa_messages SET phone=NULL WHERE id=?').run(id);
     return { ok: true };
   });
 
@@ -155,6 +192,7 @@ function setup(app) {
     const raw = await setting('whatsapp_config'); let any = null; try { any = raw ? JSON.parse(await open(raw)) : null; } catch {}
     return { configured: !!c, enabled: !!c?.enabled, mode: any?.mode || 'web', phoneIdEnd: c?.phoneId ? String(c.phoneId).slice(-4) : null, welcome: any?.welcome || '', survey: any?.survey || '', lang: any?.lang || 'ar', delay: any?.delay || 75,
       welcomeText: any?.welcomeText || '', surveyText: any?.surveyText || '', lastWeb: iso(Number(await setting('wa_web_last')) || null),
+      unconfirmed: (await db.prepare("SELECT COUNT(*) n FROM wa_claims WHERE state='unknown' OR (state='claimed' AND claimed_at<?)").get(ctx.now-180000)).n,
       today: { orders: await n('1 = 1'), welcome: await n('welcome_at IS NOT NULL'), survey: await n('survey_at IS NOT NULL'), waiting: await n('phone IS NOT NULL') }, errors };
   });
   app.route('POST', '/api/whatsapp', async ctx => {

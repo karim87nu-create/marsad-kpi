@@ -214,7 +214,7 @@ async function talabatMessage(m, sender) {
     talabatTabs.wa = sender.tab.id; return { active: true };
   }
   if ((m.type === 'TALABAT_WA_NEXT' || m.type === 'TALABAT_WA_RESULT') && t && waSender(sender) && talabatTabs.wa === sender.tab.id) {
-    const body = m.type === 'TALABAT_WA_NEXT' ? {} : { id: m.id, kind: m.kind, ok: !!m.ok, error: m.error || null, invalid: !!m.invalid };
+    const body = m.type === 'TALABAT_WA_NEXT' ? { protocol: 2 } : { id: m.id, kind: m.kind, claimToken: m.claimToken, ok: !!m.ok, error: m.error || null, invalid: !!m.invalid };
     const r = await api(m.type === 'TALABAT_WA_NEXT' ? '/api/whatsapp/next' : '/api/whatsapp/result', { method: 'POST', headers: { 'content-type': 'application/json', 'x-talabat-token': t.token }, body: JSON.stringify(body), timeout: 20000 });
     const d = r.json();
     return r.ok ? { ok: true, ...d } : { ok: false, status: r.status, error: d.error };

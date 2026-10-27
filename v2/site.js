@@ -207,6 +207,7 @@ window.MarsadSite = function MarsadSite(ctx) {
   function renderTalabatCancels(d, id, pick) {
     table(id, [{ title: 'الأوردر', get: x => x.id }, { title: 'الفرع', get: x => x.store || '—' }, { title: 'وصل', get: x => x.receivedAt || x.placedAt, show: x => t12(x.receivedAt || x.placedAt), type: 'datetime' },
       { title: 'اتلغى', get: x => x.cancelledAt, show: x => t12(x.cancelledAt), type: 'datetime' }, { title: 'على مين', get: x => OWNER[x.cancelOwner] || x.cancelOwner || '—', show: x => pill(OWNER[x.cancelOwner] || x.cancelOwner || '—', x.cancelOwner === 'Vendor' ? 'bad' : '') },
+      { title: 'اكتمال التفاصيل', get: x => x.cancellationReadiness === 'FAILED' ? 'تعذّر استكمال التفاصيل — راجع المصدر' : x.cancellationReadiness === 'PENDING' ? 'مستني تفاصيل الإلغاء' : 'مكتملة' },
       { title: 'السبب', get: x => x.cancelReason || '—', cls: () => 'wrap' }, { title: 'كان خرج', get: x => x.pickedUpAt ? 'أيوه' : 'لأ' }, { title: 'على Apex', get: x => x.apex ? '#' + (x.apex.sn ?? x.apex.no) + ' · ' + (x.apex.user || '') : '—' },
       { title: 'الأصناف', get: x => itemsText(x) || '—', cls: () => 'wrap' }, { title: 'مطابقة الأصناف', get: x => x.apex?.items ? (x.apex.items.ok ? 'مطابقة' : 'مختلفة') : '', show: itemsCell }, { title: 'المبلغ', get: x => x.subtotal ?? x.total, type: 'number' }],
       d.orders.filter(x => x.status === 'CANCELLED' && (!pick || x.store === pick)).reverse(), { empty: 'مفيش إلغاءات على طلبات' });
@@ -269,7 +270,7 @@ window.MarsadSite = function MarsadSite(ctx) {
     if (!isAdmin) return;
     const s = await api('/api/whatsapp'), f = $('waWebForm');
     $('waStatus').replaceChildren(s.enabled ? pill('الإرسال شغال', 'ok') : pill('الإرسال واقف', 'warn'), ' ',
-      h('span', { className: 'muted', textContent: 'النهارده: ' + s.today.orders + ' أوردر برقم · اتبعت ترحيب ' + s.today.welcome + ' · استطلاع ' + s.today.survey + ' · مستني ' + s.today.waiting + (s.lastWeb ? ' · آخر رسالة ' + t12(s.lastWeb) : '') }));
+      h('span', { className: 'muted', textContent: 'النهارده: ' + s.today.orders + ' أوردر برقم · اتبعت ترحيب ' + s.today.welcome + ' · استطلاع ' + s.today.survey + ' · مستني ' + s.today.waiting + (s.unconfirmed ? ' · إرسال غير مؤكد يحتاج مراجعة: ' + s.unconfirmed : '') + (s.lastWeb ? ' · آخر رسالة ' + t12(s.lastWeb) : '') }));
     if (document.activeElement?.form !== f) { f.elements.welcomeText.value = s.welcomeText || ''; f.elements.surveyText.value = s.surveyText || ''; f.elements.delay.value = s.delay || 75; }
     $('waOn').hidden = s.enabled || !s.welcomeText; $('waOff').hidden = !s.enabled;
     $('waErrors').replaceChildren(...(s.errors.length ? [h('h3', { textContent: 'اللي ماتبعتش النهارده' }), ...s.errors.map(e => h('p', { className: 'muted', textContent: t12(e.at) + ' · أوردر ' + e.order + ' · ' + e.error }))] : []));

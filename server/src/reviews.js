@@ -39,7 +39,15 @@ function setup(app) {
     const who = await app.requireAdmin(ctx, 'write');
     const b = ctx.body || {}, key = String(b.key || '').slice(0, 160);
     if (!key) fail(400, 'invalid_key');
-    if (b.verdict == null) { await db.prepare('DELETE FROM exception_reviews WHERE key = ?').run(key); return { ok: true }; }
+    const before = await db.prepare('SELECT * FROM exception_reviews WHERE key = ?').get(key);
+    if (b.verdict == null) {
+      // Preserve the original review in the append-only audit before clearing its current decision.
+      await db.batch([
+        db.prepare('INSERT INTO audit (occurred_at,action,employee_id,details) VALUES (?,?,NULL,?)').bind(ctx.now,'exception_review_cleared',JSON.stringify({actor:who.name,key,before:before||null,after:null,reason:String(b.note||'').slice(0,500)||null})),
+        db.prepare('DELETE FROM exception_reviews WHERE key = ?').bind(key),
+      ]);
+      return { ok: true };
+    }
     if (!['ok', 'error'].includes(b.verdict)) fail(400, 'invalid_verdict');
     if (b.verdict === 'ok' && b.reason && !REASONS[b.reason]) fail(400, 'invalid_reason');
     const day = validDate(String(b.day || '')) ? b.day : businessDay(ctx.now);
@@ -47,7 +55,7 @@ function setup(app) {
       ON CONFLICT(key) DO UPDATE SET verdict = excluded.verdict, reason = excluded.reason, note = excluded.note, signature = COALESCE(excluded.signature, exception_reviews.signature), by_name = excluded.by_name, at = excluded.at`)
       .run(key, String(b.source || '').slice(0, 40), String(b.ref || '').slice(0, 40), day, b.verdict, b.verdict === 'ok' ? (b.reason || 'other') : null, String(b.note || '').slice(0, 500) || null,
         b.signature ? String(b.signature).slice(0, 200) : null, who.name, ctx.now);
-    await app.audit('exception_review', null, { actor: who.name, key, verdict: b.verdict, reason: b.reason });
+    await app.audit('exception_review', null, { actor: who.name, key, verdict: b.verdict, reason: b.reason, before: before || null, after: { verdict:b.verdict, reason:b.reason || null, note:b.note || null } });
     return { ok: true };
   });
 }

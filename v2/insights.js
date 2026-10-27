@@ -27,7 +27,7 @@ window.MarsadInsights = function MarsadInsights(ctx) {
     if (p?.learned) return { status: 'learned', pattern: p };
     return { status: 'open', pattern: p };
   }
-  const counts = item => ['open', 'error'].includes(judge(item).status);   // still an error
+  const counts = item => judge(item).status === 'error';   // Only reviewed errors count against an employee.
   const REASON = () => rv.data.reasons || {};
   async function answer(item, verdict, reason, note) {
     await api('/api/exception-reviews', { method: 'POST', body: { ...item, verdict, reason, note } });

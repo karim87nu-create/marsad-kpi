@@ -84,7 +84,7 @@ function createApp({ db, config: input = {}, now = () => Date.now() }) {
       headers['access-control-allow-origin'] = origin;
       headers.vary = 'Origin';
       headers['access-control-allow-headers'] = ALLOWED_HEADERS;
-      headers['access-control-allow-methods'] = 'GET, POST, PATCH, DELETE, OPTIONS';
+      headers['access-control-allow-methods'] = 'GET, POST, PUT, PATCH, DELETE, OPTIONS';
       headers['access-control-max-age'] = '600';
     }
     const send = (status, body) => new Response(JSON.stringify(body), { status, headers: { ...headers, 'content-type': 'application/json; charset=utf-8' } });

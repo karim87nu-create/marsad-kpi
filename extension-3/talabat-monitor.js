@@ -175,7 +175,10 @@
   const FULL = 'marsadTalabatFull', fullAt = () => { try { return Number(sessionStorage.getItem(FULL)) || 0; } catch { return 0; } };
   let want = [], lastReload = Date.now(), failures = 0, phonesWanted = false;
   async function push(orders) {
-    const r = await bg({ type: 'TALABAT_PUSH', orders }).catch(e => ({ ok: false, error: e.message }));
+    const timing = await bg({ type: 'CLOCK' }).catch(() => null);
+    if (!Number.isFinite(timing?.offset)) { failures++; say('مستني مزامنة ساعة المرصد قبل الإرسال'); return false; }
+    const observedAt = new Date(Date.now() + timing.offset).toISOString();
+    const r = await bg({ type: 'TALABAT_PUSH', orders: orders.map(o => ({ ...o, observedAt: o.observedAt || observedAt })) }).catch(e => ({ ok: false, error: e.message }));
     if (!r?.ok) { failures++; say('مش قادر يبعت للمرصد (' + (r?.error || r?.status || '?') + ')'); return false; }
     failures = 0; want = r.want || []; phonesWanted = !!r.phones; return true;
   }

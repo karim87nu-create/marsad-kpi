@@ -108,23 +108,22 @@ function setup(app) {
     const existing = await db.prepare('SELECT id FROM events WHERE session_id = ? AND event_key = ?').get(session.id, key);
     if (existing) return { ok: true, duplicate: true, id: existing.id };
 
-    const writes = [];
+    const writes = []; let permissionId = null;
     if (type === 'break_start') {
       const p = await db.prepare('SELECT * FROM break_permissions WHERE id = ?').get(String(ev.permissionId || ''));
       if (!p || p.session_id !== session.id || p.used_at || p.expires_at < occurred - 5000 || p.extension !== extension)
         fail(409, 'break_authorization_rejected');
-      // Claim the permission first, so two copies of the same start cannot both use it.
-      const claim = await db.prepare('UPDATE break_permissions SET used_at = ? WHERE id = ? AND used_at IS NULL').run(occurred, p.id);
-      if (!claim.changes) fail(409, 'break_authorization_rejected');
+      permissionId = p.id;
+      writes.push(db.prepare('UPDATE break_permissions SET used_at=? WHERE id=? AND used_at IS NULL AND EXISTS (SELECT 1 FROM events WHERE session_id=? AND event_key=?)').bind(occurred,p.id,session.id,key));
       const r = p.request_id ? await db.prepare('SELECT * FROM break_requests WHERE id = ?').get(p.request_id) : null;
-      if (r) writes.push(db.prepare("UPDATE break_requests SET status = 'starting' WHERE id = ?").bind(r.id));
+      if (r) writes.push(db.prepare("UPDATE break_requests SET status = 'starting' WHERE id = ? AND EXISTS (SELECT 1 FROM events WHERE session_id=? AND event_key=?)").bind(r.id,session.id,key));
       // The break details stored with every authorized break start.
       extra = JSON.stringify({ ...(extra ? JSON.parse(extra) : {}), breakPolicyKind: r ? 'approved' : 'regular', breakReasonId: String(ev.breakReasonId || r?.reason_id || '2'),
         breakRequestedMinutes: r ? r.requested_minutes : 15, breakPermissionId: p.id, breakAllowedSeconds: p.allowed_seconds, breakGraceSeconds: p.grace_seconds });
     }
     if (type === 'break_end' && !await openBreak(session.id)) fail(409, 'break_start_missing');
     const insert = db.prepare(`INSERT OR IGNORE INTO events (session_id, employee_id, extension, event_type, event_key, occurred_at, received_at,
-      duration_seconds, state, call_id, phone, queue, call_type, client_version, payload, extra) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
+      duration_seconds, state, call_id, phone, queue, call_type, client_version, payload, extra) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE ? IS NULL OR EXISTS (SELECT 1 FROM break_permissions WHERE id=? AND used_at IS NULL)`).bind(
       session.id, employee.id, extension, type, key, occurred, ctx.now,
       Number.isFinite(Number(ev.durationSeconds)) ? Math.max(0, Math.round(Number(ev.durationSeconds))) : null,
       ev.state == null ? null : String(ev.state).slice(0, 40),
@@ -132,7 +131,7 @@ function setup(app) {
       ev.phone == null ? null : String(ev.phone).slice(0, 40),
       ev.queue == null ? null : String(ev.queue).slice(0, 20),
       ev.callType == null ? null : String(ev.callType).slice(0, 20),
-      String(ev.clientVersion || '').slice(0, 20), payload, extra);
+      String(ev.clientVersion || '').slice(0, 20), payload, extra, permissionId, permissionId);
     writes.unshift(insert);
     // A logout event ends the session at its own time.
     if (!closed && (type === 'session_logout' || type === 'arabicss_logout'))
@@ -149,7 +148,8 @@ function setup(app) {
     if (!results[0].changes) {
       // The same event arrived twice at the same moment; the other copy was stored.
       const row = await db.prepare('SELECT id FROM events WHERE session_id = ? AND event_key = ?').get(session.id, key);
-      return { ok: true, duplicate: true, id: row?.id };
+      if (!row) fail(409, 'break_authorization_rejected');
+      return { ok: true, duplicate: true, id: row.id };
     }
     return { ok: true, id: Number(results[0].lastInsertRowid) };
   });

@@ -31,11 +31,13 @@ test('ties in either direction are ambiguous and independent of row order', () =
   }
   assert.equal(resolveOrders([row()], [apex(1), apex(2)], opts).matches.size, 0);
 });
-test('manual links and manual-none reserve first, even against an exact code', () => {
+test('manual proposals do not reserve or override independent evidence; conflicts remain ambiguous', () => {
   const rows = [row(), row('10000002')], A = [apex(1, { tag: '10000001' }), apex(2)];
   const d = resolveOrders(rows, A, { ...opts, manual: new Map([['10000002','1'], ['10000001', null]]) });
-  assert.equal(d.matches.get('10000002').no, 1); assert.equal(d.how.get('10000002'), 'manual');
-  assert.equal(d.matches.has('10000001'), false); assert.equal(d.states.get('10000001').state, 'manual-none');
+  assert.equal(d.matches.size, 0);
+  assert.equal(d.states.get('10000001').confidence, 'AMBIGUOUS');
+  assert.equal(d.states.get('10000001').manualConflict, true);
+  assert.equal(d.states.get('10000002').manualProposal, '1');
 });
 test('duplicate codes and zero-stripped partial codes do not become sure links without evidence', () => {
   const bare = row('10000001', { code: '8403', customer: {}, items: [] });
@@ -51,7 +53,7 @@ test('split duplicate item lines aggregate before matching quantities', () => {
   const d = resolveOrders([row()], [apex(1, { items: [ { ...aitems[0], qty: 1 }, { ...aitems[0], qty: 1 } ] })], opts);
   assert.equal(d.matches.size, 1);
 });
-test('API persists customer evidence, excludes ambiguity from learning, and manual wins', async () => {
+test('API persists customer evidence, excludes ambiguity from learning, and conflicting manual proposals do not teach', async () => {
   const t = await start({ at: anchor + 30 * 60000 });
   try {
     const admin = await t.admin(), token = (await admin('POST', '/api/talabat/token')).body.token;
@@ -71,9 +73,10 @@ test('API persists customer evidence, excludes ambiguity from learning, and manu
     // Exact code arriving later cannot override a manual-none or steal a manually reserved order.
     await t.call('POST', '/api/orders/tags', { headers: { 'x-orders-token': ot }, body: { day: '2026-10-22', tags: { 1: '10000001', 2: '10000002' } } });
     d = (await admin('GET', '/api/talabat/day?day=2026-10-22')).body;
-    assert.equal(d.orders.find(x => x.id === '10000002').apex.no, 1);
+    assert.equal(d.orders.find(x => x.id === '10000002').apex, null);
+    assert.equal(d.orders.find(x => x.id === '10000002').matching.confidence, 'AMBIGUOUS');
     assert.equal(d.orders.find(x => x.id === '10000001').apex, null);
     const facts = t.app.db.raw.prepare("SELECT DISTINCT ref FROM learned WHERE kind LIKE 'match-v2:%'").all();
-    assert.deepEqual(facts, [{ ref: '10000002' }]);
+    assert.deepEqual(facts, []);
   } finally { await t.close(); }
 });

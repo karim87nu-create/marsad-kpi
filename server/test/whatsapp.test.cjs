@@ -16,7 +16,7 @@ test('whatsapp: welcome on a new Talabat order, survey after the delay, numbers 
   try {
     const admin = await t.admin();
     const { token } = (await admin('POST', '/api/talabat/token')).body;
-    const push = orders => t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders } });
+    const push = orders => t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: orders.map(o => o.phone ? { ...o, detail: { ...(o.detail || {}), customer: { phone: o.phone } } } : o) } });
     // Off: the screen is not asked for numbers, and a number sent anyway is not kept.
     let r = await push([{ id: '4676900001', status: 'ACCEPTED', placedAt: at(0), phone: '01001234567' }]);
     assert.equal(r.body.phones, false);
@@ -83,7 +83,7 @@ test('whatsapp web: the monitor PC takes the messages one at a time (welcome, th
     const admin = await t.admin();
     const { token } = (await admin('POST', '/api/talabat/token')).body;
     const H = { 'x-talabat-token': token };
-    const push = orders => t.call('POST', '/api/talabat/push', { headers: H, body: { orders } });
+    const push = orders => t.call('POST', '/api/talabat/push', { headers: H, body: { orders: orders.map(o => o.phone ? { ...o, detail: { ...(o.detail || {}), customer: { phone: o.phone } } } : o) } });
     const next = async () => (await t.call('POST', '/api/whatsapp/next', { headers: H, body: {} })).body;
     const result = body => t.call('POST', '/api/whatsapp/result', { headers: H, body });
     assert.equal((await t.call('POST', '/api/whatsapp/next', { headers: { 'x-talabat-token': 'x' }, body: {} })).status, 401);

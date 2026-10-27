@@ -259,11 +259,31 @@ if (Test-Path $stateFile) {
   if ($lines.Count -gt 0) { $stateDay = $lines[0]; foreach($x in ($lines | Select-Object -Skip 1)){ [void]$alerted.Add($x) } }
 }
 $pending = New-Object System.Collections.ArrayList
+$outboxFile = Join-Path $here 'alerts-outbox.json'
+function ReadOutbox {
+  if (-not (Test-Path $outboxFile)) { return @() }
+  $wire = Get-Content $outboxFile -Raw -Encoding UTF8
+  if ($wire.Trim() -eq '[]') { return @() }
+  return @(ConvertFrom-Json $wire)
+}
+if (Test-Path $outboxFile) {
+  # A corrupt or unreadable queue must stop startup, never silently discard unacknowledged alerts.
+  foreach ($entry in (ReadOutbox)) { if ($entry) { [void]$pending.Add($entry) } }
+}
+function SaveOutbox {
+  $tmp = $outboxFile + '.tmp'
+  [IO.File]::WriteAllText($tmp, (ConvertTo-Json -InputObject @($pending) -Depth 8 -Compress), [Text.UTF8Encoding]::new($false))
+  if (Test-Path $outboxFile) { [IO.File]::Replace($tmp, $outboxFile, [System.Management.Automation.Language.NullString]::Value) } else { [IO.File]::Move($tmp, $outboxFile) }
+}
 function Raise($key, $kind, $text, [bool]$silent, $branch, $sn, $status){
   if ($alerted.Contains($key)) { return }
+  if (-not $silent -and -not @($pending | Where-Object { $_.key -eq $key -and $_.day -eq $script:stateDay }).Count) {
+    [void]$pending.Add([ordered]@{ day = $script:stateDay; key = $key; kind = $kind; text = $text; branch = $branch; sn = $sn; status = $(if ($status) { $status } else { 'active' }) })
+    # Persist before the legacy seen marker. A crash between writes reuses the same queue key.
+  }
+  if (-not $silent) { SaveOutbox }
   [void]$alerted.Add($key)
   Add-Content $stateFile $key -Encoding UTF8
-  if (-not $silent) { [void]$pending.Add([ordered]@{ key = $key; kind = $kind; text = $text; branch = $branch; sn = $sn; status = $(if ($status) { $status } else { 'active' }) }); L "alert $key" }
 }
 
 $script:pushFails = 0
@@ -287,7 +307,12 @@ function Push($payload){
     # Values the admin marked as officer (not sales) come back with every push.
     $script:ServerFollow = [bool]($resp -and $resp.follow)
     if ($resp -and $resp.officer) { $script:OfficerValues = @($resp.officer | ForEach-Object { "$_".Trim() }) }
-    $pending.Clear()
+    if (-not $resp.ok -or $resp.ignored) { throw 'Snapshot was not accepted; pending alerts retained' }
+    # New server explicitly acknowledges persisted alerts. Older servers cannot retire this queue.
+    foreach ($key in @($resp.acknowledgedAlerts)) {
+      for ($i = $pending.Count - 1; $i -ge 0; $i--) { if ($pending[$i].day -eq $payload.day -and $pending[$i].key -eq $key) { $pending.RemoveAt($i) } }
+    }
+    SaveOutbox
     if ($script:pushFails -gt 0) { L "push ok again after $($script:pushFails) failures" }
     $script:pushFails = 0
   } catch {
@@ -297,7 +322,7 @@ function Push($payload){
     if ($body.Length -gt 300) { $body = $body.Substring(0, 300) }
     # Do not persist the customer payload in failed-push diagnostics.
     if ($script:pushFails -le 3 -or $script:pushFails % 40 -eq 0) { L "push failed ($($script:pushFails)): $($_.Exception.Message) $body" }
-    while ($pending.Count -gt 50) { $pending.RemoveAt(0) }
+    # No size-based eviction: failed deliveries remain durable until acknowledged.
   }
 }
 
@@ -625,7 +650,14 @@ while ($true) {
     $cycleNo++
     if ($cycleNo % 240 -eq 0) { LoadRefs }
     $payload = Cycle
-    if ($payload) { Push $payload }
+    if ($payload) {
+      $currentAlerts = @($pending | Where-Object { $_.day -eq $payload.day } | Select-Object -First 400)
+      $payload.alerts = @($currentAlerts + $(if ($script:ServerFollow -and $currentAlerts.Count -lt 400) { @($script:follow | Select-Object -First (400 - $currentAlerts.Count)) } else { @() }))
+      Push $payload
+      foreach ($oldDay in @($pending | Where-Object { $_.day -ne $payload.day } | ForEach-Object { $_.day } | Sort-Object -Unique)) {
+        Push ([ordered]@{ day = $oldDay; replayAlerts = $true; alerts = @($pending | Where-Object { $_.day -eq $oldDay } | Select-Object -First 400) })
+      }
+    }
     if (-not $script:tagsBackfilled -and $script:pushFails -eq 0 -and $script:ServerFollow -and (-not $script:tagsRetryAt -or (Get-Date) -gt $script:tagsRetryAt)) { BackfillTags }
   } catch {
     L "cycle error: $($_.Exception.Message)"

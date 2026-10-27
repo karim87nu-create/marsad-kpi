@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node src/main.js",
-    "test": "node --test --test-force-exit test/*.test.cjs",
+    "test": "node test/run-tests.cjs",
     "import-old": "node scripts/import-old-db.js"
   },
   "dependencies": {

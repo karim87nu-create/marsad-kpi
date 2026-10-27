@@ -270,10 +270,12 @@
     { title: 'أول دخول', get: r => r.firstLogin, show: r => clock(r.firstLogin), type: 'datetime' }, { title: 'آخر خروج', get: r => r.lastLogout, show: r => clock(r.lastLogout), type: 'datetime' }];
   async function renderTeam() {
     const d = await dayData(), rows = teamRows(d);
-    const busy = rows.filter(r => r.onCall + r.ready > 0).map(r => r.onCall / (r.onCall + r.ready) * 100), ahts = rows.filter(r => r.aht).map(r => r.aht);
+    const busy = rows.filter(r => r.onCall + r.ready > 0).map(r => r.onCall / (r.onCall + r.ready) * 100);
+    const answered = d.employees.reduce((n,e) => n + (e.answered || 0), 0);
+    const teamAht = answered ? d.employees.reduce((n,e) => n + (e.talkSeconds || 0), 0) / answered : null;
     const topCalls = [...rows].sort((a, b) => b.calls - a.calls)[0], overBreak = rows.filter(r => (r.overBreakDays ?? (r.breakSeconds > 1800 ? 1 : 0)) > 0).length, gaps = rows.filter(r => r.unknown > 900).length;
     $('teamViewCards').replaceChildren(kpi('موظفين اشتغلوا', rows.length, 'info'), kpi('متوسط نسبة الانشغال', busy.length ? Math.round(avg(busy)) + '%' : '—', '', 'وقت المكالمات ÷ (المكالمات + المتاح)'),
-      kpi('متوسط مدة المكالمة', dur(avg(ahts))), kpi('أكتر واحد مكالمات', topCalls ? topCalls.calls : '—', 'on_call', topCalls?.name || ''),
+      kpi('متوسط مدة المكالمة', dur(teamAht)), kpi('أكتر واحد مكالمات', topCalls ? topCalls.calls : '—', 'on_call', topCalls?.name || ''),
       kpi('عدّوا الـ 30 دقيقة بريك', overBreak, overBreak ? 'bad' : 'good'), kpi('برّه التحويلة أكتر من 15 د', gaps, gaps ? 'warn' : 'good', 'للتوضيح بس'));
     table('teamTable', teamColumns, rows, { onRow: r => { state.profile = r.id; show('profile'); } });
   }
