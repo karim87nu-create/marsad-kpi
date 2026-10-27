@@ -1,0 +1,47 @@
+name: Apply reviewed Marsad repairs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - deployment/repair/marsad-repairs.patch.gz.b64
+      - .github/workflows/apply-marsad-repairs.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Decode reviewed patch
+        run: |
+          base64 --decode deployment/repair/marsad-repairs.patch.gz.b64 > /tmp/marsad-repairs.patch.gz
+          gzip -t /tmp/marsad-repairs.patch.gz
+          gzip -dc /tmp/marsad-repairs.patch.gz > /tmp/marsad-repairs.patch
+          git apply --check --whitespace=nowarn /tmp/marsad-repairs.patch
+      - name: Apply repairs
+        run: git apply --whitespace=nowarn /tmp/marsad-repairs.patch
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - name: Run server regression suite
+        working-directory: server
+        run: |
+          npm ci
+          npm test
+      - name: Commit repairs
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m 'Repair Apex and order reconciliation'
+          git push origin HEAD:main
