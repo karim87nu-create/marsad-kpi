@@ -26,7 +26,9 @@ jobs:
           gzip -dc /tmp/marsad-repairs.patch.gz > /tmp/marsad-repairs.patch
           git apply --check --ignore-space-change --ignore-whitespace /tmp/marsad-repairs.patch
       - name: Apply repairs
-        run: git apply --ignore-space-change --ignore-whitespace /tmp/marsad-repairs.patch
+        run: |
+          git apply --ignore-space-change --ignore-whitespace /tmp/marsad-repairs.patch
+          git restore --source=HEAD -- .github/workflows/sign-extension-3.0.7.yml
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
