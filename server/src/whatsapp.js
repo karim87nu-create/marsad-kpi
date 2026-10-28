@@ -149,10 +149,16 @@ function setup(app) {
     const now = ctx.now, c = await on();
     if (!c || c.mode !== 'web') return { ok: true, message: null, on: false };
     const delay = Math.max(10, Math.min(600, Number(c.delay) || 75)) * 60000, gap = Math.max(20, Number(c.gap) || 40) * 1000;
-    // One at a time, never faster than the gap (a person's pace), and a claimed message waits 3 minutes for its answer.
+    // One at a time, never faster than the gap (a person's pace), and uncertain attempts stay held while later orders continue.
     const last = Number(await setting('wa_web_last')) || 0;
     if (now - last < gap) return { ok: true, message: null, on: true, wait: gap - (now - last) };
-    const free = 'phone IS NOT NULL AND tries < 3 AND (sending_at IS NULL OR sending_at < ' + (now - 180000) + ')';
+    // Filter blocked jobs BEFORE LIMIT: old unknown claims must not starve later orders.
+    const free = `w.phone IS NOT NULL AND w.tries < 3
+      AND EXISTS (SELECT 1 FROM wa_identity i WHERE i.talabat_id=w.talabat_id)
+      AND t.status IS NOT NULL AND t.status NOT IN ('CANCELLED','REJECTED')`;
+    const claimable = kind => kind === 'welcome'
+      ? 'NOT EXISTS (SELECT 1 FROM wa_claims q WHERE q.message_id=w.id)'
+      : "NOT EXISTS (SELECT 1 FROM wa_claims q WHERE q.message_id=w.id AND NOT (q.state='done' AND q.kind='welcome'))";
     const status = async id => (await db.prepare('SELECT status, accepted_at FROM talabat_orders WHERE id = ?').get(id)) || {};
     const pick = async (kind, r) => {
       const token = await claim(r,kind,now,ctx.body?.protocol === 2 ? 2 : 1);
@@ -161,11 +167,11 @@ function setup(app) {
       const text = (kind === 'survey' ? c.surveyText : c.welcomeText).replace(/\{code\}/g, r.code || '').replace(/\{branch\}/g, r.store || '').trim();
       return { ok: true, on: true, message: { id: r.id, kind, phone: r.phone, text, claimToken: token } };
     };
-    for (const r of await db.prepare('SELECT w.*, t.code, t.store FROM wa_messages w LEFT JOIN talabat_orders t ON t.id = w.talabat_id WHERE ' + free.replace(/(phone|tries|sending_at)/g, 'w.$1') + ' AND w.welcome_at IS NULL AND w.created_at > ? ORDER BY w.created_at LIMIT 5').all(now - WELCOME_WINDOW_MS)) {
+    for (const r of await db.prepare('SELECT w.*, t.code, t.store FROM wa_messages w LEFT JOIN talabat_orders t ON t.id = w.talabat_id WHERE ' + free + ' AND ' + claimable('welcome') + ' AND w.welcome_at IS NULL AND w.created_at > ? ORDER BY w.created_at LIMIT 5').all(now - WELCOME_WINDOW_MS)) {
       if (DEAD.has((await status(r.talabat_id)).status)) { await db.prepare('UPDATE wa_messages SET phone = NULL, error = ? WHERE id = ?').run('الأوردر اتلغى', r.id); continue; }
       const picked=await pick('welcome',r); if (picked) return picked;
     }
-    if (c.surveyText) for (const r of await db.prepare('SELECT w.*, t.code, t.store FROM wa_messages w LEFT JOIN talabat_orders t ON t.id = w.talabat_id WHERE ' + free.replace(/(phone|tries|sending_at)/g, 'w.$1') + ' AND w.welcome_at IS NOT NULL AND w.survey_at IS NULL ORDER BY w.created_at LIMIT 20').all()) {
+    if (c.surveyText) for (const r of await db.prepare('SELECT w.*, t.code, t.store FROM wa_messages w LEFT JOIN talabat_orders t ON t.id = w.talabat_id WHERE ' + free + ' AND ' + claimable('survey') + ' AND w.welcome_at IS NOT NULL AND w.survey_at IS NULL AND COALESCE(t.accepted_at,w.created_at) <= ? ORDER BY w.created_at LIMIT 20').all(now - delay)) {
       const s = await status(r.talabat_id);
       if (DEAD.has(s.status)) { await db.prepare('UPDATE wa_messages SET phone = NULL, error = ? WHERE id = ?').run('الأوردر اتلغى — مفيش استطلاع', r.id); continue; }
       if (now - (s.accepted_at || r.created_at) < delay) continue;
@@ -196,10 +202,18 @@ function setup(app) {
     const errors = (await db.prepare('SELECT talabat_id, error, created_at FROM wa_messages WHERE day = ? AND error IS NOT NULL ORDER BY id DESC LIMIT 10').all(day))
       .map(r => ({ order: r.talabat_id, error: r.error, at: iso(r.created_at) }));
     const raw = await setting('whatsapp_config'); let any = null; try { any = raw ? JSON.parse(await open(raw)) : null; } catch {}
+    const delay = Math.max(10, Math.min(600, Number(c?.delay) || 75)) * 60000;
+    const ready = await db.prepare(`SELECT COUNT(*) n FROM wa_messages w JOIN talabat_orders t ON t.id=w.talabat_id
+      JOIN wa_identity i ON i.talabat_id=w.talabat_id LEFT JOIN wa_claims q ON q.message_id=w.id
+      WHERE w.phone IS NOT NULL AND w.tries<3 AND t.status NOT IN ('CANCELLED','REJECTED')
+      AND ((w.welcome_at IS NULL AND w.created_at>? AND q.message_id IS NULL)
+        OR (? AND w.welcome_at IS NOT NULL AND w.survey_at IS NULL AND COALESCE(t.accepted_at,w.created_at)<=?
+          AND (q.message_id IS NULL OR (q.state='done' AND q.kind='welcome'))))`)
+      .get(ctx.now-WELCOME_WINDOW_MS, (c?.mode==='web' ? c?.surveyText : c?.survey) ? 1 : 0, ctx.now-delay);
     return { configured: !!c, enabled: !!c?.enabled, mode: any?.mode || 'web', phoneIdEnd: c?.phoneId ? String(c.phoneId).slice(-4) : null, welcome: any?.welcome || '', survey: any?.survey || '', lang: any?.lang || 'ar', delay: any?.delay || 75,
       welcomeText: any?.welcomeText || '', surveyText: any?.surveyText || '', lastWeb: iso(Number(await setting('wa_web_last')) || null),
       unconfirmed: (await db.prepare("SELECT COUNT(*) n FROM wa_claims WHERE state='unknown' OR (state='claimed' AND claimed_at<?)").get(ctx.now-180000)).n,
-      today: { orders: await n('1 = 1'), welcome: await n('welcome_at IS NOT NULL'), survey: await n('survey_at IS NOT NULL'), waiting: await n('phone IS NOT NULL') }, errors };
+      today: { ready: ready.n, orders: await n('1 = 1'), welcome: await n('welcome_at IS NOT NULL'), survey: await n('survey_at IS NOT NULL'), waiting: await n('phone IS NOT NULL') }, errors };
   });
   app.route('POST', '/api/whatsapp', async ctx => {
     const who = await app.requireAdmin(ctx, 'admin'), b = ctx.body || {};

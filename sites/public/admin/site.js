@@ -290,7 +290,7 @@ window.MarsadSite = function MarsadSite(ctx) {
     if (!isAdmin) return;
     const s = await api('/api/whatsapp'), f = $('waWebForm');
     $('waStatus').replaceChildren(s.enabled ? pill('الإرسال شغال', 'ok') : pill('الإرسال واقف', 'warn'), ' ',
-      h('span', { className: 'muted', textContent: 'النهارده: ' + s.today.orders + ' أوردر برقم · اتبعت ترحيب ' + s.today.welcome + ' · استطلاع ' + s.today.survey + ' · مستني ' + s.today.waiting + (s.unconfirmed ? ' · إرسال غير مؤكد يحتاج مراجعة: ' + s.unconfirmed : '') + (s.lastWeb ? ' · آخر رسالة ' + t12(s.lastWeb) : '') }));
+      h('span', { className: 'muted', textContent: 'النهارده: ' + s.today.orders + ' أوردر برقم · اتبعت ترحيب ' + s.today.welcome + ' · استطلاع ' + s.today.survey + ' · جاهز للإرسال ' + s.today.ready + ' · أرقام محفوظة للترحيب أو الاستطلاع ' + s.today.waiting + (s.unconfirmed ? ' · إرسال غير مؤكد يحتاج مراجعة: ' + s.unconfirmed : '') + (s.lastWeb ? ' · آخر رسالة ' + t12(s.lastWeb) : '') }));
     if (document.activeElement?.form !== f) { f.elements.welcomeText.value = s.welcomeText || ''; f.elements.surveyText.value = s.surveyText || ''; f.elements.delay.value = s.delay || 75; }
     $('waOn').hidden = s.enabled || !s.welcomeText; $('waOff').hidden = !s.enabled;
     $('waErrors').replaceChildren(...(s.errors.length ? [h('h3', { textContent: 'اللي ماتبعتش النهارده' }), ...s.errors.map(e => h('p', { className: 'muted', textContent: t12(e.at) + ' · أوردر ' + e.order + ' · ' + e.error }))] : []));
