@@ -1,4 +1,17 @@
 const test=require('node:test'),assert=require('node:assert/strict');const {start}=require('./helpers.cjs');
+
+test('late phone backfills and already delivered orders do not create new welcome jobs',async()=>{
+ const t=await start();try{
+  const admin=await t.admin(),token=(await admin('POST','/api/talabat/token')).body.token,H={'x-talabat-token':token};
+  await admin('POST','/api/whatsapp',{action:'web',welcomeText:'hello',surveyText:'rating',delay:80});await admin('POST','/api/whatsapp',{action:'enable',on:true});
+  const phone='01001234567',push=orders=>t.call('POST','/api/talabat/push',{headers:H,body:{orders}});
+  await push([{id:'12345001',status:'ACCEPTED',placedAt:new Date(t.clock.now-3*3600000).toISOString(),phone,detail:{customer:{phone}}},
+    {id:'12345002',status:'DELIVERED',placedAt:new Date(t.clock.now-60000).toISOString(),phone,detail:{customer:{phone}}}]);
+  assert.equal(t.app.db.raw.prepare('SELECT COUNT(*) n FROM wa_messages').get().n,0);
+  await push([{id:'12345003',status:'ACCEPTED',placedAt:new Date(t.clock.now-60000).toISOString(),phone,detail:{customer:{phone}}}]);
+  assert.equal(t.app.db.raw.prepare('SELECT COUNT(*) n FROM wa_messages').get().n,1);
+ }finally{await t.close();}
+});
 test('WhatsApp phone-only input is held; two requests get one claim; wrong claim and wrong kind cannot settle; timed-out delivery is not resent',async()=>{
  const t=await start();try{
   const admin=await t.admin(),token=(await admin('POST','/api/talabat/token')).body.token,H={'x-talabat-token':token};

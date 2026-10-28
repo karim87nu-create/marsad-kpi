@@ -59,6 +59,12 @@ function setup(app) {
       for (const o of orders) {
         const id = String(o.id || '').replace(/\D/g, '').slice(0, 20);
         if (id.length < 6 || !o.phone) continue;
+        const prior = await db.prepare('SELECT id FROM wa_messages WHERE talabat_id=?').get(id);
+        const order = await db.prepare('SELECT status,placed_at,received_at FROM talabat_orders WHERE id=?').get(id);
+        const sourceAt = order?.received_at || order?.placed_at;
+        // A late detail backfill is not a new order. Existing welcome jobs can still receive their survey.
+        if (!prior && (DEAD.has(order?.status) || ['COMPLETED','DELIVERED'].includes(order?.status) ||
+          (Number.isFinite(sourceAt) && now - sourceAt > WELCOME_WINDOW_MS))) continue;
         const phone = egMobile(o.phone);
         // Current 3.1.9 reads these fields from a detail panel whose order ID it checks.
         // A phone-only list row is not proof of customer/order identity.
