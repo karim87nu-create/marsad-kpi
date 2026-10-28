@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $file = Join-Path $PSScriptRoot 'marsad_monitor.ps1'
 $tokens = $null; $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$errors)
@@ -54,3 +54,10 @@ if ($pending.Count -ne 1) { throw 'Ignored snapshot discarded pending alert' }
 $script:mockMode = 'ack'; Push $payload
 if ($pending.Count -ne 0 -or @(ReadOutbox).Count -ne 0) { throw 'Acknowledgement did not retire persisted queue' }
 Write-Output 'PASS: durable queue, restart, failed/lost response, ignored snapshot, explicit acknowledgement; HTTP mocked.'
+
+# Check the actual active-order SELECT, not just a synthetic CustomerOf row.
+$onlineSql = [regex]::Match($source, '(?s)SELECT OrderNo, BranchNo, PosNo,.*?FROM Orders_M_Daily WITH').Value
+foreach($column in @('CustNo','o_Phone','o_CustName','o_Address','o_BuildingNo','o_FloorNo','o_FlatNo','o_Sign')) {
+ if ($onlineSql -notmatch ('\b' + $column + '\b')) { throw "Active-order query omits customer field $column" }
+}
+Write-Output 'PASS: active-order SQL projection includes customer fields.'

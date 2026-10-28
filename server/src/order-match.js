@@ -37,14 +37,23 @@ const aggregate = (xs, apex) => {
 };
 
 // A single conservative decision used by both sources. Only matches contains confirmed links.
-// Suggestions never reserve an Apex order and never teach. IDs are opaque strings throughout.
+// Suggestions never reserve an Apex order and never teach. Manual choices reserve first.
 export function resolveOrders(rows, apex, { manual = new Map(), branchOk = () => null, windowFor = () => 45 * 60000,
   learned = new Map(), ratio = 1.13 } = {}) {
   apex = [...new Map(apex.map(a => [String(a.no), a])).values()];
   const matches = new Map(), how = new Map(), states = new Map(), used = new Set();
+  // Explicit human decisions take precedence; suppressed links stay suppressed.
+  for (const o of rows) if (manual.has(o.id)) {
+    const no = manual.get(o.id), a = apex.find(x => String(x.no) === String(no));
+    if (no == null || no === 'none') states.set(o.id, { state: 'excluded', candidates: [], how: 'manual' });
+    else if (a && !used.has(String(a.no))) {
+      matches.set(o.id, a); how.set(o.id, 'manual'); used.add(String(a.no));
+      states.set(o.id, { state: 'confirmed', how: 'manual' });
+    } else states.set(o.id, { state: 'ambiguous', candidates: [], manualProposal: no });
+  }
   const pairs = [];
   for (const o of rows) {
-    if (o.excluded || !Number.isFinite(o.anchor)) continue;
+    if (manual.has(o.id) || o.excluded || !Number.isFinite(o.anchor)) continue;
     const c = customerOf(o.customer), cp = new Set([c.phone, c.mobile].filter(Boolean));
     for (const a of apex) {
       if (used.has(String(a.no))) continue;
@@ -61,11 +70,11 @@ export function resolveOrders(rows, apex, { manual = new Map(), branchOk = () =>
       for (const t of T) { const ids = A.filter(x => textKey(x.name) === textKey(t.name)).map(x => [String(x.no), 2]); if (ids.length) direct.set(itemKey(t.name), new Map([...(direct.get(itemKey(t.name)) || []), ...ids])); }
       const item = T.length && A.length ? compareItems(T, A, { learned: direct, ratio }) : null;
       const money = Number(o.amount) > 0 && Number(a.amount) > 0 ? Math.abs(o.amount - a.amount) / Math.max(o.amount, a.amount) : null;
-      const identity = phone === true && name >= .6 && address >= .6;
+      const identity = phone === true && (name >= .6 || address >= .6);
       const nameConflict = c.name && ac.name && name != null && name < .35;
       const addressConflict = c.address && ac.address && address != null && address < .5;
       const conflict = reference.conflict || phone === false || nameConflict || addressConflict || branch === false || (item && !item.ok) || (money != null && money > .3) || !withinTime;
-      // A matching #code is useful evidence, never a shortcut around a contradictory or incomplete order.
+      // Explicit source order IDs never bypass contradictory customer or basket evidence.
       const fullEvidence = withinTime && branch === true && money != null && money < .08 && item?.ok === true && identity;
       const strong = !conflict && fullEvidence;
       const score = (exact ? 100 : 0) + (phone === true ? 42 : phone === false ? -70 : 0) +
@@ -76,7 +85,7 @@ export function resolveOrders(rows, apex, { manual = new Map(), branchOk = () =>
         branch, money, minutes: gap / 60000, withinTime, fullEvidence } });
     }
   }
-  const sorted = pairs.sort((x, y) => y.score - x.score || String(x.a.no).localeCompare(String(y.a.no)));
+  const sorted = pairs.sort((x, y) => Number(x.conflict) - Number(y.conflict) || y.score - x.score || String(x.a.no).localeCompare(String(y.a.no)));
   const byOrder = new Map(), byApex = new Map();
   for (const p of sorted) {
     if (!byOrder.has(p.o)) byOrder.set(p.o, []);
@@ -86,9 +95,11 @@ export function resolveOrders(rows, apex, { manual = new Map(), branchOk = () =>
   const listO = id => byOrder.get(id) || [], listA = no => byApex.get(String(no)) || [];
   // Require a clear winner on BOTH sides before any assignment; do not break ties by iteration order.
   for (const o of rows) {
+    if (manual.has(o.id)) continue;
     const candidates = listO(o.id), best = candidates[0];
     if (!best) { states.set(o.id, { state: 'unmatched', candidates: [] }); continue; }
-    const rivals = listA(best.a.no), margin = candidates[1] ? best.score - candidates[1].score : Infinity;
+    const rivalOrders = candidates.filter(p => !p.conflict);
+    const rivals = listA(best.a.no).filter(p => !p.conflict), margin = rivalOrders[1] ? best.score - rivalOrders[1].score : Infinity;
     const reverseMargin = rivals[1] ? rivals[0].score - rivals[1].score : Infinity;
     const clear = margin >= 15 && reverseMargin >= 15 && rivals[0] === best;
     if (best.strong && clear && !used.has(String(best.a.no))) {
@@ -96,11 +107,11 @@ export function resolveOrders(rows, apex, { manual = new Map(), branchOk = () =>
       states.set(o.id, { state: 'confirmed', how: how.get(o.id), evidence: best.reasons });
     } else states.set(o.id, { state: clear && !best.conflict ? 'tentative' : 'ambiguous', candidates: candidates.slice(0, 3).map(p => ({ no: p.a.no, sn: p.a.sn ?? null, score: Math.round(p.score), evidence: p.reasons })) });
   }
-  // A human proposal is retained as evidence, never a reservation or shortcut to certainty.
+  // Include the human choice in the explanation without training from it.
   for (const o of rows) {
     const st = states.get(o.id) || { state: 'unmatched', candidates: [] };
     if (manual.has(o.id)) st.manualProposal = manual.get(o.id);
-    st.confidence = ({ confirmed: 'SURE', tentative: 'PROBABLE', ambiguous: 'AMBIGUOUS', unmatched: 'NO MATCH' })[st.state] || 'AMBIGUOUS';
+    st.confidence = ({ confirmed: 'SURE', tentative: 'PROBABLE', ambiguous: 'AMBIGUOUS', unmatched: 'NO MATCH', excluded: 'EXCLUDED' })[st.state] || 'AMBIGUOUS';
     states.set(o.id, st);
   }
   return { matches, how, states, used };

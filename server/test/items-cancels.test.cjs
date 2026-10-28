@@ -27,13 +27,16 @@ test('items: Talabat dishes compared with Apex lines; wrong dish alerted; unknow
       [{ qty: 1, name: 'Roqaq with Meat', price: 339 }], [{ qty: 1, name: 'Roqaq with Meat', price: 339 }]];
     await push({ orders: tal.map((items, i) => ({ id: '397710000' + (i + 1), store, status: i === 1 ? 'CANCELLED' : 'ACCEPTED', placedAt: at(i * 10), detail: { receivedAt: at(i * 10), acceptedAt: at(i * 10 + 0.5), items, subtotal: 100,
       ...(i === 1 ? { cancelledAt: at(30), cancelOwner: 'Owner: Vendor', cancelReason: 'Wrong order' } : {}) } })) });
+    // A supervisor explicitly links these orders to audit wrong/unknown dishes; hashtags do not establish identity.
+    for (let i=1;i<=4;i++) assert.equal((await admin('POST','/api/talabat/link',{talabatId:'397710000'+i,apexNo:9000+i})).status,200);
+    t.advance(31000); await push({orders:[]});
     let d = (await admin('GET', '/api/talabat/day?day=2026-10-22')).body, o = Object.fromEntries(d.orders.map(x => [x.id, x]));
     assert.equal(o['3977100001'].apex.items.ok, true);
     assert.equal(o['3977100002'].apex.items.ok, false);
     assert.deepEqual(o['3977100002'].apex.items.missingOnApex, ['1× Kofta']);
     assert.deepEqual(o['3977100002'].apex.items.extraOnApex, ['1× 1/4كيلو كفتة']);
     const log = t.app.db.raw.prepare("SELECT key, target, text FROM telegram_log WHERE kind = 'talabatItems'").all();
-    assert.equal(log.length, 1); assert.equal(log[0].target, 'online'); assert.match(log[0].text, /Kofta/); assert.match(log[0].text, /9002/);
+    assert.equal(log.length, 1); assert.equal(log[0].target, 'online'); assert.match(log[0].text, /Kofta/); assert.match(log[0].text, /3977100002/);
     // Roqaq: one dish each side, same quantity, price fits (339 / 300 = 1.13): learned from two orders, then known.
     const l = (await admin('GET', '/api/learned')).body;
     assert.ok(!l.facts.some(f => f.kind === 'match-v2:item:talabat' && f.a === 'roqaq with meat'), 'unknown dishes do not teach by price alone');
@@ -67,6 +70,7 @@ test('items: a Talabat dish entered with Apex\'s own «طلبات» item (known 
     const push = body => t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body });
     await push({ codes: [1, 2, 3].map(i => ({ id: '39772000' + i + '0', code: String(2800 + i), store })) });
     await push({ orders: [1, 2, 3].map(i => ({ id: '39772000' + i + '0', store, status: 'ACCEPTED', placedAt: at(i * 10), detail: { receivedAt: at(i * 10), acceptedAt: at(i * 10 + 0.5), items: [{ qty: 1, name: 'Half grilled chicken on charcoal', price: 252 }], subtotal: 252 } })) });
+    for (let i=1;i<=3;i++) assert.equal((await admin('POST','/api/talabat/link',{talabatId:'39772000'+i+'0',apexNo:9200+i})).status,200);
     const d = (await admin('GET', '/api/talabat/day?day=2026-10-22')).body, o = Object.fromEntries(d.orders.map(x => [x.id, x]));
     assert.equal(o['3977200030'].apex.items.ok, false, 'a differently named dish needs review before learning');
   } finally { await t.close(); }

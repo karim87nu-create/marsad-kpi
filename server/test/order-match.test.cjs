@@ -51,16 +51,21 @@ test('an exact tag with missing customer or basket remains a suggestion, not a c
   assert.equal(d.states.get('10000001').state, 'tentative');
 });
 
-test('each identity field is required and a manual proposal cannot force or veto full evidence', () => {
-  for (const field of ['phone', 'name', 'address']) {
-    const d = resolveOrders([row()], [apex(1, { sourceRefs: { talabat: { orderId: '10000001' } }, customer: { ...customer, [field]: '' } })], opts);
-    assert.equal(d.matches.size, 0, field);
+test('phone plus matching name or address confirms; missing identity stays tentative; manual choices reserve first', () => {
+  for (const field of ['name', 'address']) {
+    assert.equal(resolveOrders([row()], [apex(1, {customer:{...customer,[field]:''}})], opts).matches.size,1);
   }
-  const forced = resolveOrders([row()], [apex(1, { amount: 999 })], { ...opts, manual: new Map([['10000001', 1]]) });
-  assert.equal(forced.matches.size, 0);
-  const veto = resolveOrders([row()], [apex()], { ...opts, manual: new Map([['10000001', 2]]) });
-  assert.equal(veto.matches.get('10000001').no, 1);
+  for (const fields of [{phone:''},{name:'',address:''}]) {
+    assert.equal(resolveOrders([row()], [apex(1,{customer:{...customer,...fields}})],opts).matches.size,0);
+  }
+  const forced=resolveOrders([row()], [apex(1,{amount:999})], {...opts,manual:new Map([['10000001',1]])});
+  assert.equal(forced.matches.get('10000001').no,1);assert.equal(forced.how.get('10000001'),'manual');
+  const suppressed=resolveOrders([row()], [apex()], {...opts,manual:new Map([['10000001',null]])});
+  assert.equal(suppressed.matches.size,0);assert.equal(suppressed.states.get('10000001').state,'excluded');
+  const reserved=resolveOrders([row(),row('10000002')], [apex()], {...opts,manual:new Map([['10000002',1]])});
+  assert.equal(reserved.matches.size,1);assert.equal(reserved.matches.get('10000002').no,1);
 });
+
 test('duplicate codes and zero-stripped partial codes do not become sure links without evidence', () => {
   const bare = row('10000001', { code: '8403', customer: {}, items: [] });
   assert.equal(resolveOrders([bare], [apex(1, { tag: '843' })], opts).matches.size, 0);
@@ -75,7 +80,7 @@ test('split duplicate item lines aggregate before matching quantities', () => {
   const d = resolveOrders([row()], [apex(1, { items: [ { ...aitems[0], qty: 1 }, { ...aitems[0], qty: 1 } ] })], opts);
   assert.equal(d.matches.size, 1);
 });
-test('API persists customer evidence, excludes ambiguity from learning, and links from full evidence rather than manual proposals', async () => {
+test('API persists customer evidence, excludes ambiguity and manual links from learning, and applies human decisions immediately', async () => {
   const t = await start({ at: anchor + 30 * 60000 });
   try {
     const admin = await t.admin(), token = (await admin('POST', '/api/talabat/token')).body.token;
@@ -96,9 +101,26 @@ test('API persists customer evidence, excludes ambiguity from learning, and link
     await t.call('POST', '/api/orders/tags', { headers: { 'x-orders-token': ot }, body: { day: '2026-10-22', references: { 1: { talabat: { orderId: '10000001' } }, 2: { talabat: { orderId: '10000002' } } } } });
     t.advance(31000); await push([]); // a throttled alert/matching pass learns only the now-complete, unique evidence
     d = (await admin('GET', '/api/talabat/day?day=2026-10-22')).body;
-    assert.equal(d.orders.find(x => x.id === '10000002').apex.no, 2);
-    assert.equal(d.orders.find(x => x.id === '10000001').apex.no, 1);
+    assert.equal(d.orders.find(x => x.id === '10000002').apex.no, 1);
+    assert.equal(d.orders.find(x => x.id === '10000002').apex.how, 'manual');
+    assert.equal(d.orders.find(x => x.id === '10000001').apex, null);
     const facts = t.app.db.raw.prepare("SELECT DISTINCT ref FROM learned WHERE kind LIKE 'match-v2:%'").all();
-    assert.deepEqual(facts, [{ ref: '10000001' }, { ref: '10000002' }]);
+    assert.ok(!facts.some(f=>f.ref==='10000002'),'manual choice never teaches');
+    assert.equal((await t.app.learn.pairs('match-v2:branch:talabat')).size,0,'suppressed earlier evidence is inactive');
   } finally { await t.close(); }
+});
+
+test('live-only hashtags neither boost nor veto customer and item matches',()=>{
+ const d=resolveOrders([row('10000001',{code:'8403'})],[apex(1,{tag:'9999'})],opts);
+ assert.equal(d.matches.get('10000001').no,1);assert.equal(d.how.get('10000001'),'evidence');
+});
+test('a contradictory source reference cannot outrank the correct customer',()=>{
+ const wrong=apex(1,{sourceRefs:{talabat:{orderId:'10000001'}},customer:{...customer,phone:'01112345678'}});
+ const d=resolveOrders([row()],[wrong,apex(2)],opts);assert.equal(d.matches.get('10000001').no,2);
+});
+
+test('website uses the same phone, Arabic basket and quantity evidence without hashtags',()=>{
+ const o=row('29306',{source:'site',items:[{name:'أرز سادة',qty:2,price:113}]});
+ const d=resolveOrders([o],[apex(1,{kind:'الموقع',tag:'99999'}),apex(2,{kind:'الموقع',customer:{...customer,phone:'01112345678'}})],opts);
+ assert.equal(d.matches.get('29306').no,1);assert.equal(d.how.get('29306'),'evidence');
 });

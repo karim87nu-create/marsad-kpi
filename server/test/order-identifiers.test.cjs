@@ -3,7 +3,7 @@ const {referenceEvidence,talabatReference,apexReceipt,apexAlertText,platformAler
 
 test('platform numbers have separate namespaces; no zero stripping, suffix or Apex ID comparisons',()=>{
  const o={source:'talabat',id:'4676938403',code:'8403'};
- assert.equal(referenceEvidence(o,{kind:'طلبات',tag:'8403'}).exact,true);
+ assert.equal(referenceEvidence(o,{kind:'طلبات',tag:'8403'}).exact,false);
  for(const tag of ['843','38403'])assert.equal(referenceEvidence(o,{kind:'طلبات',tag}).exact,false);
  assert.equal(referenceEvidence(o,{kind:'طلبات',tag:o.id}).exact,false);
  assert.equal(referenceEvidence(o,{kind:'طلبات',no:'8403',sn:'8403'}).exact,false);
@@ -11,7 +11,7 @@ test('platform numbers have separate namespaces; no zero stripping, suffix or Ap
  assert.equal(referenceEvidence(o,{kind:'طلبات',sourceRefs:{talabat:{orderId:o.id}}}).exact,true);
  assert.equal(referenceEvidence(o,{kind:'الموقع',tag:'8403'}).conflict,true);
  const website={source:'site',id:'8403',code:'9999'};
- assert.equal(referenceEvidence(website,{kind:'الموقع',tag:'8403'}).exact,true);
+ assert.equal(referenceEvidence(website,{kind:'الموقع',tag:'8403'}).exact,false);
  assert.equal(referenceEvidence(website,{kind:'الموقع',sourceRefs:{talabat:{code:'8403'}}}).exact,false);
 });
 test('Telegram labels distinguish Talabat ID and hashtag and never substitute internal Apex ID for receipt',()=>{

@@ -343,7 +343,7 @@ function Cycle {
   $orders = Q @"
 SELECT OrderNo, BranchNo, PosNo, UserNo, TransType, PayWay, OnlineType, TimeIn, SendDate, OrderTime, ReturnTime,
        WaiterNo, SubTotal, Discount, Tax, Service, Addition$selSn,
-       o_LocationNo, Remarks,
+       o_LocationNo, Remarks, CustNo, o_Phone, o_CustName, o_PersonName, o_Address, o_BuildingNo, o_FloorNo, o_FlatNo, o_Sign,
        ISNULL(o_CustName,'') AS NameTxt, ISNULL(o_PersonName,'') AS NameTxt2, ISNULL(PersonName,'') AS NameTxt3
 FROM Orders_M_Daily WITH (NOLOCK) WHERE OrderDate = @d
 "@ $p

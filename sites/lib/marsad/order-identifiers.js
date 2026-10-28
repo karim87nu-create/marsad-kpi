@@ -13,16 +13,8 @@ export function referenceEvidence(order, apex) {
   if (!expectedKind) return { exact: false, conflict: false, type: null };
   if (apex.kind && apex.kind !== expectedKind) return { exact: false, conflict: true, type: 'source' };
   const refs = apex.sourceRefs?.[source] || {}, pairs = [];
-  const legacyTag = id(String(apex.tag ?? '').replace(/^#\s*/, ''));
-  if (source === 'talabat') {
-    // The legacy tag on a Talabat order is a short hashtag only; it is never compared to the full order ID.
-    const code = id(refs.code) || (legacyTag.length <= 8 ? legacyTag : '');
-    if (code && id(order.code)) pairs.push({ type: 'talabatCode', equal: code === id(order.code) });
-    if (id(refs.orderId)) pairs.push({ type: 'talabatOrderId', equal: id(refs.orderId) === id(order.id) });
-  } else {
-    const siteId = id(refs.orderId) || legacyTag;
-    if (siteId) pairs.push({ type: 'siteOrderId', equal: siteId === id(order.id) });
-  }
+  // Live-only hashtags and legacy free text are not durable order identifiers.
+  if (id(refs.orderId)) pairs.push({ type: source === 'talabat' ? 'talabatOrderId' : 'siteOrderId', equal: id(refs.orderId) === id(order.id) });
   return { exact: pairs.some(p => p.equal), conflict: pairs.some(p => !p.equal), type: pairs.map(p => p.type).join(',') || null };
 }
 

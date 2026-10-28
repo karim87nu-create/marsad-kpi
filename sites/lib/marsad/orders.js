@@ -82,7 +82,7 @@ function setup(app) {
       const old = new Map((before.online || []).map(o => [String(o.no), o]));
       b.online = b.online.map(o => {
         const prior = old.get(String(o.no));
-        return { ...o, ...(!Object.hasOwn(o, 'items') && prior?.items ? { items: prior.items } : {}),
+        return { ...o, ...(!Object.hasOwn(o, 'customer') && prior?.customer ? { customer: prior.customer } : {}), ...(!Object.hasOwn(o, 'items') && prior?.items ? { items: prior.items } : {}),
           ...(!Object.hasOwn(o, 'sourceRefs') && prior?.sourceRefs ? { sourceRefs: prior.sourceRefs } : {}) };
       });
     }

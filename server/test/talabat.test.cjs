@@ -44,8 +44,8 @@ test('talabat: monitor key, orders with details, Apex match (auto and manual), a
     // Manual link.
     assert.equal((await admin('POST', '/api/talabat/link', { talabatId: '3977400002', apexNo: 7002 })).status, 200);
     d = (await admin('GET', '/api/talabat/day?day=2026-10-22')).body; o = Object.fromEntries(d.orders.map(x => [x.id, x]));
-    assert.equal(o['3977400002'].apex, null, 'manual proposal cannot override missing evidence or time conflict');
-    assert.equal(d.unmatchedApex.length, 2);
+    assert.equal(o['3977400002'].apex.no, 7002); assert.equal(o['3977400002'].apex.how, 'manual');
+    assert.equal(d.unmatchedApex.length, 0);
     // Alerts: the cancellation to the branches group; 3977400002 was unmatched > 10 min at the earlier push.
     const kinds = t.app.db.raw.prepare("SELECT kind, target FROM telegram_log WHERE kind LIKE 'talabat%' ORDER BY kind").all();
     assert.deepEqual(kinds.map(k => k.kind + ':' + k.target), ['talabatCancel:branches']);
@@ -61,13 +61,13 @@ test('talabat: a #code cannot bypass complete evidence; sure links teach the bra
     const push = body => t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body });
     const ot = (await admin('POST', '/api/orders/token')).body.token;
     const online = [];
-    for (let i = 0; i < 3; i++) online.push({ no: 8000 + i, kind: 'طلبات', branch: 'التجمع', at: at(i * 10 + 3), user: 'u', amount: 113, tag: '#' + (2700 + i), customer: { name: 'Customer ' + i, phone: '01012345678', address: 'Tagamoa 5' }, items: [{ name: 'Rice', no: 42, qty: 1, price: 100 }] });
+    for (let i = 0; i < 3; i++) online.push({ no: 8000 + i, kind: 'طلبات', branch: 'التجمع', at: at(i * 10 + 3), user: 'u', amount: 113, tag: '#' + (2700 + i), customer: { name: 'Customer ' + i, phone: '0101234567' + i, address: 'Tagamoa 5' }, items: [{ name: 'Rice', no: 42, qty: 1, price: 100 }] });
     await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': ot }, body: { v: 1, day: '2026-10-22', online } });
     await push({ codes: [0, 1, 2].map(i => ({ id: '39770000' + i + '0', code: String(2700 + i), store: 'الدهان، التجمع الخامس' })) });
-    await push({ orders: [0, 1, 2].map(i => ({ id: '39770000' + i + '0', store: 'الدهان، التجمع الخامس', status: 'MYSTERY', placedAt: at(i * 10), customer: { name: 'Customer ' + i, phone: '01012345678', address: 'Tagamoa 5' }, detail: { receivedAt: at(i * 10), acceptedAt: at(i * 10 + 0.5), items: [{ name: 'Rice', qty: 1, price: 113 }], subtotal: 113, milestones: { DISPLAYED_AT_VENDOR: at(i * 10), RIDER_NEAR: at(i * 10 + 3) } } })) });
+    await push({ orders: [0, 1, 2].map(i => ({ id: '39770000' + i + '0', store: 'الدهان، التجمع الخامس', status: 'MYSTERY', placedAt: at(i * 10), customer: { name: 'Customer ' + i, phone: '0101234567' + i, address: 'Tagamoa 5' }, detail: { receivedAt: at(i * 10), acceptedAt: at(i * 10 + 0.5), items: [{ name: 'Rice', qty: 1, price: 113 }], subtotal: 113, milestones: { DISPLAYED_AT_VENDOR: at(i * 10), RIDER_NEAR: at(i * 10 + 3) } } })) });
     t.advance(31000); await push({ orders: [] });
     const d = (await admin('GET', '/api/talabat/day?day=2026-10-22')).body;
-    for (const o of d.orders) assert.equal(o.apex?.how, 'code', o.id);
+    for (const o of d.orders) assert.equal(o.apex?.how, 'evidence', o.id);
     const l = (await admin('GET', '/api/learned')).body;
     assert.ok(l.facts.some(f => f.kind === 'match-v2:branch:talabat' && f.a === 'الدهان، التجمع الخامس' && f.b === 'التجمع' && f.evidence === 3), 'learned the branch name');
     assert.ok(l.facts.some(f => f.kind === 'unknown' && f.b === 'حالة: MYSTERY'));
@@ -143,7 +143,7 @@ test('talabat: bare and partial codes need full evidence; past days get codes la
     const r = await t.call('POST', '/api/orders/tags', { headers: { 'x-orders-token': ot }, body: { day: '2026-10-22', tags: { 3526864: '843', 3526865: '8698' } } });
     assert.equal(r.body.updated, 2);
     const d = (await admin('GET', '/api/talabat/day?day=2026-10-22')).body, o = Object.fromEntries(d.orders.map(x => [x.id, x]));
-    assert.equal(o['4676900301'].apex.no, 3526865); assert.equal(o['4676900301'].apex.how, 'code');
+    assert.equal(o['4676900301'].apex.no, 3526865); assert.equal(o['4676900301'].apex.how, 'evidence');
     assert.equal(o['4676900302'].apex, null, 'zero-stripped code alone is tentative');
     assert.ok(['tentative','ambiguous'].includes(o['4676900302'].matching.state));
     assert.deepEqual([...new Set(d.orders.map(x => x.store))], ['مدينة نصر'], 'Arabic and English store names are one branch');

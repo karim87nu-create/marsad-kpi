@@ -283,7 +283,7 @@ function setup(app) {
     const sent = new Set((await db.prepare("SELECT key FROM telegram_log WHERE (key LIKE 'talabat:items:%' OR key LIKE 'resolved:talabat:items:%') AND created_at >= ?").all(now - 6 * 3600000)).map(x => x.key));
     for (const o of m.rows) {
       const a = m.matches.get(o.id), c = a?.items, key = 'talabat:items:' + o.id;
-      if (!c || (a.how !== 'code' && a.how !== 'evidence')) continue;
+      if (!c || !['code','evidence','manual'].includes(a.how)) continue;
       if (!c.ok && !c.uncertain && !c.reviewedOk && !sent.has(key) && now - (o.accepted_at || o.placed_at || now) < 3 * 3600000)
         out.push({ key, kind: 'talabatItems', target: 'online', text: '🛵 طلبات | 🍽️ صنف ممكن يكون متضرب غلط على Apex\n' + talabatReference(o) + ' · ' + (a.branch || '') + (a.user ? '\nاللي ضرب الأوردر: ' + a.user : '') +
           (c.missingOnApex.length ? '\nعلى طلبات ومش على Apex: ' + c.missingOnApex.join('، ') : '') + (c.extraOnApex.length ? '\nعلى Apex ومش على طلبات: ' + c.extraOnApex.join('، ') : '') });
@@ -332,6 +332,7 @@ function setup(app) {
     if (no === null) await db.prepare('DELETE FROM talabat_links WHERE talabat_id = ?').run(id);
     else await db.prepare('INSERT INTO talabat_links (talabat_id, day, apex_no, set_by, set_at) VALUES (?,?,?,?,?) ON CONFLICT(talabat_id) DO UPDATE SET apex_no = excluded.apex_no, set_by = excluded.set_by, set_at = excluded.set_at')
       .run(id, o.day, no === 'none' ? null : no, who.name, ctx.now);
+    matchRevision++; matchCache.delete(o.day);
     await app.audit('talabat_link', null, { actor: who.name, talabatId: id, apexNo: no, before: before || null, after: no, reason: String(ctx.body.reason || '').slice(0,500) || null });
     await matchDay(o.day, { teach: true });
     return { ok: true };

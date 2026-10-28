@@ -129,10 +129,23 @@ window.MarsadSite = function MarsadSite(ctx) {
 
   function matchingLabel(x) {
     const state = x.matching?.state;
-    if (state === 'manual-none') return 'مالوش Apex (يدوي)';
+    if (state === 'manual-none' || state === 'excluded') return 'مالوش Apex (يدوي)';
     if (state === 'manual-conflict') return 'تعارض في الربط اليدوي — راجع';
-    if (state === 'tentative' || state === 'ambiguous') return (state === 'ambiguous' ? 'مطابقة ملتبسة' : 'مرشح غير مؤكد') +
-      (x.matching.candidates?.length ? ' · ' + x.matching.candidates.map(a => '#' + (a.sn ?? 'إيصال غير متاح')).join(' / ') : '');
+    if (state === 'tentative' || state === 'ambiguous') {
+      const e = x.matching.candidates?.[0]?.evidence, why = [];
+      if (e) {
+        if (e.phone == null) why.push('رقم العميل ناقص'); else if (!e.phone) why.push('رقم العميل مختلف');
+        if (e.nameConflict) why.push('الاسم مختلف');
+        if (e.addressConflict) why.push('العنوان مختلف');
+        if (e.items == null) why.push('الأصناف ناقصة'); else if (!e.items) why.push('الأصناف أو الكميات مختلفة');
+        if (e.branch !== true) why.push(e.branch === false ? 'الفرع مختلف' : 'الفرع غير مؤكد');
+        if (!e.withinTime) why.push('الوقت خارج نطاق المطابقة');
+        if (e.money == null || e.money >= .08) why.push('القيمة غير متوافقة');
+      }
+      return (state === 'ambiguous' ? 'مطابقة ملتبسة' : 'مرشح غير مؤكد') +
+        (x.matching.candidates?.length ? ' · ' + x.matching.candidates.map(a => '#' + (a.sn ?? 'إيصال غير متاح')).join(' / ') : '') +
+        (why.length ? ' · ' + why.join('، ') : ' · محتاج تمييز بين المرشحين');
+    }
     return 'لم تتأكد مطابقته';
   }
   function siteLinkCell(x, d) {
@@ -188,7 +201,7 @@ window.MarsadSite = function MarsadSite(ctx) {
       const label = x.apex ? '#' + (x.apex.sn ?? 'إيصال غير متاح') + ' · ' + t12(x.apex.at) + ({ code: ' ✓ بمرجع المصدر', manual: ' (يدوي)', time: ' ≈ بالوقت', evidence: ' ✓ بالأدلة' })[x.apex.how] : matchingLabel(x);
       if (!ctx.canWrite()) return label;
       const sel = h('select', { ariaLabel: 'أوردر Apex' }, h('option', { value: '', textContent: label }),
-        ...((x.apex || x.matching?.state?.startsWith('manual')) ? [h('option', { value: '__clear', textContent: 'رجّع الربط التلقائي' })] : []), h('option', { value: 'none', textContent: 'مالوش أوردر على Apex' }),
+        ...((x.apex || (x.matching?.how === 'manual' || x.matching?.state?.startsWith('manual'))) ? [h('option', { value: '__clear', textContent: 'رجّع الربط التلقائي' })] : []), h('option', { value: 'none', textContent: 'مالوش أوردر على Apex' }),
       );
       let choicesLoaded = false;
       const loadChoices = () => {
