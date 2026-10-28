@@ -149,10 +149,23 @@ window.MarsadSite = function MarsadSite(ctx) {
   const OWNER = { Customer: 'العميل', Vendor: 'المطعم', Platform: 'طلبات', Transport: 'التوصيل', Rider: 'الطيار' };
   const STATUS = { NEW: 'جديد', ACCEPTED: 'مقبول', READY: 'جاهز', 'READY FOR PICKUP': 'جاهز', 'PICKED UP': 'خرج', COMPLETED: 'اتسلّم', DELIVERED: 'اتسلّم', CANCELLED: 'اتلغى', REJECTED: 'مرفوض' };
   const secs = v => v == null ? '—' : v < 60 ? v + ' ث' : Math.floor(v / 60) + ' د ' + (v % 60) + ' ث';
-  let tal = null;
+  let tal = null, talCache = null, talFlight = null;
+  async function loadTalabat(force = false) {
+    if (talFlight?.day === state.day) return talFlight.promise;
+    if (!force && talCache?.day === state.day && Date.now() - talCache.at < 12000) return talCache.value;
+    const day = state.day;
+    const promise = api('/api/talabat/day?day=' + day).then(value => {
+      talCache = { day, at: Date.now(), value };
+      return value;
+    }).finally(() => { if (talFlight?.promise === promise) talFlight = null; });
+    talFlight = { day, promise };
+    return promise;
+  }
   const entryDelay = x => x.apex && x.acceptedAt ? Math.round((Date.parse(x.apex.at) - Date.parse(x.acceptedAt)) / 1000) : null;
   async function renderTalabat(force) {
-    const d = tal = await api('/api/talabat/day?day=' + state.day), now = serverNow();
+    const requestedDay = state.day, d = await loadTalabat(force);
+    if (requestedDay !== state.day) return;
+    tal = d; const now = serverNow();
     $('talNote').textContent = !d.linked ? 'شاشة مراقبة طلبات مش متربطة لسه: من «الإدارة» ← «شاشة مراقبة طلبات».' : (d.stale ? 'شاشة المراقبة مش بتبعت من ' + (d.lastPush ? t12(d.lastPush) : '—') + ' — اتأكد إن الجهاز وفايرفوكس شغالين' : 'لايف من شاشة المراقبة · آخر قراءة ' + t12(d.lastPush)) + (d.apexLinked ? '' : ' · الربط مع Apex بيبدأ مع نسخة سكريبت الكاشير الجديدة') + (state.day !== state.to ? ' · ليوم واحد: أول يوم في الفترة' : '');
     const pick = $('talPick').value, o = d.orders.filter(x => !pick || x.store === pick);
     const names = [...new Set(d.orders.map(x => x.store).filter(Boolean))].sort(); const v = $('talPick').value;
@@ -163,7 +176,7 @@ window.MarsadSite = function MarsadSite(ctx) {
     const delays = o.map(entryDelay).filter(x => x != null);
     $('talCards').replaceChildren(kpi('أوردرات طلبات', o.length, 'info', live.length ? live.length + ' لسه في الفرع' : ''), kpi('متوسط القبول', acc.length ? secs(Math.round(acc.reduce((n, x) => n + x.acceptSeconds, 0) / acc.length)) : '—'),
       kpi('من القبول للضرب على Apex', delays.length ? secs(Math.round(delays.reduce((n, x) => n + x, 0) / delays.length)) : '—', '', 'متوسط'),
-      kpi('متربطة بالهاشتاج', o.filter(x => x.apex?.how === 'code').length + ' من ' + o.filter(x => x.apex).length, '', 'الباقي بالأدلة أو يدوي؛ المرشحات غير مؤكدة'),
+      kpi('متربطة بالهاشتاج', o.filter(x => x.apex?.how === 'code').length + ' من ' + o.filter(x => x.apex).length, '', 'كل ربط مؤكد يعتمد على بيانات العميل والطلب؛ اليدوي اقتراح'),
       kpi('اتقبلت وماتضربتش', notIn.length, notIn.length ? 'bad' : 'good', 'أكتر من 10 دقايق'), kpi('اتلغت', canc.length, canc.length ? 'bad' : 'good', canc.filter(x => x.cancelOwner === 'Vendor').length + ' بسبب المطعم'));
     // Who entered Talabat orders on Apex, and how fast after acceptance.
     const by = new Map();

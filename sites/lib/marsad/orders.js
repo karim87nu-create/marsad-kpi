@@ -89,6 +89,7 @@ function setup(app) {
       .run(b.day, data, ctx.now, existing?.data ?? null);
     if (!stored.changes) fail(409, 'snapshot_changed_retry');
     if (!replay) await put('orders_last_push', ctx.now);
+    app.talabat?.invalidate?.(b.day);
     const alerts = [];
     // Persist each alert's last state per Apex day. A retry must not create a second reply.
     const stateKey = 'orders_alert_states:' + b.day;
@@ -186,7 +187,7 @@ function setup(app) {
       const tg = tags[String(o.no)]; if (!tg || !/^\d{3,12}$/.test(String(tg)) || o.tag === String(tg)) continue;
       o.tag = String(tg); updated++;
     }
-    if (updated) await db.prepare('UPDATE orders_days SET data = ? WHERE day = ?').run(JSON.stringify(d), b.day);
+    if (updated) { await db.prepare('UPDATE orders_days SET data = ? WHERE day = ?').run(JSON.stringify(d), b.day); app.talabat?.invalidate?.(b.day); }
     return { ok: true, updated };
   });
 

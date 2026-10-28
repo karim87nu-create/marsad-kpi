@@ -193,7 +193,11 @@
       }; box.append(b);
     } return box;
   }
+  let requestsBusy = false;
   async function refreshRequests() {
+    if (requestsBusy) return;
+    requestsBusy = true;
+    try {
     try { state.requests = await api('/api/break-requests'); } catch (e) { if (state.view === 'requests') showError(e); return; }
     const rows = state.requests.requests, pending = rows.filter(r => r.status === 'pending');
     document.title = (pending.length ? '(' + pending.length + ') ' : '') + 'مرصد الدهان — الإدارة';
@@ -205,6 +209,7 @@
       kpi('اترفضت', cnt(['rejected']), cnt(['rejected']) ? 'bad' : ''), kpi('انتهت أو اتلغت', cnt(['expired', 'cancelled'])), kpi('إجمالي الطلبات', rows.length, 'info'));
     table('breakRequestHistory', [{ title: 'الموظف', get: r => r.employee }, { title: 'التحويلة', get: r => r.extension }, { title: 'المدة المطلوبة', get: r => r.requestedMinutes, show: r => r.requestedMinutes + ' دقيقة' },
       { title: 'وقت الطلب', get: r => r.createdAt, show: r => stamp(r.createdAt) }, { title: 'الحالة', get: r => BREAK_REQUEST_STATUS[r.status] || r.status }, { title: 'القرار', get: requestActions }, { title: 'اتخذ القرار', get: r => r.decidedBy || '—' }], rows, { empty: 'مفيش طلبات بريك إضافي اليوم' });
+    } finally { requestsBusy = false; }
   }
 
   // ---------- ملخص اليوم ----------
@@ -819,13 +824,13 @@
   }
   // One draw per second: fetch, then draw (timers keep counting from the last good data).
   setInterval(() => { tick(); if (state.view === 'now' && Date.now() - (state.drawnAt || 0) > 900) { renderNow(); state.drawnAt = Date.now(); } }, 1000);
-  setInterval(() => { if (token && !document.hidden) refreshRequests(); }, 2000);
+  setInterval(() => { if (token && !document.hidden) refreshRequests(); }, 10000);
   // الفروع الآن: timers every second, the summary every 5 seconds; elsewhere only the late badge, every 30 seconds.
   let boardBusy = false, boardAt = 0;
   setInterval(() => {
     if (!token || document.hidden) return;
     if (state.view === 'branchesNow') OR.tickBoard();
-    const every = state.view === 'branchesNow' ? 5000 : 30000;
+    const every = state.view === 'branchesNow' ? 5000 : 60000;
     if (boardBusy || Date.now() - boardAt < every) return;
     boardBusy = true; boardAt = Date.now();
     OR.refreshBoard().then(() => { if (state.view === 'branchesNow') { syncStatus(true); showError(null); } }).catch(() => { if (state.view === 'branchesNow') syncStatus(false); }).finally(() => { boardBusy = false; });

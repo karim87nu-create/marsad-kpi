@@ -44,8 +44,7 @@ test('talabat: monitor key, orders with details, Apex match (auto and manual), a
     // Manual link.
     assert.equal((await admin('POST', '/api/talabat/link', { talabatId: '3977400002', apexNo: 7002 })).status, 200);
     d = (await admin('GET', '/api/talabat/day?day=2026-10-22')).body; o = Object.fromEntries(d.orders.map(x => [x.id, x]));
-    assert.equal(o['3977400002'].apex, null, 'manual proposal alone does not prove an order entered before acceptance');
-    assert.equal(o['3977400002'].matching.manualProposal, '7002');
+    assert.equal(o['3977400002'].apex, null, 'manual proposal cannot override missing evidence or time conflict');
     assert.equal(d.unmatchedApex.length, 2);
     // Alerts: the cancellation to the branches group; 3977400002 was unmatched > 10 min at the earlier push.
     const kinds = t.app.db.raw.prepare("SELECT kind, target FROM telegram_log WHERE kind LIKE 'talabat%' ORDER BY kind").all();
@@ -53,7 +52,7 @@ test('talabat: monitor key, orders with details, Apex match (auto and manual), a
   } finally { await t.close(); }
 });
 
-test('talabat: the #code on Apex links for sure, even far in time; sure links teach the branch name; unknown values are kept', async () => {
+test('talabat: a #code cannot bypass complete evidence; sure links teach the branch name; unknown values are kept', async () => {
   const t0 = cairoToUtc(2026, 10, 22, 20, 0, 0), at = m => new Date(t0 + m * 60000).toISOString();
   const t = await start({ at: t0 + 90 * 60000 });
   try {
@@ -62,14 +61,15 @@ test('talabat: the #code on Apex links for sure, even far in time; sure links te
     const push = body => t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body });
     const ot = (await admin('POST', '/api/orders/token')).body.token;
     const online = [];
-    for (let i = 0; i < 3; i++) online.push({ no: 8000 + i, kind: 'طلبات', branch: 'Tagamoa Branch', at: at(i * 10 + 70), user: 'u', amount: 100, tag: '#' + (2700 + i) });
+    for (let i = 0; i < 3; i++) online.push({ no: 8000 + i, kind: 'طلبات', branch: 'التجمع', at: at(i * 10 + 3), user: 'u', amount: 113, tag: '#' + (2700 + i), customer: { name: 'Customer ' + i, phone: '01012345678', address: 'Tagamoa 5' }, items: [{ name: 'Rice', no: 42, qty: 1, price: 100 }] });
     await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': ot }, body: { v: 1, day: '2026-10-22', online } });
     await push({ codes: [0, 1, 2].map(i => ({ id: '39770000' + i + '0', code: String(2700 + i), store: 'الدهان، التجمع الخامس' })) });
-    await push({ orders: [0, 1, 2].map(i => ({ id: '39770000' + i + '0', store: 'الدهان، التجمع الخامس', status: 'MYSTERY', placedAt: at(i * 10), detail: { receivedAt: at(i * 10), acceptedAt: at(i * 10 + 0.5), milestones: { DISPLAYED_AT_VENDOR: at(i * 10), RIDER_NEAR: at(i * 10 + 3) } } })) });
+    await push({ orders: [0, 1, 2].map(i => ({ id: '39770000' + i + '0', store: 'الدهان، التجمع الخامس', status: 'MYSTERY', placedAt: at(i * 10), customer: { name: 'Customer ' + i, phone: '01012345678', address: 'Tagamoa 5' }, detail: { receivedAt: at(i * 10), acceptedAt: at(i * 10 + 0.5), items: [{ name: 'Rice', qty: 1, price: 113 }], subtotal: 113, milestones: { DISPLAYED_AT_VENDOR: at(i * 10), RIDER_NEAR: at(i * 10 + 3) } } })) });
+    t.advance(31000); await push({ orders: [] });
     const d = (await admin('GET', '/api/talabat/day?day=2026-10-22')).body;
     for (const o of d.orders) assert.equal(o.apex?.how, 'code', o.id);
     const l = (await admin('GET', '/api/learned')).body;
-    assert.ok(l.facts.some(f => f.kind === 'match-v2:branch:talabat' && f.a === 'الدهان، التجمع الخامس' && f.b === 'Tagamoa Branch' && f.evidence === 3), 'learned the branch name');
+    assert.ok(l.facts.some(f => f.kind === 'match-v2:branch:talabat' && f.a === 'الدهان، التجمع الخامس' && f.b === 'التجمع' && f.evidence === 3), 'learned the branch name');
     assert.ok(l.facts.some(f => f.kind === 'unknown' && f.b === 'حالة: MYSTERY'));
     assert.ok(l.facts.some(f => f.kind === 'unknown' && f.b === 'خطوة: RIDER_NEAR'));
     // Now a Talabat order with no #code: «Tagamoa Branch» is accepted as the same branch (names share no word).
@@ -90,12 +90,12 @@ test('talabat: «accepted and not on Apex» is answered when it is entered on Ap
     const push = orders => t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders } });
     const apex = online => t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': ot }, body: { v: 1, day: '2026-10-22', online } });
     await apex([]);
-    await push([{ id: '3977400009', store: 'الدهان، التجمع الخامس - البنفسج', status: 'ACCEPTED', placedAt: at(0), total: 300,
-      detail: { receivedAt: at(0), acceptSeconds: 30, acceptedAt: at(0.5), items: [], subtotal: 300 } }]);
+    await push([{ id: '3977400009', store: 'الدهان، التجمع الخامس - البنفسج', status: 'ACCEPTED', placedAt: at(0), total: 113,
+      detail: { customer: { name: 'Customer One', phone: '01012345678', address: 'Tagamoa 5' }, receivedAt: at(0), acceptSeconds: 30, acceptedAt: at(0.5), items: [{ name: 'White Rice', qty: 1, price: 113 }], subtotal: 113 } }]);
     t.advance(11 * 60000); await apex([]); await push([]);
     assert.ok(t.app.db.raw.prepare("SELECT 1 FROM telegram_log WHERE key = 'talabat:notEntered:3977400009'").get());
     t.advance(2 * 60000);
-    await apex([{ no: 3526900, sn: 512, kind: 'طلبات', branch: 'التجمع', at: at(12), user: 'sara.m', amount: 300, tag: '3977400009' }]);
+    await apex([{ no: 3526900, sn: 512, kind: 'طلبات', branch: 'التجمع', at: at(12), user: 'sara.m', amount: 113, tag: '3977400009', customer: { name: 'Customer One', phone: '01012345678', address: 'Tagamoa 5' }, items: [{ name: 'ارز سادة', no: '0103007', qty: 1, price: 100 }] }]);
     await push([]);
     const rep = t.app.db.raw.prepare("SELECT text, reply_to FROM telegram_log WHERE key = 'resolved:talabat:notEntered:3977400009'").get();
     assert.equal(rep.reply_to, 'talabat:notEntered:3977400009');
@@ -124,7 +124,7 @@ test('talabat: a list row counts with the time shown on it (yesterday stays yest
   } finally { await t.close(); }
 });
 
-test('talabat: codes written bare or cut («8698», «843» for 8403) link for sure; past days get their codes later; one name per branch', async () => {
+test('talabat: bare and partial codes need full evidence; past days get codes later; one name per branch', async () => {
   const t0 = cairoToUtc(2026, 10, 22, 21, 0, 0), at = m => new Date(t0 + m * 60000).toISOString();
   const t = await start({ at: t0 + 60 * 60000 });
   try {
@@ -135,9 +135,9 @@ test('talabat: codes written bare or cut («8698», «843» for 8403) link for s
     // Two Nasr City orders a minute apart: by time alone they would be swapped; the codes decide.
     await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': ot }, body: { v: 1, day: '2026-10-22', online: [
       { no: 3526864, sn: 651, kind: 'طلبات', branch: 'مدينة نصر', at: at(1), user: 'a', amount: 700 },
-      { no: 3526865, sn: 653, kind: 'طلبات', branch: 'مدينة نصر', at: at(2), user: 'b', amount: 480 }] } });
+      { no: 3526865, sn: 653, kind: 'طلبات', branch: 'مدينة نصر', at: at(2), user: 'b', amount: 113, customer: { name: 'Customer One', phone: '01012345678', address: 'Nasr City' }, items: [{ name: 'Rice', no: 42, qty: 1, price: 100 }] }] } });
     await push({ codes: [{ id: '4676900301', code: '8698' }, { id: '4676900302', code: '8403' }] });
-    await push({ orders: [{ id: '4676900301', store: 'الدهان سيتي ستار مول، مكرم عبيد', status: 'ACCEPTED', placedAt: at(0), detail: { acceptedAt: at(0.2), subtotal: 480, items: [] } },
+    await push({ orders: [{ id: '4676900301', store: 'الدهان سيتي ستار مول، مكرم عبيد', status: 'ACCEPTED', placedAt: at(0), customer: { name: 'Customer One', phone: '01012345678', address: 'Nasr City' }, detail: { acceptedAt: at(0.2), subtotal: 113, items: [{ name: 'Rice', qty: 1, price: 113 }] } },
       { id: '4676900302', store: 'El Dahan, Makram Ebeid', status: 'ACCEPTED', placedAt: at(0.5), detail: { acceptedAt: at(0.7), subtotal: 700, items: [] } }] });
     // The codes come later (the monitor's archive pass): «8698» and «843».
     const r = await t.call('POST', '/api/orders/tags', { headers: { 'x-orders-token': ot }, body: { day: '2026-10-22', tags: { 3526864: '843', 3526865: '8698' } } });

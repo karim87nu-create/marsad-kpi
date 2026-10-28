@@ -52,7 +52,8 @@ export function resolveOrders(rows, apex, { manual = new Map(), branchOk = () =>
       const loose = !!tag && !exact && ((tag.length >= 6 && id.endsWith(tag)) || (tag.length >= 3 && code && tag.replace(/0/g, '') === code.replace(/0/g, '')));
       if (tag && !exact && !loose) continue;
       const time = Number(a.t ?? Date.parse(a.at)), gap = time - o.anchor, branch = branchOk(o.branch, a.branch);
-      if (!Number.isFinite(time) || (!exact && (gap < -120000 || gap > windowFor(o)))) continue;
+      const withinTime = Number.isFinite(time) && gap >= -120000 && gap <= windowFor(o);
+      if (!Number.isFinite(time) || (!exact && !loose && !withinTime)) continue;
       const ac = customerOf(a.customer), ap = new Set([ac.phone, ac.mobile].filter(Boolean));
       const phone = cp.size && ap.size ? [...cp].some(p => ap.has(p)) : null;
       const name = similar(c.name, ac.name), address = similar(c.address, ac.address);
@@ -62,19 +63,29 @@ export function resolveOrders(rows, apex, { manual = new Map(), branchOk = () =>
       for (const t of T) { const ids = A.filter(x => textKey(x.name) === textKey(t.name)).map(x => [String(x.no), 2]); if (ids.length) direct.set(itemKey(t.name), new Map([...(direct.get(itemKey(t.name)) || []), ...ids])); }
       const item = T.length && A.length ? compareItems(T, A, { learned: direct, ratio }) : null;
       const money = Number(o.amount) > 0 && Number(a.amount) > 0 ? Math.abs(o.amount - a.amount) / Math.max(o.amount, a.amount) : null;
-      const identity = phone === true || name >= .8 || address >= .75;
-      const conflict = phone === false || (!exact && (branch === false || (item && !item.ok) || (money != null && money > .3)));
-      const strong = !conflict && (exact || (branch === true && money != null && money < .08 &&
-        ((phone === true && (name >= .6 || address >= .6 || item?.ok)) || (item?.ok && (identity || T.length >= 2)))));
+      const identity = phone === true && name >= .6 && address >= .6;
+      const nameConflict = c.name && ac.name && name != null && name < .35;
+      const addressConflict = c.address && ac.address && address != null && address < .5;
+      const conflict = phone === false || nameConflict || addressConflict || branch === false || (item && !item.ok) || (money != null && money > .3) || !withinTime;
+      // A matching #code is useful evidence, never a shortcut around a contradictory or incomplete order.
+      const fullEvidence = withinTime && branch === true && money != null && money < .08 && item?.ok === true && identity;
+      const strong = !conflict && fullEvidence;
       const score = (exact ? 100 : loose ? 18 : 0) + (phone === true ? 42 : phone === false ? -70 : 0) +
         (name ?? 0) * 16 + (address ?? 0) * 18 + (item ? item.ok ? 32 : -24 : 0) +
         (branch === true ? 8 : branch === false ? -25 : 0) + (money == null ? 0 : Math.max(-20, 12 - money * 70)) + Math.max(0, 8 - Math.abs(gap) / 60000 / 5);
       pairs.push({ o: o.id, a, score, strong, exact, conflict, reasons: { code: exact ? 'exact' : loose ? 'partial' : null, phone, name, address,
-        items: item ? item.ok : null, quantities: item ? item.countTalabat === item.countApex : null, branch, money, minutes: gap / 60000 } });
+        nameConflict: !!nameConflict, addressConflict: !!addressConflict, items: item ? item.ok : null, quantities: item ? item.countTalabat === item.countApex : null,
+        branch, money, minutes: gap / 60000, withinTime, fullEvidence } });
     }
   }
   const sorted = pairs.sort((x, y) => y.score - x.score || String(x.a.no).localeCompare(String(y.a.no)));
-  const listO = id => sorted.filter(p => p.o === id), listA = no => sorted.filter(p => String(p.a.no) === String(no));
+  const byOrder = new Map(), byApex = new Map();
+  for (const p of sorted) {
+    if (!byOrder.has(p.o)) byOrder.set(p.o, []);
+    if (!byApex.has(String(p.a.no))) byApex.set(String(p.a.no), []);
+    byOrder.get(p.o).push(p); byApex.get(String(p.a.no)).push(p);
+  }
+  const listO = id => byOrder.get(id) || [], listA = no => byApex.get(String(no)) || [];
   // Require a clear winner on BOTH sides before any assignment; do not break ties by iteration order.
   for (const o of rows) {
     const candidates = listO(o.id), best = candidates[0];
@@ -90,15 +101,7 @@ export function resolveOrders(rows, apex, { manual = new Map(), branchOk = () =>
   // A human proposal is retained as evidence, never a reservation or shortcut to certainty.
   for (const o of rows) {
     const st = states.get(o.id) || { state: 'unmatched', candidates: [] };
-    if (manual.has(o.id)) {
-      const proposed = manual.get(o.id), actual = matches.get(o.id);
-      st.manualProposal = proposed;
-      if (actual && (proposed == null || String(actual.no) !== String(proposed))) {
-        used.delete(String(actual.no)); matches.delete(o.id); how.delete(o.id);
-        st.state = 'ambiguous'; st.manualConflict = true;
-        st.candidates = [{ no: actual.no, evidence: st.evidence }];
-      }
-    }
+    if (manual.has(o.id)) st.manualProposal = manual.get(o.id);
     st.confidence = ({ confirmed: 'SURE', tentative: 'PROBABLE', ambiguous: 'AMBIGUOUS', unmatched: 'NO MATCH' })[st.state] || 'AMBIGUOUS';
     states.set(o.id, st);
   }

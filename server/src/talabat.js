@@ -121,6 +121,7 @@ function setup(app) {
       if (committed[committed.length - 2].changes) accepted.push(o);
     }
     if (writes.length) await db.batch(writes);
+    if (writes.length || accepted.length) { matchRevision++; matchCache.clear(); }
     await put('talabat_last_push', now);
     // What the monitor should open next: orders never read in detail or whose status changed since, and orders still
     // waiting at the branch (new / accepted / ready) read over a minute ago.
@@ -133,16 +134,33 @@ function setup(app) {
     if (want.length) await db.batch(want.map(({ id }) => db.prepare(`INSERT INTO order_ingest (source,ref,detail_attempts,detail_retry_at,updated_at)
       SELECT 'talabat',id,1,?,? FROM talabat_orders WHERE id=? AND status='CANCELLED'
       ON CONFLICT(source,ref) DO UPDATE SET detail_attempts=order_ingest.detail_attempts+1, detail_retry_at=excluded.detail_retry_at, updated_at=excluded.updated_at`).bind(now + 60000, now, id)));
-    await alerts(now);
+    await maybeAlerts(now, accepted.some(o => String(o.status || '').toUpperCase() === 'CANCELLED'));
     // WhatsApp (when on): the customers' numbers for the welcome and the survey; «phones» tells the screen to read them.
     await app.whatsapp?.take(accepted, now);
     return { ok: true, want: want.map(r => r.id), phones: !!await app.whatsapp?.wantPhones(), serverNow: iso(now) };
   }, { limit: 1024 * 1024 });
 
   // ---- Talabat order ↔ Apex order ----
-  // Manual reservations first, then unique exact codes or strong multi-field evidence.
+  // Resolve links only from unique, full-evidence matches. Manual choices remain proposals.
   // Time-only and partial-code candidates remain unconfirmed and cannot teach.
-  async function matchDay(day, { teach = false } = {}) {
+  const matchCache = new Map(), matchFlights = new Map();
+  let matchRevision = 0;
+  async function matchDay(day, options = {}) {
+    const teach = !!options.teach, cached = matchCache.get(day);
+    if (!teach && cached && Date.now() - cached.at < 8000) return cached.value;
+    const running = matchFlights.get(day);
+    if (running) { await running; if (!teach) return matchDay(day, options); }
+    const revision = matchRevision;
+    const flight = computeMatchDay(day, { teach });
+    matchFlights.set(day, flight);
+    try {
+      const value = await flight;
+      if (revision === matchRevision) matchCache.set(day, { at: Date.now(), value });
+      while (matchCache.size > 4) matchCache.delete(matchCache.keys().next().value);
+      return value;
+    } finally { if (matchFlights.get(day) === flight) matchFlights.delete(day); }
+  }
+  async function computeMatchDay(day, { teach = false } = {}) {
     const rows = await db.prepare('SELECT * FROM talabat_orders WHERE day = ? AND (placed_at IS NOT NULL OR received_at IS NOT NULL) ORDER BY placed_at').all(day);
     const r = await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(day);
     let d = null; try { d = r ? JSON.parse(r.data) : null; } catch {}
@@ -177,7 +195,7 @@ function setup(app) {
     // Learning from independently confirmed links.
     if (teach && app.learn) for (const o of rows) {
       const a = matches.get(o.id), h = how.get(o.id);
-      if (!a || (h !== 'code' && h !== 'manual')) continue;
+      if (!a || (h !== 'code' && h !== 'evidence')) continue;
       if (o.store && a.branch) record('match-v2:branch:talabat', o.store, a.branch, o.id);
       const anchor = o.accepted_at || o.received_at;
       if (o.store && anchor) record('match-v2:delay:talabat', o.store, '-', o.id, Math.max(0, (a.t - anchor) / 1000));
@@ -191,8 +209,8 @@ function setup(app) {
       const c = compareItems(ti, a.items, { learned: learnedItems, ratio });
       c.reviewedOk = okReviews.has(o.id);
       itemsOf.set(o.id, c);
-      const sure = how.get(o.id) === 'code' || how.get(o.id) === 'manual';
-      if (!teach || !app.learn || !sure || !c.ok) continue;   // only orders linked for sure (the code, or by hand) teach
+      const sure = how.get(o.id) === 'code' || how.get(o.id) === 'evidence';
+      if (!teach || !app.learn || !sure || !c.ok) continue;   // only full-evidence automatic matches teach
       // Sure pairs teach the dish name and the price ratio. One left on each side with the same quantity and a fitting
       // price is the same dish under another name — also when the name is known with another Apex item (Talabat orders
       // are entered with Apex's own «طلبات» items); a wrong weight or dish has a price that does not fit, so it is never
@@ -239,7 +257,7 @@ function setup(app) {
     const sent = new Set((await db.prepare("SELECT key FROM telegram_log WHERE (key LIKE 'talabat:items:%' OR key LIKE 'resolved:talabat:items:%') AND created_at >= ?").all(now - 6 * 3600000)).map(x => x.key));
     for (const o of m.rows) {
       const a = m.matches.get(o.id), c = a?.items, key = 'talabat:items:' + o.id;
-      if (!c || (a.how !== 'code' && a.how !== 'manual')) continue;
+      if (!c || (a.how !== 'code' && a.how !== 'evidence')) continue;
       if (!c.ok && !c.uncertain && !c.reviewedOk && !sent.has(key) && now - (o.accepted_at || o.placed_at || now) < 3 * 3600000)
         out.push({ key, kind: 'talabatItems', target: 'online', text: '🛵 طلبات | 🍽️ صنف ممكن يكون متضرب غلط على Apex\nرقم أوردر طلبات: ' + (o.code ? '#' + o.code : o.id) + '\nرقمه على Apex: ' + (a.sn ?? a.no) + ' · ' + (a.branch || '') + (a.user ? '\nاللي ضرب الأوردر: ' + a.user : '') +
           (c.missingOnApex.length ? '\nعلى طلبات ومش على Apex: ' + c.missingOnApex.join('، ') : '') + (c.extraOnApex.length ? '\nعلى Apex ومش على طلبات: ' + c.extraOnApex.join('، ') : '') });
@@ -249,8 +267,18 @@ function setup(app) {
     if (out.length) await db.batch(out.map(a => db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, sent_at, target, reply_to, branch) VALUES (?,?,?,?,?,?,?,?,?)').bind(a.key, a.kind, null, a.text, now, r[a.kind] === false && !a.replyTo ? now : null, a.target, a.replyTo || null, a.branch || null)));
   }
 
+  // Order pushes arrive in bursts while the monitor reads details. Alert matching is expensive,
+  // and the rules only change meaningfully every few seconds, so share one in-flight pass and cap it.
+  let alertsAt = 0, alertsFlight = null;
+  async function maybeAlerts(now, force = false) {
+    if (alertsFlight) { await alertsFlight; if (!force) return; }
+    if (!force && now - alertsAt < 30000) return;
+    alertsFlight = alerts(now).then(value => { alertsAt = now; return value; }).finally(() => { alertsFlight = null; });
+    return alertsFlight;
+  }
+
   // ---- the admin page ----
-  app.talabat = { matchDay };
+  app.talabat = { matchDay, invalidate: day => { matchRevision++; matchCache.delete(day); } };
   app.route('GET', '/api/talabat/day', async ctx => {
     await app.requireAdmin(ctx);
     const day = validDate(String(ctx.query.day || '')) ? ctx.query.day : businessDay(ctx.now);

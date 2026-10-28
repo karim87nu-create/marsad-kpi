@@ -18,7 +18,7 @@ test('normalizes Egyptian numbers and rejects masked numbers', () => {
 test('identity and basket beat a closer wrong customer; all evidence is included', () => {
   const d = resolveOrders([row()], [apex(1, { t: anchor, customer: { ...customer, phone: '01112345678' } }), apex(2)], opts);
   assert.equal(d.matches.get('10000001').no, 2);
-  assert.deepEqual(Object.keys(d.states.get('10000001').evidence).sort(), ['address','branch','code','items','minutes','money','name','phone','quantities']);
+  assert.deepEqual(Object.keys(d.states.get('10000001').evidence).sort(), ['address','addressConflict','branch','code','fullEvidence','items','minutes','money','name','nameConflict','phone','quantities','withinTime']);
 });
 test('time and value alone remain tentative and never confirmed', () => {
   const d = resolveOrders([row('10000001', { customer: {}, items: [] })], [apex()], opts);
@@ -31,13 +31,35 @@ test('ties in either direction are ambiguous and independent of row order', () =
   }
   assert.equal(resolveOrders([row()], [apex(1), apex(2)], opts).matches.size, 0);
 });
-test('manual proposals do not reserve or override independent evidence; conflicts remain ambiguous', () => {
-  const rows = [row(), row('10000002')], A = [apex(1, { tag: '10000001' }), apex(2)];
-  const d = resolveOrders(rows, A, { ...opts, manual: new Map([['10000002','1'], ['10000001', null]]) });
+test('an exact tag cannot overrule customer, item, branch, value, or time contradictions', () => {
+  const cases = [
+    { branch: 'مدينتي' }, { amount: 900 },
+    { customer: { ...customer, phone: '01112345678' } },
+    { customer: { ...customer, name: 'محمود حسن' } },
+    { customer: { ...customer, address: 'شارع مختلف عمارة 9' } },
+    { items: [{ ...aitems[0], qty: 1 }] }, { t: anchor + 4 * 3600000 },
+  ];
+  for (const extra of cases) {
+    const d = resolveOrders([row()], [apex(1, { tag: '10000001', ...extra })], opts);
+    assert.equal(d.matches.size, 0, JSON.stringify(extra));
+    assert.equal(d.states.get('10000001').state, 'ambiguous');
+  }
+});
+test('an exact tag with missing customer or basket remains a suggestion, not a confirmation', () => {
+  const d = resolveOrders([row('10000001', { customer: {}, items: [] })], [apex(1, { tag: '10000001', customer: {}, items: [] })], opts);
   assert.equal(d.matches.size, 0);
-  assert.equal(d.states.get('10000001').confidence, 'AMBIGUOUS');
-  assert.equal(d.states.get('10000001').manualConflict, true);
-  assert.equal(d.states.get('10000002').manualProposal, '1');
+  assert.equal(d.states.get('10000001').state, 'tentative');
+});
+
+test('each identity field is required and a manual proposal cannot force or veto full evidence', () => {
+  for (const field of ['phone', 'name', 'address']) {
+    const d = resolveOrders([row()], [apex(1, { tag: '10000001', customer: { ...customer, [field]: '' } })], opts);
+    assert.equal(d.matches.size, 0, field);
+  }
+  const forced = resolveOrders([row()], [apex(1, { amount: 999 })], { ...opts, manual: new Map([['10000001', 1]]) });
+  assert.equal(forced.matches.size, 0);
+  const veto = resolveOrders([row()], [apex()], { ...opts, manual: new Map([['10000001', 2]]) });
+  assert.equal(veto.matches.get('10000001').no, 1);
 });
 test('duplicate codes and zero-stripped partial codes do not become sure links without evidence', () => {
   const bare = row('10000001', { code: '8403', customer: {}, items: [] });
@@ -53,7 +75,7 @@ test('split duplicate item lines aggregate before matching quantities', () => {
   const d = resolveOrders([row()], [apex(1, { items: [ { ...aitems[0], qty: 1 }, { ...aitems[0], qty: 1 } ] })], opts);
   assert.equal(d.matches.size, 1);
 });
-test('API persists customer evidence, excludes ambiguity from learning, and conflicting manual proposals do not teach', async () => {
+test('API persists customer evidence, excludes ambiguity from learning, and links from full evidence rather than manual proposals', async () => {
   const t = await start({ at: anchor + 30 * 60000 });
   try {
     const admin = await t.admin(), token = (await admin('POST', '/api/talabat/token')).body.token;
@@ -70,13 +92,13 @@ test('API persists customer evidence, excludes ambiguity from learning, and conf
     assert.equal((await admin('POST', '/api/talabat/link', { talabatId: '10000002', apexNo: 1 })).status, 200);
     assert.equal((await admin('POST', '/api/talabat/link', { talabatId: '10000001', apexNo: 1 })).status, 409);
     assert.equal((await admin('POST', '/api/talabat/link', { talabatId: '10000001', apexNo: 'none' })).status, 200);
-    // Exact code arriving later cannot override a manual-none or steal a manually reserved order.
+    // Exact codes arrive later; the complete customer and basket evidence determines the links.
     await t.call('POST', '/api/orders/tags', { headers: { 'x-orders-token': ot }, body: { day: '2026-10-22', tags: { 1: '10000001', 2: '10000002' } } });
+    t.advance(31000); await push([]); // a throttled alert/matching pass learns only the now-complete, unique evidence
     d = (await admin('GET', '/api/talabat/day?day=2026-10-22')).body;
-    assert.equal(d.orders.find(x => x.id === '10000002').apex, null);
-    assert.equal(d.orders.find(x => x.id === '10000002').matching.confidence, 'AMBIGUOUS');
-    assert.equal(d.orders.find(x => x.id === '10000001').apex, null);
+    assert.equal(d.orders.find(x => x.id === '10000002').apex.no, 2);
+    assert.equal(d.orders.find(x => x.id === '10000001').apex.no, 1);
     const facts = t.app.db.raw.prepare("SELECT DISTINCT ref FROM learned WHERE kind LIKE 'match-v2:%'").all();
-    assert.deepEqual(facts, []);
+    assert.deepEqual(facts, [{ ref: '10000001' }, { ref: '10000002' }]);
   } finally { await t.close(); }
 });
