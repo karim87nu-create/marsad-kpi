@@ -306,7 +306,13 @@ window.MarsadSite = function MarsadSite(ctx) {
       h('span', { className: 'muted', textContent: 'النهارده: ' + s.today.orders + ' أوردر برقم · اتبعت ترحيب ' + s.today.welcome + ' · استطلاع ' + s.today.survey + ' · جاهز للإرسال ' + s.today.ready + ' · أرقام محفوظة للترحيب أو الاستطلاع ' + s.today.waiting + (s.unconfirmed ? ' · إرسال غير مؤكد يحتاج مراجعة: ' + s.unconfirmed : '') + (s.lastWeb ? ' · آخر رسالة ' + t12(s.lastWeb) : '') }));
     if (document.activeElement?.form !== f) { f.elements.welcomeText.value = s.welcomeText || ''; f.elements.surveyText.value = s.surveyText || ''; f.elements.delay.value = s.delay || 75; }
     $('waOn').hidden = s.enabled || !s.welcomeText; $('waOff').hidden = !s.enabled;
-    $('waErrors').replaceChildren(...(s.errors.length ? [h('h3', { textContent: 'اللي ماتبعتش النهارده' }), ...s.errors.map(e => h('p', { className: 'muted', textContent: t12(e.at) + ' · أوردر ' + e.order + ' · ' + e.error }))] : []));
+    $('waErrors').replaceChildren(...(s.errors.length ? [h('h3', { textContent: 'اللي ماتبعتش النهارده' }), ...s.errors.map(e => {
+      const row=h('p',{className:'muted',textContent:t12(e.at)+' · أوردر '+e.order+' · '+(e.error==='delivery_unconfirmed'?'إرسال الرسالة غير مؤكد':e.error)});
+      if(e.canConfirm){const button=h('button',{type:'button',textContent:'راجعتها على واتساب: اتبعتت'});button.onclick=async()=>{
+        if(!confirm('تأكيد إن رسالة '+(e.kind==='survey'?'المتابعة':'الترحيب')+' للأوردر '+e.order+' ظاهرة في محادثته على واتساب؟ لن يُعاد إرسالها.'))return;
+        button.disabled=true;await waDo({action:'confirm_sent',id:e.id,kind:e.kind},r=>r.surveyAvailable?'اتسجل الإرسال؛ المتابعة هتدخل الطابور عند موعدها.':'اتسجل الإرسال.');button.disabled=false;
+      };row.append(' ',button);}return row;
+    })] : []));
   }
   const waDo = async (body, ok) => { try { const r = await api('/api/whatsapp', { method: 'POST', body }); $('waNote').textContent = ok(r); renderWhatsApp(true); } catch (x) { $('waNote').textContent = x.message; } };
   $('waWebForm').onsubmit = e => { e.preventDefault(); const f = e.target;

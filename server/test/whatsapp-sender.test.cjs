@@ -35,3 +35,24 @@ test('only the requested draft is sent and success requires a new outgoing messa
  await h.c.finish({id:2,kind:'welcome',claimToken:'other',text:'hello'});assert.equal(clicks,1);assert.equal(h.reports[1].ok,false);
  }finally{h.close();}
 });
+
+test('emoji images and split outgoing spans confirm a sent welcome without resending',async()=>{
+ const h=harness('<footer><div contenteditable="true">hello ❤️ customer</div><button>Send</button></footer>');try{
+ let clicks=0;h.w.document.querySelector('button').onclick=()=>{clicks++;h.w.document.querySelector('[contenteditable]').textContent='';h.w.document.body.insertAdjacentHTML('beforeend','<div class="message-out" data-id="new"><span class="selectable-text"><span>hello </span><img alt="❤️"></span><span class="selectable-text">customer</span></div>');};
+ await h.c.finish({id:1,kind:'welcome',claimToken:'claim',text:'hello ❤️ customer'});
+ assert.equal(clicks,1);assert.equal(h.reports[0].ok,true);
+ }finally{h.close();}
+});
+test('an old identical message is not proof of the new send',async()=>{
+ const h=harness('<div class="message-out" data-id="old"><span class="selectable-text">hello</span></div><footer><div contenteditable="true">hello</div><button>Send</button></footer>');try{
+ h.w.document.querySelector('button').onclick=()=>{h.w.document.querySelector('[contenteditable]').textContent='';};
+ await h.c.finish({id:1,kind:'welcome',claimToken:'claim',text:'hello'});assert.equal(h.reports[0].ok,false);
+ }finally{h.close();}
+});
+test('reload after click can acknowledge the new message by its saved baseline without clicking',async()=>{
+ const h=harness('<div class="message-out" data-id="new"><span class="selectable-text">hello</span></div><footer><div contenteditable="true"></div><button>Send</button></footer>');try{
+ let clicks=0;h.w.document.querySelector('button').onclick=()=>clicks++;
+ await h.c.finish({id:1,kind:'welcome',claimToken:'claim',text:'hello',phase:'clicked',baseline:{captured:true,ids:['old'],count:0}});
+ assert.equal(clicks,0);assert.equal(h.reports[0].ok,true);
+ }finally{h.close();}
+});

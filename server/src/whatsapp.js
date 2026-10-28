@@ -199,8 +199,8 @@ function setup(app) {
     await app.requireAdmin(ctx, 'admin');
     const c = await config(), day = businessDay(ctx.now);
     const n = async where => (await db.prepare('SELECT COUNT(*) AS n FROM wa_messages WHERE day = ? AND ' + where).get(day)).n;
-    const errors = (await db.prepare('SELECT talabat_id, error, created_at FROM wa_messages WHERE day = ? AND error IS NOT NULL ORDER BY id DESC LIMIT 10').all(day))
-      .map(r => ({ order: r.talabat_id, error: r.error, at: iso(r.created_at) }));
+    const errors = (await db.prepare('SELECT w.id,w.talabat_id,w.error,w.created_at,q.kind,q.state FROM wa_messages w LEFT JOIN wa_claims q ON q.message_id=w.id WHERE w.day = ? AND w.error IS NOT NULL ORDER BY w.id DESC LIMIT 30').all(day))
+      .map(r => ({ id:r.id, kind:r.kind, canConfirm:r.error==='delivery_unconfirmed' && r.state==='unknown', order: r.talabat_id, error: r.error, at: iso(r.created_at) }));
     const raw = await setting('whatsapp_config'); let any = null; try { any = raw ? JSON.parse(await open(raw)) : null; } catch {}
     const delay = Math.max(10, Math.min(600, Number(c?.delay) || 75)) * 60000;
     const ready = await db.prepare(`SELECT COUNT(*) n FROM wa_messages w JOIN talabat_orders t ON t.id=w.talabat_id
@@ -219,6 +219,33 @@ function setup(app) {
     const who = await app.requireAdmin(ctx, 'admin'), b = ctx.body || {};
     const old = await config();
     const tpl = x => String(x || '').trim().toLowerCase();
+    if (b.action === 'confirm_sent') {
+      const id=Number(b.id),kind=b.kind;
+      if (!Number.isInteger(id) || !['welcome','survey'].includes(kind)) fail(400,'invalid_message');
+      const row=await db.prepare('SELECT w.*,q.kind,q.token,q.state,q.claimed_at FROM wa_messages w JOIN wa_claims q ON q.message_id=w.id WHERE w.id=?').get(id);
+      if (!row || row.kind!==kind) fail(404,'message_not_found');
+      if (row.state==='done') return {ok:true,duplicate:true};
+      if (row.state!=='unknown' || row.error!=='delivery_unconfirmed') fail(409,'message_not_reviewable');
+      // Restore only the same verified customer's number, within the existing retention window.
+      const order=await db.prepare('SELECT status FROM talabat_orders WHERE id=?').get(row.talabat_id);
+      let phone=row.phone;
+      if (!phone && kind==='welcome' && old?.enabled && old?.surveyText && ctx.now-row.created_at<KEEP_MS && !DEAD.has(order?.status)) {
+        const profile=await db.prepare("SELECT data FROM match_profiles WHERE source='talabat' AND ref=?").get(row.talabat_id);
+        let customer={};try{customer=JSON.parse(profile?.data||'{}');}catch{}
+        const candidate=egMobile(customer.phone || customer.mobile);
+        const identity=await db.prepare('SELECT phone_hash FROM wa_identity WHERE talabat_id=?').get(row.talabat_id);
+        if (candidate && identity?.phone_hash===sha256(candidate)) phone=candidate;
+      }
+      const field=kind==='welcome'?'welcome_at':'survey_at';
+      await db.batch([
+        db.prepare("UPDATE wa_claims SET state='done' WHERE message_id=? AND token=? AND state='unknown'").bind(id,row.token),
+        db.prepare(`UPDATE wa_messages SET ${field}=?,sending_at=NULL,error=NULL,phone=? WHERE id=? AND EXISTS (SELECT 1 FROM wa_claims WHERE message_id=? AND token=? AND state='done')`)
+          .bind(row.claimed_at,kind==='survey'?null:phone,id,id,row.token),
+      ]);
+      await app.audit('whatsapp_confirm_sent',null,{actor:who.name,order:row.talabat_id,kind});
+      return {ok:true,surveyAvailable:kind==='welcome' && !!phone && !!old?.enabled && !!old?.surveyText};
+    }
+
     if (b.action === 'web') {
       const raw = await setting('whatsapp_config'); let prev = null; try { prev = raw ? JSON.parse(await open(raw)) : null; } catch {}
       const c = { ...(prev || {}), mode: 'web', welcomeText: String(b.welcomeText || '').trim().slice(0, 1000), surveyText: String(b.surveyText || '').trim().slice(0, 1000),
