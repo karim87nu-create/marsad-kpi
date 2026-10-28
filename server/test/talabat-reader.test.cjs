@@ -20,6 +20,20 @@ test('Talabat detail matching fields stay within the current order and ignore ma
   assert.equal(w.eval('(()=>{'+code+';return readDetail("99999999");})()'),null);
  }finally{w.close();}
 });
+test('Talabat details: icon-only customer rows are read only inside Customer Details', () => {
+ const s=fs.readFileSync(path.join(__dirname,'../../extension-3/talabat-monitor.js'),'utf8');
+ const code=s.slice(s.indexOf('  const T ='),s.indexOf('  // ---------- the operating day'))+'\n'+s.slice(s.indexOf('  function readDetail('),s.indexOf('  // ---------- one cycle'));
+ const dom=new JSDOM('<aside>تفاصيل الزبون\nWrong Person\nWrong Street\n01099999999</aside><section><b data-testid="details-order-id">10000001</b><div data-testid="milestone-for__ACCEPTED">12:01</div><div data-testid="customer-details">تفاصيل الزبون\nperson\nAmr Ali\nplace\nCairo, New Cairo\ncall\n<a href="tel:+201012345678">+201012345678</a></div><h3>الجدول الزمني للطلب</h3></section>',{runScripts:'outside-only',url:'https://partner-app.talabat.com/orders?placedAt=2026-10-22T12:00:00Z'});
+ const w=dom.window;
+ try {
+  Object.defineProperty(w.HTMLElement.prototype,'innerText',{get(){return [...this.childNodes].map(n=>n.textContent).join('\n');}});
+  const run=()=>JSON.parse(w.eval('(()=>{'+code+';const clockAfter=()=>null;return JSON.stringify(readDetail("10000001"));})()'));
+  const r=run();
+  assert.deepEqual(r.detail.customer,{name:'Amr Ali',address:'Cairo, New Cairo',phone:'+201012345678'});
+  w.document.querySelector('[data-testid="customer-details"]').innerHTML='تفاصيل الزبون\nperson\nAmr Ali\nplace\nCairo, New Cairo\ncall\n<a href="tel:+2010***5678">+2010***5678</a>';
+  const masked=run();assert.equal(masked.detail.customer.name,'');assert.equal(masked.detail.customer.address,'');assert.equal(masked.detail.customer.phone,'');
+ } finally { w.close(); }
+});
 test('Talabat live: ID next to item count is read without customer details',()=>{
  const s=fs.readFileSync(path.join(__dirname,'../../extension-3/talabat-monitor.js'),'utf8');
  const reader=s.slice(s.indexOf('    const readCodes = () => {'),s.indexOf('    let lastKey'));

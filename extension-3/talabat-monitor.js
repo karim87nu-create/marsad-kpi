@@ -155,6 +155,21 @@
     // do not guess a name/address from arbitrary order text or a masked phone number.
     let box = T('details-order-id'); while (box && !box.querySelector('[data-testid^="milestone-for__"]')) box = box.parentElement;
     const customerLines = lines(box).filter(Boolean);
+    const customerHeading = /^(?:customer details|customer information|تفاصيل الزبون|تفاصيل العميل)$/i;
+    const sectionEnd = /^(?:order timeline|timeline|order details|تفاصيل الطلب|الجدول الزمني للطلب)$/i;
+    const iconLine = /^(?:info|person(?:_outline)?|location_on|place|call(?:_outgoing)?|phone|check_circle|expand_more)$/i;
+    const fieldLabel = /^(?:customer name|name|customer address|delivery address|address|customer phone(?: number)?|phone(?: number)?|mobile(?: number)?|اسم العميل|الاسم|عنوان العميل|عنوان التوصيل|العنوان|رقم هاتف العميل|رقم الهاتف|رقم الموبايل)$/i;
+    const customerPanel = box?.querySelector('[data-testid="customer-details"]');
+    let sectionRaw = customerPanel ? lines(customerPanel) : [];
+    const sectionHeadingAt = sectionRaw.findIndex(x => customerHeading.test(x));
+    if (sectionHeadingAt >= 0) sectionRaw = sectionRaw.slice(sectionHeadingAt + 1);
+    else if (!customerPanel) {
+      const at = customerLines.findIndex(x => customerHeading.test(x));
+      sectionRaw = [];
+      if (at >= 0) for (const x of customerLines.slice(at + 1)) { if (sectionEnd.test(x)) break; sectionRaw.push(x); }
+    }
+    const cleanSectionLine = x => String(x || '').replace(/^(?:customer name|name|customer address|delivery address|address|customer phone(?: number)?|phone(?: number)?|mobile(?: number)?|اسم العميل|الاسم|عنوان العميل|عنوان التوصيل|العنوان|رقم هاتف العميل|رقم الهاتف|رقم الموبايل)\s*[:：]\s*/i, '').trim();
+    const sectionLines = sectionRaw.map(cleanSectionLine).filter(x => x && !customerHeading.test(x) && !sectionEnd.test(x) && !iconLine.test(x) && !fieldLabel.test(x));
     const field = re => {
       const i = customerLines.findIndex(x => re.test(x)); if (i < 0) return '';
       const inline = customerLines[i].replace(re, '').replace(/^\s*[:：]\s*/, '').trim();
@@ -162,15 +177,33 @@
       const next = customerLines[i + 1] || '';
       return /^(?:customer|phone|mobile|address|اسم العميل|رقم الهاتف|العنوان)\s*[:：]?$/i.test(next) ? '' : next;
     };
-    const name = field(/^(?:customer name|اسم العميل)\s*[:：]?\s*/i);
-    const address = field(/^(?:delivery address|customer address|عنوان العميل|عنوان التوصيل)\s*[:：]?\s*/i);
+    let name = field(/^(?:customer name|اسم العميل)\s*[:：]?\s*/i);
+    let address = field(/^(?:delivery address|customer address|عنوان العميل|عنوان التوصيل)\s*[:：]?\s*/i);
     const labelledPhone = field(/^(?:customer (?:phone|mobile)(?: number)?|(?:phone|mobile)(?: number)?|رقم هاتف العميل|رقم الهاتف|رقم الموبايل)\s*[:：]?\s*/i);
     // A tel link is accepted only inside an explicit customer element of this order, never the branch/contact area.
     const customerBox = box?.querySelector('[data-testid="customer-details"], [data-testid="customer-info"], [data-testid="customer-phone"], [data-testid="prop-customer-phone"]');
     const customerTel = customerBox?.querySelector('a[href^="tel:"]') || (customerBox?.matches('a[href^="tel:"]') ? customerBox : null);
-    const rawPhone = labelledPhone || customerTel?.getAttribute('href')?.replace(/^tel:/i, '') || '';
-    const normalized = rawPhone.replace(/[٠-٩]/g, c => String(c.charCodeAt(0) - 0x660));
-    const phone = !/[x*•…]/i.test(normalized) && /^(?:\+?20|0)?1[0125](?:[\s-]?\d){8}$/.test(normalized) ? normalized.replace(/[^\d+]/g, '') : null;
+    const normalizePhone = raw => {
+      let value = String(raw || '').replace(/[٠-٩]/g, c => String(c.charCodeAt(0) - 0x660)).replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069\u00a0\u202f]/g, '').trim();
+      if (!value || /[x*•…]/i.test(value)) return '';
+      let candidate = value.replace(/[^\d+]/g, '');
+      if (/^\d{12}\+$/.test(candidate)) candidate = '+' + candidate.slice(0, -1);
+      return /^(?:\+?20|0)?1[0125](?:[\s-]?\d){8}$/.test(candidate) ? candidate.replace(/[^\d+]/g, '') : '';
+    };
+    const sectionPhone = sectionLines.find(normalizePhone) || '';
+    const rawPhone = labelledPhone || customerTel?.getAttribute('href')?.replace(/^tel:/i, '') || sectionPhone;
+    const phone = normalizePhone(rawPhone) || null;
+    const phoneKey = raw => {
+      let n = String(raw || '').replace(/[٠-٩]/g, c => String(c.charCodeAt(0) - 0x660)).replace(/\D/g, '');
+      if (n.startsWith('0020')) n = n.slice(2);
+      if (n.startsWith('20') && n.length === 12) n = '0' + n.slice(2);
+      return n;
+    };
+    const phoneIndex = phone ? sectionLines.findIndex(x => phoneKey(x) === phoneKey(phone)) : -1;
+    if (phoneIndex >= 2) {
+      if (!name) name = sectionLines[0].slice(0, 160);
+      if (!address) address = sectionLines.slice(1, phoneIndex).join(' ').slice(0, 360);
+    }
     d.customer = { name: name.slice(0, 160), address: address.slice(0, 360), phone: phone || '' };
     d.deliveryType = lines(T('prop-delivery-type'))[1] || null;
     return { id, vendorId, placedAt: Number.isFinite(placed) ? new Date(placed).toISOString() : null, status: d.status, detail: d, ...(phone ? { phone } : {}) };
