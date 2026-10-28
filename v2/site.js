@@ -189,7 +189,14 @@ window.MarsadSite = function MarsadSite(ctx) {
       if (!ctx.canWrite()) return label;
       const sel = h('select', { ariaLabel: 'أوردر Apex' }, h('option', { value: '', textContent: label }),
         ...((x.apex || x.matching?.state?.startsWith('manual')) ? [h('option', { value: '__clear', textContent: 'رجّع الربط التلقائي' })] : []), h('option', { value: 'none', textContent: 'مالوش أوردر على Apex' }),
-        ...[...new Map([...d.unmatchedApex, ...d.orders.filter(z => z.apex && !z.apex.manual).map(z => z.apex)].map(a => [String(a.no), a])).values()].filter(a => !x.store || !a.branch || x.store.includes(a.branch) || a.branch.includes((x.store.split(/[،,\-]/)[1] || '').trim().split(' ')[0])).map(a => h('option', { value: a.no, textContent: '#' + (a.sn ?? a.no) + ' · ' + t12(a.at) + ' · ' + (a.user || '') + ' · ' + (a.amount ?? '') + ' ج' })));
+      );
+      let choicesLoaded = false;
+      const loadChoices = () => {
+        if (choicesLoaded) return;
+        choicesLoaded = true;
+        sel.append(...[...new Map([...d.unmatchedApex, ...d.orders.filter(z => z.apex && !z.apex.manual).map(z => z.apex)].map(a => [String(a.no), a])).values()].filter(a => !x.store || !a.branch || x.store.includes(a.branch) || a.branch.includes((x.store.split(/[،,\-]/)[1] || '').trim().split(' ')[0])).map(a => h('option', { value: a.no, textContent: '#' + (a.sn ?? a.no) + ' · ' + t12(a.at) + ' · ' + (a.user || '') + ' · ' + (a.amount ?? '') + ' ج' })));
+      };
+      sel.onfocus = loadChoices; sel.onpointerdown = loadChoices;
       sel.onchange = async () => { try { await api('/api/talabat/link', { method: 'POST', body: { talabatId: x.id, apexNo: sel.value === '__clear' ? null : sel.value } }); renderTalabat(true); } catch (e) { ctx.showError(e); } };
       return sel;
     };
@@ -199,7 +206,7 @@ window.MarsadSite = function MarsadSite(ctx) {
       { title: 'خرج', get: x => x.pickedUpAt, show: x => t12(x.pickedUpAt), type: 'datetime' }, { title: 'الحالة', get: x => x.status, show: x => pill(STATUS[x.status] || x.status || '—', x.status === 'CANCELLED' ? 'bad' : x.final ? 'ok' : 'warn') },
       { title: 'الأصناف', get: x => x.items.reduce((n, i) => n + i.qty, 0), show: x => itemsText(x) || '—', cls: () => 'wrap' },
       { title: 'مطابقة الأصناف مع Apex', get: x => x.apex?.items ? (x.apex.items.ok ? 'مطابقة' : 'مختلفة') : '', show: itemsCell }, { title: 'الإجمالي', get: x => x.subtotal ?? x.total, type: 'number' }],
-      [...o].reverse(), { empty: d.linked ? 'مفيش أوردرات طلبات لليوم ده' : 'شاشة مراقبة طلبات مش متربطة لسه' });
+      [...o].reverse(), { pageSize: 50, empty: d.linked ? 'مفيش أوردرات طلبات لليوم ده' : 'شاشة مراقبة طلبات مش متربطة لسه' });
     renderTalabatCancels(d, 'talCancels', pick);
   }
   // The dishes in English with what they are on Apex in Arabic (from the comparison), and whether Apex matches.
@@ -223,7 +230,7 @@ window.MarsadSite = function MarsadSite(ctx) {
       { title: 'اكتمال التفاصيل', get: x => x.cancellationReadiness === 'FAILED' ? 'تعذّر استكمال التفاصيل — راجع المصدر' : x.cancellationReadiness === 'PENDING' ? 'مستني تفاصيل الإلغاء' : 'مكتملة' },
       { title: 'السبب', get: x => x.cancelReason || '—', cls: () => 'wrap' }, { title: 'كان خرج', get: x => x.pickedUpAt ? 'أيوه' : 'لأ' }, { title: 'على Apex', get: x => x.apex ? '#' + (x.apex.sn ?? x.apex.no) + ' · ' + (x.apex.user || '') : '—' },
       { title: 'الأصناف', get: x => itemsText(x) || '—', cls: () => 'wrap' }, { title: 'مطابقة الأصناف', get: x => x.apex?.items ? (x.apex.items.ok ? 'مطابقة' : 'مختلفة') : '', show: itemsCell }, { title: 'المبلغ', get: x => x.subtotal ?? x.total, type: 'number' }],
-      d.orders.filter(x => x.status === 'CANCELLED' && (!pick || x.store === pick)).reverse(), { empty: 'مفيش إلغاءات على طلبات' });
+      d.orders.filter(x => x.status === 'CANCELLED' && (!pick || x.store === pick)).reverse(), { pageSize: 50, empty: 'مفيش إلغاءات على طلبات' });
   }
   async function renderBranchTalabatCancels() {
     try { const d = await api('/api/talabat/day?day=' + state.day); $('cancelTalabatPanel').hidden = !d.linked; if (d.linked) renderTalabatCancels(d, 'cancelTalabat'); } catch { $('cancelTalabatPanel').hidden = true; }

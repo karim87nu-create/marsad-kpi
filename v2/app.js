@@ -43,20 +43,28 @@
 
   // ---------- tables ----------
   // columns: { title, get(row), show?(row), type: 'text'|'number'|'duration'|'datetime'|'percent', cls? }
-  function table(container, columns, rows, { onRow, limit = 500, empty = 'لا توجد بيانات' } = {}) {
+  function table(container, columns, rows, { onRow, limit = 500, pageSize = 0, empty = 'لا توجد بيانات' } = {}) {
     const box = typeof container === 'string' ? $(container) : container;
     const state = box._sort || (box._sort = { col: -1, dir: 1 });
     let list = rows;
     if (state.col >= 0) { const c = columns[state.col]; list = [...rows].sort((a, b) => { const x = c.get(a), y = c.get(b); return (x == null) - (y == null) || (x < y ? -1 : x > y ? 1 : 0) * state.dir; }); }
-    const head = h('tr', {}, ...columns.map((c, i) => { const th = h('th', { textContent: c.title, scope: 'col', tabIndex: 0 }); th.setAttribute('aria-sort', state.col === i ? (state.dir > 0 ? 'ascending' : 'descending') : 'none'); th.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); th.click(); } }; th.onclick = () => { state.dir = state.col === i ? -state.dir : 1; state.col = i; table(box, columns, rows, { onRow, limit, empty }); }; return th; }));
+    const redraw = () => table(box, columns, rows, { onRow, limit, pageSize, empty });
+    const pages = pageSize ? Math.max(1, Math.ceil(list.length / pageSize)) : 1;
+    box._page = Math.min(box._page || 0, pages - 1);
+    const start = pageSize ? box._page * pageSize : 0;
+    const head = h('tr', {}, ...columns.map((c, i) => { const th = h('th', { textContent: c.title, scope: 'col', tabIndex: 0 }); th.setAttribute('aria-sort', state.col === i ? (state.dir > 0 ? 'ascending' : 'descending') : 'none'); th.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); th.click(); } }; th.onclick = () => { state.dir = state.col === i ? -state.dir : 1; state.col = i; box._page = 0; redraw(); }; return th; }));
     const body = h('tbody');
-    for (const r of list.slice(0, limit)) {
+    for (const r of list.slice(start, start + (pageSize || limit))) {
       const tr = h('tr', { className: onRow ? 'click' : '' }, ...columns.map(c => { const v = c.show ? c.show(r) : c.get(r); const td = h('td', { className: (c.type && c.type !== 'text' ? 'num ' : '') + (c.cls?.(r) || '') }); if (v instanceof Node) td.append(v); else td.textContent = v ?? '—'; return td; }));
       if (onRow) tr.onclick = () => onRow(r);
       body.append(tr);
     }
     if (!list.length) body.append(h('tr', {}, h('td', { colSpan: columns.length, textContent: empty, className: 'muted' })));
-    box.replaceChildren(h('div', { className: 'tablewrap', tabIndex: 0 }, h('table', {}, h('thead', {}, head), body)), list.length > limit ? h('p', { className: 'muted', textContent: 'معروض أول ' + limit + ' من ' + list.length + '؛ التصدير فيه الكل.' }) : '');
+    const pager = pageSize && pages > 1 ? h('div', { className: 'inline' },
+      h('button', { type: 'button', textContent: 'السابق', disabled: box._page === 0, onclick: () => { box._page--; redraw(); } }),
+      h('span', { textContent: (box._page + 1) + ' / ' + pages + ' · ' + list.length + ' أوردر' }),
+      h('button', { type: 'button', textContent: 'التالي', disabled: box._page === pages - 1, onclick: () => { box._page++; redraw(); } })) : '';
+    box.replaceChildren(h('div', { className: 'tablewrap', tabIndex: 0 }, h('table', {}, h('thead', {}, head), body)), pager, !pageSize && list.length > limit ? h('p', { className: 'muted', textContent: 'معروض أول ' + limit + ' من ' + list.length + '؛ التصدير فيه الكل.' }) : '');
   }
   function exportSheets(file, sheets) {
     window.MarsadXlsx.download(file + '-' + periodLabel(), sheets.map(([sheet, columns, rows]) => ({ name: sheet, columns: columns.map(c => ({ title: c.title, type: c.type })), rows: rows.map(r => columns.map(c => { const v = c.get(r); return v instanceof Node ? v.textContent : v; })) })));
