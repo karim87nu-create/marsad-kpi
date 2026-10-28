@@ -392,6 +392,13 @@ browser.runtime.onInstalled.addListener(async ({ reason }) => {
       } catch {}
       continue;
     }
+    if (u.hostname === 'web.whatsapp.com' && await store.get(TALABAT, null)) {
+      try {
+        await browser.tabs.executeScript(t.id, { file: 'config.js' });
+        await browser.tabs.executeScript(t.id, { file: 'whatsapp-sender.js' });
+      } catch {}
+      continue;
+    }
     if (u.hostname !== globalThis.MARSAD.ARABICSS_HOST) continue;
     try {
       if (/^\/themes\/arabicssReportsInclude\//i.test(u.pathname)) await browser.tabs.executeScript(t.id, { file: 'report-bridge.js', allFrames: true });

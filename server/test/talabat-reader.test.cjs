@@ -11,6 +11,12 @@ test('Talabat detail matching fields stay within the current order and ignore ma
   let r=run();assert.deepEqual(r.detail.customer,{name:'Ahmed Ali',address:'Nasr Street 20',phone:'01012345678'});
   w.document.querySelector('section div:last-child').textContent='Customer name\nAhmed Ali\nPhone number\n010***45678';
   r=run();assert.equal(r.detail.customer.phone,'');assert.equal(r.phone,undefined);
+  w.document.querySelector('section div:last-child').innerHTML='<div data-testid="customer-info"><a href="tel:+201012345678">Call customer</a></div>';
+  r=run();assert.equal(r.detail.customer.phone,'+201012345678');assert.equal(r.phone,'+201012345678');
+  w.document.querySelector('section div:last-child').innerHTML='<div data-testid="restaurant-info"><a href="tel:+201012345678">Call restaurant</a></div>';
+  r=run();assert.equal(r.detail.customer.phone,'');
+  w.document.querySelector('section div:last-child').textContent='Customer phone number\n01012345678';
+  r=run();assert.equal(r.detail.customer.phone,'01012345678');
   assert.equal(w.eval('(()=>{'+code+';return readDetail("99999999");})()'),null);
  }finally{w.close();}
 });

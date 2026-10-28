@@ -1,7 +1,7 @@
 const test = require('node:test'), assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
 const { JSDOM } = require('jsdom');
 const ext = path.join(__dirname, '../../extension-3');
-function background(linked = true) {
+function background(linked = true, tabs = [{ id: 7, url: 'https://partner-app.talabat.com/orders' }]) {
   const data = linked ? { talabatMonitor: { token: 'tal_' + 'a'.repeat(48) } } : {};
   const listeners = [], installed = [], injected = [], requests = [];
   const ctx = { URL, URLSearchParams, Date, Intl, performance, AbortController, setTimeout, clearTimeout, setInterval: () => 0,
@@ -9,7 +9,7 @@ function background(linked = true) {
     fetch: async (url, options) => { requests.push({ url, body: options.body }); return new Response(JSON.stringify({ ok: true, want: ['12345678'] }), { headers: { date: new Date().toUTCString() } }); },
     browser: { storage: { local: { get: async k => ({ [k]: data[k] }), set: async x => Object.assign(data, x) } },
       runtime: { onMessage: { addListener: f => listeners.push(f) }, onInstalled: { addListener: f => installed.push(f) }, getURL: p => 'moz-extension://test/' + p },
-      tabs: { query: async () => [{ id: 7, url: 'https://partner-app.talabat.com/orders' }], onRemoved: { addListener() {} },
+      tabs: { query: async () => tabs, onRemoved: { addListener() {} },
         executeScript: async (id, x) => injected.push(x.file), get: async () => ({}), create: async () => ({ id: 8 }) },
       browserAction: { onClicked: { addListener() {} } } } };
   vm.createContext(ctx); for (const f of ['config.js', 'background.js']) vm.runInContext(fs.readFileSync(path.join(ext, f), 'utf8'), ctx);
@@ -34,6 +34,11 @@ test('a connector update resumes linked Talabat tabs without changing the source
   const h = background(); await h.installed[0]({ reason: 'update' });
   assert.deepEqual(h.injected, ['config.js', 'talabat-monitor.js']);
   const unlinked = background(false); await unlinked.installed[0]({ reason: 'update' }); assert.equal(unlinked.injected.length, 0);
+});
+test('a connector update resumes the linked WhatsApp sender on an already open tab', async () => {
+  const h = background(true, [{ id: 9, url: 'https://web.whatsapp.com/' }]);
+  await h.installed[0]({ reason: 'update' });
+  assert.deepEqual(h.injected, ['config.js', 'whatsapp-sender.js']);
 });
 test('list status survives changing column order and never becomes an order number', () => {
   const source = fs.readFileSync(path.join(ext, 'talabat-monitor.js'), 'utf8');

@@ -164,7 +164,11 @@
     };
     const name = field(/^(?:customer name|اسم العميل)\s*[:：]?\s*/i);
     const address = field(/^(?:delivery address|customer address|عنوان العميل|عنوان التوصيل)\s*[:：]?\s*/i);
-    const rawPhone = field(/^(?:customer phone|phone number|رقم هاتف العميل|رقم الهاتف)\s*[:：]?\s*/i);
+    const labelledPhone = field(/^(?:customer (?:phone|mobile)(?: number)?|(?:phone|mobile)(?: number)?|رقم هاتف العميل|رقم الهاتف|رقم الموبايل)\s*[:：]?\s*/i);
+    // A tel link is accepted only inside an explicit customer element of this order, never the branch/contact area.
+    const customerBox = box?.querySelector('[data-testid="customer-details"], [data-testid="customer-info"], [data-testid="customer-phone"], [data-testid="prop-customer-phone"]');
+    const customerTel = customerBox?.querySelector('a[href^="tel:"]') || (customerBox?.matches('a[href^="tel:"]') ? customerBox : null);
+    const rawPhone = labelledPhone || customerTel?.getAttribute('href')?.replace(/^tel:/i, '') || '';
     const normalized = rawPhone.replace(/[٠-٩]/g, c => String(c.charCodeAt(0) - 0x660));
     const phone = !/[x*•…]/i.test(normalized) && /^(?:\+?20|0)?1[0125](?:[\s-]?\d){8}$/.test(normalized) ? normalized.replace(/[^\d+]/g, '') : null;
     d.customer = { name: name.slice(0, 160), address: address.slice(0, 360), phone: phone || '' };

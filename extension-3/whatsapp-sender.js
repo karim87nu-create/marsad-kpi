@@ -3,8 +3,8 @@
 // the welcome and survey messages the server hands out, one at a time at a person's pace. It never reads chats; it only
 // opens the send link for the customer's number with the message filled in, presses send, and says if it went.
 (async () => {
-  if (location.hostname !== 'web.whatsapp.com' || window.top !== window || window.__marsadWa) return;
-  window.__marsadWa = true;
+  if (location.hostname !== 'web.whatsapp.com' || window.top !== window || window.__marsadWa === globalThis.MARSAD.VERSION) return;
+  window.__marsadWa = globalThis.MARSAD.VERSION;
   const bg = m => browser.runtime.sendMessage(m);
   let state; try { state = await bg({ type: 'TALABAT_WA_ACTIVE' }); } catch { return; }
   if (!state?.active) return;
@@ -19,40 +19,57 @@
   say('بيبدأ…');
 
   const loggedIn = () => !!document.querySelector('#pane-side, [data-testid="chat-list"], div[aria-label="Chat list"], div[aria-label="قائمة الدردشات"]');
-  const invalidNumber = () => /(shared via url is invalid|غير صالح|isn.t on WhatsApp|ليس على واتساب|not on WhatsApp)/i.test(document.body.innerText || '');
+  const invalidNumber = () => [...document.querySelectorAll('[role="dialog"]')].some(d => /(shared via url is invalid|غير صالح|isn.t on WhatsApp|ليس على واتساب|not on WhatsApp)/i.test(d.innerText || ''));
   const composer = () => document.querySelector('footer div[contenteditable="true"], div[contenteditable="true"][data-tab="10"]');
   const sendButton = () => {
     const icon = document.querySelector('footer [data-icon="send"], footer [data-icon="wds-ic-send-filled"], [data-icon="send"], [data-icon="wds-ic-send-filled"]');
     return icon?.closest('button,[role="button"]') || document.querySelector('footer button[aria-label="Send"], footer button[aria-label="إرسال"], button[aria-label="Send"], button[aria-label="إرسال"]');
   };
-  const report = async (j, ok, error, invalid) => { await bg({ type: 'TALABAT_WA_RESULT', id: j.id, kind: j.kind, claimToken: j.claimToken, ok, error, invalid: !!invalid }).catch(() => null); job.set(null); };
+  const report = async (j, ok, error, invalid) => {
+    const saved = { ...j, phase: 'result', result: { ok, error, invalid: !!invalid } };
+    job.set(saved);
+    const reply = await bg({ type: 'TALABAT_WA_RESULT', id: j.id, kind: j.kind, claimToken: j.claimToken, ...saved.result }).catch(() => null);
+    if (reply?.ok) { job.set(null); return true; }
+    say('نتيجة الإرسال محفوظة؛ مستني تأكيد المرصد'); return false;
+  };
+  const normalized = text => String(text || '').replace(/[\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, '').replace(/\s+/g, ' ').trim();
 
   // A message in progress: this page is its send link. Wait for the chat to open with the text, press send, check.
   async function finish(j) {
+    if (j.phase === 'result') { await report(j, j.result.ok, j.result.error, j.result.invalid); return; }
+    if (j.phase === 'clicked') { await report(j, false, 'delivery_unconfirmed'); return; }
     say('بيبعت ' + (j.kind === 'survey' ? 'الاستطلاع' : 'الترحيب') + '…');
     for (let i = 0; i < 60; i++) {
       await sleep(1000);
       if (invalidNumber()) { await report(j, false, 'الرقم مش على واتساب', true); say('الرقم مش على واتساب — اتسجل'); return; }
       const box = composer(), btn = sendButton();
-      if (box && (box.innerText || '').trim() && btn) {
+      if (box && normalized(box.innerText) === normalized(j.text) && normalized(j.text) && btn) {
         await sleep(800 + Math.random() * 1500);   // a person's pace
+        if (composer() !== box || normalized(box.innerText) !== normalized(j.text)) continue;
+        const before = new Set(document.querySelectorAll('.message-out'));
+        job.set({ ...j, phase: 'clicked' });
         btn.click();
-        for (let k = 0; k < 15; k++) { await sleep(700); if (!(composer()?.innerText || '').trim()) { await report(j, true); say('اتبعت ✓ ' + new Date().toLocaleTimeString('ar-EG-u-nu-latn', { hour: '2-digit', minute: '2-digit' })); return; } }
-        await report(j, false, 'دوسنا إرسال والرسالة فضلت مكتوبة'); say('ماتبعتش — هيتجرب تاني'); return;
+        for (let k = 0; k < 15; k++) { await sleep(700);
+          const outgoing = [...document.querySelectorAll('.message-out')].some(n => !before.has(n) && [...n.querySelectorAll('.selectable-text')].some(t => normalized(t.innerText) === normalized(j.text)));
+          if (outgoing && !(composer()?.innerText || '').trim()) { if (await report(j, true)) say('اتأكد الإرسال ✓'); return; }
+        }
+        await report(j, false, 'delivery_unconfirmed'); say('الإرسال غير مؤكد؛ محتاج مراجعة'); return;
       }
     }
-    await report(j, false, loggedIn() ? 'المحادثة ماتفتحتش في دقيقة' : 'واتساب ويب مش متسجل دخول'); say('ماتبعتش — هيتجرب تاني');
+    await report(j, false, loggedIn() ? 'المحادثة أو نص الرسالة غير جاهز' : 'واتساب ويب مش متسجل دخول'); say('الإرسال متوقف للمراجعة');
   }
 
   const pending = job.get();
   if (pending) {
-    if (Date.now() - pending.at < 5 * 60000) await finish(pending);
+    if (pending.phase === 'result' || pending.phase === 'clicked' || Date.now() - pending.at < 5 * 60000) await finish(pending);
     else { await report(pending, false, 'الصفحة اتقفلت قبل الإرسال'); }
   }
   // Then: ask for the next message every 15 seconds, only while WhatsApp Web is signed in.
   for (;;) {
     await sleep(15000);
     try {
+      const saved = job.get();
+      if (saved) { await finish(saved); continue; }
       if (!loggedIn()) { say('امسح الكود اللي على الشاشة من موبايل المطعم (الأجهزة المرتبطة ← ربط جهاز)'); continue; }
       const r = await bg({ type: 'TALABAT_WA_NEXT' }).catch(() => null);
       if (!r?.ok) { say('مش قادر يكلم المرصد'); continue; }
