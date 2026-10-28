@@ -270,9 +270,47 @@ if (Test-Path $outboxFile) {
   # A corrupt or unreadable queue must stop startup, never silently discard unacknowledged alerts.
   foreach ($entry in (ReadOutbox)) { if ($entry) { [void]$pending.Add($entry) } }
 }
+function ConvertTo-JsonPlain([object]$value,[int]$depth=0){
+  if ($null -eq $value -or $value -is [DBNull]) { return $null }
+  if ($depth -gt 12) { throw 'payload nesting exceeded safe JSON depth' }
+  if ($value -is [string]) { return $value }
+  if ($value -is [datetime] -or $value -is [datetimeoffset]) { return ([DateTimeOffset][datetime]$value).ToString('yyyy-MM-ddTHH:mm:sszzz',$inv) }
+  if ($value -is [System.Collections.IDictionary]) {
+    $d=New-Object 'System.Collections.Generic.Dictionary[string,object]'
+    foreach($key in $value.Keys){ $d.Add([string]$key,(ConvertTo-JsonPlain -value $value[$key] -depth ($depth + 1))) }
+    return ,$d
+  }
+  if ($value -is [System.Collections.IEnumerable]) {
+    $a=New-Object 'System.Collections.Generic.List[object]'
+    foreach($item in $value){ [void]$a.Add((ConvertTo-JsonPlain -value $item -depth ($depth + 1))) }
+    return ,$a
+  }
+  if ($value -is [pscustomobject]) {
+    $d=New-Object 'System.Collections.Generic.Dictionary[string,object]'
+    foreach($prop in $value.PSObject.Properties){ if($prop.MemberType -in @('Property','NoteProperty','AliasProperty','ScriptProperty')){ $d[[string]$prop.Name]=ConvertTo-JsonPlain -value $prop.Value -depth ($depth + 1) } }
+    return ,$d
+  }
+  if ($value.GetType().IsPrimitive -or $value -is [decimal]) { return $value }
+  return [string]$value
+}
 function SaveOutbox {
   $tmp = $outboxFile + '.tmp'
-  [IO.File]::WriteAllText($tmp, (ConvertTo-Json -InputObject @($pending) -Depth 8 -Compress), [Text.UTF8Encoding]::new($false))
+  Add-Type -AssemblyName System.Web.Extensions
+  $serializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+  $serializer.MaxJsonLength = [int]::MaxValue
+  $wire = New-Object 'System.Collections.Generic.List[object]'
+  foreach ($entry in $pending) {
+    $item = New-Object 'System.Collections.Generic.Dictionary[string,object]'
+    foreach ($field in @('day','key','kind','text','branch','sn','status')) {
+      $value = $entry[$field]
+      if ($field -eq 'sn' -and $null -ne $value) { $value = [long]$value }
+      elseif ($null -ne $value) { $value = [string]$value }
+      $item.Add($field, $value)
+    }
+    [void]$wire.Add($item)
+  }
+  $json = $serializer.Serialize($wire)
+  [IO.File]::WriteAllText($tmp, $json, [Text.UTF8Encoding]::new($false))
   if (Test-Path $outboxFile) { [IO.File]::Replace($tmp, $outboxFile, [System.Management.Automation.Language.NullString]::Value) } else { [IO.File]::Move($tmp, $outboxFile) }
 }
 function Raise($key, $kind, $text, [bool]$silent, $branch, $sn, $status){
@@ -291,7 +329,12 @@ $script:OfficerValues = @()
 $script:ServerFollow = $false   # the server answers follow-ups (status changes, reminders) only once updated
 function Push($payload){
   if (-not $OrdersKey) { return }
-  $json = $payload | ConvertTo-Json -Depth 8 -Compress
+  Add-Type -AssemblyName System.Web.Extensions
+  $serializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+  $serializer.MaxJsonLength = [int]::MaxValue
+  $json = $serializer.Serialize((ConvertTo-JsonPlain -value $payload))
+  $bodyBytes = [Text.Encoding]::UTF8.GetBytes($json)
+  if ($bodyBytes.Length -gt 900000) { L "push withheld above safe body limit: $($bodyBytes.Length) bytes; pending alerts retained"; return }
   try {
     try {
       $resp = Invoke-RestMethod -Method Post -Uri "$ServerUrl/api/orders/push" -Headers @{ 'x-orders-token' = $OrdersKey } -Body ([Text.Encoding]::UTF8.GetBytes($json)) -ContentType 'application/json; charset=utf-8' -TimeoutSec 20
@@ -300,7 +343,8 @@ function Push($payload){
       if ("$($_.Exception.Message)" -notmatch '\(500\)' -or -not $payload.online) { throw }
       $light = [ordered]@{}; foreach($k in $payload.Keys){ $light[$k] = $payload[$k] }
       $light.online = @($payload.online | ForEach-Object { $x = [ordered]@{}; foreach($k in $_.Keys){ if ($k -ne 'items') { $x[$k] = $_[$k] } }; $x })
-      $json2 = $light | ConvertTo-Json -Depth 8 -Compress
+      $json2 = $serializer.Serialize((ConvertTo-JsonPlain -value $light))
+      if ([Text.Encoding]::UTF8.GetByteCount($json2) -gt 900000) { throw 'light snapshot exceeded safe body limit' }
       $resp = Invoke-RestMethod -Method Post -Uri "$ServerUrl/api/orders/push" -Headers @{ 'x-orders-token' = $OrdersKey } -Body ([Text.Encoding]::UTF8.GetBytes($json2)) -ContentType 'application/json; charset=utf-8' -TimeoutSec 20
       if (-not $script:lightLogged) { L "push ok only without online item lines (full $([Text.Encoding]::UTF8.GetByteCount($json)) bytes, light $([Text.Encoding]::UTF8.GetByteCount($json2)) bytes)"; $script:lightLogged = $true }
     }
