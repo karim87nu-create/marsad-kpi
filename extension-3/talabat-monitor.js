@@ -250,6 +250,13 @@
     if (location.pathname !== '/orders') history.back();
     await sleep(300);
   }
+  async function pushVisibleDetail() {
+    const id = (T('details-order-id')?.innerText || '').trim();
+    if (!/^\d{6,20}$/.test(id)) return false;
+    const d = readDetail(id);
+    if (!d || !(d.detail?.items?.length || d.phone || d.detail?.customer?.name || d.detail?.customer?.address)) return false;
+    return push([d]);
+  }
   async function cycle() {
     // The "allow notifications" box covers the list.
     [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Got it')?.click();
@@ -261,7 +268,10 @@
       if (!sessionStorage.getItem(navKey)) { sessionStorage.setItem(navKey, '1'); location.href = listUrl(); return; }
       // Otherwise the list is read as it is, and only the operating day's rows (by the time on each row) are taken.
     }
-    if (T('details-order-id')) await closeDetail();
+    if (T('details-order-id')) {
+      await pushVisibleDetail();
+      await closeDetail();
+    }
     const start = dayStart(), end = start + 864e5;
     const inDay = o => o.at !== null && o.at >= start - 60000 && o.at < end;
     const older = () => { const t = readList().at(-1)?.at; return t != null && t < start - 60000; };

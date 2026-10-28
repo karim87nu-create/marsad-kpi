@@ -34,6 +34,22 @@ test('Talabat details: icon-only customer rows are read only inside Customer Det
   const masked=run();assert.equal(masked.detail.customer.name,'');assert.equal(masked.detail.customer.address,'');assert.equal(masked.detail.customer.phone,'');
  } finally { w.close(); }
 });
+test('Talabat details: an already-open order is pushed before the monitor closes it', async () => {
+ const s=fs.readFileSync(path.join(__dirname,'../../extension-3/talabat-monitor.js'),'utf8');
+ const code=s.slice(s.indexOf('  async function pushVisibleDetail()'),s.indexOf('  async function cycle()'));
+ const idNode={innerText:'10000002'};
+ let sent=null;
+ const readDetail=id=>({id,detail:{items:[{qty:3,name:'Test Item'}],customer:{name:'Test Customer'}}});
+ const push=async orders=>{sent=orders;return true;};
+ const fn=new Function('T','readDetail','push',code+';return pushVisibleDetail;')(id=>id==='details-order-id'?idNode:null,readDetail,push);
+ assert.equal(await fn(),true);
+ assert.equal(sent[0].id,'10000002');
+ assert.equal(sent[0].detail.customer.name,'Test Customer');
+ sent=null;
+ const empty=new Function('T','readDetail','push',code+';return pushVisibleDetail;')(id=>id==='details-order-id'?idNode:null,()=>({id:'10000002',detail:{items:[],customer:{}}}),push);
+ assert.equal(await empty(),false);
+ assert.equal(sent,null);
+});
 test('Talabat live: ID next to item count is read without customer details',()=>{
  const s=fs.readFileSync(path.join(__dirname,'../../extension-3/talabat-monitor.js'),'utf8');
  const reader=s.slice(s.indexOf('    const readCodes = () => {'),s.indexOf('    let lastKey'));

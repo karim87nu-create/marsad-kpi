@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Arabicss KPI Connector",
-  "version": "3.1.14",
+  "version": "3.1.15",
   "description": "يربط جلسات ومكالمات وبريكات أرابيكس بمرصد الأداء",
   "permissions": [
     "storage",
