@@ -4,8 +4,8 @@
 // list every few seconds, and opens each order the server asks for to read its timeline, cancellation and items.
 // It never accepts, rejects or changes an order, and it reads available customer matching fields inside the current order only.
 (async () => {
-  if (location.hostname !== 'partner-app.talabat.com' || window.top !== window || window.__marsadTalabat) return;
-  window.__marsadTalabat = true;
+  if (location.hostname !== 'partner-app.talabat.com' || window.top !== window || window.__marsadTalabat === globalThis.MARSAD.VERSION) return;
+  window.__marsadTalabat = globalThis.MARSAD.VERSION;
   const bg = m => browser.runtime.sendMessage(m);
   let state;
   try { state = await bg({ type: 'TALABAT_ACTIVE' }); } catch { return; }
@@ -114,7 +114,10 @@
       if (!/^\d{6,}$/.test(id)) continue;
       const l = lines(row);
       const at = rowTime(l);
-      out.push({ id, at, listAt: at == null ? null : new Date(at).toISOString(), status: (l[1] || '').toUpperCase(), store: (l.find(x => /الدهان|el ?dahan/i.test(x)) || '').replace(/^\|\s*/, '') || null, total: money(l.find(x => /E£|EGP|ج\.م/.test(x))) });
+      // Column positions change between accounts. Never store an ID or amount as an order status.
+      const statusCell = row.querySelector('[data-field="status"], [data-field="orderStatus"]');
+      const status = (l.find(x => /^(?:NEW|ACCEPTED|PREORDER ACCEPTED|READY|READY FOR PICKUP|PICKED UP|IN DELIVERY|COMPLETED|DELIVERED|CANCELLED|REJECTED)$/i.test(x)) || statusCell?.innerText?.trim() || '').toUpperCase();
+      out.push({ id, at, listAt: at == null ? null : new Date(at).toISOString(), status, store: (l.find(x => /الدهان|el ?dahan/i.test(x)) || '').replace(/^\|\s*/, '') || null, total: money(l.find(x => /E£|EGP|ج\.م/.test(x))) });
     }
     return out;
   }
@@ -175,7 +178,7 @@
   const FULL = 'marsadTalabatFull', fullAt = () => { try { return Number(sessionStorage.getItem(FULL)) || 0; } catch { return 0; } };
   let want = [], lastReload = Date.now(), failures = 0, phonesWanted = false;
   async function push(orders) {
-    const timing = await bg({ type: 'CLOCK' }).catch(() => null);
+    const timing = await bg({ type: 'TALABAT_CLOCK' }).catch(() => null);
     if (!Number.isFinite(timing?.offset)) { failures++; say('مستني مزامنة ساعة المرصد قبل الإرسال'); return false; }
     const observedAt = new Date(Date.now() + timing.offset).toISOString();
     const r = await bg({ type: 'TALABAT_PUSH', orders: orders.map(o => ({ ...o, observedAt: o.observedAt || observedAt })) }).catch(e => ({ ok: false, error: e.message }));

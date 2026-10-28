@@ -187,6 +187,11 @@ async function talabatMessage(m, sender) {
   if (m.type === 'TALABAT_UNLINK' && adminSender(sender)) { await store.set(TALABAT, null); return { ok: true }; }
   if (!talabatSender(sender)) throw Error('invalid_sender');
   const t = await store.get(TALABAT, null);
+  if (m.type === 'TALABAT_CLOCK') {
+    if (!t || new URL(sender.url).hostname !== 'partner-app.talabat.com') throw Error('invalid_sender');
+    await clock.ensure();
+    return { offset: clock.offset };
+  }
   if (m.type === 'TALABAT_ACTIVE') {
     if (!t) return { active: false };
     // Two tabs on the monitor: Order History (the times) and Live Orders (the short #codes). The second opens by itself.
@@ -380,6 +385,13 @@ browser.runtime.onInstalled.addListener(async ({ reason }) => {
   if (reason !== 'update') return;
   for (const t of await browser.tabs.query({}).catch(() => [])) {
     let u; try { u = new URL(t.url); } catch { continue; }
+    if (u.hostname === 'partner-app.talabat.com' && await store.get(TALABAT, null)) {
+      try {
+        await browser.tabs.executeScript(t.id, { file: 'config.js' });
+        await browser.tabs.executeScript(t.id, { file: 'talabat-monitor.js' });
+      } catch {}
+      continue;
+    }
     if (u.hostname !== globalThis.MARSAD.ARABICSS_HOST) continue;
     try {
       if (/^\/themes\/arabicssReportsInclude\//i.test(u.pathname)) await browser.tabs.executeScript(t.id, { file: 'report-bridge.js', allFrames: true });
