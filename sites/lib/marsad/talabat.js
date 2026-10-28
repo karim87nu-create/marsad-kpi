@@ -1,3 +1,4 @@
+import { talabatReference } from './order-identifiers.js';
 // طلبات: one monitor screen (Firefox on a PC that stays on, signed in with the call center's Talabat account that sees
 // every branch) reads Order History and each order's details, and pushes them here. Per order we keep the times
 // (received, accepted and how fast, picked up, delivered, cancelled), the cancellation owner and reason, the items and
@@ -186,7 +187,7 @@ function setup(app) {
     const ratios = app.learn ? await app.learn.values('match-v2:ratio:talabat', '-') : [], ratio = ratios.length >= 5 ? [...ratios].sort((x, y) => x - y)[Math.floor(ratios.length / 2)] : 1.13;
     const profiles = new Map((await db.prepare("SELECT ref, data FROM match_profiles WHERE source = 'talabat' AND ref IN (SELECT id FROM talabat_orders WHERE day = ?)").all(day)).map(x => [x.ref, parseJson(x.data, {})]));
     const windows = new Map(); for (const o of rows) if (!windows.has(o.store)) windows.set(o.store, await windowFor(o.store));
-    const decision = resolveOrders(rows.map(o => ({ ...o, branch: o.store, anchor: o.accepted_at || o.received_at || o.placed_at,
+    const decision = resolveOrders(rows.map(o => ({ ...o, source: 'talabat', branch: o.store, anchor: o.accepted_at || o.received_at || o.placed_at,
       amount: o.total || o.subtotal, customer: profiles.get(o.id), items: parseJson(o.items, []), excluded: o.status === 'REJECTED' })), apex,
       { manual, branchOk, windowFor: o => windows.get(o.store), learned: learnedItems, ratio });
     const { matches, how } = decision, usedA = decision.used;
@@ -235,22 +236,23 @@ function setup(app) {
     const clock = t => new Date(t).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit' });
     const out = [], det = app.apexDetails ? await app.apexDetails(day) : { extra: () => '' };
     for (const o of m.rows) {
-      const store = o.store ? '\nالفرع: ' + storeName(o.store) : '', ref = o.code ? '#' + o.code : o.id; // the short #code staff use; the long id only when there is no code
+      const store = o.store ? '\nالفرع: ' + storeName(o.store) : '', ref = o.id; // the short #code staff use; the long id only when there is no code
       if (m.hasApex && o.accepted_at && !m.matches.get(o.id) && o.status !== 'CANCELLED' && now - o.accepted_at > NOT_ENTERED_MIN * 60000 && now - o.accepted_at < 3 * 3600000)
-        out.push({ key: 'talabat:notEntered:' + o.id, kind: 'talabatNotEntered', target: 'online', text: '🛵 طلبات | ⚠️ أوردر اتقبل على طلبات ولسه ماتضربش على Apex\nرقم أوردر طلبات: ' + ref + store + '\nاتقبل الساعة ' + clock(o.accepted_at) + '، وبقاله ' + Math.round((now - o.accepted_at) / 60000) + ' دقيقة' + (o.subtotal ? '\nقيمة الأوردر: ' + Math.round(o.subtotal) + ' ج' : '') });
+        out.push({ key: 'talabat:notEntered:' + o.id, kind: 'talabatNotEntered', target: 'online', text: '🛵 طلبات | ⚠️ أوردر اتقبل على طلبات ولسه ماتضربش على Apex\n' + talabatReference(o) + store + '\nاتقبل الساعة ' + clock(o.accepted_at) + '، وبقاله ' + Math.round((now - o.accepted_at) / 60000) + ' دقيقة' + (o.subtotal ? '\nقيمة الأوردر: ' + Math.round(o.subtotal) + ' ج' : '') });
       if (cancelReady(o) && now - o.cancelled_at < 3 * 3600000)
-        out.push({ key: 'talabat:cancel:' + o.id, kind: 'talabatCancel', target: 'branches', branch: m.matches.get(o.id)?.branch || o.store || null, text: '🛵 طلبات | ❌ أوردر اتلغى على طلبات\nرقم أوردر طلبات: ' + ref + store + '\nاتلغى الساعة ' + clock(o.cancelled_at) + (o.cancel_owner ? '\nالإلغاء على: ' + o.cancel_owner : '') + (o.cancel_reason ? '\nالسبب: ' + o.cancel_reason : '') + (o.subtotal ? '\nقيمة الأوردر: ' + Math.round(o.subtotal) + ' ج' : '') +
-          (m.matches.get(o.id) ? '\nرقمه على Apex: ' + (m.matches.get(o.id).sn ?? m.matches.get(o.id).no) + det.extra(m.matches.get(o.id).no) : '') });
+        out.push({ key: 'talabat:cancel:' + o.id, kind: 'talabatCancel', target: 'branches', branch: m.matches.get(o.id)?.branch || o.store || null, text: '🛵 طلبات | ❌ أوردر اتلغى على طلبات\n' + talabatReference(o) + store + '\nاتلغى الساعة ' + clock(o.cancelled_at) + (o.cancel_owner ? '\nالإلغاء على: ' + o.cancel_owner : '') + (o.cancel_reason ? '\nالسبب: ' + o.cancel_reason : '') + (o.subtotal ? '\nقيمة الأوردر: ' + Math.round(o.subtotal) + ' ج' : '') +
+          (m.matches.get(o.id) ? det.extra(m.matches.get(o.id).no) : '') });
     }
     // «Accepted and not on Apex»: answered when it is entered on Apex, or cancelled on Talabat first.
     const open = new Set((await db.prepare("SELECT l.key FROM telegram_log l WHERE l.key LIKE 'talabat:notEntered:%' AND l.created_at >= ? AND NOT EXISTS (SELECT 1 FROM telegram_log x WHERE x.key = 'resolved:' || l.key)").all(now - 12 * 3600000)).map(x => x.key));
     for (const o of m.rows) {
       const key = 'talabat:notEntered:' + o.id; if (!open.has(key)) continue;
-      const a = m.matches.get(o.id), ref = o.code ? '#' + o.code : o.id;
+      const a = m.matches.get(o.id), ref = o.id;
       let text = null;
-      if (a) text = '🛵 طلبات | ✅ أوردر طلبات ' + ref + ' اتضرب على Apex — أوردر ' + (a.sn ?? a.no) + ' · ' + (a.branch || '') + '\nالساعة ' + clock(Date.parse(a.at)) +
+      if (a) text = '🛵 طلبات | ✅ أوردر طلبات ' + ref + ' اتأكدت مطابقته على Apex' + ' · ' + (a.branch || '') + '\nالساعة ' + clock(Date.parse(a.at)) +
         (o.accepted_at ? ' (بعد ' + Math.round((Date.parse(a.at) - o.accepted_at) / 60000) + ' دقيقة من القبول)' : '') + (a.user ? ' · ضربه ' + a.user : '');
       else if (o.status === 'CANCELLED' || o.status === 'REJECTED') text = '🛵 طلبات | 🔄 أوردر طلبات ' + ref + ' اتلغى على طلبات قبل ما يتضرب على Apex' + (o.cancelled_at ? ' — الساعة ' + clock(o.cancelled_at) : '') + (o.cancel_reason ? '\nالسبب: ' + o.cancel_reason : '');
+      if (text && !text.includes('هاشتاج طلبات:')) text += '\n' + talabatReference(o);
       if (text) out.push({ key: 'resolved:' + key, kind: 'talabatNotEntered', target: 'online', replyTo: key, text });
     }
     // A dish on Talabat that is not what was entered on Apex (only for orders tied by the #code or by hand: sure links).
@@ -259,7 +261,7 @@ function setup(app) {
       const a = m.matches.get(o.id), c = a?.items, key = 'talabat:items:' + o.id;
       if (!c || (a.how !== 'code' && a.how !== 'evidence')) continue;
       if (!c.ok && !c.uncertain && !c.reviewedOk && !sent.has(key) && now - (o.accepted_at || o.placed_at || now) < 3 * 3600000)
-        out.push({ key, kind: 'talabatItems', target: 'online', text: '🛵 طلبات | 🍽️ صنف ممكن يكون متضرب غلط على Apex\nرقم أوردر طلبات: ' + (o.code ? '#' + o.code : o.id) + '\nرقمه على Apex: ' + (a.sn ?? a.no) + ' · ' + (a.branch || '') + (a.user ? '\nاللي ضرب الأوردر: ' + a.user : '') +
+        out.push({ key, kind: 'talabatItems', target: 'online', text: '🛵 طلبات | 🍽️ صنف ممكن يكون متضرب غلط على Apex\n' + talabatReference(o) + ' · ' + (a.branch || '') + (a.user ? '\nاللي ضرب الأوردر: ' + a.user : '') +
           (c.missingOnApex.length ? '\nعلى طلبات ومش على Apex: ' + c.missingOnApex.join('، ') : '') + (c.extraOnApex.length ? '\nعلى Apex ومش على طلبات: ' + c.extraOnApex.join('، ') : '') });
       else if ((c.ok || c.reviewedOk) && sent.has(key) && !sent.has('resolved:' + key))
         out.push({ key: 'resolved:' + key, kind: 'talabatItems', target: 'online', replyTo: key, text: '🛵 طلبات | ✅ أوردر طلبات ' + (o.code ? '#' + o.code : o.id) + ': الأصناف بقت مطابقة على Apex' + (c.reviewedOk && !c.ok ? ' (اتراجع: مش غلط)' : '') });

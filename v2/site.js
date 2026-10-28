@@ -132,16 +132,16 @@ window.MarsadSite = function MarsadSite(ctx) {
     if (state === 'manual-none') return 'مالوش Apex (يدوي)';
     if (state === 'manual-conflict') return 'تعارض في الربط اليدوي — راجع';
     if (state === 'tentative' || state === 'ambiguous') return (state === 'ambiguous' ? 'مطابقة ملتبسة' : 'مرشح غير مؤكد') +
-      (x.matching.candidates?.length ? ' · ' + x.matching.candidates.map(a => '#' + (a.sn ?? a.no)).join(' / ') : '');
+      (x.matching.candidates?.length ? ' · ' + x.matching.candidates.map(a => '#' + (a.sn ?? 'إيصال غير متاح')).join(' / ') : '');
     return 'لم تتأكد مطابقته';
   }
   function siteLinkCell(x, d) {
-    const label = x.apex ? t12(x.apex.at) + ' · #' + (x.apex.sn ?? x.apex.no) + (x.apex.how === 'manual' ? ' (يدوي)' : ' ✓') : matchingLabel(x);
+    const label = x.apex ? t12(x.apex.at) + ' · #' + (x.apex.sn ?? 'إيصال غير متاح') + (x.apex.how === 'manual' ? ' (يدوي)' : ' ✓') : matchingLabel(x);
     if (!ctx.canWrite() || !d.apex?.linked) return label;
     const options = [...new Map([...(d.apex.unmatched || []), ...d.orders.filter(z => z.apex && !z.apex.manual).map(z => z.apex)].map(a => [String(a.no), a])).values()];
     const sel = h('select', { ariaLabel: 'ربط أوردر الموقع بـ Apex' }, h('option', { value: '', textContent: label }),
       h('option', { value: '__clear', textContent: 'رجّع الربط التلقائي' }), h('option', { value: 'none', textContent: 'مالوش أوردر على Apex' }),
-      ...options.map(a => h('option', { value: a.no, textContent: '#' + (a.sn ?? a.no) + ' · ' + (a.branch || '') + ' · ' + t12(a.at) + ' · ' + (a.amount ?? '') + ' ج' })));
+      ...options.map(a => h('option', { value: a.no, textContent: '#' + (a.sn ?? 'إيصال غير متاح') + ' · ' + (a.branch || '') + ' · ' + t12(a.at) + ' · ' + (a.amount ?? '') + ' ج' })));
     sel.onchange = async () => { if (!sel.value) return; try { await api('/api/site/link', { method: 'POST', body: { siteId: x.id, apexNo: sel.value === '__clear' ? null : sel.value } }); cache = null; await renderTransfer(true); } catch (e) { ctx.showError(e); } };
     return sel;
   }
@@ -185,7 +185,7 @@ window.MarsadSite = function MarsadSite(ctx) {
       { title: 'بعد أكتر من 5 دقايق', get: x => x.slow, type: 'number', cls: x => x.slow ? 'warn' : '' }], [...by.values()].sort((a, b) => b.n - a.n), { empty: 'لسه مفيش أوردرات متربطة بـ Apex' });
     const linkCell = x => {
       if (!d.apexLinked) return '—';
-      const label = x.apex ? '#' + (x.apex.sn ?? x.apex.no) + ' · ' + t12(x.apex.at) + ({ code: ' ✓ بالهاشتاج', manual: ' (يدوي)', time: ' ≈ بالوقت', evidence: ' ✓ بالأدلة' })[x.apex.how] : matchingLabel(x);
+      const label = x.apex ? '#' + (x.apex.sn ?? 'إيصال غير متاح') + ' · ' + t12(x.apex.at) + ({ code: ' ✓ بمرجع المصدر', manual: ' (يدوي)', time: ' ≈ بالوقت', evidence: ' ✓ بالأدلة' })[x.apex.how] : matchingLabel(x);
       if (!ctx.canWrite()) return label;
       const sel = h('select', { ariaLabel: 'أوردر Apex' }, h('option', { value: '', textContent: label }),
         ...((x.apex || x.matching?.state?.startsWith('manual')) ? [h('option', { value: '__clear', textContent: 'رجّع الربط التلقائي' })] : []), h('option', { value: 'none', textContent: 'مالوش أوردر على Apex' }),
@@ -194,13 +194,13 @@ window.MarsadSite = function MarsadSite(ctx) {
       const loadChoices = () => {
         if (choicesLoaded) return;
         choicesLoaded = true;
-        sel.append(...[...new Map([...d.unmatchedApex, ...d.orders.filter(z => z.apex && !z.apex.manual).map(z => z.apex)].map(a => [String(a.no), a])).values()].filter(a => !x.store || !a.branch || x.store.includes(a.branch) || a.branch.includes((x.store.split(/[،,\-]/)[1] || '').trim().split(' ')[0])).map(a => h('option', { value: a.no, textContent: '#' + (a.sn ?? a.no) + ' · ' + t12(a.at) + ' · ' + (a.user || '') + ' · ' + (a.amount ?? '') + ' ج' })));
+        sel.append(...[...new Map([...d.unmatchedApex, ...d.orders.filter(z => z.apex && !z.apex.manual).map(z => z.apex)].map(a => [String(a.no), a])).values()].filter(a => !x.store || !a.branch || x.store.includes(a.branch) || a.branch.includes((x.store.split(/[،,\-]/)[1] || '').trim().split(' ')[0])).map(a => h('option', { value: a.no, textContent: '#' + (a.sn ?? 'إيصال غير متاح') + ' · ' + t12(a.at) + ' · ' + (a.user || '') + ' · ' + (a.amount ?? '') + ' ج' })));
       };
       sel.onfocus = loadChoices; sel.onpointerdown = loadChoices;
       sel.onchange = async () => { try { await api('/api/talabat/link', { method: 'POST', body: { talabatId: x.id, apexNo: sel.value === '__clear' ? null : sel.value } }); renderTalabat(true); } catch (e) { ctx.showError(e); } };
       return sel;
     };
-    table('talOrders', [{ title: 'الأوردر', get: x => x.id, show: x => x.code ? x.id + ' (#' + x.code + ')' : x.id }, { title: 'الفرع', get: x => x.store || '—' }, { title: 'وصل', get: x => x.receivedAt || x.placedAt, show: x => t12(x.receivedAt || x.placedAt), type: 'datetime' },
+    table('talOrders', [{ title: 'رقم أوردر طلبات', get: x => x.id }, { title: 'هاشتاج طلبات', get: x => x.code || '—', show: x => x.code ? '#' + x.code : '—' }, { title: 'الفرع', get: x => x.store || '—' }, { title: 'وصل', get: x => x.receivedAt || x.placedAt, show: x => t12(x.receivedAt || x.placedAt), type: 'datetime' },
       { title: 'القبول', get: x => x.acceptSeconds, show: x => secs(x.acceptSeconds), type: 'number', cls: x => x.acceptSeconds > 60 ? 'warn' : '' },
       { title: 'على Apex', get: x => x.apex?.at, show: x => !x.apex && d.apexLinked && x.acceptedAt && x.status !== 'CANCELLED' ? h('span', { className: 'inline' }, linkCell(x), R().cell(R().items.talabatNE(x, d.day))) : linkCell(x) }, { title: 'ضربه', get: x => x.apex?.user || '—' }, { title: 'من القبول للضرب', get: entryDelay, show: x => secs(entryDelay(x)), type: 'number', cls: x => entryDelay(x) > 300 ? 'warn' : '' },
       { title: 'خرج', get: x => x.pickedUpAt, show: x => t12(x.pickedUpAt), type: 'datetime' }, { title: 'الحالة', get: x => x.status, show: x => pill(STATUS[x.status] || x.status || '—', x.status === 'CANCELLED' ? 'bad' : x.final ? 'ok' : 'warn') },
@@ -228,7 +228,7 @@ window.MarsadSite = function MarsadSite(ctx) {
     table(id, [{ title: 'الأوردر', get: x => x.id }, { title: 'الفرع', get: x => x.store || '—' }, { title: 'وصل', get: x => x.receivedAt || x.placedAt, show: x => t12(x.receivedAt || x.placedAt), type: 'datetime' },
       { title: 'اتلغى', get: x => x.cancelledAt, show: x => t12(x.cancelledAt), type: 'datetime' }, { title: 'على مين', get: x => OWNER[x.cancelOwner] || x.cancelOwner || '—', show: x => pill(OWNER[x.cancelOwner] || x.cancelOwner || '—', x.cancelOwner === 'Vendor' ? 'bad' : '') },
       { title: 'اكتمال التفاصيل', get: x => x.cancellationReadiness === 'FAILED' ? 'تعذّر استكمال التفاصيل — راجع المصدر' : x.cancellationReadiness === 'PENDING' ? 'مستني تفاصيل الإلغاء' : 'مكتملة' },
-      { title: 'السبب', get: x => x.cancelReason || '—', cls: () => 'wrap' }, { title: 'كان خرج', get: x => x.pickedUpAt ? 'أيوه' : 'لأ' }, { title: 'على Apex', get: x => x.apex ? '#' + (x.apex.sn ?? x.apex.no) + ' · ' + (x.apex.user || '') : '—' },
+      { title: 'السبب', get: x => x.cancelReason || '—', cls: () => 'wrap' }, { title: 'كان خرج', get: x => x.pickedUpAt ? 'أيوه' : 'لأ' }, { title: 'على Apex', get: x => x.apex ? '#' + (x.apex.sn ?? 'إيصال غير متاح') + ' · ' + (x.apex.user || '') : '—' },
       { title: 'الأصناف', get: x => itemsText(x) || '—', cls: () => 'wrap' }, { title: 'مطابقة الأصناف', get: x => x.apex?.items ? (x.apex.items.ok ? 'مطابقة' : 'مختلفة') : '', show: itemsCell }, { title: 'المبلغ', get: x => x.subtotal ?? x.total, type: 'number' }],
       d.orders.filter(x => x.status === 'CANCELLED' && (!pick || x.store === pick)).reverse(), { pageSize: 50, empty: 'مفيش إلغاءات على طلبات' });
   }

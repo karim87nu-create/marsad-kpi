@@ -3,6 +3,7 @@
 import { businessDay, dayWindow, iso, RULES } from './time.js';
 import { outKind } from './attendance-rules.js';
 import { branchMessage } from './branch-message.js';
+import { platformAlertText } from './order-identifiers.js';
 import * as A from './arabicss.js';
 import { sha256Bytes, randomBytes, b64, fromB64 } from './security.js';
 
@@ -488,7 +489,8 @@ function setup(app) {
         const claim = await db.prepare('UPDATE telegram_log SET sent_at = ?, tries = tries + 1 WHERE id = ? AND sent_at IS NULL').run(app.now(), r.id);
         if (!claim.changes) continue;
         try {
-          const text = target === 'branches' || target?.startsWith('branch:') ? branchMessage(r.text) : r.text;
+          const sourceText = platformAlertText(r.text, r.kind, r.key);
+          const text = target === 'branches' || target?.startsWith('branch:') ? branchMessage(sourceText) : sourceText;
           const m = await call('sendMessage', { chat_id: chat, text, ...(parent?.message_id ? { reply_parameters: { message_id: parent.message_id, allow_sending_without_reply: true } } : {}) }, c.token);
           await db.prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('telegram_delivery:' + r.key, String(chat));
           await db.prepare('UPDATE telegram_log SET error = NULL, message_id = ? WHERE id = ?').run(m?.message_id ?? null, r.id); sent++;

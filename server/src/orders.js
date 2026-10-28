@@ -1,3 +1,4 @@
+import { apexAlertText, apexReceipt } from './order-identifiers.js';
 // مرصد الأوردرات: the monitor on the restaurant PC reads Apex (read-only) and pushes a summary of the
 // operating day here every few seconds. The admin page shows it; its alerts go out through the appropriate
 // department group, including replies when an alert changes state (each kind can be switched off from the Telegram settings).
@@ -79,8 +80,11 @@ function setup(app) {
     // A legacy lightweight retry omits items. Absence is not an empty basket.
     if (Array.isArray(b.online)) {
       const old = new Map((before.online || []).map(o => [String(o.no), o]));
-      b.online = b.online.map(o => !Object.hasOwn(o, 'items') && old.get(String(o.no))?.items
-        ? { ...o, items: old.get(String(o.no)).items } : o);
+      b.online = b.online.map(o => {
+        const prior = old.get(String(o.no));
+        return { ...o, ...(!Object.hasOwn(o, 'items') && prior?.items ? { items: prior.items } : {}),
+          ...(!Object.hasOwn(o, 'sourceRefs') && prior?.sourceRefs ? { sourceRefs: prior.sourceRefs } : {}) };
+      });
     }
     const data = JSON.stringify({ ...b, alerts: undefined });
     if (data.length > 900000) fail(413, 'payload_too_large');
@@ -106,8 +110,9 @@ function setup(app) {
     for (const a of (Array.isArray(b.alerts) ? b.alerts : []).slice(0, 400).sort((x, y) => !!x?.follow - !!y?.follow)) {
       if (!a || !KINDS.includes(a.kind) || ['ordersStale', 'ordersComment'].includes(a.kind) || !a.key || !a.text) continue;
       if (a.follow && String(a.status || 'active') === 'active') continue;
-      const key = 'orders:' + b.day + ':' + String(a.key).slice(0, 80), text = String(a.text).slice(0, 3500);
+      const key = 'orders:' + b.day + ':' + String(a.key).slice(0, 80);
       const old = states[key], no = orderNo(a), branch = a.branch || branchOfNo(no);
+      const text = apexAlertText(String(a.text).slice(0, 3500), findNo(no) || { no, sn: a.sn });
       const target = BRANCH_KINDS.has(a.kind) ? 'branches' : 'online';
       const status = String(a.status || 'active').slice(0,80);
       const version = sha256(JSON.stringify([status, text]));
@@ -146,7 +151,7 @@ function setup(app) {
       let text = null;
       // The small serial staff use; the internal number only when the monitor never sent one.
       if (old.sn == null) old.sn = out?.sn ?? cancel?.sn ?? findNo(old.no)?.sn ?? null;
-      const shown = old.sn ?? old.no;
+      const shown = apexReceipt({ sn: old.sn });
       const clockOf = v => new Date(v).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit' });
       // Cancelled on Apex: closed without a message (only Talabat cancellations are sent).
       if (old.kind === 'ordersLate' && cancel && !out) { old.status = 'resolved'; continue; }
@@ -182,10 +187,26 @@ function setup(app) {
     if (!r) return { ok: true, updated: 0 };
     let d; try { d = JSON.parse(r.data); } catch { return { ok: true, updated: 0 }; }
     const tags = b.tags && typeof b.tags === 'object' ? b.tags : {};
+    const references = b.references && typeof b.references === 'object' ? b.references : {};
     let updated = 0;
     for (const list of ['online', 'cancels']) for (const o of Array.isArray(d[list]) ? d[list] : []) {
-      const tg = tags[String(o.no)]; if (!tg || !/^\d{3,12}$/.test(String(tg)) || o.tag === String(tg)) continue;
-      o.tag = String(tg); updated++;
+      let changed = false;
+      const tg = tags[String(o.no)];
+      if (tg && /^\d{3,12}$/.test(String(tg)) && o.tag !== String(tg)) { o.tag = String(tg); changed = true; }
+      const source = o.kind === 'طلبات' ? 'talabat' : o.kind === 'الموقع' ? 'site' : null;
+      const incoming = source && references[String(o.no)]?.[source];
+      if (incoming) {
+        const clean = {};
+        for (const field of source === 'talabat' ? ['orderId','code'] : ['orderId'])
+          if (/^\d{1,20}$/.test(String(incoming[field] ?? ''))) clean[field] = String(incoming[field]);
+        if (Object.keys(clean).length) {
+          const merged = { ...(o.sourceRefs?.[source] || {}), ...clean };
+          if (JSON.stringify(merged) !== JSON.stringify(o.sourceRefs?.[source])) {
+            o.sourceRefs = { ...(o.sourceRefs || {}), [source]: merged }; changed = true;
+          }
+        }
+      }
+      if (changed) updated++;
     }
     if (updated) { await db.prepare('UPDATE orders_days SET data = ? WHERE day = ?').run(JSON.stringify(d), b.day); app.talabat?.invalidate?.(b.day); }
     return { ok: true, updated };

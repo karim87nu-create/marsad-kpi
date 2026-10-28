@@ -67,7 +67,7 @@ test('site: key, sync of orders and notes, the day rows, alerts', async () => {
     // Order 102: received at 13:10 and not sent to a branch → after 5 minutes one alert for the online group.
     const a = t.app.db.raw.prepare("SELECT kind, target FROM telegram_log WHERE kind LIKE 'site%'").all();
     assert.deepEqual(a, [{ kind: 'siteTransfer', target: 'online' }]);
-    assert.match(t.app.db.raw.prepare("SELECT text FROM telegram_log WHERE key = 'site:transfer:102'").get().text, /لسه مش لاقيينه على Apex/);
+    assert.match(t.app.db.raw.prepare("SELECT text FROM telegram_log WHERE key = 'site:transfer:102'").get().text, /المطابقة مع Apex غير مؤكدة/);
     // Next run a minute later: only open orders' notes are read again, no duplicate alert.
     site.calls.length = 0; t.advance(61000);
     await admin('POST', '/api/site', { action: 'sync' });

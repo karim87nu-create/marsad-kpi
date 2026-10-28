@@ -1,4 +1,5 @@
 import { compareItems, itemKey } from './items.js';
+import { referenceEvidence } from './order-identifiers.js';
 
 export const digits = x => String(x ?? '').replace(/[٠-٩۰-۹]/g, c => String(c.charCodeAt(0) >= 0x6f0 ? c.charCodeAt(0) - 0x6f0 : c.charCodeAt(0) - 0x660));
 export const textKey = x => digits(x).toLowerCase().replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/[\u064b-\u065fـ]/g, '').replace(/#\s*\d+|\b\d{1,2}[:.]\d{2}\b/g, ' ').replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ');
@@ -47,13 +48,10 @@ export function resolveOrders(rows, apex, { manual = new Map(), branchOk = () =>
     const c = customerOf(o.customer), cp = new Set([c.phone, c.mobile].filter(Boolean));
     for (const a of apex) {
       if (used.has(String(a.no))) continue;
-      const tag = digits(a.tag || '').replace(/\D/g, ''), code = String(o.code || ''), id = String(o.id);
-      const exact = !!tag && (tag === code || tag === id);
-      const loose = !!tag && !exact && ((tag.length >= 6 && id.endsWith(tag)) || (tag.length >= 3 && code && tag.replace(/0/g, '') === code.replace(/0/g, '')));
-      if (tag && !exact && !loose) continue;
+      const reference = referenceEvidence(o, a), exact = reference.exact;
       const time = Number(a.t ?? Date.parse(a.at)), gap = time - o.anchor, branch = branchOk(o.branch, a.branch);
       const withinTime = Number.isFinite(time) && gap >= -120000 && gap <= windowFor(o);
-      if (!Number.isFinite(time) || (!exact && !loose && !withinTime)) continue;
+      if (!Number.isFinite(time) || (!exact && !reference.conflict && !withinTime)) continue;
       const ac = customerOf(a.customer), ap = new Set([ac.phone, ac.mobile].filter(Boolean));
       const phone = cp.size && ap.size ? [...cp].some(p => ap.has(p)) : null;
       const name = similar(c.name, ac.name), address = similar(c.address, ac.address);
@@ -66,14 +64,14 @@ export function resolveOrders(rows, apex, { manual = new Map(), branchOk = () =>
       const identity = phone === true && name >= .6 && address >= .6;
       const nameConflict = c.name && ac.name && name != null && name < .35;
       const addressConflict = c.address && ac.address && address != null && address < .5;
-      const conflict = phone === false || nameConflict || addressConflict || branch === false || (item && !item.ok) || (money != null && money > .3) || !withinTime;
+      const conflict = reference.conflict || phone === false || nameConflict || addressConflict || branch === false || (item && !item.ok) || (money != null && money > .3) || !withinTime;
       // A matching #code is useful evidence, never a shortcut around a contradictory or incomplete order.
       const fullEvidence = withinTime && branch === true && money != null && money < .08 && item?.ok === true && identity;
       const strong = !conflict && fullEvidence;
-      const score = (exact ? 100 : loose ? 18 : 0) + (phone === true ? 42 : phone === false ? -70 : 0) +
+      const score = (exact ? 100 : 0) + (phone === true ? 42 : phone === false ? -70 : 0) +
         (name ?? 0) * 16 + (address ?? 0) * 18 + (item ? item.ok ? 32 : -24 : 0) +
         (branch === true ? 8 : branch === false ? -25 : 0) + (money == null ? 0 : Math.max(-20, 12 - money * 70)) + Math.max(0, 8 - Math.abs(gap) / 60000 / 5);
-      pairs.push({ o: o.id, a, score, strong, exact, conflict, reasons: { code: exact ? 'exact' : loose ? 'partial' : null, phone, name, address,
+      pairs.push({ o: o.id, a, score, strong, exact, conflict, reasons: { code: exact ? 'exact' : null, referenceType: reference.type, referenceConflict: reference.conflict, phone, name, address,
         nameConflict: !!nameConflict, addressConflict: !!addressConflict, items: item ? item.ok : null, quantities: item ? item.countTalabat === item.countApex : null,
         branch, money, minutes: gap / 60000, withinTime, fullEvidence } });
     }

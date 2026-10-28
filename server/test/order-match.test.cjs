@@ -6,7 +6,7 @@ const anchor = Date.UTC(2026, 9, 22, 12), at = m => new Date(anchor + m * 60000)
 const customer = { name: 'أحمد علي', phone: '٠١٠١٢٣٤٥٦٧٨', address: 'شارع النصر عمارة 20 شقة 3' };
 const items = [{ name: 'White Rice', qty: 2, price: 113 }];
 const aitems = [{ name: 'ارز سادة', no: '0103007', qty: 2, price: 50 }];
-const row = (id = '10000001', extra = {}) => ({ id, anchor, amount: 113, branch: 'التجمع', customer, items, ...extra });
+const row = (id = '10000001', extra = {}) => ({ id, source: 'talabat', anchor, amount: 113, branch: 'التجمع', customer, items, ...extra });
 const apex = (no = 1, extra = {}) => ({ no, at: at(3), t: anchor + 180000, amount: 113, branch: 'التجمع', customer, items: aitems, ...extra });
 const opts = { branchOk: (a, b) => a === b };
 
@@ -18,7 +18,7 @@ test('normalizes Egyptian numbers and rejects masked numbers', () => {
 test('identity and basket beat a closer wrong customer; all evidence is included', () => {
   const d = resolveOrders([row()], [apex(1, { t: anchor, customer: { ...customer, phone: '01112345678' } }), apex(2)], opts);
   assert.equal(d.matches.get('10000001').no, 2);
-  assert.deepEqual(Object.keys(d.states.get('10000001').evidence).sort(), ['address','addressConflict','branch','code','fullEvidence','items','minutes','money','name','nameConflict','phone','quantities','withinTime']);
+  assert.deepEqual(Object.keys(d.states.get('10000001').evidence).sort(), ['address','addressConflict','branch','code','fullEvidence','items','minutes','money','name','nameConflict','phone','quantities','referenceConflict','referenceType','withinTime']);
 });
 test('time and value alone remain tentative and never confirmed', () => {
   const d = resolveOrders([row('10000001', { customer: {}, items: [] })], [apex()], opts);
@@ -40,20 +40,20 @@ test('an exact tag cannot overrule customer, item, branch, value, or time contra
     { items: [{ ...aitems[0], qty: 1 }] }, { t: anchor + 4 * 3600000 },
   ];
   for (const extra of cases) {
-    const d = resolveOrders([row()], [apex(1, { tag: '10000001', ...extra })], opts);
+    const d = resolveOrders([row()], [apex(1, { sourceRefs: { talabat: { orderId: '10000001' } }, ...extra })], opts);
     assert.equal(d.matches.size, 0, JSON.stringify(extra));
     assert.equal(d.states.get('10000001').state, 'ambiguous');
   }
 });
 test('an exact tag with missing customer or basket remains a suggestion, not a confirmation', () => {
-  const d = resolveOrders([row('10000001', { customer: {}, items: [] })], [apex(1, { tag: '10000001', customer: {}, items: [] })], opts);
+  const d = resolveOrders([row('10000001', { customer: {}, items: [] })], [apex(1, { sourceRefs: { talabat: { orderId: '10000001' } }, customer: {}, items: [] })], opts);
   assert.equal(d.matches.size, 0);
   assert.equal(d.states.get('10000001').state, 'tentative');
 });
 
 test('each identity field is required and a manual proposal cannot force or veto full evidence', () => {
   for (const field of ['phone', 'name', 'address']) {
-    const d = resolveOrders([row()], [apex(1, { tag: '10000001', customer: { ...customer, [field]: '' } })], opts);
+    const d = resolveOrders([row()], [apex(1, { sourceRefs: { talabat: { orderId: '10000001' } }, customer: { ...customer, [field]: '' } })], opts);
     assert.equal(d.matches.size, 0, field);
   }
   const forced = resolveOrders([row()], [apex(1, { amount: 999 })], { ...opts, manual: new Map([['10000001', 1]]) });
@@ -93,7 +93,7 @@ test('API persists customer evidence, excludes ambiguity from learning, and link
     assert.equal((await admin('POST', '/api/talabat/link', { talabatId: '10000001', apexNo: 1 })).status, 409);
     assert.equal((await admin('POST', '/api/talabat/link', { talabatId: '10000001', apexNo: 'none' })).status, 200);
     // Exact codes arrive later; the complete customer and basket evidence determines the links.
-    await t.call('POST', '/api/orders/tags', { headers: { 'x-orders-token': ot }, body: { day: '2026-10-22', tags: { 1: '10000001', 2: '10000002' } } });
+    await t.call('POST', '/api/orders/tags', { headers: { 'x-orders-token': ot }, body: { day: '2026-10-22', references: { 1: { talabat: { orderId: '10000001' } }, 2: { talabat: { orderId: '10000002' } } } } });
     t.advance(31000); await push([]); // a throttled alert/matching pass learns only the now-complete, unique evidence
     d = (await admin('GET', '/api/talabat/day?day=2026-10-22')).body;
     assert.equal(d.orders.find(x => x.id === '10000002').apex.no, 2);

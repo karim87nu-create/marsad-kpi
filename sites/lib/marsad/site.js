@@ -1,3 +1,4 @@
+import { siteReference } from './order-identifiers.js';
 // الموقع (eldahan.com.eg): the server reads the WooCommerce orders and their notes with a read-only REST key, every
 // minute, and keeps per order only the times the reports need (received, sent to the branch, out with the driver,
 // delivered) plus the branch and driver names. Matching fields are stored separately for order reconciliation.
@@ -137,7 +138,7 @@ function setup(app) {
     let mt = new Map(); try { mt = (await apexMatch(day, rows, { teach: true })).matches; } catch {}
     const more = o => { const a = mt.get(o.id);
       return (o.total ? '\nقيمة الأوردر: ' + Math.round(o.total) + ' ج' : '') +
-        (a ? '\nرقمه على Apex: ' + (a.sn ?? a.no) + (a.user ? '، ضربه ' + a.user : '') + (a.at ? ' الساعة ' + clock(Date.parse(a.at)) : '') : '\nلسه مش لاقيينه على Apex') + (a ? det.extra(a.no) : ''); };
+        (a ? '\nالمطابقة مع Apex مؤكدة' : '\nالمطابقة مع Apex غير مؤكدة') + (a ? det.extra(a.no) : ''); };
     for (const o of rows) {
       if (o.received_at && !o.transfer_at && now - o.received_at > TRANSFER_MIN * 60000)
         list.push({ key: 'site:transfer:' + o.id, kind: 'siteTransfer', target: 'online', text: '🌐 الموقع | ⏳ أوردر وصل على الموقع ولسه ماتحوّلش لأي فرع\nرقم أوردر الموقع: #' + o.id + '\nوصل الساعة ' + clock(o.received_at) + '، وبقاله ' + Math.round((now - o.received_at) / 60000) + ' دقيقة' + more(o) });
@@ -205,7 +206,7 @@ function setup(app) {
     const manual = new Map((await db.prepare('SELECT site_id, apex_no FROM site_links WHERE day = ?').all(day)).map(x => [x.site_id, x.apex_no]));
     const learned = app.learn ? await app.learn.pairs('match-v2:branch:site') : new Map();
     const branchOk = (s, b) => { const k = learned.get(s); return k && [...k.values()].reduce((x, y) => x + y, 0) >= 3 ? k.has(b) : sameBranch(s, b); };
-    const decision = resolveOrders(rows.map(o => ({ ...o, anchor: o.transfer_at || o.received_at || o.created_at,
+    const decision = resolveOrders(rows.map(o => ({ ...o, source: 'site', anchor: o.transfer_at || o.received_at || o.created_at,
       amount: o.total, ...profiles.get(String(o.id)), excluded: EXCLUDED.has(o.status) })), apex, { manual, branchOk, windowFor: () => 90 * 60000 });
     const matches = new Map();
     for (const [id, a] of decision.matches) {

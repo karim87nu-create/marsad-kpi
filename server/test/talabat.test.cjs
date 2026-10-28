@@ -95,11 +95,11 @@ test('talabat: «accepted and not on Apex» is answered when it is entered on Ap
     t.advance(11 * 60000); await apex([]); await push([]);
     assert.ok(t.app.db.raw.prepare("SELECT 1 FROM telegram_log WHERE key = 'talabat:notEntered:3977400009'").get());
     t.advance(2 * 60000);
-    await apex([{ no: 3526900, sn: 512, kind: 'طلبات', branch: 'التجمع', at: at(12), user: 'sara.m', amount: 113, tag: '3977400009', customer: { name: 'Customer One', phone: '01012345678', address: 'Tagamoa 5' }, items: [{ name: 'ارز سادة', no: '0103007', qty: 1, price: 100 }] }]);
+    await apex([{ no: 3526900, sn: 512, kind: 'طلبات', branch: 'التجمع', at: at(12), user: 'sara.m', amount: 113, sourceRefs: { talabat: { orderId: '3977400009' } }, customer: { name: 'Customer One', phone: '01012345678', address: 'Tagamoa 5' }, items: [{ name: 'ارز سادة', no: '0103007', qty: 1, price: 100 }] }]);
     await push([]);
     const rep = t.app.db.raw.prepare("SELECT text, reply_to FROM telegram_log WHERE key = 'resolved:talabat:notEntered:3977400009'").get();
     assert.equal(rep.reply_to, 'talabat:notEntered:3977400009');
-    assert.match(rep.text, /اتضرب على Apex — أوردر 512 /); assert.match(rep.text, /بعد 12 دقيقة من القبول/);
+    assert.match(rep.text, /اتأكدت مطابقته على Apex/); assert.ok(!rep.text.includes('512')); assert.match(rep.text, /بعد 12 دقيقة من القبول/);
     assert.ok(!rep.text.includes('3526900'), 'never the internal number');
   } finally { await t.close(); }
 });
