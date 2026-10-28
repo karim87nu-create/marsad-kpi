@@ -74,13 +74,33 @@ function setup(app) {
       if (o.detail?.cancelOwner && !KNOWN_OWNER.has(o.detail.cancelOwner)) unknown.push(['talabat', 'الإلغاء على: ' + o.detail.cancelOwner, o.id]);
     }
     for (const u of unknown.slice(0, 20)) await app.learn?.unknown(...u, now);
-    const accepted = [];
+    const accepted = [], priorRows = new Map(), seen = new Set();
+    const ids = [...new Set(list.filter(o => o && typeof o === 'object').map(o => String(o.id || '').replace(/\D/g, '').slice(0, 20)).filter(id => id.length >= 6))];
+    const priorSql = `SELECT t.id,t.status,i.observed_at,p.data AS profile FROM talabat_orders t
+      LEFT JOIN order_ingest i ON i.source='talabat' AND i.ref=t.id
+      LEFT JOIN match_profiles p ON p.source='talabat' AND p.ref=t.id WHERE t.id IN `;
+    for (let offset = 0; offset < ids.length; offset += 50) {
+      const chunk = ids.slice(offset, offset + 50);
+      for (const row of await db.prepare(priorSql + '(' + chunk.map(() => '?').join(',') + ')').all(...chunk)) priorRows.set(row.id, row);
+    }
+    let pendingWrites = [], pendingOrders = [];
+    const flushOrders = async () => {
+      if (!pendingWrites.length) return;
+      const committed = await db.batch(pendingWrites);
+      for (const item of pendingOrders) if (committed[item.orderIndex].changes) accepted.push(item.order);
+      pendingWrites = []; pendingOrders = [];
+    };
     for (const o of list) {
       if (!o || typeof o !== 'object') continue;
       const id = String(o.id || '').replace(/\D/g, '').slice(0, 20);
       if (id.length < 6) continue;
-      const prior = await db.prepare('SELECT status FROM talabat_orders WHERE id = ?').get(id);
-      const meta = await db.prepare("SELECT * FROM order_ingest WHERE source = 'talabat' AND ref = ?").get(id);
+      if (seen.has(id)) {
+        // Duplicate IDs in one input retain sequential semantics, without penalizing normal unique batches.
+        await flushOrders();
+        priorRows.set(id, await db.prepare(priorSql + '(?)').get(id));
+      }
+      seen.add(id);
+      const prior = priorRows.get(id), meta = prior;
       const observed = ms(o.observedAt);
       if (o.observedAt && (!observed || observed > now + 300000)) continue;
       if (meta?.observed_at && (!observed || observed < meta.observed_at)) continue;
@@ -95,7 +115,7 @@ function setup(app) {
       const placed = ms(o.placedAt) || ms(o.receivedAt) || ms(o.listAt), d = o.detail || null;
       const customer = customerOf({ ...(o.customer || {}), ...(d?.customer || {}), phone: d?.customer?.phone || o.customer?.phone || o.phone || '' });
       if (Object.values(customer).some(Boolean)) {
-        const old = parseJson((await db.prepare("SELECT data FROM match_profiles WHERE source = 'talabat' AND ref = ?").get(id))?.data, {});
+        const old = parseJson(prior?.profile, {});
         for (const [k, v] of Object.entries(customer)) if (v) old[k] = v;
         orderWrites.push(db.prepare("INSERT INTO match_profiles (source, ref, data) SELECT 'talabat',?,? WHERE " + guard + " ON CONFLICT(source, ref) DO UPDATE SET data = excluded.data").bind(id, JSON.stringify(old), id, guardTime));
       }
@@ -118,9 +138,11 @@ function setup(app) {
           ms(d?.pickedUpAt), ms(d?.deliveredAt), ms(d?.cancelledAt), d?.cancelOwner ? String(d.cancelOwner).slice(0, 60) : null, d?.cancelReason ? String(d.cancelReason).slice(0, 300) : null,
           items, Number(d?.subtotal) || null, d?.deliveryType ? String(d.deliveryType).slice(0, 60) : null, d?.milestones ? JSON.stringify(d.milestones).slice(0, 2000) : null, d ? now : null, now, now, id, guardTime));
       orderWrites.push(db.prepare("INSERT INTO order_ingest (source, ref, observed_at, updated_at) VALUES ('talabat',?,?,?) ON CONFLICT(source, ref) DO UPDATE SET observed_at = MAX(COALESCE(order_ingest.observed_at,0),COALESCE(excluded.observed_at,0)), updated_at = excluded.updated_at").bind(id, observed, now));
-      const committed = await db.batch(orderWrites);
-      if (committed[committed.length - 2].changes) accepted.push(o);
+      pendingOrders.push({ order: o, orderIndex: pendingWrites.length + orderWrites.length - 2 });
+      pendingWrites.push(...orderWrites);
+      if (pendingOrders.length >= 25) await flushOrders();
     }
+    await flushOrders();
     if (writes.length) await db.batch(writes);
     if (writes.length || accepted.length) { matchRevision++; matchCache.clear(); }
     await put('talabat_last_push', now);
@@ -135,7 +157,9 @@ function setup(app) {
     if (want.length) await db.batch(want.map(({ id }) => db.prepare(`INSERT INTO order_ingest (source,ref,detail_attempts,detail_retry_at,updated_at)
       SELECT 'talabat',id,1,?,? FROM talabat_orders WHERE id=? AND status='CANCELLED'
       ON CONFLICT(source,ref) DO UPDATE SET detail_attempts=order_ingest.detail_attempts+1, detail_retry_at=excluded.detail_retry_at, updated_at=excluded.updated_at`).bind(now + 60000, now, id)));
-    await maybeAlerts(now, accepted.some(o => String(o.status || '').toUpperCase() === 'CANCELLED'));
+    const alertWork = maybeAlerts(now, accepted.some(o => String(o.status || '').toUpperCase() === 'CANCELLED'));
+    if (db.kind === 'd1') ctx.waitUntil(alertWork.catch(error => console.error('Talabat alert pass failed', error?.message)));
+    else await alertWork;
     // WhatsApp (when on): the customers' numbers for the welcome and the survey; «phones» tells the screen to read them.
     await app.whatsapp?.take(accepted, now);
     return { ok: true, want: want.map(r => r.id), phones: !!await app.whatsapp?.wantPhones(), serverNow: iso(now) };
