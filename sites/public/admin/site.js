@@ -265,9 +265,13 @@ window.MarsadSite = function MarsadSite(ctx) {
   async function renderTalabatKey(isAdmin) {
     $('talKeyPanel').hidden = !isAdmin;
     if (!isAdmin) return;
-    const k = await api('/api/talabat/token'), ext = await ctx.extensionCall({ type: 'TALABAT_STATUS' }, 1500);
-    $('talKeyStatus').replaceChildren(k.lastPush ? h('span', { className: k.ageSeconds < 120 ? 'ok' : 'error', textContent: 'آخر قراءة من شاشة المراقبة ' + t12(k.lastPush) + (k.ageSeconds < 120 ? ' — شغالة' : ' — واقفة') }) : h('span', { className: 'muted', textContent: 'لسه مفيش جهاز متربط' }),
-      ' · ', h('span', { className: 'muted', textContent: ext ? (ext.linked ? 'الجهاز ده هو شاشة المراقبة' : 'الإضافة موجودة على الجهاز ده (نسخة ' + ext.version + ')') : 'الإضافة مش على الجهاز ده (أو نسخة قديمة)' }));
+    const k = await api('/api/talabat/token');
+    $('talLink').hidden = false;
+    {
+      const ext = await ctx.extensionCall({ type: 'TALABAT_STATUS' }, 1500);
+      $('talKeyStatus').replaceChildren(k.lastPush ? h('span', { className: k.ageSeconds < 120 ? 'ok' : 'error', textContent: 'آخر قراءة من شاشة المراقبة ' + t12(k.lastPush) + (k.ageSeconds < 120 ? ' — شغالة' : ' — واقفة') }) : h('span', { className: 'muted', textContent: 'لسه مفيش جهاز متربط' }),
+        ' · ', h('span', { className: 'muted', textContent: ext ? (ext.linked ? 'الجهاز ده هو شاشة المراقبة' : 'الإضافة موجودة على الجهاز ده (نسخة ' + ext.version + ')') : 'الإضافة مش على الجهاز ده (أو نسخة قديمة)' }));
+    }
   }
   $('talLink').onclick = async () => {
     $('talKeyNote').textContent = 'جارٍ الربط…';
@@ -324,3 +328,4 @@ window.MarsadSite = function MarsadSite(ctx) {
 
   return { renderBranches, renderTransfer, renderTalabat, renderBranchTalabatCancels, renderTalabatKey, exportKind, renderKey, renderWhatsApp, branchRows, transferRows, perBranch };
 };
+
