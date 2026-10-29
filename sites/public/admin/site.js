@@ -225,13 +225,15 @@ window.MarsadSite = function MarsadSite(ctx) {
   // The dishes in English with what they are on Apex in Arabic (from the comparison), and whether Apex matches.
   function itemsText(x) {
     const ar = new Map((x.apex?.items?.pairs || []).map(p => [p.talabat, p.apex]));
-    return x.items.map(i => i.qty + '× ' + i.name + (ar.get(i.name) ? ' (' + ar.get(i.name) + ')' : '')).join('، ');
+    return x.items.map(i => i.qty + '× ' + i.name + (ar.get(i.name) ? ' (' + ar.get(i.name) + ')' : '') +
+      (i.modifiers?.length ? ' [إضافات: ' + i.modifiers.join('، ') + ']' : i.modifierRead === false ? ' [الإضافات غير مقروءة]' : '')).join('، ');
   }
   function itemsCell(x) {
     const c = x.apex?.items;
     if (!c) return x.apex ? h('span', { className: 'muted', textContent: '—' }) : '';
     if (c.ok) return pill('✓ مطابقة', 'ok');
-    const box = h('span', { className: 'inline' }, pill(c.reviewedOk ? 'اتراجعت: مش غلط' : 'صنف مختلف', c.reviewedOk ? '' : 'bad'),
+    const label = c.reviewedOk ? 'اتراجعت: مش غلط' : c.modifierUncertain ? 'مراجعة الإضافات' : c.uncertain ? 'مراجعة' : 'صنف مختلف';
+    const box = h('span', { className: 'inline' }, pill(label, c.reviewedOk ? '' : c.uncertain ? 'warn' : 'bad'),
       h('small', { className: 'muted', textContent: [c.missingOnApex.length ? 'على طلبات بس: ' + c.missingOnApex.join('، ') : '', c.extraOnApex.length ? 'على Apex بس: ' + c.extraOnApex.join('، ') : ''].filter(Boolean).join(' · ') }));
     if (R().cell) box.append(R().cell(R().items.talabatItems(x, tal?.day || state.day)));
     return box;
