@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 8097)
+Total output lines: 344
+
 import { talabatReference } from './order-identifiers.js';
 // طلبات: one monitor screen (Firefox on a PC that stays on, signed in with the call center's Talabat account that sees
 // every branch) reads Order History and each order's details, and pushes them here. Per order we keep the times
@@ -119,7 +122,8 @@ function setup(app) {
         for (const [k, v] of Object.entries(customer)) if (v) old[k] = v;
         orderWrites.push(db.prepare("INSERT INTO match_profiles (source, ref, data) SELECT 'talabat',?,? WHERE " + guard + " ON CONFLICT(source, ref) DO UPDATE SET data = excluded.data").bind(id, JSON.stringify(old), id, guardTime));
       }
-      const items = d && Array.isArray(d.items) ? JSON.stringify(d.items.slice(0, 60).map(x => ({ qty: Number(x.qty) || 1, name: String(x.name || '').slice(0, 120), price: Number(x.price) || null }))) : null;
+      const items = d && Array.isArray(d.items) ? JSON.stringify(d.items.slice(0, 60).map(x => ({ qty: Number(x.qty) || 1, name: String(x.name || '').slice(0, 120), price: Number(x.price) || null,
+        modifiers: Array.isArray(x.modifiers) ? [...new Set(x.modifiers.map(v => String(v || '').trim().slice(0, 120)).filter(Boolean))].slice(0, 20) : [], modifierRead: x.modifierRead === true }))) : null;
       orderWrites.push(db.prepare(`INSERT INTO talabat_orders (id, day, vendor_id, store, status, billable, placed_at, total, received_at, accept_seconds, accepted_at, picked_up_at, delivered_at,
           cancelled_at, cancel_owner, cancel_reason, items, subtotal, delivery_type, milestones, detail_at, first_seen, updated_at)
         SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE ${guard}
@@ -171,15 +175,7 @@ function setup(app) {
   const matchCache = new Map(), matchFlights = new Map();
   let matchRevision = 0;
   async function matchDay(day, options = {}) {
-    const teach = !!options.teach, cached = matchCache.get(day);
-    if (!teach && cached && Date.now() - cached.at < 8000) return cached.value;
-    const running = matchFlights.get(day);
-    if (running) { await running; if (!teach) return matchDay(day, options); }
-    const revision = matchRevision;
-    const flight = computeMatchDay(day, { teach });
-    matchFlights.set(day, flight);
-    try {
-      const value = await flight;
+    const teach = !!options.teac…97 tokens truncated…st value = await flight;
       if (revision === matchRevision) matchCache.set(day, { at: Date.now(), value });
       while (matchCache.size > 4) matchCache.delete(matchCache.keys().next().value);
       return value;
@@ -340,3 +336,4 @@ function setup(app) {
 }
 
 export { setup, sameBranch };
+
