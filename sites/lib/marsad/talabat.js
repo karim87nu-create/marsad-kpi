@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 8097)
-Total output lines: 344
-
 import { talabatReference } from './order-identifiers.js';
 // طلبات: one monitor screen (Firefox on a PC that stays on, signed in with the call center's Talabat account that sees
 // every branch) reads Order History and each order's details, and pushes them here. Per order we keep the times
@@ -175,7 +172,15 @@ function setup(app) {
   const matchCache = new Map(), matchFlights = new Map();
   let matchRevision = 0;
   async function matchDay(day, options = {}) {
-    const teach = !!options.teac…97 tokens truncated…st value = await flight;
+    const teach = !!options.teach, cached = matchCache.get(day);
+    if (!teach && cached && Date.now() - cached.at < 8000) return cached.value;
+    const running = matchFlights.get(day);
+    if (running) { await running; if (!teach) return matchDay(day, options); }
+    const revision = matchRevision;
+    const flight = computeMatchDay(day, { teach });
+    matchFlights.set(day, flight);
+    try {
+      const value = await flight;
       if (revision === matchRevision) matchCache.set(day, { at: Date.now(), value });
       while (matchCache.size > 4) matchCache.delete(matchCache.keys().next().value);
       return value;
