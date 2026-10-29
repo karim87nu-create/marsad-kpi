@@ -175,7 +175,8 @@
         .filter(x => x && x !== name && !/^(?:expand_more|expand_less|keyboard_arrow_down|keyboard_arrow_up|add-ons?|options?|customi[sz]ations?|modifiers?|no add-ons? selected)$/i.test(x) &&
           !/^(?:\d+\s*[x×]|[x×]\s*\d+)$/i.test(x) && !/(?:E£|EGP|£E|ج\.م)\s*[-+]?\d/i.test(x)))].slice(0, 20);
       const iconStillCollapsed = /\bexpand_more\b|\bkeyboard_arrow_down\b/i.test(p.innerText || '');
-      d.items.push({ qty: Number((l[0] || '').replace(/[^\d]/g, '')) || 1, name, price: money(l.find(x => /E£|EGP/.test(x))), modifiers, modifierRead: productModifierExpanded(control) && !iconStillCollapsed });
+      const modifierComplete = productModifierExpanded(control) && !iconStillCollapsed;
+      d.items.push({ qty: Number((l[0] || '').replace(/[^\d]/g, '')) || 1, name, price: money(l.find(x => /E£|EGP/.test(x))), modifiers, modifierRead: modifiers.length > 0 || modifierComplete, modifierComplete });
     }
     // The list time has seconds (placedAt); the timeline only minutes. Received = placed, accepted = received + "Accepted in".
     if (d.receivedAt && Number.isFinite(placed) && Math.abs(Date.parse(d.receivedAt) - Math.floor(placed / 60000) * 60000) < 60000) d.receivedAt = new Date(placed).toISOString();
