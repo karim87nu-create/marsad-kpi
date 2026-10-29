@@ -33,28 +33,39 @@ const WORDS = {
 };
 const ar = s => String(s || '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/[ًٌٍَُِّْ]/g, '').toLowerCase();
 const key = s => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+const variantKey = s => key(ar(s)).split(/[^\p{L}\p{N}]+/u).filter(w => w && !['meal','offer','combo'].includes(w)).sort().join(' ');
+const SEED_VARIANTS = new Map();
+for (const [name, ids] of Object.entries(SEED)) {
+  const k = variantKey(name);
+  SEED_VARIANTS.set(k, [...new Set([...(SEED_VARIANTS.get(k) || []), ...ids])]);
+}
 // How well an English dish name fits an Arabic item name, 0..1, by translated words.
 function wordScore(en, arName) {
   const words = key(en).split(/[^a-z]+/).filter(w => w.length > 2 && !['with','and','the','for','from'].includes(w));
   if (!words.length) return 0;
   const a = ar(arName);
-  return words.filter(w => WORDS[w] && a.includes(ar(WORDS[w]).slice(0, Math.max(3, ar(WORDS[w]).length - 1)))).length / words.length;
+  const weight = w => ['meal','offer','combo'].includes(w) ? 0.5 : 1;
+  return words.reduce((n, w) => n + (WORDS[w] && a.includes(ar(WORDS[w]).slice(0, Math.max(3, ar(WORDS[w]).length - 1))) ? weight(w) : 0), 0) /
+    words.reduce((n, w) => n + weight(w), 0);
 }
 
 // talabat: [{ qty, name, price (line total with tax) }], apex: [{ no, name, qty, price (unit, before tax) }]
 // learned: Map(talabat name → Map(apex no → evidence)), ratio: Talabat/Apex price ratio (learned, about 1.13).
 function compareItems(talabat, apex, { learned = new Map(), ratio = 1.13 } = {}) {
   const T = talabat.map((x, i) => ({ ...x, i, unit: x.price && x.qty ? x.price / x.qty : null })), A = apex.map((x, i) => ({ ...x, i }));
-  const usedA = new Set(), pairs = [], priceOk = (t, a) => !t.unit || !a.price || Math.abs(t.unit / a.price - ratio) / ratio < 0.06;
-  const known = t => [...(learned.get(key(t.name))?.keys() || []), ...(SEED[key(t.name)] || [])];
-  // Each Talabat line: a known dish number with the same quantity and a fitting price, else the best translated name.
+  const usedA = new Set(), pairs = [];
+  const known = t => [...(learned.get(key(t.name))?.keys() || []), ...(SEED[key(t.name)] || []), ...(SEED_VARIANTS.get(variantKey(t.name)) || [])];
+  // Names and quantities identify dishes; current menu prices vary and never veto a match.
   for (const pass of ['known', 'words']) for (const t of T) {
     if (pairs.some(p => p.t === t)) continue;
     let best = null, bestScore = 0, tied = false;
     for (const a of A) {
       if (usedA.has(a.i) || Math.abs((a.qty || 1) - (t.qty || 1)) > 0.01) continue;
       const k = known(t).includes(String(a.no).trim());
-      const s = pass === 'known' ? (k && priceOk(t, a) ? 2 : 0) : (wordScore(t.name, a.name) * (priceOk(t, a) ? 1 : 0.4));
+      // Talabat can expose Arabic labels too. Match identical normalized names
+      // directly, while keeping the same quantity and price checks as other paths.
+      const sameName = key(ar(t.name)) === key(ar(a.name)) && key(ar(t.name));
+      const s = sameName ? 2 : pass === 'known' ? (k ? 2 : 0) : wordScore(t.name, a.name);
       if (s > bestScore) { best = a; bestScore = s; tied = false; }
       else if (s > 0 && s === bestScore && String(a.no) !== String(best?.no)) tied = true;
     }
@@ -63,11 +74,16 @@ function compareItems(talabat, apex, { learned = new Map(), ratio = 1.13 } = {})
   const missingOnApex = T.filter(t => !pairs.some(p => p.t === t)), extraOnApex = A.filter(a => !usedA.has(a.i));
   // Quantities: the same dishes in other counts.
   const qty = (l, k) => l.reduce((n, x) => n + (Number(x[k]) || 1), 0);
-  const uncertain = missingOnApex.some(t => !known(t).length && !A.some(a => wordScore(t.name, a.name) >= 0.65));
-  return { ok: !missingOnApex.length && !extraOnApex.length, uncertain, pairs: pairs.map(p => ({ talabat: p.t.name, apex: p.a.name, apexNo: p.a.no, how: p.how, ratio: p.t.unit && p.a.price ? p.t.unit / p.a.price : null })),
+  // A collapsed Talabat product can hide selected add-ons. Apex may store those as
+  // separate detail rows; call that reviewable instead of declaring the basket wrong.
+  const modifierContext = T.some(t => t.modifierRead !== true || (Array.isArray(t.modifiers) && t.modifiers.length));
+  const modifierUncertain = extraOnApex.length > 0 && modifierContext;
+  const uncertain = modifierUncertain || missingOnApex.some(t => !known(t).length && !A.some(a => wordScore(t.name, a.name) >= 0.65));
+  return { ok: !missingOnApex.length && !extraOnApex.length, uncertain, modifierUncertain, pairs: pairs.map(p => ({ talabat: p.t.name, apex: p.a.name, apexNo: p.a.no, how: p.how, ratio: p.t.unit && p.a.price ? p.t.unit / p.a.price : null })),
     missingOnApex: missingOnApex.map(t => t.qty + '× ' + t.name), extraOnApex: extraOnApex.map(a => (a.qty || 1) + '× ' + a.name),
     countTalabat: qty(talabat, 'qty'), countApex: qty(apex, 'qty'),
     unmatched: { talabat: missingOnApex.map(({ qty, name, price }) => ({ qty, name, price })), apex: extraOnApex.map(({ no, name, qty, price }) => ({ no, name, qty, price })) } };
 }
 
 export { compareItems, wordScore, SEED, WORDS, key as itemKey };
+
