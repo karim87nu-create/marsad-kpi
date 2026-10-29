@@ -121,6 +121,31 @@
     }
     return out;
   }
+  const expandedProductKeys = new Set();
+  function productModifierControl(p) {
+    const all = [...(p.matches?.('button,[role="button"],[aria-expanded]') ? [p] : []), ...p.querySelectorAll('button,[role="button"],[aria-expanded]')];
+    return all.find(el => {
+      const label = [el.getAttribute('aria-label'), el.getAttribute('data-testid'), el.innerText, el.textContent].filter(Boolean).join(' ').trim();
+      return el.getAttribute('aria-expanded') === 'false' || /expand_more|keyboard_arrow_down|chevron_right/i.test(label);
+    }) || null;
+  }
+  function productModifierExpanded(el) {
+    if (!el) return true;
+    const label = [el.getAttribute('aria-label'), el.getAttribute('data-testid'), el.innerText, el.textContent].filter(Boolean).join(' ').trim();
+    return el.getAttribute('aria-expanded') === 'true' || /expand_less|keyboard_arrow_up|chevron_down/i.test(label);
+  }
+  async function expandProductModifiers(id) {
+    let clicked = false;
+    const count = document.querySelectorAll('[data-testid^="existing-product__"]').length;
+    for (let i = 0; i < count; i++) {
+      const p = document.querySelectorAll('[data-testid^="existing-product__"]')[i]; if (!p) continue;
+      const key = id + ':' + (p.dataset.testid || i), control = productModifierControl(p);
+      if (control && !productModifierExpanded(control) && !expandedProductKeys.has(key)) {
+        expandedProductKeys.add(key); control.click(); clicked = true; await sleep(100);
+      }
+    }
+    if (clicked) await sleep(180);
+  }
   function readDetail(id) {
     if ((T('details-order-id')?.innerText || '').trim() !== id) return null;
     const u = new URL(location.href), placedAt = u.searchParams.get('placedAt'), placed = Date.parse(placedAt || '');
@@ -144,8 +169,13 @@
       }
     }
     for (const p of document.querySelectorAll('[data-testid^="existing-product__"]')) {
-      const l = lines(p).filter(x => x !== 'expand_more');
-      d.items.push({ qty: Number((l[0] || '').replace(/[^\d]/g, '')) || 1, name: l[1] || '', price: money(l.find(x => /E£|EGP/.test(x))) });
+      const raw = lines(p).map(x => x.trim()).filter(Boolean), l = raw.filter(x => !/^(?:expand_more|expand_less|keyboard_arrow_down|keyboard_arrow_up)$/i.test(x));
+      const name = l[1] || '', control = productModifierControl(p);
+      const modifiers = [...new Set(l.slice(2).map(x => x.replace(/\s*(?:E£|EGP|£E|ج\.م)\s*[-+]?\d[\d,.]*/ig, '').trim())
+        .filter(x => x && x !== name && !/^(?:expand_more|expand_less|keyboard_arrow_down|keyboard_arrow_up|add-ons?|options?|customi[sz]ations?|modifiers?|no add-ons? selected)$/i.test(x) &&
+          !/^(?:\d+\s*[x×]|[x×]\s*\d+)$/i.test(x) && !/(?:E£|EGP|£E|ج\.م)\s*[-+]?\d/i.test(x)))].slice(0, 20);
+      const iconStillCollapsed = /\bexpand_more\b|\bkeyboard_arrow_down\b/i.test(p.innerText || '');
+      d.items.push({ qty: Number((l[0] || '').replace(/[^\d]/g, '')) || 1, name, price: money(l.find(x => /E£|EGP/.test(x))), modifiers, modifierRead: productModifierExpanded(control) && !iconStillCollapsed });
     }
     // The list time has seconds (placedAt); the timeline only minutes. Received = placed, accepted = received + "Accepted in".
     if (d.receivedAt && Number.isFinite(placed) && Math.abs(Date.parse(d.receivedAt) - Math.floor(placed / 60000) * 60000) < 60000) d.receivedAt = new Date(placed).toISOString();
@@ -241,7 +271,7 @@
     if (!row) return null;
     row.scrollIntoView?.({ block: 'center' }); await sleep(150);
     row.click();
-    for (let i = 0; i < 40; i++) { await sleep(200); const d = readDetail(id); if (d && document.querySelector('[data-testid^="milestone-for__"]')) { await sleep(400); return readDetail(id); } }
+    for (let i = 0; i < 40; i++) { await sleep(200); const d = readDetail(id); if (d && document.querySelector('[data-testid^="milestone-for__"]')) { await sleep(400); await expandProductModifiers(id); return readDetail(id); } }
     return null;
   }
   async function closeDetail() {
@@ -253,6 +283,7 @@
   async function pushVisibleDetail() {
     const id = (T('details-order-id')?.innerText || '').trim();
     if (!/^\d{6,20}$/.test(id)) return false;
+    await expandProductModifiers(id);
     const d = readDetail(id);
     if (!d || !(d.detail?.items?.length || d.phone || d.detail?.customer?.name || d.detail?.customer?.address)) return false;
     return push([d]);
