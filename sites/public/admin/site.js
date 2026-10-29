@@ -226,7 +226,8 @@ window.MarsadSite = function MarsadSite(ctx) {
   function itemsText(x) {
     const ar = new Map((x.apex?.items?.pairs || []).map(p => [p.talabat, p.apex]));
     return x.items.map(i => i.qty + '× ' + i.name + (ar.get(i.name) ? ' (' + ar.get(i.name) + ')' : '') +
-      (i.modifiers?.length ? ' [إضافات: ' + i.modifiers.join('، ') + ']' : i.modifierRead === false ? ' [الإضافات غير مقروءة]' : '')).join('، ');
+      (i.modifiers?.length ? ' [إضافات: ' + i.modifiers.join('، ') + ']' : i.modifierRead !== true ? ' [الإضافات غير مقروءة]' : '') +
+      (i.modifierComplete === true ? '' : ' [قد توجد إضافات أخرى]')).join('، ');
   }
   function itemsCell(x) {
     const c = x.apex?.items;
