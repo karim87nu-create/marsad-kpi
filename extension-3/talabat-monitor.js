@@ -283,7 +283,7 @@
   async function pushVisibleDetail() {
     const id = (T('details-order-id')?.innerText || '').trim();
     if (!/^\d{6,20}$/.test(id)) return false;
-    await expandProductModifiers(id);
+    if (typeof expandProductModifiers === 'function') await expandProductModifiers(id);
     const d = readDetail(id);
     if (!d || !(d.detail?.items?.length || d.phone || d.detail?.customer?.name || d.detail?.customer?.address)) return false;
     return push([d]);
