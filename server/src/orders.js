@@ -10,6 +10,7 @@ const KINDS = ['ordersLate', 'ordersCancel', 'ordersComment', 'ordersDiscount', 
 const STALE_MS = 3 * 60000, CHECK_MS = 60000;
 // Which group: delays leaving the branch and all cancellations go to the branch managers.
 const BRANCH_KINDS = new Set(['ordersLate', 'ordersCancel']);
+const DELAY_KINDS = new Set(['ordersLate', 'ordersEntryLate']);
 
 function setup(app) {
   const { db, fail } = app;
@@ -102,7 +103,18 @@ function setup(app) {
     // The branch of an order, from any list of the day (for the branch's own Telegram group).
     const findNo = no => no && ['open', 'lateOut', 'cancels', 'online', 'issues'].map(k => rows(k).find(o => String(o.no) === no)).find(Boolean);
     const branchOfNo = no => no && ['open', 'lateOut', 'cancels', 'online', 'issues'].map(k => rows(k).find(o => String(o.no) === no)).find(Boolean)?.branch || null;
-    const orderNo = a => String(a.orderNo ?? a.orderId ?? (/^(?:v?late|del|disc|pay|dup|entry|duplicate|cancel|note):([0-9]+)(?::|$)/.exec(String(a.key))?.[1] || ''));
+    const orderNo = a => String(a.orderNo ?? a.orderId ?? (/^(?:v?late|del|disc|pay|dup|entry|entrylate|lateentry|duplicate|cancel|note):([0-9]+)(?::|$)/i.exec(String(a.key))?.[1] || ''));
+    const apexDetails = app.apexDetails ? await app.apexDetails(b.day) : null;
+    const withOrderContext = (text, no, kind) => {
+      if (!DELAY_KINDS.has(kind) || !no || !apexDetails?.extra) return text;
+      const lines = apexDetails.extra(no).split(/\\r?\\n/);
+      let result = text;
+      for (const prefix of ['📍 المنطقة:', '💬 ملاحظة الأوردر:']) {
+        const line = lines.find(value => value.trimStart().startsWith(prefix));
+        if (line && !result.split(/\\r?\\n/).some(value => value.trimStart().startsWith(prefix))) result += '\\n' + line.trim();
+      }
+      return result;
+    };
     // Comments never make a message of their own: the monitor writes them inside its alerts (area, order comment,
     // item comments, comments sent after entry). An «ordersComment» from an older monitor is ignored.
     delete states['context:comments'];
@@ -112,7 +124,7 @@ function setup(app) {
       if (a.follow && String(a.status || 'active') === 'active') continue;
       const key = 'orders:' + b.day + ':' + String(a.key).slice(0, 80);
       const old = states[key], no = orderNo(a), branch = a.branch || branchOfNo(no);
-      const text = apexAlertText(String(a.text).slice(0, 3500), findNo(no) || { no, sn: a.sn });
+      const text = withOrderContext(apexAlertText(String(a.text).slice(0, 3500), findNo(no) || { no, sn: a.sn }), no, a.kind);
       const target = BRANCH_KINDS.has(a.kind) ? 'branches' : 'online';
       const status = String(a.status || 'active').slice(0,80);
       const version = sha256(JSON.stringify([status, text]));
@@ -160,7 +172,7 @@ function setup(app) {
       if (old.kind === 'ordersEntry' && Array.isArray(b.issues) && Number.isInteger(b.totals?.issues) && b.totals.issues === b.issues.length &&
           old.observedIssue && !b.issues.some(o => String(o.no) === old.no)) text = '🖥️ Apex | ✅ أوردر ' + shown + ': غلطة الضرب اتصلّحت على Apex';
       if (old.kind === 'ordersEntry' && rows('issues').some(o => String(o.no) === old.no)) old.observedIssue = true;
-      if (text) { alerts.push({ key: 'resolved:' + key + ':' + ((old.sequence || 0) + 1), kind: old.kind, text, replyTo: key, target: old.target, branch: old.branch }); old.status = 'resolved'; old.sequence = (old.sequence || 0) + 1; }
+      if (text) { alerts.push({ key: 'resolved:' + key + ':' + ((old.sequence || 0) + 1), kind: old.kind, text: withOrderContext(text, old.no, old.kind), replyTo: key, target: old.target, branch: old.branch }); old.status = 'resolved'; old.sequence = (old.sequence || 0) + 1; }
     }
     // The monitor was reported stopped: say it is back, as a reply to that alert.
     if (previous && !replay) {
