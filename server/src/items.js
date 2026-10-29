@@ -75,8 +75,22 @@ function compareItems(talabat, apex, { learned = new Map(), ratio = 1.13 } = {})
   // Quantities: the same dishes in other counts.
   const qty = (l, k) => l.reduce((n, x) => n + (Number(x[k]) || 1), 0);
   // A collapsed Talabat product can hide selected add-ons. Apex may store those as
-  // separate detail rows; call that reviewable instead of declaring the basket wrong.
-  const modifierContext = T.some(t => t.modifierRead !== true || (Array.isArray(t.modifiers) && t.modifiers.length));
+  // separate detail rows; keep those reviewable until the full modifier list is confirmed.
+  const modifierContext = T.some(t => t.modifierRead !== true || t.modifierComplete !== true);
+  // Only count an Apex detail row as a Talabat add-on when the modifier list was fully expanded,
+  // the displayed modifier name matches exactly, and its quantity equals the parent quantity.
+  if (T.some(t => t.modifierRead === true && t.modifierComplete === true && Array.isArray(t.modifiers))) {
+    for (const t of T.filter(x => x.modifierRead === true && x.modifierComplete === true && Array.isArray(x.modifiers))) {
+      for (const modifier of t.modifiers) {
+        const parts = /^(?:(\d+(?:\.\d+)?)\s*[x×]\s*)?(.+?)(?:\s*[x×]\s*(\d+(?:\.\d+)?))?$/i.exec(String(modifier).trim());
+        const modifierName = (parts?.[2] || String(modifier)).trim(), modifierQty = Number(parts?.[1] || parts?.[3] || t.qty || 1);
+        const a = A.find(x => !usedA.has(x.i) && Math.abs((x.qty || 1) - modifierQty) <= 0.01 && key(ar(x.name)) === key(ar(modifierName)));
+        if (a) usedA.add(a.i);
+      }
+    }
+  }
+  const unmatchedApex = A.filter(a => !usedA.has(a.i));
+  extraOnApex.length = 0; extraOnApex.push(...unmatchedApex);
   const modifierUncertain = extraOnApex.length > 0 && modifierContext;
   const uncertain = modifierUncertain || missingOnApex.some(t => !known(t).length && !A.some(a => wordScore(t.name, a.name) >= 0.65));
   return { ok: !missingOnApex.length && !extraOnApex.length, uncertain, modifierUncertain, pairs: pairs.map(p => ({ talabat: p.t.name, apex: p.a.name, apexNo: p.a.no, how: p.how, ratio: p.t.unit && p.a.price ? p.t.unit / p.a.price : null })),
