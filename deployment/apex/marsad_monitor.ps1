@@ -93,7 +93,7 @@ function FirstText($r, [string[]]$columns){
   return ''
 }
 function CustomerOf($r){
-  $address = @(); foreach($cn in @('o_Address','o_BuildingNo','o_FloorNo','o_FlatNo','o_Sign')){
+  $address = @(); foreach($cn in @('o_Address','o_BuildingNo','o_FloorNo','o_FlatNo')){
     $v = FirstText $r @($cn); if ($v) { $address += $v }
   }
   return [ordered]@{
@@ -102,6 +102,7 @@ function CustomerOf($r){
     phone = FirstText $r @('o_Phone')
     mobile = FirstText $r @('o_Mobile','MobileNo')
     address = (($address -join ' ').Trim())
+    specialMark = FirstText $r @('o_Sign')
   }
 }
 # An order for a set time: the time written next to the customer's name ("9:30", "9.30 م", "9 م", "الساعة 9", "ميعاد 9").
