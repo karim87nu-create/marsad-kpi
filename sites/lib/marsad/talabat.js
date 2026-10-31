@@ -63,6 +63,12 @@ function setup(app) {
       if (id.length < 6 || !code) continue;
       writes.push(db.prepare('INSERT INTO talabat_orders (id, day, code, store, first_seen, updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET code = excluded.code, store = COALESCE(talabat_orders.store, excluded.store)')
         .bind(id, businessDay(now), code, c.store ? String(c.store).slice(0, 160) : null, now, now));
+      // A payment badge seen on the live card (its exact words), kept for the transfer page.
+      if (c.pay) {
+        const prof = parseJson((await db.prepare("SELECT data FROM match_profiles WHERE source = 'talabat' AND ref = ?").get(id))?.data, {});
+        if (prof.livePay !== String(c.pay).slice(0, 40)) writes.push(db.prepare("INSERT INTO match_profiles (source, ref, data) VALUES ('talabat',?,?) ON CONFLICT(source, ref) DO UPDATE SET data = json_set(match_profiles.data, '$.livePay', json_extract(excluded.data, '$.livePay'))")
+          .bind(id, JSON.stringify({ ...prof, livePay: String(c.pay).slice(0, 40) })));
+      }
     }
     // Anything the screen showed that is not known yet is kept (listed under «اللي المرصد اتعلمه»), never dropped.
     const unknown = [];
@@ -122,7 +128,8 @@ function setup(app) {
         orderWrites.push(db.prepare("INSERT INTO match_profiles (source, ref, data) SELECT 'talabat',?,? WHERE " + guard + " ON CONFLICT(source, ref) DO UPDATE SET data = excluded.data").bind(id, JSON.stringify(old), id, guardTime));
       }
       const items = d && Array.isArray(d.items) ? JSON.stringify(d.items.slice(0, 60).map(x => ({ qty: Number(x.qty) || 1, name: String(x.name || '').slice(0, 120), price: Number(x.price) || null,
-        modifiers: Array.isArray(x.modifiers) ? [...new Set(x.modifiers.map(v => String(v || '').trim().slice(0, 120)).filter(Boolean))].slice(0, 20) : [], modifierRead: x.modifierRead === true, modifierComplete: x.modifierComplete === true }))) : null;
+        modifiers: Array.isArray(x.modifiers) ? [...new Set(x.modifiers.map(v => String(v || '').trim().slice(0, 120)).filter(Boolean))].slice(0, 20) : [], modifierRead: x.modifierRead === true, modifierComplete: x.modifierComplete === true,
+        options: Array.isArray(x.options) ? x.options.slice(0, 20).map(v => ({ qty: Number(v?.qty) || 1, name: String(v?.name || '').slice(0, 120), price: Number(v?.price) || null })).filter(v => v.name) : [] }))) : null;
       orderWrites.push(db.prepare(`INSERT INTO talabat_orders (id, day, vendor_id, store, status, billable, placed_at, total, received_at, accept_seconds, accepted_at, picked_up_at, delivered_at,
           cancelled_at, cancel_owner, cancel_reason, items, subtotal, delivery_type, milestones, detail_at, first_seen, updated_at)
         SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE ${guard}

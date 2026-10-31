@@ -107,3 +107,28 @@ test('Talabat history: a table that only draws the rows on screen is scrolled th
     assert.equal(JSON.parse(rows).length, 40, 'all 40 rows, not only the 4 drawn on screen');
   } finally { w.close(); }
 });
+test('Talabat details: options are read from their own elements even while the product is collapsed (real page structure, 2026-10-31)', () => {
+ const s=fs.readFileSync(path.join(__dirname,'../../extension-3/talabat-monitor.js'),'utf8');
+ const code=s.slice(s.indexOf('  const T ='),s.indexOf('  // ---------- the operating day'))+'\n'+s.slice(s.indexOf('  const expandedProductKeys'),s.indexOf('  async function expandProductModifiers'))+'\n'+s.slice(s.indexOf('  function readDetail('),s.indexOf('  // ---------- one cycle'));
+ const html='<div data-testid="order-details-drawer__content"><b data-testid="details-order-id">4687126962</b><div data-testid="milestone-for__ACCEPTED_originally_ACCEPTED">02:00</div>'+
+  '<div data-testid="order-content"><div data-testid="existing-product__3114762236"><div tabindex="0" role="button" aria-expanded="false"><p>1×</p><p>Boneless Fawteh Kaware</p><p>E£362.00</p></div></div>'+
+  '<div data-testid="existing-product__3114762411"><p>1×</p><p>Grilled Chicken Breasts</p><p>E£285.00</p><button aria-expanded="false">expand_more</button><div hidden>'+
+  '<div data-testid="existing-option__3114763475_for_3114762411"><p>1×</p><div><p>Quarter Kilo</p></div><p>E£214.00</p></div>'+
+  '<div data-testid="existing-option__3114877476_for_3114762411"><p>2×</p><div><p>Basmati Rice</p></div><p>E£71.00</p></div></div></div></div>'+
+  '<div data-testid="subtotal"><p>Subtotal</p><p>E£1,220.00</p></div><div><p>Payment method</p><p>Online</p></div><div data-testid="prop-delivery-type"><p>Delivery type</p><p>Vendor delivery</p></div></div>';
+ const dom=new JSDOM(html,{runScripts:'outside-only',url:'https://partner-app.talabat.com/orders/HF_EG;608556/4687126962?placedAt=2026-10-31T00:00:19Z'});
+ const w=dom.window;
+ try {
+  Object.defineProperty(w.HTMLElement.prototype,'innerText',{get(){return [...this.childNodes].map(n=>n.nodeType===1?n.innerText:n.textContent).join('\n');}});
+  const r=JSON.parse(w.eval('(()=>{'+code+';const clockAfter=()=>null;return JSON.stringify(readDetail("4687126962"));})()'));
+  const [plain, chicken]=r.detail.items;
+  assert.equal(plain.name,'Boneless Fawteh Kaware'); assert.deepEqual(plain.modifiers,[]); assert.equal(plain.modifierComplete,true);
+  assert.equal(chicken.name,'Grilled Chicken Breasts'); assert.equal(chicken.price,285);
+  assert.deepEqual(chicken.options,[{qty:1,name:'Quarter Kilo',price:214},{qty:2,name:'Basmati Rice',price:71}]);
+  assert.deepEqual(chicken.modifiers,['Quarter Kilo','2× Basmati Rice']); assert.equal(chicken.modifierComplete,true);
+  assert.equal(r.detail.subtotal,1220);
+  // Every product row is a button with aria-expanded="false" on the real page; a plain one still has no add-ons.
+  // The bill comes as label | value pairs from «Subtotal» (the payment line has no testid of its own).
+  assert.deepEqual(r.detail.bill.map(x=>x.text),['Subtotal | E£1,220.00','Payment method | Online','Delivery type | Vendor delivery']);
+ }finally{w.close();}
+});

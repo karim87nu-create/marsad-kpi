@@ -24,7 +24,7 @@ test('transfer page: employee PIN sign-in, queue with label data, one claim at a
     await push({ orders: [{ id: '3977500001', store, status: 'ACCEPTED', placedAt: at(0), total: 300, detail: { receivedAt: at(0), acceptedAt: at(0.5), subtotal: 280,
       items: [{ qty: 2, name: 'Kofta', price: 280, modifiers: ['Extra bread'], modifierRead: true, modifierComplete: true }],
       customer: { name: 'Mona', address: 'Street 9', phone: '01000000000' },
-      bill: [{ k: 'subtotal', text: 'Subtotal | E£ 280.00' }, { k: 'discount', text: 'Talabat-funded discount | -E£ 40.00' }, { k: 'payment-method', text: 'Cash' }] } },
+      bill: [{ k: 'Subtotal', text: 'Subtotal | E£280.00' }, { k: 'Talabat-funded discount', text: 'Talabat-funded discount | -E£40.00' }, { k: 'Payment method', text: 'Payment method | Cash' }] } },
       { id: '3977500002', store, status: 'CANCELLED', placedAt: at(1), total: 50 }] });
 
     let q = (await as(sara)('GET', '/api/transfer/queue?day=2026-10-22')).body;
@@ -32,7 +32,7 @@ test('transfer page: employee PIN sign-in, queue with label data, one claim at a
     assert.equal(q.orders.length, 1, 'cancelled orders are not in the queue');
     const o = q.orders[0];
     assert.equal(o.code, '2701'); assert.equal(o.payment, 'cash');
-    assert.deepEqual(o.discounts, [{ text: 'Talabat-funded discount | -E£ 40.00', amount: 40, who: 'platform' }]);
+    assert.deepEqual(o.discounts, [{ text: 'Talabat-funded discount | -E£40.00', amount: 40, who: 'platform' }]);
     assert.deepEqual(o.customer, { name: 'Mona', phone: '01000000000', address: 'Street 9' });
     assert.deepEqual(o.items[0].modifiers, ['Extra bread']);
     assert.ok(o.items[0].apex.some(a => a.no), 'known Apex item suggested');
@@ -62,8 +62,11 @@ test('transfer page: employee PIN sign-in, queue with label data, one claim at a
 test('transfer page: payment and discounts only from the source words', () => {
   return import('../src/transfer.js').then(({ talabatPayment, talabatDiscounts, sitePayment }) => {
     assert.equal(talabatPayment([{ k: 'x', text: 'Total | E£ 200' }]), null, 'no payment words → not guessed');
-    assert.equal(talabatPayment([{ k: 'payment', text: 'Paid online' }]), 'paid');
-    assert.equal(talabatPayment([{ k: 'payment', text: 'Cash' }, { k: 'p2', text: 'Paid online' }]), null, 'conflicting → for review');
+    assert.equal(talabatPayment([{ k: 'Payment method', text: 'Payment method | Online' }]), 'paid', 'real page wording (2026-10-28 order)');
+    assert.equal(talabatPayment([{ k: 'Payment method', text: 'Payment method | Cash' }]), 'cash');
+    assert.equal(talabatPayment([{ k: 'Delivery type', text: 'Delivery type | Vendor delivery' }]), null, 'other lines never decide payment');
+    assert.equal(talabatPayment([], 'Paid'), 'paid', 'live card badge');
+    assert.equal(talabatPayment([], 'Cash Online'), null, 'conflicting → for review');
     assert.deepEqual(talabatDiscounts([{ k: 'discount', text: 'Discount | -E£ 30' }]), [{ text: 'Discount | -E£ 30', amount: 30, who: null }], 'unknown funder stays unknown');
     assert.equal(talabatDiscounts([{ k: 'discount', text: 'Vendor-funded discount | -E£ 15.50' }])[0].who, 'restaurant');
     assert.equal(sitePayment({ method: 'cod' }), 'cash');

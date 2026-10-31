@@ -17,12 +17,17 @@ const TALABAT_DONE = new Set(['CANCELLED', 'REJECTED']);
 const SITE_DONE = new Set(['cancelled', 'failed', 'wallet-failed', 'refunded']);
 
 // Payment, from the source's own words only.
-function talabatPayment(bill) {
-  const text = (bill || []).map(x => x.k + ' ' + x.text).join(' \n ');
-  const cash = /\bcash\b|كاش|نقد[اًي]?|الدفع عند الاستلام/i.test(text), paid = /paid online|online payment|credit card|debit card|\bcard\b|wallet|apple pay|مدفوع|بطاقة|محفظة/i.test(text);
-  if (cash && !paid) return 'cash';
-  if (paid && !cash) return 'paid';
-  return null;
+// Talabat shows «Payment method | Online» (or Cash) once its billing data is ready; the live card may show a
+// payment badge earlier. Only those exact places count; anything else stays unknown for the employee to check.
+function payWord(v) {
+  const t = String(v || '').trim();
+  const cash = /\bcash\b|كاش|نقد[اًي]?|الدفع عند الاستلام/i.test(t), paid = /\bonline\b|\bpaid\b|card|wallet|apple pay|مدفوع|بطاقة|محفظة|أونلاين/i.test(t);
+  return cash && !paid ? 'cash' : paid && !cash ? 'paid' : null;
+}
+function talabatPayment(bill, liveBadge) {
+  const line = (bill || []).find(x => /^(?:payment method|payment|طريقة الدفع)$/i.test(String(x.k || '').trim()));
+  const fromBill = line ? payWord(String(line.text).split(' | ').slice(1).join(' | ')) : null;
+  return fromBill || payWord(liveBadge) || null;
 }
 function sitePayment(p) {
   if (!p?.method) return null;
@@ -46,6 +51,13 @@ function talabatDiscounts(bill) {
 
 // Phones are kept as their last 10 digits for matching; shown as the employee dials them.
 const phoneOut = p => p ? (/^1\d{9}$/.test(String(p)) ? '0' + p : String(p)) : null;
+
+// Talabat option words for a weight → how Apex item names write it → how the page says it.
+const WEIGHTS = [
+  [/quarter|1\/4|ربع/i, /1\/4|ربع/, 'ربع كيلو'],
+  [/third|1\/3|ثلث|تلت/i, /1\/3|ثلث|تلت/, 'تلت كيلو'],
+  [/half|1\/2|نص|نصف/i, /1\/2|نص/, 'نص كيلو'],
+];
 
 function setup(app) {
   const { db, fail } = app;
@@ -87,9 +99,12 @@ function setup(app) {
       return stale ? null : { state: j.state, by: j.employee_name, mine: me.staff && j.employee_id === me.id, payment: j.payment, note: j.note, at: iso(j.at) };
     };
     const itemOut = (x, withApex) => {
-      const nos = withApex ? knownNos(x.name, learned) : [];
-      return { qty: x.qty, name: x.name, price: x.price ?? null, modifiers: x.modifiers || [], modifiersComplete: x.modifierComplete === true || !withApex,
-        apex: nos.map(no => ({ no, name: apexName.get(no) || null })) };
+      let apex = (withApex ? knownNos(x.name, learned) : []).map(no => ({ no, name: apexName.get(no) || null }));
+      // A size/weight chosen on Talabat («Quarter Kilo») narrows the Apex choices to that size, when their names say it.
+      const size = WEIGHTS.find(w => (x.options || []).some(o => w[0].test(o.name)) || (x.modifiers || []).some(m => w[0].test(m)));
+      const sized = size ? apex.filter(a => a.name && size[1].test(a.name)) : [];
+      if (sized.length) apex = sized;
+      return { qty: x.qty, name: x.name, price: x.price ?? null, modifiers: x.modifiers || [], modifiersComplete: x.modifierComplete === true || !withApex, size: size ? size[2] : null, apex };
     };
     const list = [];
 
@@ -102,7 +117,7 @@ function setup(app) {
       const discounts = talabatDiscounts(bill);
       list.push({ source: 'talabat', ref: o.id, code: o.code || null, at: iso(o.accepted_at || o.received_at || o.placed_at), status: o.status, branch: o.store, deliveryType: o.delivery_type || null,
         customer: { name: p.name || null, phone: phoneOut(p.phone), address: p.address || null },
-        payment: talabatPayment(bill), bill, discounts, subtotal: o.subtotal ?? null, total: o.total ?? null,
+        payment: talabatPayment(bill, p.livePay), bill, discounts, subtotal: o.subtotal ?? null, total: o.total ?? null,
         items: parseJson(o.items, []).map(x => itemOut(x, true)), detailRead: !!o.detail_at,
         apex: a ? { no: a.no, sn: a.sn ?? null, user: a.user || null, how: a.how || null } : null, matching: tm.states.get(o.id) || null, job: jobOf('talabat', o.id) });
     }

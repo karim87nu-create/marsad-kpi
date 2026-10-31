@@ -86,7 +86,11 @@
           const txt = textOf(card);
           if (new Set(ids(txt)).size > 1) break;
           const m = txt.match(/#\s*(\d{2,8})(?!\d)/);
-          if (m) { out.set(t, { id: t, code: m[1], store: (txt.split('\n').find(x => /الدهان/.test(x)) || '').trim() || null }); break; }
+          if (m) {
+            // A payment badge on the card, when the card says it (only these words; no customer details are kept).
+            const pay = txt.split('\n').map(x => x.trim()).find(x => /^(?:cash|collect cash|cash on delivery|paid|paid online|online|كاش|نقدي|مدفوع)(?:\s|$)/i.test(x));
+            out.set(t, { id: t, code: m[1], store: (txt.split('\n').find(x => /الدهان/.test(x)) || '').trim() || null, ...(pay ? { pay: pay.slice(0, 40) } : {}) }); break;
+          }
         }
       }
       return [...out.values()];
@@ -175,8 +179,23 @@
         .filter(x => x && x !== name && !/^(?:expand_more|expand_less|keyboard_arrow_down|keyboard_arrow_up|add-ons?|options?|customi[sz]ations?|modifiers?|no add-ons? selected)$/i.test(x) &&
           !/^(?:\d+\s*[x×]|[x×]\s*\d+)$/i.test(x) && !/(?:E£|EGP|£E|ج\.م)\s*[-+]?\d/i.test(x)))].slice(0, 20);
       const iconStillCollapsed = /\bexpand_more\b|\bkeyboard_arrow_down\b/i.test(p.innerText || '');
-      const modifierComplete = productModifierExpanded(control) && !iconStillCollapsed;
-      d.items.push({ qty: Number((l[0] || '').replace(/[^\d]/g, '')) || 1, name, price: money(l.find(x => /E£|EGP/.test(x))), modifiers, modifierRead: modifiers.length > 0 || modifierComplete, modifierComplete });
+      // Talabat keeps every chosen option in the page even while the product is collapsed:
+      // [data-testid="existing-option__<option>_for_<product>"] → <p>1×</p><div><p>Quarter Kilo</p></div><p>E£214.00</p>.
+      // Reading them from there gives the full list without depending on expanding the product.
+      const pid = String(p.dataset.testid || '').replace('existing-product__', '');
+      const options = [...p.querySelectorAll('[data-testid^="existing-option__"]')].filter(o => String(o.dataset.testid).endsWith('_for_' + pid)).map(o => {
+        const parts = [...o.querySelectorAll('p')].map(x => (x.textContent || '').trim()).filter(Boolean);
+        const q = parts.find(x => /^\d+(?:\.\d+)?\s*[x×]$|^[x×]\s*\d+$/i.test(x)), pr = parts.find(x => /(?:E£|EGP|£E|ج\.م)/.test(x));
+        return { qty: Number((q || '1').replace(/[^\d.]/g, '')) || 1, name: parts.filter(x => x !== q && x !== pr).join(' ').slice(0, 120), price: pr ? money(pr) : null };
+      }).filter(o => o.name).slice(0, 20);
+      // Every product row is itself a button (aria-expanded="false"), so «something to expand» means the expand icon.
+      // Checked on the real page 2026-10-31: plain products have no icon and no option elements.
+      const hasExpandIcon = /\b(?:expand_more|expand_less|keyboard_arrow_down|keyboard_arrow_up)\b/i.test(p.textContent || '');
+      const fromOptions = options.length > 0 || !hasExpandIcon;   // options found, or nothing to expand: the list is complete
+      const modifierComplete = fromOptions || (productModifierExpanded(control) && !iconStillCollapsed);
+      const mods = fromOptions ? options.map(o => (o.qty > 1 ? o.qty + '× ' : '') + o.name) : modifiers;
+      d.items.push({ qty: Number((l[0] || '').replace(/[^\d]/g, '')) || 1, name, price: money(l.find(x => /E£|EGP/.test(x))), modifiers: [...new Set(mods)],
+        options, modifierRead: mods.length > 0 || modifierComplete, modifierComplete });
     }
     // The list time has seconds (placedAt); the timeline only minutes. Received = placed, accepted = received + "Accepted in".
     if (d.receivedAt && Number.isFinite(placed) && Math.abs(Date.parse(d.receivedAt) - Math.floor(placed / 60000) * 60000) < 60000) d.receivedAt = new Date(placed).toISOString();
@@ -237,21 +256,14 @@
     }
     d.customer = { name: name.slice(0, 160), address: address.slice(0, 360), phone: phone || '' };
     d.deliveryType = lines(T('prop-delivery-type'))[1] || null;
-    // The bill and payment exactly as this order shows them (label + amount), for the transfer page.
-    // Nothing is interpreted here: who funds a discount and how it was paid are decided only from these words.
-    const billWords = /(total|discount|voucher|promo|fee|payment|paid|cash|wallet|card|vat|tax|tip|bill|funded|خصم|قسيمة|رسوم|الدفع|مدفوع|كاش|نقد|إجمالي|الإجمالي|ضريبة)/i;
-    const billSeen = new Set(); d.bill = [];
-    for (const el of (box || document).querySelectorAll('[data-testid]')) {
-      const k = el.dataset.testid || '';
-      if (/^(?:existing-product__|milestone-for__)/.test(k) || el.closest('[data-testid^="existing-product__"], [data-testid="customer-details"]')) continue;
-      const parts = lines(el).map(x => x.trim()).filter(x => x && !/^(?:info|info_outline|help|help_outline|expand_more|expand_less)$/i.test(x));
-      if (parts.length > (billWords.test(k) ? 6 : 3)) continue;   // a single line of the bill, not a whole panel
-      const text = parts.join(' | ').slice(0, 200);
-      if (!text || text.length < 3 || !(billWords.test(k) || billWords.test(text)) || billSeen.has(text)) continue;
-      if ([...el.querySelectorAll('[data-testid]')].some(c => billWords.test(c.dataset.testid || ''))) continue;   // keep the innermost labelled line
-      billSeen.add(text); d.bill.push({ k: k.slice(0, 60), text });
-      if (d.bill.length >= 20) break;
-    }
+    // The bill and payment exactly as this order shows them: label → value pairs from «Subtotal» on
+    // (e.g. «Payment method» → «Online»). Nothing is interpreted here. Talabat shows the payment method and
+    // discounts only once its billing data is ready (usually later); until then these lines are absent.
+    const content = lines(box).map(x => x.trim()).filter(x => x && !/^(?:expand_more|expand_less|info|info_outline|help_outline)$/i.test(x));
+    const subAt = content.findIndex(x => /^(?:subtotal|المجموع الفرعي)$/i.test(x));
+    d.bill = [];
+    if (subAt >= 0) for (let i = subAt; i + 1 < content.length && d.bill.length < 20; i += 2)
+      d.bill.push({ k: content[i].slice(0, 60), text: (content[i] + ' | ' + content[i + 1]).slice(0, 200) });
     return { id, vendorId, placedAt: Number.isFinite(placed) ? new Date(placed).toISOString() : null, status: d.status, detail: d, ...(phone ? { phone } : {}) };
   }
 
