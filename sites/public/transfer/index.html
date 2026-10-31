@@ -196,7 +196,7 @@ function card(o) {
       '<div class="box"><h3>العميل</h3>' + esc(o.customer?.name || '—') + '<br>' + (o.customer?.phone ? esc(o.customer.phone) + ' <button class="ghost copy" data-copytext="' + esc(o.customer.phone) + '">نسخ</button>' : '<span class="warn">الرقم مش ظاهر</span>') + '</div>' +
       '<div class="box"><h3>العنوان</h3>' + (o.customer?.address ? esc(o.customer.address) : '<span class="warn">العنوان مش ظاهر — خده من الأوردر</span>') + '</div>' +
       '<div class="box"><h3>الخصم</h3>' + discountsHtml(o) + '</div>' +
-      '<div class="box"><h3>القيم</h3>' + (o.subtotal != null ? 'قبل الخصم: ' + money(o.subtotal) + '<br>' : '') + (o.total != null ? 'الإجمالي: ' + money(o.total) : '') + (o.shipping ? '<br>توصيل: ' + money(o.shipping) : '') + (o.paymentTitle ? '<br>' + esc(o.paymentTitle) : '') + '</div>' +
+      '<div class="box"><h3>القيم</h3>' + (o.subtotal != null ? 'قبل الخصم: ' + money(o.subtotal) + '<br>' : '') + (o.total != null ? 'الإجمالي: ' + money(o.total) : '') + (o.target != null ? '<br><b>لازم Apex يطلع: ' + money(o.target) + '</b>' : '') + (o.shipping ? '<br>توصيل: ' + money(o.shipping) : '') + (o.paymentTitle ? '<br>' + esc(o.paymentTitle) : '') + '</div>' +
     '</div>' +
     (o.note ? '<div class="box"><h3>ملاحظة العميل</h3>' + esc(o.note) + '</div>' : '') +
     (o.bill?.length ? '<details><summary style="color:var(--muted);font-size:13px">الفاتورة زي ما طلبات كاتباها</summary>' + o.bill.map(b => '<div style="font-size:13px">' + esc(b.text) + '</div>').join('') + '</details>' : '') +
@@ -243,7 +243,7 @@ $('list').addEventListener('click', async e => {
         // Free choices and the customer's note go in the order comment on Apex (تعليقات الطلب), as the staff do.
         note: [...flatLines(o).filter(i => i.kind === 'item' && i.note).map(i => i.name + ': ' + i.note), ...(o.note ? ['ملاحظة العميل: ' + o.note] : [])].join(' | ').slice(0, 300),
         label: (o.customer?.name ? o.customer.name + ' ' : '') + labelOf(o, pay), customer: o.customer || {}, sign: plat.map(d => 'خصم طلبات ' + money(d.amount)).join(' + '),
-        restaurantDiscount: rest, expectedTotal: (o.subtotal ?? o.total ?? 0) - rest });
+        restaurantDiscount: rest, expectedTotal: (o.subtotal ?? o.total ?? 0) - rest, targetTotal: o.target ?? null });
       delete picks[key(o)]; await load();
     } catch (err) { toast(err.message); b.disabled = false; }
     return;

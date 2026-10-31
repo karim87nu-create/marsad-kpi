@@ -147,9 +147,10 @@ test('transfer page: a discount under the dish is split by who funds it (real or
     await push({ orders: [{ id: '4688946021', store, status: 'ACCEPTED', placedAt: at(0), total: 256.63, detail: { receivedAt: at(0), acceptedAt: at(0.5), subtotal: 299,
       items: [{ qty: 1, name: 'عرض وجبة نصف دجاجة مشوية', price: 299, modifiers: [], modifierRead: true, modifierComplete: true, options: [],
         discountLines: ['خصم | -89.70 ج.م.', 'خصم 30% على بعض المنتجات | -89.70 ج.م.', 'ممول من قبلك | -44.85 ج.م.', 'ممول من قبل Talabat | -44.85 ج.م.'] }],
-      bill: [{ k: 'المجموع الفرعي', text: 'المجموع الفرعي | 299.00 ج.م.' }, { k: 'Item Discounts', text: 'Item Discounts | -89.70 ج.م.' }, { k: 'التحصيل من العميل', text: 'التحصيل من العميل | 0.00 ج.م.' }] } }] });
+      bill: [{ k: 'المجموع الفرعي', text: 'المجموع الفرعي | 299.00 ج.م.' }, { k: 'Item Discounts', text: 'Item Discounts | -89.70 ج.م.' }, { k: 'مجموع', text: 'مجموع | 256.63 ج.م.' }, { k: 'التحصيل من العميل', text: 'التحصيل من العميل | 0.00 ج.م.' }] } }] });
     const o = (await t.call('GET', '/api/transfer/queue?day=2026-10-31', { headers: { 'x-transfer-session': tok } })).body.orders[0];
     assert.deepEqual(o.discounts.map(d => [d.who, d.amount]).sort(), [['platform', 44.85], ['restaurant', 44.85]], 'half the restaurant\'s (deducted), half Talabat\'s (special mark); the bill\'s total is not counted again');
     assert.deepEqual(o.items[0].freeOptions, [], 'discount lines are not comments');
+    assert.equal(o.target, 301.48, 'Apex must total what the customer pays plus Talabat\'s share');
   } finally { await t.close(); }
 });
