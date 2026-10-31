@@ -296,6 +296,20 @@ function Self-Test {
       $out.saved = $rows; $out.ok = $true
       throw 'INSPECT_DONE'
     }
+    if ($job.mode -eq 'inspect-server') {
+      # Read-only: why SQL Server restarted (its own error log around the restart) and its version. Fails quietly without the right.
+      $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[0]);Database=Resturant;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec)))
+      try { $c.Open() } catch { $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[1]);Database=Resturant;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec))); $c.Open() }
+      $out.mode = 'inspect-server'; $rows = @()
+      foreach($q in @("SELECT 'V' k, CAST(SERVERPROPERTY('ProductVersion') AS varchar(30)) ver, CAST(SERVERPROPERTY('Edition') AS varchar(60)) ed, (SELECT create_date FROM sys.databases WHERE name = 'tempdb') started",
+                      "EXEC sys.sp_readerrorlog 0, 1",
+                      "EXEC sys.sp_readerrorlog 1, 1",
+                      "SELECT 'J' k, j.name, h.run_date, h.run_time, h.run_status, h.message FROM msdb.dbo.sysjobhistory h JOIN msdb.dbo.sysjobs j ON j.job_id = h.job_id WHERE h.run_date >= 20261031")){
+        try { $cmd = $c.CreateCommand(); $cmd.CommandTimeout = 30; $cmd.CommandText = $q; $rd = $cmd.ExecuteReader(); while ($rd.Read()) { $h = [ordered]@{ q = $q.Substring(0, [math]::Min(30, $q.Length)) }; for ($i = 0; $i -lt $rd.FieldCount; $i++) { $h[$rd.GetName($i)] = "$($rd.GetValue($i))".Trim() }; $rows += $h }; $rd.Close() } catch { $rows += @{ q = $q.Substring(0, [math]::Min(30, $q.Length)); error = $_.Exception.Message } }
+      }
+      $out.saved = $rows; $out.ok = $true
+      throw 'INSPECT_DONE'
+    }
     if ($job.mode -eq 'inspect-print') {
       # Read-only, test copy: the print flags Apex's own client left on the orders it created there (no branch printer runs on the test copy).
       $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[0]);Database=Resturant_Test;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec)))
