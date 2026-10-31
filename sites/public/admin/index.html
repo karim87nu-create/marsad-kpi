@@ -373,6 +373,13 @@
         <button type="button" id="talLink">ربط الجهاز ده كشاشة مراقبة طلبات</button>
         <p id="talKeyNote" class="muted" role="status"></p>
       </article>
+      <article class="panel" id="apexWriterPanel" hidden><h2>التحويل الآلي لـApex</h2>
+        <p class="muted">كاتب Apex على جهاز الكاشير بياخد الأوردرات اللي الموظف أكدها من صفحة التحويل ويسجلها على Apex. ابدأ بـ«معاينة» (مش بيكتب حاجة، بيحسب الأرقام والقيم بس)، بعدين «تجربة» على قاعدة الاختبار، وآخر حاجة «تشغيل».</p>
+        <p id="apexWriterStatus"></p>
+        <div class="row"><button type="button" data-apx-mode="off" class="secondary">إيقاف</button><button type="button" data-apx-mode="shadow" class="secondary">معاينة</button><button type="button" data-apx-mode="test" class="secondary">تجربة (قاعدة الاختبار)</button><button type="button" data-apx-mode="live">تشغيل على Apex</button></div>
+        <p><button type="button" id="apexWriterKey" class="secondary">مفتاح جديد للكاتب</button> <code id="apexWriterToken"></code></p>
+        <p id="apexWriterNote" class="muted" role="status"></p>
+      </article>
       <article class="panel" id="ordersKeyPanel"><h2>مرصد الأوردرات (جهاز الكاشير)</h2>
         <p class="muted">السكريبت اللي على جهاز الكاشير بيقرا Apex ويبعت هنا بالمفتاح ده. طلّع المفتاح، وشغّل setup.bat على جهاز الكاشير والصقه لما يطلبه. المفتاح بيظهر مرة واحدة بس؛ لو طلّعت مفتاح جديد القديم بيبطل.</p>
         <p id="ordersKeyStatus"></p>
@@ -393,8 +400,8 @@
 <script src="charts.js?v=4"></script>
 <script src="now-arc.js?v=3"></script>
 <script src="orders.js?v=4"></script>
-<script src="site.js?v=10"></script>
+<script src="site.js?v=11"></script>
 <script src="insights.js?v=2"></script>
-<script src="app.js?v=32"></script>
+<script src="app.js?v=33"></script>
 </body>
 </html>

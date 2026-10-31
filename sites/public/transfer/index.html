@@ -16,7 +16,7 @@ button{font:inherit;cursor:pointer;border:0;border-radius:8px;padding:8px 14px;b
 button.ghost{background:transparent;color:var(--text);border:1px solid var(--line)}
 button.on{background:var(--panel2);color:var(--accent);border:1px solid var(--accent)}
 button:disabled{opacity:.45;cursor:not-allowed}
-input{font:inherit;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:#0b1729;color:var(--text);min-height:38px}
+input,select{font:inherit;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:#0b1729;color:var(--text);min-height:38px}
 header{position:sticky;top:0;z-index:5;background:#081120ee;backdrop-filter:blur(6px);border-bottom:1px solid var(--line);padding:10px 16px;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
 header h1{font-size:18px;margin:0 0 0 auto}
 .pill{border-radius:999px;padding:3px 10px;font-size:13px;border:1px solid var(--line);color:var(--muted)}
@@ -83,7 +83,7 @@ main{max-width:1100px;margin:0 auto;padding:16px}
 <script>
 'use strict';
 const API = '';
-let token = null, data = null, filter = 'todo', source = '', choice = {};
+let token = null, data = null, filter = 'todo', source = '', choice = {}, picks = {};
 try { token = sessionStorage.getItem('marsadTransfer'); } catch {}
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -117,6 +117,12 @@ function labelOf(o, pay) {
 const key = o => o.source + ':' + o.ref;
 function stateOf(o) {
   if (o.apex) return { cls: 'in', text: 'في Apex ✓ ' + (o.apex.sn ? 'رقم ' + o.apex.sn : '#' + o.apex.no) + (o.apex.user ? ' — ' + o.apex.user : '') };
+  const r = o.job?.result;
+  if (o.job?.state === 'auto_pending') return { cls: 'wait', text: 'مستني كاتب Apex…' };
+  if (o.job?.state === 'auto_sending') return { cls: 'wait', text: 'بيتكتب على Apex…' };
+  if (o.job?.state === 'auto_done') return { cls: 'in', text: 'اتكتب آليًا' + (r?.db === 'test' ? ' (قاعدة الاختبار)' : '') + ' #' + (r?.shiftSerial ?? r?.orderNo ?? '') + (r?.error ? ' — ' + r.error : '') };
+  if (o.job?.state === 'auto_failed') return { cls: 'other', text: 'التحويل الآلي ماتمش: ' + (r?.error || '') + ' — سجله بإيدك' };
+  if (o.job?.state === 'auto_preview') return { cls: r?.ok ? 'wait' : 'other', text: 'معاينة بس (إجمالي Apex ' + money(r?.total) + ')' + (r?.error ? ' — ' + r.error : '') + ' — سجله بإيدك' };
   if (o.job?.state === 'entered') return { cls: 'wait', text: (o.job.mine ? 'إنت سجلته' : o.job.by + ' سجله') + ' — مستني يظهر في Apex' };
   if (o.job?.state === 'claimed') return o.job.mine ? { cls: 'mine', text: 'معاك دلوقتي' } : { cls: 'other', text: 'مع ' + o.job.by };
   return { cls: '', text: 'جديد' };
@@ -143,6 +149,19 @@ function itemsHtml(o) {
     (o.source === 'talabat' ? (i.apex?.length ? '<div class="apex">على Apex: ' + i.apex.map(a => esc(a.no) + (a.name ? ' ' + esc(a.name) : '')).join(' أو ') + (i.apex.length > 1 ? ' <span class="warn">(اختار الحجم الصح)</span>' : '') + '</div>'
       : '<div class="apex none">مش مربوط بصنف Apex لسه — اختاره من المنيو</div>') : '') + '</li>').join('') + '</ul>';
 }
+// Automatic transfer: branch and Apex item for each line, confirmed by the employee (nothing is guessed).
+function autoHtml(o) {
+  const mode = data.autoTransfer;
+  if (!mode || mode === 'off' || o.apex || /^auto_(?:pending|sending|done|preview)$/.test(o.job?.state || '')) return '';
+  const k = key(o), p = picks[k] || (picks[k] = { branch: o.apexBranch || '', items: (o.items || []).map(i => i.apex?.length === 1 ? i.apex[0].no : '') });
+  const br = '<select data-pick="branch"><option value="">فرع Apex…</option>' + (data.branches || []).map(b => '<option value="' + b.no + '"' + (String(p.branch) === String(b.no) ? ' selected' : '') + '>' + esc(b.name) + '</option>').join('') + '</select>';
+  const lines = (o.items || []).map((i, n) => '<div class="pay" style="margin-top:4px"><span>' + esc(i.qty) + '× ' + esc(i.name) + (i.modifiers?.length ? ' (' + i.modifiers.map(esc).join('، ') + ')' : '') + '</span> ' +
+    (i.apex?.length > 1 ? '<select data-pick="item" data-n="' + n + '"><option value="">اختار…</option>' + i.apex.map(a => '<option value="' + esc(a.no) + '"' + (p.items[n] === a.no ? ' selected' : '') + '>' + esc(a.no) + (a.name ? ' ' + esc(a.name) : '') + '</option>').join('') + '</select>' : '') +
+    '<input data-pick="item" data-n="' + n + '" inputmode="numeric" placeholder="رقم الصنف على Apex" style="width:150px" value="' + esc(p.items[n] || '') + '"></div>').join('');
+  const label = mode === 'shadow' ? 'معاينة آلية (من غير كتابة)' : mode === 'test' ? 'تحويل آلي (قاعدة الاختبار)' : 'تحويل آلي لـApex';
+  return '<details class="box"' + (p.open ? ' open' : '') + ' data-pick-box><summary>' + label + '</summary><div class="pay" style="margin-top:6px"><span>الفرع على Apex:</span> ' + br + '</div>' + lines +
+    '<div class="actions" style="margin-top:8px"><button data-act="auto">' + label + '</button></div></details>';
+}
 function card(o) {
   const st = stateOf(o), pay = choice[key(o)] || o.job?.payment || (o.payment === 'cash' || o.payment === 'paid' ? o.payment : null);
   const mineOrFree = !o.job || o.job.mine || o.job.state === 'released';
@@ -161,12 +180,12 @@ function card(o) {
     '</div>' +
     (o.note ? '<div class="box"><h3>ملاحظة العميل</h3>' + esc(o.note) + '</div>' : '') +
     (o.bill?.length ? '<details><summary style="color:var(--muted);font-size:13px">الفاتورة زي ما طلبات كاتباها</summary>' + o.bill.map(b => '<div style="font-size:13px">' + esc(b.text) + '</div>').join('') + '</details>' : '') +
-    itemsHtml(o) +
+    itemsHtml(o) + autoHtml(o) +
     (done ? '' : '<div class="actions">' +
       (!o.job || o.job.state === 'released' ? '<button data-act="claim">أنا هسجله</button>' : '') +
       (mineOrFree ? '<button data-act="entered">اتسجل على Apex</button>' : '') +
       (o.job?.mine && o.job.state !== 'released' ? '<button class="ghost" data-act="release">سيبه</button>' : '') +
-      '<button class="ghost" disabled title="لسه مش متأكد: الترقيم مع شغل Apex والإرسال للفرع">تحويل آلي (قريبًا)</button></div>') +
+      '</div>') +
   '</div>';
 }
 function render() {
@@ -185,6 +204,25 @@ $('list').addEventListener('click', async e => {
     return;
   }
   if (b.dataset.pay) { choice[key(o)] = b.dataset.pay; render(); return; }
+  if (b.dataset.act === 'auto') {
+    const p = picks[key(o)] || {}, pay = choice[key(o)] || o.job?.payment || (o.payment === 'cash' || o.payment === 'paid' ? o.payment : null);
+    if (!pay) { toast('حدد الأول: كاش ولا مدفوع'); return; }
+    if (!p.branch) { toast('اختار فرع Apex'); return; }
+    if ((o.items || []).some((i, n) => !/^\d{4,10}$/.test(String(p.items?.[n] || '')))) { toast('كل صنف لازم يبقى له رقم على Apex'); return; }
+    if (o.discounts?.some(d => !d.who)) { toast('فيه خصم مش واضح مين ممول له — سجله بإيدك'); return; }
+    if (o.source === 'talabat' && o.items.some(i => !i.modifiersComplete)) { toast('الإضافات ماتقرتش كاملة — سجله بإيدك'); return; }
+    const rest = (o.discounts || []).filter(d => d.who === 'restaurant').reduce((a, d) => a + (Number(d.amount) || 0), 0);
+    const plat = (o.discounts || []).filter(d => d.who === 'platform');
+    b.disabled = true;
+    try {
+      await api('POST', '/api/transfer/job', { source: o.source, ref: o.ref, action: 'auto', payment: pay, branchNo: Number(p.branch), code: o.code,
+        items: o.items.map((i, n) => ({ itemNo: p.items[n], qty: i.qty, note: (i.modifiers || []).join('، ').slice(0, 60) })),
+        label: (o.customer?.name ? o.customer.name + ' ' : '') + labelOf(o, pay), customer: o.customer || {}, sign: plat.map(d => 'خصم طلبات ' + money(d.amount)).join(' + '),
+        restaurantDiscount: rest, expectedTotal: (o.subtotal ?? o.total ?? 0) - rest });
+      delete picks[key(o)]; await load();
+    } catch (err) { toast(err.message); b.disabled = false; }
+    return;
+  }
   if (b.dataset.act) {
     const pay = choice[key(o)] || o.job?.payment || (o.payment === 'cash' || o.payment === 'paid' ? o.payment : null);
     if (b.dataset.act === 'entered' && !pay) { toast('حدد الأول: كاش ولا مدفوع'); return; }
@@ -194,8 +232,15 @@ $('list').addEventListener('click', async e => {
     catch (err) { toast(err.message); b.disabled = false; }
   }
 });
+$('list').addEventListener('change', e => {
+  const el = e.target.closest('[data-pick]'); if (!el) return;
+  const c = el.closest('.card'), p = picks[c.dataset.k]; if (!p) return;
+  if (el.dataset.pick === 'branch') p.branch = el.value;
+  if (el.dataset.pick === 'item') { p.items[Number(el.dataset.n)] = el.value.trim(); const twin = c.querySelectorAll('[data-pick="item"][data-n="' + el.dataset.n + '"]'); twin.forEach(x => { if (x !== el) x.value = el.value.trim(); }); }
+});
+$('list').addEventListener('toggle', e => { const d = e.target.closest?.('[data-pick-box]'); if (d) { const p = picks[d.closest('.card').dataset.k]; if (p) p.open = d.open; } }, true);
 async function load() {
-  try { data = await api('GET', '/api/transfer/queue'); $('me').textContent = data.me.name; $('auto').hidden = data.autoTransfer === 'ready'; render(); }
+  try { data = await api('GET', '/api/transfer/queue'); $('me').textContent = data.me.name; const a = $('auto'); a.textContent = { off: 'التحويل الآلي متوقف — سجّل على Apex بإيدك', shadow: 'التحويل الآلي: معاينة بس — سجّل بإيدك', test: 'التحويل الآلي: تجربة على قاعدة الاختبار — سجّل بإيدك', live: 'التحويل الآلي شغال' }[data.autoTransfer] || ''; a.className = 'pill' + (data.autoTransfer === 'live' ? '' : ' off'); if (!$('list').contains(document.activeElement) || !/^(INPUT|SELECT)$/.test(document.activeElement.tagName)) render(); }
   catch (e) { if (token) toast(e.message); }
 }
 function boot() { $('login').hidden = true; $('app').hidden = false; load(); }

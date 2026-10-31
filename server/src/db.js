@@ -251,6 +251,8 @@ async function migrate(db) {
   try { await db.prepare('SELECT reply_to, message_id FROM telegram_log LIMIT 0').all(); } catch {
     for (const c of ['reply_to TEXT', 'message_id INTEGER']) { try { await db.prepare('ALTER TABLE telegram_log ADD COLUMN ' + c).run(); } catch {} }
   }
+  // The automatic Apex transfer keeps the frozen order it sends and the writer's answer.
+  try { await db.prepare('SELECT payload, result FROM transfer_jobs LIMIT 0').all(); } catch { for (const c of ['payload TEXT', 'result TEXT']) { try { await db.prepare('ALTER TABLE transfer_jobs ADD COLUMN ' + c).run(); } catch {} } }
   try { await db.prepare('SELECT code, milestones FROM talabat_orders LIMIT 0').all(); } catch { for (const c of ['code TEXT', 'milestones TEXT']) { try { await db.prepare('ALTER TABLE talabat_orders ADD COLUMN ' + c).run(); } catch {} } }
   try { await db.prepare('SELECT transfers FROM site_orders LIMIT 0').all(); } catch { try { await db.prepare('ALTER TABLE site_orders ADD COLUMN transfers INTEGER').run(); } catch {} }
   try { await db.prepare('SELECT total FROM site_orders LIMIT 0').all(); } catch { try { await db.prepare('ALTER TABLE site_orders ADD COLUMN total REAL').run(); } catch {} }

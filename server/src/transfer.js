@@ -10,6 +10,7 @@
 import { businessDay, iso, validDate } from './time.js';
 import { parseJson } from './order-match.js';
 import { knownNos } from './items.js';
+import { sha256, randomToken } from './security.js';
 
 const TOKEN_MS = 12 * 3600000;
 const CLAIM_MS = 10 * 60000;               // a claim left untouched for 10 minutes is free again
@@ -59,6 +60,16 @@ const WEIGHTS = [
   [/half|1\/2|نص|نصف/i, /1\/2|نص/, 'نص كيلو'],
 ];
 
+// Apex branches (Branches table, read 2026-10-31): number → name, for the employee's branch choice.
+const APEX_BRANCHES = [{ no: 1, name: 'التجمع' }, { no: 2, name: 'مدينة نصر' }, { no: 3, name: 'مدينتى' }];
+
+// The Apex branch a Talabat store / website branch name points to (null when unclear: the employee picks).
+function apexBranchOf(name) {
+  const t = String(name || '').replace(/[أإآ]/g, 'ا').replace(/ى/g, 'ي');
+  const hits = [/التجمع/.test(t) && 1, /(مدينة نصر|سيتي ستار|مكرم)/.test(t) && 2, /مدينتي/.test(t) && 3].filter(Boolean);
+  return hits.length === 1 ? hits[0] : null;
+}
+
 function setup(app) {
   const { db, fail } = app;
   // ---- sign-in with the employee's own PIN (the same one used for work), separate from the admin password ----
@@ -96,7 +107,7 @@ function setup(app) {
       const j = jobs.get(source + ':' + ref);
       if (!j) return null;
       const stale = j.state === 'claimed' && ctx.now - j.at > CLAIM_MS;
-      return stale ? null : { state: j.state, by: j.employee_name, mine: me.staff && j.employee_id === me.id, payment: j.payment, note: j.note, at: iso(j.at) };
+      return stale ? null : { state: j.state, by: j.employee_name, mine: me.staff && j.employee_id === me.id, payment: j.payment, note: j.note, at: iso(j.at), result: parseJson(j.result, null) };
     };
     const itemOut = (x, withApex) => {
       let apex = (withApex ? knownNos(x.name, learned) : []).map(no => ({ no, name: apexName.get(no) || null }));
@@ -115,7 +126,7 @@ function setup(app) {
       if (TALABAT_DONE.has(o.status)) continue;
       const p = tProfiles.get(o.id) || {}, a = tm.matches.get(o.id), bill = p.bill || [];
       const discounts = talabatDiscounts(bill);
-      list.push({ source: 'talabat', ref: o.id, code: o.code || null, at: iso(o.accepted_at || o.received_at || o.placed_at), status: o.status, branch: o.store, deliveryType: o.delivery_type || null,
+      list.push({ source: 'talabat', ref: o.id, code: o.code || null, at: iso(o.accepted_at || o.received_at || o.placed_at), status: o.status, branch: o.store, apexBranch: apexBranchOf(o.store), deliveryType: o.delivery_type || null,
         customer: { name: p.name || null, phone: phoneOut(p.phone), address: p.address || null },
         payment: talabatPayment(bill, p.livePay), bill, discounts, subtotal: o.subtotal ?? null, total: o.total ?? null,
         items: parseJson(o.items, []).map(x => itemOut(x, true)), detailRead: !!o.detail_at,
@@ -131,15 +142,15 @@ function setup(app) {
       const p = sProfiles.get(String(o.id)) || {}, pay = p.payment || null, a = sm.matches.get(o.id);
       const discounts = pay ? [...(pay.coupons || []).map(c => ({ text: 'كوبون ' + c.code, amount: c.amount, who: 'restaurant' })),
         ...(!pay.coupons?.length && pay.discount ? [{ text: 'خصم الموقع', amount: pay.discount, who: 'restaurant' }] : [])] : [];
-      list.push({ source: 'site', ref: String(o.id), code: String(o.id), at: iso(o.created_at), status: o.status, branch: o.branch || null, scheduled: !!o.scheduled,
+      list.push({ source: 'site', ref: String(o.id), code: String(o.id), at: iso(o.created_at), status: o.status, branch: o.branch || null, apexBranch: apexBranchOf(o.branch), scheduled: !!o.scheduled,
         customer: { name: p.customer?.name || null, phone: phoneOut(p.customer?.phone || p.customer?.mobile), address: p.customer?.address || null },
         payment: sitePayment(pay), paymentTitle: pay?.title || null, note: pay?.note || null, discounts, fees: pay?.fees || [], shipping: pay?.shipping ?? null, total: o.total ?? null,
         items: (p.items || []).map(x => itemOut(x, false)), detailRead: !!p.items?.length,
         apex: a ? { no: a.no, sn: a.sn ?? null, user: a.user || null, how: a.how || null } : null, matching: sm.states?.get(o.id) || null, job: jobOf('site', String(o.id)) });
     }
     list.sort((x, y) => (x.apex ? 1 : 0) - (y.apex ? 1 : 0) || String(x.at || '').localeCompare(String(y.at || '')));
-    const bridge = await db.prepare("SELECT value FROM settings WHERE key = 'apex_bridge_verified'").get();
-    return { day, me: { name: me.name, staff: me.staff }, serverNow: iso(ctx.now), autoTransfer: bridge?.value === '1' ? 'ready' : 'off', orders: list };
+    const mode = (await db.prepare("SELECT value FROM settings WHERE key = 'apex_bridge_mode'").get())?.value || 'off';
+    return { day, me: { name: me.name, staff: me.staff }, serverNow: iso(ctx.now), autoTransfer: mode, branches: APEX_BRANCHES, orders: list };
   });
 
   // ---- claim / entered / release ----
@@ -169,10 +180,85 @@ function setup(app) {
     } else if (b.action === 'release') {
       if (othersClaim) fail(409, 'الأوردر مع ' + (cur.employee_name || 'حد تاني'));
       await db.prepare("UPDATE transfer_jobs SET state = 'released', at = ? WHERE source = ? AND ref = ?").run(ctx.now, source, ref);
+    } else if (b.action === 'auto') {
+      // Automatic transfer: the employee confirms the Apex items, branch and payment; the order is frozen
+      // and handed to the Apex writer on the restaurant PC. Off until an admin turns it on (test first).
+      const mode = await setting('apex_bridge_mode');
+      if (!['shadow', 'test', 'live'].includes(mode)) fail(409, 'التحويل الآلي مقفول — سجّل على Apex بإيدك');
+      if (othersClaim) fail(409, 'الأوردر مع ' + (cur.employee_name || 'حد تاني'));
+      if (cur && /^auto_(?:pending|sending|done|preview)$/.test(cur.state)) fail(409, 'الأوردر اتبعت للتحويل الآلي بالفعل');
+      if (payment !== 'cash') fail(400, payment === 'paid' ? 'المدفوع مقدمًا لسه بيتسجل بإيدك (قواعد الحساب لسه بتتأكد)' : 'حدد: كاش ولا مدفوع');
+      const branchNo = Number(b.branchNo);
+      if (!Number.isInteger(branchNo) || branchNo < 1 || branchNo > 99) fail(400, 'اختار فرع Apex');
+      const items = Array.isArray(b.items) ? b.items : [];
+      if (!items.length || items.length > 40) fail(400, 'اختار أصناف Apex');
+      const clean = items.map(x => ({ itemNo: String(x?.itemNo || '').trim(), qty: Number(x?.qty), note: x?.note ? String(x.note).slice(0, 60) : '' }));
+      if (clean.some(x => !/^\d{4,10}$/.test(x.itemNo) || !(x.qty > 0 && x.qty <= 50))) fail(400, 'فيه صنف من غير رقم Apex أو كمية غلط');
+      const restaurantDiscount = Math.max(0, Number(b.restaurantDiscount) || 0), expectedTotal = Number(b.expectedTotal) || null;
+      const payload = { v: 1, source, ref, code: String(b.code || '').replace(/[^\d]/g, '').slice(0, 10) || null, db: mode, branchNo, payment,
+        label: String(b.label || '').slice(0, 80), customer: { name: String(b.customer?.name || '').slice(0, 80), phone: String(b.customer?.phone || '').replace(/[^\d+]/g, '').slice(0, 15), address: String(b.customer?.address || '').slice(0, 200) },
+        sign: String(b.sign || '').slice(0, 120), note: note || '', items: clean, restaurantDiscount, expectedTotal, by: me.name, at: ctx.now };
+      await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at, payload, result) VALUES (?,?,?,'auto_pending',?,?,?,?,?,?,NULL)
+        ON CONFLICT(source, ref) DO UPDATE SET state = 'auto_pending', employee_id = excluded.employee_id, employee_name = excluded.employee_name, payment = excluded.payment, note = excluded.note, at = excluded.at, payload = excluded.payload, result = NULL`)
+        .run(source, ref, row.day, me.id, me.name, payment, note, ctx.now, JSON.stringify(payload));
     } else fail(400, 'invalid_action');
     await app.audit('transfer_' + b.action, me.staff ? me.id : null, { actor: me.name, source, ref, payment });
     return { ok: true };
   });
+
+  // ---- the Apex writer on the restaurant PC ----
+  const setting = async k => (await db.prepare('SELECT value FROM settings WHERE key = ?').get(k))?.value ?? null;
+  const put = (k, v) => v == null ? db.prepare('DELETE FROM settings WHERE key = ?').run(k) : db.prepare('INSERT INTO settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(k, String(v));
+  const writer = async ctx => {
+    const hash = await setting('apex_writer_token_hash'), given = ctx.header('x-apex-writer');
+    if (!hash || !given || sha256(given) !== hash) fail(401, 'مفتاح كاتب Apex غير صحيح');
+  };
+  app.route('GET', '/api/apex-writer', async ctx => {
+    await app.requireAdmin(ctx);
+    const jobs = await db.prepare("SELECT source, ref, state, employee_name, at, result FROM transfer_jobs WHERE state LIKE 'auto_%' ORDER BY at DESC LIMIT 50").all();
+    return { mode: await setting('apex_bridge_mode') || 'off', linked: !!await setting('apex_writer_token_hash'), lastSeen: Number(await setting('apex_writer_seen')) || null,
+      jobs: jobs.map(j => ({ source: j.source, ref: j.ref, state: j.state, by: j.employee_name, at: iso(j.at), result: parseJson(j.result, null) })) };
+  });
+  app.route('POST', '/api/apex-writer', async ctx => {
+    const who = await app.requireAdmin(ctx, 'admin'), b = ctx.body;
+    if (b.action === 'token') { const token = 'apx_' + randomToken(24); await put('apex_writer_token_hash', sha256(token)); await app.audit('apex_writer_token', null, { actor: who.name }); return { token }; }
+    if (b.action === 'mode') {
+      if (!['off', 'shadow', 'test', 'live'].includes(b.mode)) fail(400, 'invalid_mode');
+      if (b.mode === 'live' && String(b.confirm || '') !== 'LIVE') fail(400, 'التشغيل على قاعدة الإنتاج محتاج تأكيد');
+      await put('apex_bridge_mode', b.mode); await app.audit('apex_bridge_mode', null, { actor: who.name, mode: b.mode });
+      return { ok: true, mode: b.mode };
+    }
+    fail(400, 'invalid_action');
+  });
+  // The writer asks for the next order. A job stays «sending» until the writer answers; it is never handed out
+  // twice (the writer also checks Apex for its own marker before writing, so a lost answer cannot double an order).
+  app.route('POST', '/api/apex-writer/next', async ctx => {
+    await writer(ctx); await put('apex_writer_seen', ctx.now);
+    const mode = await setting('apex_bridge_mode') || 'off';
+    if (mode === 'off') return { mode, job: null };
+    const stuck = await db.prepare("SELECT source, ref, payload FROM transfer_jobs WHERE state = 'auto_sending' ORDER BY at LIMIT 1").get();
+    if (stuck) return { mode, job: { ...parseJson(stuck.payload, {}), resume: true } };   // finish (or confirm) the one in flight first
+    const j = await db.prepare("SELECT source, ref, payload FROM transfer_jobs WHERE state = 'auto_pending' ORDER BY at LIMIT 1").get();
+    if (!j) return { mode, job: null };
+    const job = parseJson(j.payload, {});
+    if (job.db !== mode) { await db.prepare("UPDATE transfer_jobs SET state = 'auto_failed', result = ? WHERE source = ? AND ref = ?").run(JSON.stringify({ ok: false, error: 'وضع التحويل اتغير؛ ابعته تاني' }), j.source, j.ref); return { mode, job: null }; }
+    const r = await db.prepare("UPDATE transfer_jobs SET state = 'auto_sending', at = ? WHERE source = ? AND ref = ? AND state = 'auto_pending'").run(ctx.now, j.source, j.ref);
+    return { mode, job: r.changes ? job : null };
+  });
+  app.route('POST', '/api/apex-writer/result', async ctx => {
+    await writer(ctx);
+    const b = ctx.body, source = b.source === 'talabat' || b.source === 'site' ? b.source : null, ref = String(b.ref || '');
+    if (!source || !/^\d{1,20}$/.test(ref)) fail(400, 'أوردر غير صحيح');
+    const result = { ok: !!b.ok, preview: !!b.preview, db: ['shadow', 'test', 'live'].includes(b.db) ? b.db : null, orderNo: b.orderNo ?? null, shiftSerial: b.shiftSerial ?? null, branchOrderNo: b.branchOrderNo ?? null,
+      total: Number(b.total) || null, error: b.error ? String(b.error).slice(0, 300) : null, detail: b.detail ? String(b.detail).slice(0, 1500) : null, at: ctx.now };
+    // A shadow preview writes nothing: the employee still enters the order by hand; the preview is kept for comparison.
+    const state = result.preview ? 'auto_preview' : result.ok ? 'auto_done' : 'auto_failed';
+    const r = await db.prepare("UPDATE transfer_jobs SET state = ?, result = ?, at = ? WHERE source = ? AND ref = ? AND state = 'auto_sending'")
+      .run(state, JSON.stringify(result), ctx.now, source, ref);
+    if (!r.changes) fail(409, 'الأوردر مش في حالة إرسال');
+    await app.audit('apex_writer_result', null, { source, ref, ...result });
+    return { ok: true };
+  });
 }
 
-export { setup, talabatPayment, talabatDiscounts, sitePayment };
+export { setup, talabatPayment, talabatDiscounts, sitePayment, apexBranchOf };

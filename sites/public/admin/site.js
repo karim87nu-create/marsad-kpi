@@ -327,6 +327,30 @@ window.MarsadSite = function MarsadSite(ctx) {
   $('waOn').onclick = () => waDo({ action: 'enable', on: true }, () => 'الإرسال اشتغل. على جهاز شاشة طلبات هيتفتح تاب واتساب ويب: امسح الكود من موبايل المطعم مرة واحدة.');
   $('waOff').onclick = () => waDo({ action: 'enable', on: false }, () => 'الإرسال وقف، والأرقام اللي كانت مستنية اتمسحت.');
 
-  return { renderBranches, renderTransfer, renderTalabat, renderBranchTalabatCancels, renderTalabatKey, exportKind, renderKey, renderWhatsApp, branchRows, transferRows, perBranch };
+  // ---------- الإدارة: كاتب Apex (التحويل الآلي) ----------
+  const APX = { off: 'متوقف', shadow: 'معاينة بس', test: 'تجربة على قاعدة الاختبار', live: 'شغال على Apex' };
+  const APX_STATE = { auto_pending: 'مستني', auto_sending: 'بيتكتب', auto_done: 'اتكتب', auto_failed: 'ماتمش', auto_preview: 'معاينة' };
+  async function renderApexWriter(isAdmin) {
+    $('apexWriterPanel').hidden = !isAdmin;
+    if (!isAdmin) return;
+    const s = await api('/api/apex-writer');
+    const seen = s.lastSeen ? (Date.now() - s.lastSeen < 120000 ? 'الكاتب شغال (آخر سؤال ' + t12(new Date(s.lastSeen).toISOString()) + ')' : 'الكاتب واقف (آخر سؤال ' + t12(new Date(s.lastSeen).toISOString()) + ')') : (s.linked ? 'الكاتب لسه ماشتغلش' : 'مفيش مفتاح للكاتب');
+    $('apexWriterStatus').replaceChildren(pill('الوضع: ' + APX[s.mode], s.mode === 'live' ? 'ok' : 'warn'), ' ', h('span', { className: 'muted', textContent: seen }),
+      ...s.jobs.slice(0, 8).map(j => h('div', { className: 'muted', textContent: (j.source === 'talabat' ? 'طلبات ' : 'الموقع ') + j.ref + ' — ' + (APX_STATE[j.state] || j.state) + ' — ' + (j.by || '') +
+        (j.result ? ' — ' + [j.result.orderNo && ('Apex ' + j.result.orderNo), j.result.total && ('إجمالي ' + j.result.total), j.result.error, j.result.detail].filter(Boolean).join(' · ') : '') })));
+  }
+  document.querySelectorAll('[data-apx-mode]').forEach(b => b.onclick = async () => {
+    const mode = b.dataset.apxMode;
+    if (mode === 'live' && !confirm('التشغيل هيكتب أوردرات حقيقية على Apex. اتأكدت من المعاينة والتجربة؟')) return;
+    try { await api('/api/apex-writer', { method: 'POST', body: { action: 'mode', mode, confirm: mode === 'live' ? 'LIVE' : undefined } }); $('apexWriterNote').textContent = 'الوضع بقى: ' + APX[mode]; renderApexWriter(true); }
+    catch (e) { $('apexWriterNote').textContent = e.message; }
+  });
+  $('apexWriterKey').onclick = async () => {
+    if (!confirm('مفتاح جديد هيوقف القديم. تكمل؟')) return;
+    try { const { token } = await api('/api/apex-writer', { method: 'POST', body: { action: 'token' } }); $('apexWriterToken').textContent = token; $('apexWriterNote').textContent = 'انسخ المفتاح والصقه في Setup-ApexWriter على جهاز الكاشير. بيظهر مرة واحدة.'; }
+    catch (e) { $('apexWriterNote').textContent = e.message; }
+  };
+
+  return { renderBranches, renderTransfer, renderTalabat, renderBranchTalabatCancels, renderTalabatKey, exportKind, renderKey, renderWhatsApp, renderApexWriter, branchRows, transferRows, perBranch };
 };
 

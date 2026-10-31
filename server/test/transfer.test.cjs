@@ -75,3 +75,48 @@ test('transfer page: payment and discounts only from the source words', () => {
     assert.equal(sitePayment(null), null);
   });
 });
+
+test('automatic transfer: off by default, cash only, frozen order handed to the writer once, result recorded', async () => {
+  const t0 = cairoToUtc(2026, 10, 22, 20, 0, 0), at = m => new Date(t0 + m * 60000).toISOString();
+  const t = await start({ at: t0 + 10 * 60000 });
+  try {
+    const admin = await t.admin();
+    await t.employee(admin, { name: 'سارة', code: 'E1', pin: '1111' });
+    const sara = (await t.call('POST', '/api/transfer/login', { body: { pin: '1111' } })).body.token;
+    const as = (method, path, body) => t.call(method, path, { body, headers: { 'x-transfer-session': sara } });
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const store = 'الدهان، التجمع الخامس - البنفسج';
+    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: [{ id: '3977600001', store, status: 'ACCEPTED', placedAt: at(0), total: 300 }] } });
+    const q = (await as('GET', '/api/transfer/queue?day=2026-10-22')).body;
+    assert.equal(q.autoTransfer, 'off'); assert.equal(q.orders[0].apexBranch, 1);
+    const job = { source: 'talabat', ref: '3977600001', action: 'auto', payment: 'cash', branchNo: 1, items: [{ itemNo: '0108004', qty: 2 }], expectedTotal: 300, code: '2701', label: 'اطلب/كاش #2701' };
+    assert.equal((await as('POST', '/api/transfer/job', job)).status, 409, 'off until an admin turns it on');
+    assert.equal((await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'live' })).status, 400, 'live needs explicit confirmation');
+    assert.equal((await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'test' })).status, 200);
+    assert.equal((await as('POST', '/api/transfer/job', { ...job, payment: 'paid' })).status, 400, 'prepaid stays manual');
+    assert.equal((await as('POST', '/api/transfer/job', { ...job, items: [{ itemNo: 'x', qty: 1 }] })).status, 400);
+    assert.equal((await as('POST', '/api/transfer/job', job)).status, 200);
+    assert.equal((await as('POST', '/api/transfer/job', job)).status, 409, 'not sent twice');
+    const wtoken = (await admin('POST', '/api/apex-writer', { action: 'token' })).body.token;
+    const w = (path, body) => t.call('POST', path, { body: body || {}, headers: { 'x-apex-writer': wtoken } });
+    assert.equal((await t.call('POST', '/api/apex-writer/next', { body: {}, headers: { 'x-apex-writer': 'bad' } })).status, 401);
+    let n = (await w('/api/apex-writer/next')).body;
+    assert.equal(n.mode, 'test'); assert.equal(n.job.ref, '3977600001'); assert.equal(n.job.db, 'test'); assert.deepEqual(n.job.items, [{ itemNo: '0108004', qty: 2, note: '' }]);
+    n = (await w('/api/apex-writer/next')).body;
+    assert.equal(n.job.resume, true, 'the one in flight comes back until answered, never a second one');
+    assert.equal((await w('/api/apex-writer/result', { source: 'talabat', ref: '3977600001', ok: true, db: 'test', orderNo: 701, shiftSerial: 5, branchOrderNo: 3496, total: 300 })).status, 200);
+    assert.equal((await w('/api/apex-writer/result', { source: 'talabat', ref: '3977600001', ok: true })).status, 409);
+    assert.equal((await w('/api/apex-writer/next')).body.job, null);
+    const job2 = (await as('GET', '/api/transfer/queue?day=2026-10-22')).body.orders[0].job;
+    assert.equal(job2.state, 'auto_done'); assert.equal(job2.result.orderNo, 701);
+    assert.equal((await admin('GET', '/api/apex-writer')).body.jobs[0].state, 'auto_done');
+    // Shadow mode: the writer only previews; the order stays for manual entry and the preview is kept.
+    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: [{ id: '3977600002', store, status: 'ACCEPTED', placedAt: at(1), total: 120 }] } });
+    assert.equal((await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'shadow' })).status, 200);
+    assert.equal((await as('POST', '/api/transfer/job', { ...job, ref: '3977600002' })).status, 200);
+    n = (await w('/api/apex-writer/next')).body; assert.equal(n.mode, 'shadow'); assert.equal(n.job.db, 'shadow');
+    assert.equal((await w('/api/apex-writer/result', { source: 'talabat', ref: '3977600002', ok: true, preview: true, db: 'shadow', total: 120.5, detail: 'sub=105.7' })).status, 200);
+    const pj = (await as('GET', '/api/transfer/queue?day=2026-10-22')).body.orders.find(o => o.ref === '3977600002').job;
+    assert.equal(pj.state, 'auto_preview'); assert.equal(pj.result.preview, true); assert.equal(pj.result.detail, 'sub=105.7');
+  } finally { await t.close(); }
+});
