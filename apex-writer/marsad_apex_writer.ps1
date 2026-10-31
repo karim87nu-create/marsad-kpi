@@ -207,10 +207,43 @@ function Price-Lines($c, $job){
   }
 }
 
+# Self-test (test database or preview only, never production): a job placed in selftest.json by the Marsad team is
+# run once without the server; the answer and the saved rows (read back) go to selftest_result.json.
+function Self-Test {
+  $f = Join-Path $here 'selftest.json'
+  if (-not (Test-Path $f)) { return }
+  $out = [ordered]@{ at = (Get-Date).ToString('s') }
+  $c = $null
+  try {
+    $job = Get-Content $f -Raw -Encoding UTF8 | ConvertFrom-Json
+    $mode = if ($job.mode -eq 'test') { 'test' } else { 'shadow' }
+    $out.mode = $mode
+    $c = Open-Db $mode
+    if ($job.source -eq 'talabat' -and $TalabatServiceItem -and -not ($job.items | Where-Object { $_.itemNo -eq $TalabatServiceItem })) { $job.items = @([pscustomobject]@{ itemNo = $TalabatServiceItem; qty = 1; note = '' }) + @($job.items) }
+    Price-Lines $c $job
+    $out.lines = @($job.items | ForEach-Object { "$($_.itemNo) x$($_.qty) @ $($_.price) [$($_.candidates -join ',')]" })
+    $r = Write-Order $c $job $mode
+    $out.answer = @{}; foreach($col in $r.Table.Columns){ $out.answer[$col.ColumnName] = "$($r[$col.ColumnName])" }
+    if ($r.OrderNo -and $mode -eq 'test') {
+      $cmd = $c.CreateCommand(); $cmd.CommandText = "SELECT 'M' k, OrderNo, ShiftSerial, BranchShiftSerial, TypeSerial, BranchNo, BranchOrderNo, PosNo, PosSerial, CheckNo, CustNo, OrderDate, TimeIn, RTRIM(PayWay) PayWay, OnlineType, Otlob, SubTotal, Service, Tax, Discount, CashPayment, UserNo FROM Orders_M_Daily WHERE OrderNo = @o; SELECT 'D' k, ItemNo, SerialNo, Qty, Price, Printed, PrintedSlip, Weight, ItemsNo, ItemDetailNo FROM Orders_D_Daily WHERE OrderNo = @o ORDER BY SerialNo; SELECT 'C' k, num, OrderNo, PosSerial, ShiftOrderNo, OrderDate, ShiftNo FROM Counter WHERE num = @p; SELECT 'L' k, COUNT(*) n FROM OrderLog WHERE OrderNo = @o; SELECT 'P' k, COUNT(*) n FROM PrintedOrders WHERE OrderNo = @o"
+      [void]$cmd.Parameters.AddWithValue('@o', $r.OrderNo); [void]$cmd.Parameters.AddWithValue('@p', $WriterPos)
+      $rd = $cmd.ExecuteReader(); $rows = @()
+      do { while ($rd.Read()) { $h = [ordered]@{}; for ($i = 0; $i -lt $rd.FieldCount; $i++) { $h[$rd.GetName($i)] = "$($rd.GetValue($i))" }; $rows += $h } } while ($rd.NextResult())
+      $rd.Close(); $out.saved = $rows
+    }
+    $out.ok = $true
+  } catch { $out.ok = $false; $out.error = $_.Exception.Message }
+  finally { if ($c) { try { $c.Close() } catch {} } }
+  ($out | ConvertTo-Json -Depth 6) | Set-Content (Join-Path $here 'selftest_result.json') -Encoding UTF8
+  Move-Item $f (Join-Path $here ('selftest.done-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.json')) -Force
+  L ('self-test ' + $out.mode + ': ' + $(if ($out.ok) { 'ok' } else { $out.error }))
+}
+
 L "writer started (pos $WriterPos)"
 $failures = 0
 for (;;) {
   try { if ((Get-Item $self).LastWriteTimeUtc -ne $selfStamp) { L 'script updated - restarting'; $mutex.ReleaseMutex(); $mutex.Dispose(); Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $self + '"'); exit 0 } } catch {}
+  try { Self-Test } catch { L "self-test: $($_.Exception.Message)" }
   $c = $null
   try {
     $n = Api '/api/apex-writer/next' @{}
