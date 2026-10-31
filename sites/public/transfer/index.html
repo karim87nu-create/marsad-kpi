@@ -219,7 +219,11 @@ function render(force) {
     dl.innerHTML = data.apexItems.map(a => '<option value="' + esc(a.name) + '">').join('');
   }
   // «لسه»: not on Apex yet and not already out with the rider (those were entered before; see «الكل»).
-  const waiting = o => !o.apex && !o.out && !/^(?:entered|auto_done)$/.test(o.job?.state || '');
+  // «لسه» is the work to do now: an order older than 2 hours was entered or delivered long ago even when the match to Apex
+  // was not found (Karim 01-11: 19 old orders sat in «لسه»). A claimed one stays with its employee.
+  const now = Date.parse(data.serverNow) || Date.now();
+  const recent = o => !o.at || now - Date.parse(o.at) < 2 * 3600000 || (o.job && !/^(?:released)$/.test(o.job.state || ''));
+  const waiting = o => !o.apex && !o.out && !/^(?:entered|auto_done)$/.test(o.job?.state || '') && recent(o);
   const list = data.orders.filter(o => (!source || o.source === source) && (filter === 'all' || waiting(o)));
   const todo = data.orders.filter(waiting).length;
   $('count').textContent = 'لسه: ' + todo + ' · الكل: ' + data.orders.length;
