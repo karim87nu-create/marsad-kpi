@@ -186,7 +186,11 @@ async function talabatMessage(m, sender) {
   if (m.type === 'TALABAT_STATUS' && adminSender(sender)) { const l = await store.get(TALABAT, null); return { linked: !!l, extra: !!l?.extra, version: VERSION }; }
   if (m.type === 'TALABAT_UNLINK' && adminSender(sender)) { await store.set(TALABAT, null); return { ok: true }; }
   if (!talabatSender(sender)) throw Error('invalid_sender');
-  const t = await store.get(TALABAT, null);
+  // Not linked from admin: a Live Orders tab still works by itself on any PC with the extension (Karim 31-10), as one more
+  // branch live screen (its own live tab only: no Order History, no WhatsApp), signed with the extension's device key.
+  const linked = await store.get(TALABAT, null);
+  const t = linked || (/\/live-orders/.test((() => { try { return new URL(sender.url).pathname; } catch { return ''; } })()) ? { device: true, extra: true } : null);
+  const auth = x => x.device ? { 'x-device-token': globalThis.MARSAD.DEVICE_TOKEN } : { 'x-talabat-token': x.token };
   if (m.type === 'TALABAT_CLOCK') {
     if (!t || new URL(sender.url).hostname !== 'partner-app.talabat.com') throw Error('invalid_sender');
     await clock.ensure();
@@ -210,7 +214,7 @@ async function talabatMessage(m, sender) {
   }
   if (m.type === 'TALABAT_PUSH') {
     if (!t) return { ok: false, error: 'not_linked' };
-    const r = await api('/api/talabat/push', { method: 'POST', headers: { 'content-type': 'application/json', 'x-talabat-token': t.token }, body: JSON.stringify({ orders: Array.isArray(m.orders) ? m.orders.slice(0, 800) : [], codes: Array.isArray(m.codes) ? m.codes.slice(0, 200) : [] }), timeout: 30000 });
+    const r = await api('/api/talabat/push', { method: 'POST', headers: { 'content-type': 'application/json', ...auth(t) }, body: JSON.stringify({ orders: Array.isArray(m.orders) ? m.orders.slice(0, 800) : [], codes: Array.isArray(m.codes) ? m.codes.slice(0, 200) : [] }), timeout: 30000 });
     const d = r.json();
     // WhatsApp messages on: keep one WhatsApp Web tab open on this PC (it sends them).
     if (r.ok && d.phones && !t.extra && !(talabatTabs.wa != null && await browser.tabs.get(talabatTabs.wa).then(() => true, () => false))) {
@@ -222,12 +226,12 @@ async function talabatMessage(m, sender) {
   // Live screen orders (per branch, set in admin): what to do, what was done, and a sample of the screen's buttons.
   if (m.type === 'TALABAT_ACTIONS') {
     if (!t) return { ok: false };
-    const r = await api('/api/talabat/actions', { headers: { 'x-talabat-token': t.token }, timeout: 20000 });
+    const r = await api('/api/talabat/actions', { headers: { ...auth(t) }, timeout: 20000 });
     return r.ok ? { ok: true, ...r.json() } : { ok: false };
   }
   if (m.type === 'TALABAT_ACTION_RESULT' || m.type === 'TALABAT_UI') {
     if (!t) return { ok: false };
-    const r = await api(m.type === 'TALABAT_UI' ? '/api/talabat/ui' : '/api/talabat/actions/result', { method: 'POST', headers: { 'content-type': 'application/json', 'x-talabat-token': t.token },
+    const r = await api(m.type === 'TALABAT_UI' ? '/api/talabat/ui' : '/api/talabat/actions/result', { method: 'POST', headers: { 'content-type': 'application/json', ...auth(t) },
       body: JSON.stringify(m.body || {}), timeout: 20000 });
     return { ok: r.ok };
   }

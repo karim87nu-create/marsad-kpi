@@ -61,7 +61,9 @@ function setup(app) {
   app.route('POST', '/api/talabat/push', async ctx => {
     const hash = await setting('talabat_token_hash'), given = ctx.header('x-talabat-token'), extras = parseJson(await setting('talabat_token_extra'), []);
     const main = !!hash && !!given && sha256(given) === hash;
-    if (!given || (!main && !extras.includes(sha256(given)))) fail(401, 'مفتاح شاشة طلبات غير صحيح');
+    // A Live Orders tab on any PC with the extension (not linked from admin) signs with the extension's device key.
+    const device = !given && app.config.deviceTokens.includes(ctx.header('x-device-token') || '');
+    if (!device && (!given || (!main && !extras.includes(sha256(given))))) fail(401, 'مفتاح شاشة طلبات غير صحيح');
     const now = ctx.now, list = (Array.isArray(ctx.body?.orders) ? ctx.body.orders : []).slice(0, 800), writes = [];
     // From Live Orders: the short code (#2703) next to the full number; it is what is written on Apex next to the customer.
     for (const c of (Array.isArray(ctx.body?.codes) ? ctx.body.codes : []).slice(0, 200)) {

@@ -26,6 +26,7 @@ function setup(app) {
   const config = async () => clean(parseJson(await setting('talabat_actions'), {}));
   const screen = async ctx => {
     const hash = await setting('talabat_token_hash'), given = ctx.header('x-talabat-token'), extras = parseJson(await setting('talabat_token_extra'), []);
+    if (!given && app.config.deviceTokens.includes(ctx.header('x-device-token') || '')) return;   // a Live Orders tab on any PC with the extension
     if (!given || !((hash && sha256(given) === hash) || extras.includes(sha256(given)))) fail(401, 'مفتاح شاشة طلبات غير صحيح');
   };
 

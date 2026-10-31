@@ -183,5 +183,9 @@ test('Talabat: an extra Firefox profile (a branch\'s Live Orders) gets its own k
     assert.equal(r.body.phones, false, 'only the main screen sends WhatsApp');
     assert.equal((await t.call('GET', '/api/talabat/actions', { headers: { 'x-talabat-token': extra } })).status, 200);
     assert.equal((await push('tal_' + '0'.repeat(48))).status, 401);
+    const dev = await t.call('POST', '/api/talabat/push', { headers: { 'x-device-token': '7000865f1220458f86506b41a97cab7d' }, body: { codes: [{ id: '4688946022', code: '9172', store: 'الدهان، مدينتي' }] } });
+    assert.equal(dev.status, 200, 'a Live Orders tab on any PC with the extension works without linking');
+    assert.equal(dev.body.phones, false);
+    assert.equal((await t.call('POST', '/api/talabat/push', { headers: { 'x-device-token': 'nope' }, body: { codes: [] } })).status, 401);
   } finally { await t.close(); }
 });
