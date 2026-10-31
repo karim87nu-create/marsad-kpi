@@ -106,11 +106,16 @@
       target.click();
       let d = null;
       for (let i = 0; i < 25 && !d; i++) { await sleep(200); d = (T('details-order-id')?.innerText || '').includes(id) ? readDetail((T('details-order-id').innerText || '').trim()) : null; }
-      if (!d) { for (let i = 0; i < 25 && !d; i++) { await sleep(200); if ((document.body.innerText || '').includes('المجموع الفرعي') || /Subtotal/.test(document.body.innerText || '')) break; } }
+      if (!d) {
+        for (let i = 0; i < 25 && !d; i++) { await sleep(200); if ((document.body.innerText || '').includes('المجموع الفرعي') || /Subtotal/.test(document.body.innerText || '')) break; }
+        if (!T('details-order-id') && document.querySelector('[data-testid^="existing-product__"]')) d = readDetail(id);   // live window without that id element
+      }
       const close = T('close-button') || [...document.querySelectorAll('button,[role="button"]')].find(b => /^(?:close|إغلاق|×|✕)$/i.test((b.getAttribute('aria-label') || b.innerText || '').trim()));
       if (close && !ACTION.test((close.innerText || '').trim())) close.click(); else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       await sleep(400);
-      return d && d.detail ? { id, detail: { ...d.detail, status: undefined } } : null;   // the live screen's status words are not Order History statuses
+      // The branch: the live card does not always name it (single-account view); the order window does («الدهان، مدينتي - ساوث بارك»).
+      const store = (lines(document.body).find(x => /الدهان[،,]/.test(x) && x.length < 80) || '').trim() || null;
+      return d && d.detail ? { id, store, detail: { ...d.detail, status: undefined } } : null;   // the live screen's status words are not Order History statuses
     }
     // A sample of the screen's controls (button words, test ids, roles) for admin, so clicks are built on the real page.
     // Text is kept only for buttons/options (never names, phones or addresses).
@@ -121,7 +126,9 @@
     });
     const uiSent = {};
     const sendUi = (kind, root) => { if (uiSent[kind] > Date.now() - 30 * 60000) return; uiSent[kind] = Date.now(); bg({ type: 'TALABAT_UI', body: { kind, controls: controlsOf(root) } }).catch(() => null); };
-    const newOrderDialog = () => document.querySelector('[role="dialog"] button[data-testid="dialog_confirm_button"]:not([hidden])')?.closest('[role="dialog"]') || null;
+    // The new-order window. Not the «Please allow notifications» window: it has the same confirm button and stays up on a
+    // PC with notifications off — taken for a new order, it stopped every detail read (found 01-11-2026).
+    const newOrderDialog = () => [...document.querySelectorAll('[role="dialog"]')].find(d => d.querySelector('button[data-testid="dialog_confirm_button"]:not([hidden])') && !/notification|إشعار/i.test(d.innerText || '')) || null;
     const drawer = () => T('details-order-id')?.closest('[data-testid*="drawer"], [role="dialog"], aside') || T('order-details-drawer__content') || null;
     // «في الطريق» for one order whose Apex order left with the pilot: open it (a click on its number), press the button
     // with exactly these words, confirm only a dialog that asks about it, close. Anything unexpected: stop and report.
@@ -156,7 +163,8 @@
     let lastKey = '', lastAt = 0;
     for (;;) {
       try {
-        [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Got it')?.click();
+        // «Please allow notifications»: close it (English or Arabic), only inside that window.
+        for (const d of document.querySelectorAll('[role="dialog"]')) if (/notification|إشعار/i.test(d.innerText || '')) [...d.querySelectorAll('button')].find(b => /^(?:got it|حسنًا|حسنا|فهمت|تمام)$/i.test(b.textContent.trim()))?.click();
         const codes = readCodes(), key = JSON.stringify(codes);
         if (codes.length && (key !== lastKey || Date.now() - lastAt > 60000)) {
           const r = await bg({ type: 'TALABAT_PUSH', orders: [], codes }).catch(() => null);
@@ -175,10 +183,10 @@
         // Payment and bill come only from the live screen (Order History shows them a day later): open each live
         // order's details once (a click on its number, never on a button), read, and close. Nothing is changed.
         for (const c of codes) {
-          if (liveRead.get(c.id) > Date.now() - 10 * 60000 || document.querySelector('[role="dialog"] button[data-testid="dialog_confirm_button"]:not([hidden])')) continue;
+          if (liveRead.get(c.id) > Date.now() - 10 * 60000 || newOrderDialog()) continue;
           liveRead.set(c.id, Date.now());
           const d = await readLiveDetail(c.id);
-          if (d) { await bg({ type: 'TALABAT_PUSH', orders: [{ ...d, store: c.store || undefined }], codes: [] }).catch(() => null); }
+          if (d) { await bg({ type: 'TALABAT_PUSH', orders: [{ ...d, store: c.store || d.store || undefined }], codes: [] }).catch(() => null); }
         }
         say(codes.length + ' أوردر لايف · ' + new Date().toLocaleTimeString('ar-EG-u-nu-latn', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
       } catch {}
@@ -227,7 +235,9 @@
     if (clicked) await sleep(180);
   }
   function readDetail(id) {
-    if ((T('details-order-id')?.innerText || '').trim() !== id) return null;
+    // Order History's window names the order in «details-order-id»; the live window may not: then the order's number on the page will do.
+    const shownId = T('details-order-id');
+    if (shownId ? (shownId.innerText || '').trim() !== id : !(document.body.innerText || '').includes(id)) return null;
     const u = new URL(location.href), placedAt = u.searchParams.get('placedAt'), placed = Date.parse(placedAt || '');
     const vendorId = (u.pathname.match(/;(\d+)\//) || [])[1] || null;
     const d = { status: (T('details-order-status-holder')?.innerText || '').trim().toUpperCase(), billable: (T('billable-status-holder')?.innerText || '').trim() || null, items: [] };
