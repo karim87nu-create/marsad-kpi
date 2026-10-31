@@ -104,5 +104,7 @@ function compareItems(talabat, apex, { learned = new Map(), ratio = 1.13 } = {})
     unmatched: { talabat: missingOnApex.map(({ qty, name, price }) => ({ qty, name, price })), apex: extraOnApex.map(({ no, name, qty, price }) => ({ no, name, qty, price })) } };
 }
 
-export { compareItems, wordScore, SEED, WORDS, key as itemKey };
+// The Apex item numbers a Talabat dish name is known to be (learned from sure links, or the starting list).
+const knownNos = (name, learned = new Map()) => [...new Set([...(learned.get(key(name))?.keys() || []), ...(SEED[key(name)] || []), ...(SEED_VARIANTS.get(variantKey(name)) || [])].map(x => String(x).trim()))];
+export { compareItems, wordScore, knownNos, SEED, WORDS, key as itemKey };
 

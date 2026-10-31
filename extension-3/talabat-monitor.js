@@ -237,6 +237,21 @@
     }
     d.customer = { name: name.slice(0, 160), address: address.slice(0, 360), phone: phone || '' };
     d.deliveryType = lines(T('prop-delivery-type'))[1] || null;
+    // The bill and payment exactly as this order shows them (label + amount), for the transfer page.
+    // Nothing is interpreted here: who funds a discount and how it was paid are decided only from these words.
+    const billWords = /(total|discount|voucher|promo|fee|payment|paid|cash|wallet|card|vat|tax|tip|bill|funded|خصم|قسيمة|رسوم|الدفع|مدفوع|كاش|نقد|إجمالي|الإجمالي|ضريبة)/i;
+    const billSeen = new Set(); d.bill = [];
+    for (const el of (box || document).querySelectorAll('[data-testid]')) {
+      const k = el.dataset.testid || '';
+      if (/^(?:existing-product__|milestone-for__)/.test(k) || el.closest('[data-testid^="existing-product__"], [data-testid="customer-details"]')) continue;
+      const parts = lines(el).map(x => x.trim()).filter(x => x && !/^(?:info|info_outline|help|help_outline|expand_more|expand_less)$/i.test(x));
+      if (parts.length > (billWords.test(k) ? 6 : 3)) continue;   // a single line of the bill, not a whole panel
+      const text = parts.join(' | ').slice(0, 200);
+      if (!text || text.length < 3 || !(billWords.test(k) || billWords.test(text)) || billSeen.has(text)) continue;
+      if ([...el.querySelectorAll('[data-testid]')].some(c => billWords.test(c.dataset.testid || ''))) continue;   // keep the innermost labelled line
+      billSeen.add(text); d.bill.push({ k: k.slice(0, 60), text });
+      if (d.bill.length >= 20) break;
+    }
     return { id, vendorId, placedAt: Number.isFinite(placed) ? new Date(placed).toISOString() : null, status: d.status, detail: d, ...(phone ? { phone } : {}) };
   }
 

@@ -114,9 +114,11 @@ function setup(app) {
       // The exact time comes with the details; until then the time shown on the list row (to the minute).
       const placed = ms(o.placedAt) || ms(o.receivedAt) || ms(o.listAt), d = o.detail || null;
       const customer = customerOf({ ...(o.customer || {}), ...(d?.customer || {}), phone: d?.customer?.phone || o.customer?.phone || o.phone || '' });
-      if (Object.values(customer).some(Boolean)) {
+      const bill = Array.isArray(d?.bill) ? d.bill.slice(0, 20).map(x => ({ k: String(x?.k || '').slice(0, 60), text: String(x?.text || '').slice(0, 200) })).filter(x => x.text) : null;
+      if (Object.values(customer).some(Boolean) || bill?.length) {
         const old = parseJson(prior?.profile, {});
         for (const [k, v] of Object.entries(customer)) if (v) old[k] = v;
+        if (bill?.length) old.bill = bill;   // the bill lines as Talabat shows them, for the transfer page
         orderWrites.push(db.prepare("INSERT INTO match_profiles (source, ref, data) SELECT 'talabat',?,? WHERE " + guard + " ON CONFLICT(source, ref) DO UPDATE SET data = excluded.data").bind(id, JSON.stringify(old), id, guardTime));
       }
       const items = d && Array.isArray(d.items) ? JSON.stringify(d.items.slice(0, 60).map(x => ({ qty: Number(x.qty) || 1, name: String(x.name || '').slice(0, 120), price: Number(x.price) || null,

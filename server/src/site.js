@@ -92,9 +92,19 @@ function setup(app) {
         const customer = customerOf({ name, phone: b.phone, mobile: sh.phone,
           address: [sh.address_1 || b.address_1, sh.address_2 || b.address_2, sh.city || b.city].filter(Boolean).join(' ') });
         const items = Array.isArray(o.line_items) ? o.line_items.slice(0, 80).map(x => ({ name: String(x.name || '').slice(0, 160), qty: Number(x.quantity) || 0,
-          price: (Number(x.total) || 0) + (Number(x.total_tax) || 0) })) : [];
+          price: (Number(x.total) || 0) + (Number(x.total_tax) || 0),
+          // Add-ons/options the website stores on the line (hidden keys start with "_").
+          modifiers: (Array.isArray(x.meta_data) ? x.meta_data : []).filter(m => m && !String(m.key || '').startsWith('_') && ['string', 'number'].includes(typeof (m.display_value ?? m.value)))
+            .slice(0, 20).map(m => (String(m.display_key || m.key || '').slice(0, 60) + ': ' + String(m.display_value ?? m.value).replace(/<[^>]*>/g, '').slice(0, 120)).trim()) })) : [];
         const old = parseJson((await db.prepare("SELECT data FROM match_profiles WHERE source = 'site' AND ref = ?").get(String(o.id)))?.data, {});
-        const profile = { customer: { ...(old.customer || {}) }, items: Array.isArray(o.line_items) ? items : old.items || [] };
+        // Payment and discounts exactly as the website order records them (no guessing).
+        const money = v => Number.isFinite(Number(v)) ? Number(v) : null;
+        const pay = { method: String(o.payment_method || '').slice(0, 60) || null, title: String(o.payment_method_title || '').slice(0, 120) || null, paid: !!o.date_paid || !!o.date_paid_gmt,
+          discount: money(o.discount_total), discountTax: money(o.discount_tax), shipping: money(o.shipping_total), total: money(o.total),
+          coupons: Array.isArray(o.coupon_lines) ? o.coupon_lines.slice(0, 10).map(c => ({ code: String(c.code || '').slice(0, 60), amount: money(c.discount) })) : [],
+          fees: Array.isArray(o.fee_lines) ? o.fee_lines.slice(0, 10).map(f => ({ name: String(f.name || '').slice(0, 80), amount: money(f.total) })) : [],
+          note: String(o.customer_note || '').slice(0, 500) || null };
+        const profile = { customer: { ...(old.customer || {}) }, items: Array.isArray(o.line_items) ? items : old.items || [], payment: 'payment_method' in o || 'discount_total' in o ? pay : old.payment || null };
         for (const [k, v] of Object.entries(customer)) if (v) profile.customer[k] = v;
         upsert.push(db.prepare("INSERT INTO match_profiles (source, ref, data) SELECT 'site',?,? WHERE NOT EXISTS (SELECT 1 FROM site_orders WHERE id=? AND modified_at>?) ON CONFLICT(source, ref) DO UPDATE SET data = excluded.data").bind(String(o.id), JSON.stringify(profile),o.id,modified));
         upsert.push(db.prepare('INSERT INTO site_orders (id, day, status, fulfillment, total, created_at, modified_at, notes_at) VALUES (?,?,?,?,?,?,?,NULL) ON CONFLICT(id) DO UPDATE SET status = excluded.status, fulfillment = excluded.fulfillment, total = excluded.total, modified_at = excluded.modified_at, notes_at = CASE WHEN excluded.modified_at > IFNULL(site_orders.modified_at, 0) THEN NULL ELSE site_orders.notes_at END WHERE COALESCE(site_orders.modified_at,0) <= excluded.modified_at')
@@ -221,6 +231,7 @@ function setup(app) {
     }
     return { matches, states: decision.states, apexCount: apex.length, unmatched: apex.filter(a => !decision.used.has(String(a.no))).map(a => ({ no: a.no, sn: a.sn ?? null, at: iso(a.t), branch: a.branch, user: names[a.user] || a.user, amount: a.amount })), hasList: Array.isArray(d?.online) };
   }
+  app.site = { apexMatch };
   app.route('POST', '/api/site/link', async ctx => {
     const who = await app.requireAdmin(ctx, 'write'), id = Number(ctx.body.siteId);
     const no = ctx.body.apexNo == null || ctx.body.apexNo === '' ? null : String(ctx.body.apexNo);

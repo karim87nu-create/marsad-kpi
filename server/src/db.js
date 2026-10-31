@@ -233,6 +233,8 @@ CREATE TABLE IF NOT EXISTS wa_claims (message_id INTEGER PRIMARY KEY, kind TEXT 
 CREATE TABLE IF NOT EXISTS wa_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, talabat_id TEXT UNIQUE NOT NULL, day TEXT NOT NULL, phone TEXT, created_at INTEGER NOT NULL, welcome_at INTEGER, survey_at INTEGER, tries INTEGER NOT NULL DEFAULT 0, error TEXT, sending_at INTEGER);
 CREATE INDEX IF NOT EXISTS wa_messages_day ON wa_messages(day);
 CREATE TABLE IF NOT EXISTS apex_names (apex_name TEXT PRIMARY KEY, employee_id INTEGER NOT NULL, set_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS transfer_jobs (source TEXT NOT NULL, ref TEXT NOT NULL, day TEXT NOT NULL, state TEXT NOT NULL, employee_id INTEGER, employee_name TEXT, payment TEXT, note TEXT, at INTEGER NOT NULL, PRIMARY KEY(source, ref));
+CREATE INDEX IF NOT EXISTS transfer_jobs_day ON transfer_jobs(day);
 `;
 
 // Statements one by one (D1 runs one statement per call); comments removed.
