@@ -169,3 +169,19 @@ test('Talabat: dishes stopped per branch from admin, read by the Talabat screen'
     assert.deepEqual(s.stopped, { 'الدهان، مدينتي': [fillet] });
   } finally { await t.close(); }
 });
+
+test('Talabat: an extra Firefox profile (a branch\'s Live Orders) gets its own key without stopping the main screen', async () => {
+  const t = await start({ at: cairoToUtc(2026, 10, 31, 22, 0, 0) });
+  try {
+    const admin = await t.admin();
+    const main = (await admin('POST', '/api/talabat/token')).body.token;
+    const extra = (await admin('POST', '/api/talabat/token', { extra: true })).body.token;
+    const push = tok => t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': tok }, body: { codes: [{ id: '4688946021', code: '9171', store: 'الدهان، مدينتي' }] } });
+    assert.equal((await push(main)).status, 200, 'main still works');
+    const r = await push(extra);
+    assert.equal(r.status, 200, 'extra works too');
+    assert.equal(r.body.phones, false, 'only the main screen sends WhatsApp');
+    assert.equal((await t.call('GET', '/api/talabat/actions', { headers: { 'x-talabat-token': extra } })).status, 200);
+    assert.equal((await push('tal_' + '0'.repeat(48))).status, 401);
+  } finally { await t.close(); }
+});

@@ -25,8 +25,8 @@ function setup(app) {
   const put = (k, v) => db.prepare('INSERT INTO settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(k, String(v));
   const config = async () => clean(parseJson(await setting('talabat_actions'), {}));
   const screen = async ctx => {
-    const hash = await setting('talabat_token_hash'), given = ctx.header('x-talabat-token');
-    if (!hash || !given || sha256(given) !== hash) fail(401, 'مفتاح شاشة طلبات غير صحيح');
+    const hash = await setting('talabat_token_hash'), given = ctx.header('x-talabat-token'), extras = parseJson(await setting('talabat_token_extra'), []);
+    if (!given || !((hash && sha256(given) === hash) || extras.includes(sha256(given)))) fail(401, 'مفتاح شاشة طلبات غير صحيح');
   };
 
   // Admin: the branches seen on Talabat lately, each with its setting, the last results and the screen samples.

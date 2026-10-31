@@ -180,10 +180,10 @@ const waSender = sender => { try { return new URL(sender.url).hostname === 'web.
 async function talabatMessage(m, sender) {
   if (m.type === 'TALABAT_LINK' && adminSender(sender)) {
     if (typeof m.token !== 'string' || !/^tal_[a-f0-9]{48}$/.test(m.token)) throw Error('invalid_link');
-    await store.set(TALABAT, { token: m.token, linkedAt: new Date().toISOString() });
+    await store.set(TALABAT, { token: m.token, linkedAt: new Date().toISOString(), extra: m.extra === true });
     return { ok: true };
   }
-  if (m.type === 'TALABAT_STATUS' && adminSender(sender)) return { linked: !!(await store.get(TALABAT, null)), version: VERSION };
+  if (m.type === 'TALABAT_STATUS' && adminSender(sender)) { const l = await store.get(TALABAT, null); return { linked: !!l, extra: !!l?.extra, version: VERSION }; }
   if (m.type === 'TALABAT_UNLINK' && adminSender(sender)) { await store.set(TALABAT, null); return { ok: true }; }
   if (!talabatSender(sender)) throw Error('invalid_sender');
   const t = await store.get(TALABAT, null);
@@ -197,6 +197,12 @@ async function talabatMessage(m, sender) {
     // Two tabs on the monitor: Order History (the times) and Live Orders (the short #codes). The second opens by itself.
     const alive = id => browser.tabs.get(id).then(() => true, () => false), tabId = sender.tab.id;
     for (const r of ['history', 'live']) if (talabatTabs[r] != null && talabatTabs[r] !== tabId && !(await alive(talabatTabs[r]))) delete talabatTabs[r];
+    // An extra profile (one branch's Live Orders): only its live tab works; no Order History, no new tabs, no WhatsApp.
+    if (t.extra) {
+      if (talabatTabs.live != null && talabatTabs.live !== tabId && !(await alive(talabatTabs.live))) delete talabatTabs.live;
+      if (talabatTabs.live == null && /\/live-orders/.test(new URL(sender.url).pathname)) talabatTabs.live = tabId;
+      return { active: true, role: talabatTabs.live === tabId ? 'live' : 'extra' };
+    }
     let role = Object.keys(talabatTabs).find(r => talabatTabs[r] === tabId);
     if (!role) { role = talabatTabs.history == null ? 'history' : talabatTabs.live == null ? 'live' : 'extra'; if (role !== 'extra') talabatTabs[role] = tabId; }
     if (talabatTabs.history != null && talabatTabs.live == null) { const n = await browser.tabs.create({ url: 'https://partner-app.talabat.com/live-orders', active: false }); talabatTabs.live = n.id; }
@@ -207,7 +213,7 @@ async function talabatMessage(m, sender) {
     const r = await api('/api/talabat/push', { method: 'POST', headers: { 'content-type': 'application/json', 'x-talabat-token': t.token }, body: JSON.stringify({ orders: Array.isArray(m.orders) ? m.orders.slice(0, 800) : [], codes: Array.isArray(m.codes) ? m.codes.slice(0, 200) : [] }), timeout: 30000 });
     const d = r.json();
     // WhatsApp messages on: keep one WhatsApp Web tab open on this PC (it sends them).
-    if (r.ok && d.phones && !(talabatTabs.wa != null && await browser.tabs.get(talabatTabs.wa).then(() => true, () => false))) {
+    if (r.ok && d.phones && !t.extra && !(talabatTabs.wa != null && await browser.tabs.get(talabatTabs.wa).then(() => true, () => false))) {
       const open = (await browser.tabs.query({ url: 'https://web.whatsapp.com/*' }).catch(() => []))[0];
       talabatTabs.wa = open ? open.id : (await browser.tabs.create({ url: 'https://web.whatsapp.com/', active: false })).id;
     }

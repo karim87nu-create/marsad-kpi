@@ -47,15 +47,21 @@ function setup(app) {
   app.route('POST', '/api/talabat/token', async ctx => {
     const who = await app.requireAdmin(ctx, 'admin');
     const token = 'tal_' + randomToken(24);
-    await put('talabat_token_hash', sha256(token));
-    await app.audit('talabat_token_created', null, { actor: who.name });
-    return { token };
+    // «extra»: one more Firefox profile showing a branch's Live Orders (Karim 31-10); it reads and acts on its own live
+    // screen only. The main screen (Order History + WhatsApp) keeps its key. A new main key replaces only the main one.
+    if (ctx.body?.extra === true) {
+      const list = parseJson(await setting('talabat_token_extra'), []);
+      await put('talabat_token_extra', JSON.stringify([sha256(token), ...list].slice(0, 10)));
+    } else await put('talabat_token_hash', sha256(token));
+    await app.audit('talabat_token_created', null, { actor: who.name, extra: ctx.body?.extra === true });
+    return { token, extra: ctx.body?.extra === true };
   });
 
   // ---- the monitor pushes what it read ----
   app.route('POST', '/api/talabat/push', async ctx => {
-    const hash = await setting('talabat_token_hash'), given = ctx.header('x-talabat-token');
-    if (!hash || !given || sha256(given) !== hash) fail(401, 'مفتاح شاشة طلبات غير صحيح');
+    const hash = await setting('talabat_token_hash'), given = ctx.header('x-talabat-token'), extras = parseJson(await setting('talabat_token_extra'), []);
+    const main = !!hash && !!given && sha256(given) === hash;
+    if (!given || (!main && !extras.includes(sha256(given)))) fail(401, 'مفتاح شاشة طلبات غير صحيح');
     const now = ctx.now, list = (Array.isArray(ctx.body?.orders) ? ctx.body.orders : []).slice(0, 800), writes = [];
     // From Live Orders: the short code (#2703) next to the full number; it is what is written on Apex next to the customer.
     for (const c of (Array.isArray(ctx.body?.codes) ? ctx.body.codes : []).slice(0, 200)) {
@@ -173,7 +179,7 @@ function setup(app) {
     else await alertWork;
     // WhatsApp (when on): the customers' numbers for the welcome and the survey; «phones» tells the screen to read them.
     await app.whatsapp?.take(accepted, now);
-    return { ok: true, want: want.map(r => r.id), phones: !!await app.whatsapp?.wantPhones(), serverNow: iso(now) };
+    return { ok: true, want: want.map(r => r.id), phones: main && !!await app.whatsapp?.wantPhones(), serverNow: iso(now) };
   }, { limit: 1024 * 1024 });
 
   // ---- Talabat order ↔ Apex order ----

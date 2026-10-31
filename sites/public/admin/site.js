@@ -271,9 +271,19 @@ window.MarsadSite = function MarsadSite(ctx) {
     {
       const ext = await ctx.extensionCall({ type: 'TALABAT_STATUS' }, 1500);
       $('talKeyStatus').replaceChildren(k.lastPush ? h('span', { className: k.ageSeconds < 120 ? 'ok' : 'error', textContent: 'آخر قراءة من شاشة المراقبة ' + t12(k.lastPush) + (k.ageSeconds < 120 ? ' — شغالة' : ' — واقفة') }) : h('span', { className: 'muted', textContent: 'لسه مفيش جهاز متربط' }),
-        ' · ', h('span', { className: 'muted', textContent: ext ? (ext.linked ? 'الجهاز ده هو شاشة المراقبة' : 'الإضافة موجودة على الجهاز ده (نسخة ' + ext.version + ')') : 'الإضافة مش على الجهاز ده (أو نسخة قديمة)' }));
+        ' · ', h('span', { className: 'muted', textContent: ext ? (ext.linked ? (ext.extra ? 'البروفايل ده متربط كلايف فرع' : 'الجهاز ده هو شاشة المراقبة') : 'الإضافة موجودة على الجهاز ده (نسخة ' + ext.version + ')') : 'الإضافة مش على الجهاز ده (أو نسخة قديمة)' }));
     }
   }
+  $('talLinkExtra').onclick = async () => {
+    $('talKeyNote').textContent = 'جارٍ الربط…';
+    if (!await ctx.extensionCall({ type: 'TALABAT_STATUS' }, 2000)) { $('talKeyNote').textContent = 'إضافة المرصد مش على البروفايل ده.'; return; }
+    try {
+      const { token } = await api('/api/talabat/token', { method: 'POST', body: { extra: true } });
+      const r = await ctx.extensionCall({ type: 'LINK_TALABAT', token, extra: true });
+      $('talKeyNote').textContent = r?.ok ? 'اتربط البروفايل ده كلايف فرع. افتح فيه partner-app.talabat.com/live-orders بحساب الفرع. الشاشة الأساسية لسه شغالة.' : 'الإضافة رفضت الربط: ' + (r?.error || 'بدون رد');
+      renderTalabatKey(true);
+    } catch (e) { $('talKeyNote').textContent = e.message; }
+  };
   $('talLink').onclick = async () => {
     $('talKeyNote').textContent = 'جارٍ الربط…';
     if (!await ctx.extensionCall({ type: 'TALABAT_STATUS' }, 2000)) { $('talKeyNote').textContent = 'إضافة المرصد (3.1.0 أو أحدث) مش على الجهاز ده.'; return; }
