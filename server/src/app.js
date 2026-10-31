@@ -2,6 +2,8 @@
 import { createSigner, createLimiter, hashPassword, randomToken } from './security.js';
 import { createLegacy } from './legacy.js';
 import { migrate } from './db.js';
+// Raised with each change worth checking after a publish (shown by /api/health).
+const BUILD = '2026-11-01.1';
 
 class HttpError extends Error {
   constructor(status, code, extra) {
@@ -91,7 +93,8 @@ function createApp({ db, config: input = {}, now = () => Date.now() }) {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
     let url;
     try { url = new URL(request.url); } catch { return send(400, { error: 'bad_url' }); }
-    if (url.pathname === '/health' || url.pathname === '/api/health') return send(200, { ok: true });
+    // build: which code is deployed (checked from outside after each publish; no secrets).
+    if (url.pathname === '/health' || url.pathname === '/api/health') return send(200, { ok: true, build: BUILD });
     const route = routes.get(request.method + ' ' + url.pathname);
     if (!route) return send(404, { error: 'not_found' });
     let response;
