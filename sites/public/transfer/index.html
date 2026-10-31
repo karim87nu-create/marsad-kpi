@@ -171,9 +171,13 @@ function autoHtml(o) {
   // Delivery area on Apex (decides the delivery service charge), only the chosen branch's areas.
   const areas = (data.locations || []).filter(l => !p.branch || l.branch == null || String(l.branch) === String(p.branch)).sort((a, b) => a.name.localeCompare(b.name, 'ar'));
   const loc = '<select data-pick="loc"><option value="">منطقة العميل على Apex…</option>' + areas.map(l => '<option value="' + l.no + '"' + (String(p.loc) === String(l.no) ? ' selected' : '') + '>' + esc(l.name) + (l.service != null ? ' (خدمة ' + money(l.service) + ')' : '') + '</option>').join('') + '</select>';
-  const lines = fl.map((i, n) => '<div class="pay" style="margin-top:4px"><span' + (i.kind === 'addon' ? ' class="warn"' : '') + '>' + esc(i.qty) + '× ' + esc(i.label) + '</span> ' +
-    (i.apex?.length > 1 ? '<select data-pick="item" data-n="' + n + '"><option value="">اختار…</option>' + i.apex.map(a => '<option value="' + esc(a.no) + '"' + (p.items[n] === a.no ? ' selected' : '') + '>' + esc(a.no) + (a.name ? ' ' + esc(a.name) : '') + '</option>').join('') + '</select>' : '') +
-    '<input data-pick="item" data-n="' + n + '" inputmode="numeric" placeholder="رقم الصنف على Apex" style="width:150px" value="' + esc(p.items[n] || '') + '"></div>').join('');
+  // The employee picks by name (nobody knows the Apex numbers): the suggestion is shown by name, other sizes in a list, and a search by name for anything else.
+  const nameOf = no => (data.apexItems || []).find(a => a.no === no)?.name || '';
+  const lines = fl.map((i, n) => '<div class="pay" style="margin-top:6px;flex-wrap:wrap"><span' + (i.kind === 'addon' ? ' class="warn"' : '') + '>' + esc(i.qty) + '× ' + esc(i.label) + '</span> ← ' +
+    (p.items[n] ? '<b>' + esc(nameOf(p.items[n]) || ((i.apex || []).find(a => a.no === p.items[n])?.name) || 'صنف ' + p.items[n]) + '</b>' : '<span class="warn">اختار الصنف على Apex</span>') + ' ' +
+    (i.apex?.length > 1 ? '<select data-pick="item" data-n="' + n + '"><option value="">' + (p.items[n] ? 'غيّر الحجم/الصنف…' : 'اختار…') + '</option>' + i.apex.map(a => '<option value="' + esc(a.no) + '"' + (p.items[n] === a.no ? ' selected' : '') + '>' + esc(a.name || nameOf(a.no) || a.no) + '</option>').join('') + '</select>' : '') +
+    '<input data-pick="item" data-find="1" data-n="' + n + '" list="apexItems" placeholder="' + (p.items[n] ? 'صنف تاني؟ اكتب اسمه' : 'اكتب اسم الصنف على Apex') + '" style="width:190px"></div>').join('') +
+    '<datalist id="apexItems">' + (data.apexItems || []).map(a => '<option value="' + esc(a.name) + '">').join('') + '</datalist>';
   const label = mode === 'shadow' ? 'معاينة آلية (من غير كتابة)' : mode === 'test' ? 'تحويل آلي (قاعدة الاختبار)' : 'تحويل آلي لـApex';
   return '<details class="box"' + (p.open ? ' open' : '') + ' data-pick-box><summary>' + label + '</summary><div class="pay" style="margin-top:6px"><span>الفرع على Apex:</span> ' + br + '</div>' + lines +
     '<div class="actions" style="margin-top:8px"><button data-act="auto">' + label + '</button></div></details>';
@@ -258,7 +262,13 @@ $('list').addEventListener('change', e => {
   const c = el.closest('.card'), p = picks[c.dataset.k]; if (!p) return;
   if (el.dataset.pick === 'branch') { p.branch = el.value; p.loc = ''; render(); return; }
   if (el.dataset.pick === 'loc') p.loc = el.value;
-  if (el.dataset.pick === 'item') { p.items[Number(el.dataset.n)] = el.value.trim(); const twin = c.querySelectorAll('[data-pick="item"][data-n="' + el.dataset.n + '"]'); twin.forEach(x => { if (x !== el) x.value = el.value.trim(); }); }
+  if (el.dataset.pick === 'item') {
+    const v = el.value.trim(); if (!v) return;
+    // A name typed in the search box → its Apex number (an exact name, else the one name that contains what was typed).
+    let no = v;
+    if (el.dataset.find) { const all = data.apexItems || [], hit = all.find(a => a.name === v) || (all.filter(a => a.name.includes(v)).length === 1 ? all.find(a => a.name.includes(v)) : null) || all.find(a => a.no === v); if (!hit) { toast('الصنف ده مش في Apex — اختاره من القايمة'); return; } no = hit.no; }
+    p.items[Number(el.dataset.n)] = no; p.open = true; render();
+  }
 });
 $('list').addEventListener('toggle', e => { const d = e.target.closest?.('[data-pick-box]'); if (d) { const p = picks[d.closest('.card').dataset.k]; if (p) p.open = d.open; } }, true);
 async function load() {

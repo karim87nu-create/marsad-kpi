@@ -10,6 +10,8 @@
 import { businessDay, iso, validDate } from './time.js';
 import { parseJson } from './order-match.js';
 import { knownNos } from './items.js';
+import { APEX_NAMES } from './menu-seed.js';
+const APEX_ITEM_LIST = Object.entries(APEX_NAMES).map(([no, name]) => ({ no, name }));
 import { sha256, randomToken } from './security.js';
 
 const TOKEN_MS = 12 * 3600000;
@@ -70,6 +72,7 @@ const WEIGHTS = [
   [/quarter|1\/4|ربع/i, /1\/4|ربع/, 'ربع كيلو'],
   [/third|1\/3|ثلث|تلت/i, /1\/3|ثلث|تلت/, 'تلت كيلو'],
   [/half|1\/2|نص|نصف/i, /1\/2|نص/, 'نص كيلو'],
+  [/^\s*(?:1\s*)?(?:kilo|kg|كيلو)(?:\s|$)/i, /^\s*(?:ك|كيلو)\s/, 'كيلو'],
 ];
 
 // Apex branches (Branches table, read 2026-10-31): number → name, for the employee's branch choice.
@@ -110,7 +113,7 @@ function setup(app) {
     const me = await who(ctx);
     const day = validDate(String(ctx.query.day || '')) ? ctx.query.day : businessDay(ctx.now);
     const snap = parseJson((await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(day))?.data, {});
-    const apexName = new Map();
+    const apexName = new Map(Object.entries(APEX_NAMES));
     for (const a of [...(snap.online || []), ...(snap.orders || [])]) for (const i of a.items || []) if (i?.no && i?.name) apexName.set(String(i.no).trim(), i.name);
     const learned = new Map();
     if (app.learn) for (const [n, m] of await app.learn.pairs('match-v2:item:talabat')) { const ok = new Map([...m].filter(([, c]) => c >= 2)); if (ok.size) learned.set(n, ok); }
@@ -172,7 +175,7 @@ function setup(app) {
     // Until an admin chooses, the automatic transfer only previews (shadow): it never writes to Apex.
     const mode = (await db.prepare("SELECT value FROM settings WHERE key = 'apex_bridge_mode'").get())?.value || 'shadow';
     const locations = (Array.isArray(snap.locations) ? snap.locations : []).filter(l => Number.isInteger(l?.no)).map(l => ({ no: l.no, name: String(l.name || ''), branch: l.branch ?? null, service: l.service ?? null }));
-    return { day, me: { name: me.name, staff: me.staff }, serverNow: iso(ctx.now), autoTransfer: mode, branches: APEX_BRANCHES, locations, orders: list };
+    return { day, me: { name: me.name, staff: me.staff }, serverNow: iso(ctx.now), autoTransfer: mode, branches: APEX_BRANCHES, locations, apexItems: mode && mode !== 'off' ? APEX_ITEM_LIST : [], orders: list };
   });
 
   // ---- claim / entered / release ----
