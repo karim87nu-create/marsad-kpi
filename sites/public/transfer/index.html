@@ -172,13 +172,14 @@ function autoHtml(o) {
   const areas = (data.locations || []).filter(l => !p.branch || l.branch == null || String(l.branch) === String(p.branch)).sort((a, b) => a.name.localeCompare(b.name, 'ar'));
   const loc = '<select data-pick="loc"><option value="">منطقة العميل على Apex…</option>' + areas.map(l => '<option value="' + l.no + '"' + (String(p.loc) === String(l.no) ? ' selected' : '') + '>' + esc(l.name) + (l.service != null ? ' (خدمة ' + money(l.service) + ')' : '') + '</option>').join('') + '</select>';
   // The employee picks by name (nobody knows the Apex numbers): the suggestion is shown by name, other sizes in a list, and a search by name for anything else.
-  const nameOf = no => (data.apexItems || []).find(a => a.no === no)?.name || '';
+  const nameOf = no => apexNames.get(no) || '';
   const lines = fl.map((i, n) => '<div class="pay" style="margin-top:6px;flex-wrap:wrap"><span' + (i.kind === 'addon' ? ' class="warn"' : '') + '>' + esc(i.qty) + '× ' + esc(i.label) + '</span> ← ' +
     (p.items[n] ? '<b>' + esc(nameOf(p.items[n]) || ((i.apex || []).find(a => a.no === p.items[n])?.name) || 'صنف ' + p.items[n]) + '</b>' : '<span class="warn">اختار الصنف على Apex</span>') + ' ' +
     (i.apex?.length > 1 ? '<select data-pick="item" data-n="' + n + '"><option value="">' + (p.items[n] ? 'غيّر الحجم/الصنف…' : 'اختار…') + '</option>' + i.apex.map(a => '<option value="' + esc(a.no) + '"' + (p.items[n] === a.no ? ' selected' : '') + '>' + esc(a.name || nameOf(a.no) || a.no) + '</option>').join('') + '</select>' : '') +
-    '<input data-pick="item" data-find="1" data-n="' + n + '" list="apexItems" placeholder="' + (p.items[n] ? 'صنف تاني؟ اكتب اسمه' : 'اكتب اسم الصنف على Apex') + '" style="width:190px"></div>').join('') +
-    '<datalist id="apexItems">' + (data.apexItems || []).map(a => '<option value="' + esc(a.name) + '">').join('') + '</datalist>';
+    '<input data-pick="item" data-find="1" data-n="' + n + '" list="apexItems" placeholder="' + (p.items[n] ? 'صنف تاني؟ اكتب اسمه' : 'اكتب اسم الصنف على Apex') + '" style="width:190px"></div>').join('');
   const label = mode === 'shadow' ? 'معاينة آلية (من غير كتابة)' : mode === 'test' ? 'تحويل آلي (قاعدة الاختبار)' : 'تحويل آلي لـApex';
+  // Closed: only the title (the lists of areas and items are built when it is opened — the page stays light).
+  if (!p.open) return '<details class="box" data-pick-box><summary>' + label + '</summary></details>';
   return '<details class="box"' + (p.open ? ' open' : '') + ' data-pick-box><summary>' + label + '</summary><div class="pay" style="margin-top:6px"><span>الفرع على Apex:</span> ' + br + '</div>' + lines +
     '<div class="actions" style="margin-top:8px"><button data-act="auto">' + label + '</button></div></details>';
 }
@@ -208,14 +209,22 @@ function card(o) {
       '</div>') +
   '</div>';
 }
-function render() {
+let apexNames = new Map(), lastDraw = '';
+function render(force) {
   if (!data) return;
+  // The Apex item names for the search box: one list for the whole page, built once.
+  if (data.apexItems?.length && apexNames.size !== data.apexItems.length) {
+    apexNames = new Map(data.apexItems.map(a => [a.no, a.name]));
+    let dl = document.getElementById('apexItems'); if (!dl) { dl = document.createElement('datalist'); dl.id = 'apexItems'; document.body.append(dl); }
+    dl.innerHTML = data.apexItems.map(a => '<option value="' + esc(a.name) + '">').join('');
+  }
   // «لسه»: not on Apex yet and not already out with the rider (those were entered before; see «الكل»).
   const waiting = o => !o.apex && !o.out && !/^(?:entered|auto_done)$/.test(o.job?.state || '');
   const list = data.orders.filter(o => (!source || o.source === source) && (filter === 'all' || waiting(o)));
   const todo = data.orders.filter(waiting).length;
   $('count').textContent = 'لسه: ' + todo + ' · الكل: ' + data.orders.length;
-  $('list').innerHTML = list.length ? list.map(card).join('') : '<div class="empty">مفيش أوردرات هنا دلوقتي</div>';
+  const html = list.length ? list.map(card).join('') : '<div class="empty">مفيش أوردرات هنا دلوقتي</div>';
+  if (html !== lastDraw) { $('list').innerHTML = html; lastDraw = html; }   // nothing changed: the page is not rebuilt
 }
 $('list').addEventListener('click', async e => {
   const b = e.target.closest('button'); if (!b) return;
@@ -271,7 +280,7 @@ $('list').addEventListener('change', e => {
     p.items[Number(el.dataset.n)] = no; p.open = true; render();
   }
 });
-$('list').addEventListener('toggle', e => { const d = e.target.closest?.('[data-pick-box]'); if (d) { const p = picks[d.closest('.card').dataset.k]; if (p) p.open = d.open; } }, true);
+$('list').addEventListener('toggle', e => { const d = e.target.closest?.('[data-pick-box]'); if (d) { const p = picks[d.closest('.card').dataset.k]; if (p && p.open !== d.open) { p.open = d.open; if (d.open) render(); } } }, true);
 async function load() {
   try { data = await api('GET', '/api/transfer/queue'); $('me').textContent = data.me.name; const a = $('auto'); a.textContent = { off: 'التحويل الآلي متوقف — سجّل على Apex بإيدك', shadow: 'التحويل الآلي: معاينة بس — سجّل بإيدك', test: 'التحويل الآلي: تجربة على قاعدة الاختبار — سجّل بإيدك', live: 'التحويل الآلي شغال' }[data.autoTransfer] || ''; a.className = 'pill' + (data.autoTransfer === 'live' ? '' : ' off'); if (!$('list').contains(document.activeElement) || !/^(INPUT|SELECT)$/.test(document.activeElement.tagName)) render(); }
   catch (e) { if (token) toast(e.message); }

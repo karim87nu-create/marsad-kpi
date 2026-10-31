@@ -189,3 +189,15 @@ test('Talabat: an extra Firefox profile (a branch\'s Live Orders) gets its own k
     assert.equal((await t.call('POST', '/api/talabat/push', { headers: { 'x-device-token': 'nope' }, body: { codes: [] } })).status, 401);
   } finally { await t.close(); }
 });
+
+test('Talabat: an order first seen on a live screen shows on the transfer page at once (before Order History has it)', async () => {
+  const t = await start({ at: cairoToUtc(2026, 10, 31, 23, 0, 0) });
+  try {
+    const admin = await t.admin();
+    await t.employee(admin, { name: 'سارة', code: 'E1', pin: '1111' });
+    const tok = (await t.call('POST', '/api/transfer/login', { body: { pin: '1111' } })).body.token;
+    await t.call('POST', '/api/talabat/push', { headers: { 'x-device-token': '7000865f1220458f86506b41a97cab7d' }, body: { codes: [{ id: '4689282172', code: '9301', store: 'الدهان سيتي ستار مول، مكرم عبيد' }] } });
+    const q = (await t.call('GET', '/api/transfer/queue?day=2026-10-31', { headers: { 'x-transfer-session': tok } })).body;
+    assert.deepEqual(q.orders.map(o => [o.ref, o.code]), [['4689282172', '9301']]);
+  } finally { await t.close(); }
+});

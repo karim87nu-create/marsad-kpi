@@ -69,8 +69,10 @@ function setup(app) {
     for (const c of (Array.isArray(ctx.body?.codes) ? ctx.body.codes : []).slice(0, 200)) {
       const id = String(c.id || '').replace(/\D/g, '').slice(0, 20), code = String(c.code || '').replace(/\D/g, '').slice(0, 10);
       if (id.length < 6 || !code) continue;
-      writes.push(db.prepare('INSERT INTO talabat_orders (id, day, code, store, first_seen, updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET code = excluded.code, store = COALESCE(talabat_orders.store, excluded.store)')
-        .bind(id, businessDay(now), code, c.store ? String(c.store).slice(0, 160) : null, now, now));
+      // First seen on a live screen: its time counts as received until Order History gives the real one, so the order shows
+      // on the transfer page at once (Karim 31-10: live orders on other PCs never appeared until History caught up).
+      writes.push(db.prepare('INSERT INTO talabat_orders (id, day, code, store, first_seen, updated_at, received_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET code = excluded.code, store = COALESCE(talabat_orders.store, excluded.store), received_at = CASE WHEN talabat_orders.received_at IS NULL AND talabat_orders.placed_at IS NULL THEN excluded.received_at ELSE talabat_orders.received_at END')
+        .bind(id, businessDay(now), code, c.store ? String(c.store).slice(0, 160) : null, now, now, now));
       // A payment badge seen on the live card (its exact words), kept for the transfer page.
       if (c.pay) {
         const prof = parseJson((await db.prepare("SELECT data FROM match_profiles WHERE source = 'talabat' AND ref = ?").get(id))?.data, {});
