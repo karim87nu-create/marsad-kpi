@@ -94,8 +94,9 @@ function compareItems(talabat, apex, { learned = new Map(), ratio = 1.13 } = {})
         // «?× name»: the add-on's count was not readable — never assumed, so it is not counted as matched.
         if (/^\?\s*[x×]/.test(String(modifier).trim())) continue;
         const parts = /^(?:(\d+(?:\.\d+)?)\s*[x×]\s*)?(.+?)(?:\s*[x×]\s*(\d+(?:\.\d+)?))?$/i.exec(String(modifier).trim());
-        // The count shown on Talabat is per dish; Apex writes the add-on row for all the dishes (2 dishes × 2 = 4).
-        const per = Number(parts?.[1] || parts?.[3]) || 1, modifierName = (parts?.[2] || String(modifier)).trim(), modifierQty = per * (Number(t.qty) || 1);
+        // Karim 31-10: the count Talabat shows is for all the dishes together (it is divided over them), so Apex's add-on
+        // row has that same count. A line without a count (older readings) keeps the dish's count.
+        const shown = Number(parts?.[1] || parts?.[3]), modifierName = (parts?.[2] || String(modifier)).trim(), modifierQty = shown || Number(t.qty) || 1;
         const a = A.find(x => !usedA.has(x.i) && Math.abs((x.qty || 1) - modifierQty) <= 0.01 && key(ar(x.name)) === key(ar(modifierName)));
         if (a) usedA.add(a.i);
       }

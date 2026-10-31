@@ -76,11 +76,12 @@ test('items: a Talabat dish entered with Apex\'s own «طلبات» item (known 
   } finally { await t.close(); }
 });
 
-test('add-ons: the count is per dish (2 dishes × 2 = 4 on Apex) and an unreadable count is never taken as 1', async () => {
+test('add-ons: the count Talabat shows is for all the dishes together (Apex has the same count); an unreadable count is never taken as 1', async () => {
   const { compareItems } = await import('../src/items.js');
   const T = m => [{ qty: 2, name: 'Kofta', price: 600, modifiers: [m], modifierRead: true, modifierComplete: true }];
   const A = q => [{ no: '0108001', name: 'ك كفته', qty: 2, price: 263 }, { no: '0103001', name: 'Mombar', qty: q, price: 50 }];
-  assert.equal(compareItems(T('2× Mombar'), A(4)).extraOnApex.length, 0, '2 per dish × 2 dishes');
-  assert.equal(compareItems(T('2× Mombar'), A(2)).extraOnApex.length, 1, 'only 2 on Apex is short');
+  assert.equal(compareItems(T('2× Mombar'), A(2)).extraOnApex.length, 0, '2 dishes, 2 mombar in all');
+  assert.equal(compareItems(T('2× Mombar'), A(4)).extraOnApex.length, 1, 'not multiplied by the dishes');
+  assert.equal(compareItems(T('1× Mombar'), A(1)).extraOnApex.length, 0, 'one mombar for the two dishes');
   assert.equal(compareItems(T('?× Mombar'), A(2)).extraOnApex.length, 1, 'unknown count: not confirmed');
 });

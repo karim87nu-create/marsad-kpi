@@ -125,7 +125,7 @@ test('Talabat details: options are read from their own elements even while the p
   assert.equal(plain.name,'Boneless Fawteh Kaware'); assert.deepEqual(plain.modifiers,[]); assert.equal(plain.modifierComplete,true);
   assert.equal(chicken.name,'Grilled Chicken Breasts'); assert.equal(chicken.price,285);
   assert.deepEqual(chicken.options,[{qty:1,name:'Quarter Kilo',price:214},{qty:2,name:'Basmati Rice',price:71}]);
-  assert.deepEqual(chicken.modifiers,['Quarter Kilo','2× Basmati Rice']); assert.equal(chicken.modifierComplete,true);
+  assert.deepEqual(chicken.modifiers,['1× Quarter Kilo','2× Basmati Rice']); assert.equal(chicken.modifierComplete,true);
   assert.equal(r.detail.subtotal,1220);
   // Every product row is a button with aria-expanded="false" on the real page; a plain one still has no add-ons.
   // The bill comes as label | value pairs from «Subtotal» (the payment line has no testid of its own).

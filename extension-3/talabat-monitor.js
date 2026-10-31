@@ -286,7 +286,7 @@
       const hasExpandIcon = /\b(?:expand_more|expand_less|keyboard_arrow_down|keyboard_arrow_up)\b/i.test(p.textContent || '');
       const fromOptions = options.length > 0 || !hasExpandIcon;   // options found, or nothing to expand: the list is complete
       const modifierComplete = fromOptions || (productModifierExpanded(control) && !iconStillCollapsed);
-      const mods = fromOptions ? options.map(o => (o.qty == null ? '?× ' : o.qty > 1 ? o.qty + '× ' : '') + o.name) : modifiers;
+      const mods = fromOptions ? options.map(o => (o.qty == null ? '?' : o.qty) + '× ' + o.name) : modifiers;   // the count as Talabat shows it (all the dishes together)
       d.items.push({ qty: Number((l[0] || '').replace(/[^\d]/g, '')) || 1, name, price: money(l.find(x => /E£|EGP/.test(x))), modifiers: [...new Set(mods)],
         options, discountLines, modifierRead: mods.length > 0 || modifierComplete, modifierComplete });
     }
