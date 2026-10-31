@@ -229,6 +229,21 @@ function Self-Test {
   $c = $null
   try {
     $job = Get-Content $f -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($job.mode -eq 'inspect-print') {
+      # Read-only, test copy: the print flags Apex's own client left on the orders it created there (no branch printer runs on the test copy).
+      $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[0]);Database=Resturant_Test;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec)))
+      try { $c.Open() } catch { $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[1]);Database=Resturant_Test;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec))); $c.Open() }
+      $out.mode = 'inspect-print'; $rows = @()
+      foreach($q in @("SELECT 'PO' k, OrderNo, OrderDate, Printed, Modified FROM PrintedOrders WITH (NOLOCK) WHERE OrderNo BETWEEN 290 AND 710",
+                      "SELECT 'DD' k, OrderNo, ItemNo, Printed, PrintedSlip, SentBy FROM Orders_D_Daily WITH (NOLOCK) WHERE OrderNo BETWEEN 290 AND 710",
+                      "SELECT 'DA' k, OrderNo, ItemNo, Printed, PrintedSlip, SentBy FROM Orders_D WITH (NOLOCK) WHERE OrderNo BETWEEN 290 AND 300",
+                      "SELECT 'MA' k, OrderNo, PosNo, OrderPrinted, PrintsNo FROM Orders_M WITH (NOLOCK) WHERE OrderNo BETWEEN 290 AND 300",
+                      "SELECT 'MD' k, OrderNo, PosNo, OrderPrinted, PrintsNo FROM Orders_M_Daily WITH (NOLOCK) WHERE OrderNo BETWEEN 290 AND 710")){
+        try { $cmd = $c.CreateCommand(); $cmd.CommandText = $q; $rd = $cmd.ExecuteReader(); while ($rd.Read()) { $h = [ordered]@{}; for ($i = 0; $i -lt $rd.FieldCount; $i++) { $h[$rd.GetName($i)] = "$($rd.GetValue($i))".Trim() }; $rows += $h }; $rd.Close() } catch { $rows += @{ error = $_.Exception.Message } }
+      }
+      $out.saved = $rows; $out.ok = $true
+      throw 'INSPECT_DONE'
+    }
     $mode = if ($job.mode -eq 'test') { 'test' } else { 'shadow' }
     $out.mode = $mode
     $c = Open-Db $mode
@@ -245,7 +260,7 @@ function Self-Test {
       $rd.Close(); $out.saved = $rows
     }
     $out.ok = $true
-  } catch { $out.ok = $false; $out.error = $_.Exception.Message }
+  } catch { if ($_.Exception.Message -ne 'INSPECT_DONE') { $out.ok = $false; $out.error = $_.Exception.Message } }
   finally { if ($c) { try { $c.Close() } catch {} } }
   ($out | ConvertTo-Json -Depth 6) | Set-Content (Join-Path $here 'selftest_result.json') -Encoding UTF8
   Move-Item $f (Join-Path $here ('selftest.done-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.json')) -Force
