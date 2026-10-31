@@ -22,6 +22,7 @@ GRANT SELECT, INSERT ON dbo.Orders_Checks TO [marsad_writer_test];
 GRANT SELECT, INSERT ON dbo.OrderLog TO [marsad_writer_test];
 GRANT SELECT, INSERT ON dbo.PrintedOrders TO [marsad_writer_test];
 GRANT SELECT, INSERT, UPDATE ON dbo.Customers TO [marsad_writer_test];
+GRANT SELECT, INSERT ON dbo.CLedges TO [marsad_writer_test];
 GRANT UPDATE ON dbo.Counter TO [marsad_writer_test];
 GO
 -- The writer uses its own POS number (70). Check it has exactly one Counter row in the test copy (it reads, never creates it).

@@ -1,7 +1,7 @@
 ﻿# كاتب Apex للمرصد — Marsad → Apex order writer, runs on the restaurant PC next to the monitor.
 # It asks the Marsad server for orders an employee confirmed for automatic transfer, and writes each one into Apex
 # the way the Apex call-center client does (numbers, customer, header, lines, log, print snapshot), in one short
-# transaction. Three modes, chosen on the server by an admin:
+# transaction (cash, or prepaid as Ledge with its customer-ledger row). Three modes, chosen on the server by an admin:
 #   shadow : read-only, production database, with the monitor's read-only login. Computes everything and reports
 #            the order it WOULD write. Nothing is written. The employee still enters the order by hand.
 #   test   : writes into Resturant_Test with the writer login (writer_cred.dat). Never production.
@@ -83,13 +83,13 @@ SELECT TOP 1 @Existing = OrderNo FROM dbo.OrderLog WITH (NOLOCK) WHERE OrderDate
 IF @Existing IS NOT NULL BEGIN SELECT 'exists' AS r, @Existing AS OrderNo; RETURN; END;
 IF (SELECT COUNT(*) FROM dbo.Counter WITH (NOLOCK) WHERE num = @Pos) <> 1 THROW 51004, 'writer POS needs exactly one Counter row', 1;
 -- Template: the newest order of the same kind entered by Apex itself today (same OnlineType text, cash), same branch first.
-SELECT TOP 1 @Tpl = OrderNo FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderDate = @Date AND RTRIM(PayWay) = 'Cash' AND PosNo <> @Pos
+SELECT TOP 1 @Tpl = OrderNo FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderDate = @Date AND RTRIM(PayWay) = @PayWay AND PosNo <> @Pos
   AND ((@Kind = 'talabat' AND (OnlineType LIKE '%TALABAT%' OR OnlineType LIKE N'%طلبات%')) OR (@Kind = 'site' AND (OnlineType LIKE N'%موقع%' OR OnlineType LIKE '%WEB%' OR OnlineType LIKE '%SITE%')))
   ORDER BY CASE WHEN BranchNo = @Branch THEN 0 ELSE 1 END, CheckNo DESC;
 -- The test copy may have its day closed (orders moved to Orders_M): take the template from there.
 DECLARE @TplArchive bit = 0;
 IF @Tpl IS NULL AND @IsTest = 1 BEGIN
-  SELECT TOP 1 @Tpl = OrderNo FROM dbo.Orders_M WITH (NOLOCK) WHERE RTRIM(PayWay) = 'Cash' AND PosNo <> @Pos
+  SELECT TOP 1 @Tpl = OrderNo FROM dbo.Orders_M WITH (NOLOCK) WHERE RTRIM(PayWay) = @PayWay AND PosNo <> @Pos
     AND ((@Kind = 'talabat' AND (OnlineType LIKE '%TALABAT%' OR OnlineType LIKE N'%طلبات%')) OR (@Kind = 'site' AND (OnlineType LIKE N'%موقع%' OR OnlineType LIKE '%WEB%' OR OnlineType LIKE '%SITE%')))
     ORDER BY CASE WHEN BranchNo = @Branch THEN 0 ELSE 1 END, OrderDate DESC, CheckNo DESC;
   SET @TplArchive = 1;
@@ -154,8 +154,8 @@ BEGIN TRY
     ServiceRatio, TaxRatio, Hosp_Flag, PosSerial, CheckNo, ReceiveTime, Otlob, Otlob_OrderNo, OnlineType, RedeemCode, Gift, AddPoints, DeliveryTrack, o_Phone, o_CustName,
     o_Address, o_Sign, o_PersonName, MobileNo, MyFatoorah, Modified, o_LocationNo)
   SELECT @OrderNo, @ShiftSerial, @BranchShift, @TypeSerial, t.TakeAwayLoc, @Cust, t.TableNo, t.GuestNo, 0, 0, @Date, @Time, @UserNo,
-    0, 0, @Shift, t.TransType, @Sub, @Service, 0, @Tax, 0, @Time, @RestDiscount, 0, 0, 'Cash', @Total, 0,
-    LEFT(@Remarks, 100), @Pos, CASE WHEN @RestDiscount > 0 THEN t.DiscountType ELSE NULL END, t.HallNo, 1, DATEPART(hour, @Now), '0', NULL, @Total, '0', 0, 0, LEFT(@Label, 50), 0, 0, @Branch, @BranchOrderNo,
+    0, 0, @Shift, t.TransType, @Sub, @Service, 0, @Tax, 0, @Time, @RestDiscount, 0, 0, @PayWay, CASE WHEN @PayWay = 'Ledge' THEN 0 ELSE @Total END, 0,
+    LEFT(@Remarks, 100), @Pos, CASE WHEN @RestDiscount > 0 THEN t.DiscountType ELSE NULL END, t.HallNo, 1, DATEPART(hour, @Now), '0', NULL, CASE WHEN @PayWay = 'Ledge' THEN 0 ELSE @Total END, '0', 0, 0, LEFT(@Label, 50), 0, 0, @Branch, @BranchOrderNo,
     0, @TaxRatio, 0, @PosSerial, @CheckNo, @Time, t.Otlob, '', t.OnlineType, '', '', 0, t.DeliveryTrack, @Phone, LEFT(@Label, 100),
     LEFT(@Address, 250), LEFT(@Sign, 100), LEFT(@Label, 50), @Phone, 0, 0, @LocationNo
   FROM (SELECT TakeAwayLoc, TableNo, GuestNo, TransType, DiscountType, HallNo, Otlob, OnlineType, DeliveryTrack FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderNo = @Tpl
@@ -171,6 +171,9 @@ BEGIN TRY
   VALUES (0, @OrderNo, @Date, @Time, '', '', '', 0, @Marker, 'MARSAD', @Branch, '', 'MARSAD', @Shift, @Pos);
   INSERT INTO dbo.OrderLog (TOrderNo, OrderNo, OrderDate, ItemTime, TableNo, ItemNo, ItemName, Qty, Description, Status, BranchNo, WaiterName, UserName, ShiftNo, PosNo)
   SELECT 0, @OrderNo, @Date, @Time, '', l.ItemNo, RTRIM(i.ItemName), l.Qty, '', 'Add', @Branch, '', 'MARSAD', @Shift, @Pos FROM @Lines l JOIN dbo.Items i WITH (NOLOCK) ON i.ItemNo = l.ItemNo;
+  IF @PayWay = 'Ledge'
+    INSERT INTO dbo.CLedges (CustNo, OrderNo, ShiftNo, PayDate, PayTime, TotalCash, Payments, Reminder, PayType, PosNo, UserNo, BranchNo, HourNo)
+    VALUES (@Cust, @OrderNo, @Shift, @Date, @Time, @Total, 0, @Total, 'Ledge', @Pos, @UserNo, @Branch, DATEPART(hour, @Now));
   -- The marker is what stops a second write of the same order: it must be stored exactly, or nothing is saved.
   IF NOT EXISTS (SELECT 1 FROM dbo.OrderLog WHERE OrderNo = @OrderNo AND Description = @Marker) THROW 51015, 'marker not stored exactly', 1;
   IF @AddPrinted = 1 INSERT INTO dbo.PrintedOrders (OrderNo, OrderDate, Printed, Modified) VALUES (@OrderNo, @Date, 0, 0);
@@ -201,7 +204,7 @@ function Write-Order($c, $job, [string]$mode){
     [void]$cmd.Parameters.AddWithValue("@n$i", [string]$l.note)
   }
   $cmd.CommandText = $decl + $Batch
-  $p = @{ '@Exec' = $(if ($mode -eq 'shadow') { 0 } else { 1 }); '@IsTest' = $(if ($mode -eq 'test') { 1 } else { 0 }); '@Pos' = $WriterPos; '@LocationNo' = [int]$job.locationNo; '@ServiceItem' = [string]$TalabatServiceItem; '@RefPos' = $(if ($mode -eq 'test') { $RefPosTest } else { $RefPos }); '@Branch' = [int]$job.branchNo
+  $p = @{ '@Exec' = $(if ($mode -eq 'shadow') { 0 } else { 1 }); '@IsTest' = $(if ($mode -eq 'test') { 1 } else { 0 }); '@PayWay' = $(if ($job.payment -eq 'paid') { 'Ledge' } else { 'Cash' }); '@Pos' = $WriterPos; '@LocationNo' = [int]$job.locationNo; '@ServiceItem' = [string]$TalabatServiceItem; '@RefPos' = $(if ($mode -eq 'test') { $RefPosTest } else { $RefPos }); '@Branch' = [int]$job.branchNo
           '@Marker' = ('M' + $(if ($job.source -eq 'site') { 'S' } else { 'T' }) + ':' + $job.ref); '@Kind' = [string]$job.source; '@Phone' = [string]$job.customer.phone
           '@Label' = [string]$job.label; '@Address' = [string]$job.customer.address; '@Sign' = [string]$job.sign; '@Remarks' = [string]$job.note
           '@RestDiscount' = [decimal]$job.restaurantDiscount; '@AddPrinted' = $(if ($AddPrintedOrders) { 1 } else { 0 }); '@PrintedFlag' = $PrintedFlag; '@UserNo' = $WriterUserNo

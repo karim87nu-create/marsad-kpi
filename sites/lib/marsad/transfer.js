@@ -189,7 +189,8 @@ function setup(app) {
       if (!['shadow', 'test', 'live'].includes(mode)) fail(409, 'التحويل الآلي مقفول — سجّل على Apex بإيدك');
       if (othersClaim) fail(409, 'الأوردر مع ' + (cur.employee_name || 'حد تاني'));
       if (cur && /^auto_(?:pending|sending|done|preview)$/.test(cur.state)) fail(409, 'الأوردر اتبعت للتحويل الآلي بالفعل');
-      if (payment !== 'cash') fail(400, payment === 'paid' ? 'المدفوع مقدمًا لسه بيتسجل بإيدك (قواعد الحساب لسه بتتأكد)' : 'حدد: كاش ولا مدفوع');
+      // Cash, or prepaid (Apex: Ledge with the amount on the customer's ledger, like every prepaid Talabat order there).
+      if (payment !== 'cash' && payment !== 'paid') fail(400, 'حدد: كاش ولا مدفوع');
       const branchNo = Number(b.branchNo);
       if (!Number.isInteger(branchNo) || branchNo < 1 || branchNo > 99) fail(400, 'اختار فرع Apex');
       const items = Array.isArray(b.items) ? b.items : [];

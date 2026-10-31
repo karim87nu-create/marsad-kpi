@@ -94,7 +94,7 @@ test('automatic transfer: off by default, cash only, frozen order handed to the 
     assert.equal((await as('POST', '/api/transfer/job', job)).status, 409, 'off until an admin turns it on');
     assert.equal((await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'live' })).status, 400, 'live needs explicit confirmation');
     assert.equal((await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'test' })).status, 200);
-    assert.equal((await as('POST', '/api/transfer/job', { ...job, payment: 'paid' })).status, 400, 'prepaid stays manual');
+    assert.equal((await as('POST', '/api/transfer/job', { ...job, payment: 'unknown' })).status, 400, 'payment must be stated');
     assert.equal((await as('POST', '/api/transfer/job', { ...job, items: [{ itemNo: 'x', qty: 1 }] })).status, 400);
     assert.equal((await as('POST', '/api/transfer/job', job)).status, 200);
     assert.equal((await as('POST', '/api/transfer/job', job)).status, 409, 'not sent twice');
