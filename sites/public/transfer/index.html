@@ -155,6 +155,9 @@ function autoHtml(o) {
   if (!mode || mode === 'off' || o.apex || /^auto_(?:pending|sending|done|preview)$/.test(o.job?.state || '')) return '';
   const k = key(o), p = picks[k] || (picks[k] = { branch: o.apexBranch || '', items: (o.items || []).map(i => i.apex?.length === 1 ? i.apex[0].no : '') });
   const br = '<select data-pick="branch"><option value="">فرع Apex…</option>' + (data.branches || []).map(b => '<option value="' + b.no + '"' + (String(p.branch) === String(b.no) ? ' selected' : '') + '>' + esc(b.name) + '</option>').join('') + '</select>';
+  // Delivery area on Apex (decides the delivery service charge), only the chosen branch's areas.
+  const areas = (data.locations || []).filter(l => !p.branch || l.branch == null || String(l.branch) === String(p.branch)).sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+  const loc = '<select data-pick="loc"><option value="">منطقة العميل على Apex…</option>' + areas.map(l => '<option value="' + l.no + '"' + (String(p.loc) === String(l.no) ? ' selected' : '') + '>' + esc(l.name) + (l.service != null ? ' (خدمة ' + money(l.service) + ')' : '') + '</option>').join('') + '</select>';
   const lines = (o.items || []).map((i, n) => '<div class="pay" style="margin-top:4px"><span>' + esc(i.qty) + '× ' + esc(i.name) + (i.modifiers?.length ? ' (' + i.modifiers.map(esc).join('، ') + ')' : '') + '</span> ' +
     (i.apex?.length > 1 ? '<select data-pick="item" data-n="' + n + '"><option value="">اختار…</option>' + i.apex.map(a => '<option value="' + esc(a.no) + '"' + (p.items[n] === a.no ? ' selected' : '') + '>' + esc(a.no) + (a.name ? ' ' + esc(a.name) : '') + '</option>').join('') + '</select>' : '') +
     '<input data-pick="item" data-n="' + n + '" inputmode="numeric" placeholder="رقم الصنف على Apex" style="width:150px" value="' + esc(p.items[n] || '') + '"></div>').join('');
@@ -208,6 +211,7 @@ $('list').addEventListener('click', async e => {
     const p = picks[key(o)] || {}, pay = choice[key(o)] || o.job?.payment || (o.payment === 'cash' || o.payment === 'paid' ? o.payment : null);
     if (!pay) { toast('حدد الأول: كاش ولا مدفوع'); return; }
     if (!p.branch) { toast('اختار فرع Apex'); return; }
+    if (!p.loc) { toast('اختار منطقة العميل على Apex'); return; }
     if ((o.items || []).some((i, n) => !/^\d{4,10}$/.test(String(p.items?.[n] || '')))) { toast('كل صنف لازم يبقى له رقم على Apex'); return; }
     if (o.discounts?.some(d => !d.who)) { toast('فيه خصم مش واضح مين ممول له — سجله بإيدك'); return; }
     if (o.source === 'talabat' && o.items.some(i => !i.modifiersComplete)) { toast('الإضافات ماتقرتش كاملة — سجله بإيدك'); return; }
@@ -215,7 +219,7 @@ $('list').addEventListener('click', async e => {
     const plat = (o.discounts || []).filter(d => d.who === 'platform');
     b.disabled = true;
     try {
-      await api('POST', '/api/transfer/job', { source: o.source, ref: o.ref, action: 'auto', payment: pay, branchNo: Number(p.branch), code: o.code,
+      await api('POST', '/api/transfer/job', { source: o.source, ref: o.ref, action: 'auto', payment: pay, branchNo: Number(p.branch), locationNo: Number(p.loc), code: o.code,
         items: o.items.map((i, n) => ({ itemNo: p.items[n], qty: i.qty, note: (i.modifiers || []).join('، ').slice(0, 60) })),
         label: (o.customer?.name ? o.customer.name + ' ' : '') + labelOf(o, pay), customer: o.customer || {}, sign: plat.map(d => 'خصم طلبات ' + money(d.amount)).join(' + '),
         restaurantDiscount: rest, expectedTotal: (o.subtotal ?? o.total ?? 0) - rest });
@@ -235,7 +239,8 @@ $('list').addEventListener('click', async e => {
 $('list').addEventListener('change', e => {
   const el = e.target.closest('[data-pick]'); if (!el) return;
   const c = el.closest('.card'), p = picks[c.dataset.k]; if (!p) return;
-  if (el.dataset.pick === 'branch') p.branch = el.value;
+  if (el.dataset.pick === 'branch') { p.branch = el.value; p.loc = ''; render(); return; }
+  if (el.dataset.pick === 'loc') p.loc = el.value;
   if (el.dataset.pick === 'item') { p.items[Number(el.dataset.n)] = el.value.trim(); const twin = c.querySelectorAll('[data-pick="item"][data-n="' + el.dataset.n + '"]'); twin.forEach(x => { if (x !== el) x.value = el.value.trim(); }); }
 });
 $('list').addEventListener('toggle', e => { const d = e.target.closest?.('[data-pick-box]'); if (d) { const p = picks[d.closest('.card').dataset.k]; if (p) p.open = d.open; } }, true);

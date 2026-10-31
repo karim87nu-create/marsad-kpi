@@ -96,8 +96,13 @@ IF @Tpl IS NULL AND @IsTest = 1 BEGIN
 END;
 IF @Tpl IS NULL THROW 51005, 'no Apex order of this kind today to take the settings from', 1;
 DECLARE @Service money;
-SELECT @TaxRatio = TaxRatio, @Service = ISNULL(Service, 0) FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderNo = @Tpl;
-IF @TaxRatio IS NULL SELECT @TaxRatio = TaxRatio, @Service = ISNULL(Service, 0) FROM dbo.Orders_M WITH (NOLOCK) WHERE OrderNo = @Tpl;
+SELECT @TaxRatio = TaxRatio FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderNo = @Tpl;
+IF @TaxRatio IS NULL SELECT @TaxRatio = TaxRatio FROM dbo.Orders_M WITH (NOLOCK) WHERE OrderNo = @Tpl;
+-- Delivery service: what Apex charged most for this branch and area today (the archive is only searched on the test copy: it is big).
+SELECT TOP 1 @Service = Service FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE BranchNo = @Branch AND o_LocationNo = @LocationNo AND ISNULL(Service, 0) > 0 GROUP BY Service ORDER BY COUNT(*) DESC;
+IF @Service IS NULL AND @IsTest = 1 SELECT TOP 1 @Service = Service FROM (SELECT TOP 300 Service FROM dbo.Orders_M WITH (NOLOCK) WHERE BranchNo = @Branch AND o_LocationNo = @LocationNo AND ISNULL(Service, 0) > 0 ORDER BY OrderDate DESC) x GROUP BY Service ORDER BY COUNT(*) DESC;
+IF @Service IS NULL AND @Exec = 1 THROW 51008, 'no delivery charge known for this area on Apex', 1;
+SET @Service = ISNULL(@Service, 0);
 -- Lines and prices (prices given by the caller from the proven price source; checked against Items here).
 IF EXISTS (SELECT 1 FROM @Lines l LEFT JOIN dbo.Items i WITH (NOLOCK) ON i.ItemNo = l.ItemNo WHERE i.ItemNo IS NULL) THROW 51006, 'an item number is not in Apex Items', 1;
 IF EXISTS (SELECT 1 FROM @Lines l JOIN dbo.Items i WITH (NOLOCK) ON i.ItemNo = l.ItemNo WHERE ISNULL(i.StopItem, 0) <> 0) THROW 51007, 'an item is stopped on Apex', 1;
@@ -105,7 +110,7 @@ SELECT @Sub = SUM(Qty * Price) FROM @Lines;
 SET @Tax = ROUND((@Sub + @Service) * ISNULL(@TaxRatio, 0) / 100.0, 2);   -- Apex taxes SubTotal + Service, before the discount (checked on real orders)
 SET @Total = @Sub - @RestDiscount + @Tax + @Service;   -- Apex: CashPayment = SubTotal - Discount + Tax + Service
 IF @Exec = 0 BEGIN
-  SELECT 'preview' AS r, @Date AS OrderDate, @Shift AS ShiftNo, @Tpl AS Template, @Sub AS SubTotal, @Tax AS Tax, @TaxRatio AS TaxRatio, @Service AS Service, @Total AS Total,
+  SELECT 'preview' AS r, @LocationNo AS LocationNo, @Date AS OrderDate, @Shift AS ShiftNo, @Tpl AS Template, @Sub AS SubTotal, @Tax AS Tax, @TaxRatio AS TaxRatio, @Service AS Service, @Total AS Total,
     (SELECT ISNULL(MAX(PosSerial), 0) + 1 FROM dbo.Counter WITH (NOLOCK) WHERE num = @Pos) AS PosSerial,
     (SELECT ISNULL(MAX(BranchOrderNo), 0) + 2 FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE BranchNo = @Branch) AS BranchOrderNo,
     (SELECT ISNULL(MAX(TypeSerial), 0) + 1 FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE RTRIM(PayWay) IN ('Cash', 'Ledge', 'Visa')) AS TypeSerial,
@@ -136,6 +141,8 @@ BEGIN TRY
     INSERT INTO dbo.Customers (CustNo, Name, Mobile, Address, BranchNo, New, FirstOrder, LastOrder, LastOrderNo, ShiftOrderNo, LastOrderCash, Total, OrdersNo)
     VALUES (@Cust, LEFT(@Label, 50), @Phone, LEFT(@Address, 200), @Branch, 1, @Date, @Date, 0, 0, 0, 0, 0);
   END;
+  -- The restaurant discount sits on one dish line (the top-priced one, as on Apex's own orders); the header carries the same total.
+  DECLARE @DiscLine int; SELECT TOP 1 @DiscLine = SerialNo FROM @Lines WHERE ItemNo <> @ServiceItem ORDER BY Qty * Price DESC, SerialNo;
   DECLARE @S TABLE (n numeric(18,0)); DECLARE @C TABLE (n numeric(18,0));
   INSERT INTO dbo.Orders_Serials (OrderNo, OrderDate, ShiftNo) OUTPUT inserted.ShiftSerial INTO @S VALUES (@OrderNo, @Date, @Shift);
   SELECT @ShiftSerial = n FROM @S;
@@ -145,17 +152,17 @@ BEGIN TRY
     ComboDifference, WaiterNo, ShiftNo, TransType, SubTotal, Service, Addition, Tax, Tips, TimeIn, Discount, MinCharge, MinChargeDifference, PayWay, CashPayment, VisaPayment,
     Remarks, PosNo, DiscountType, HallNo, PrintsNo, HourNo, Closed, SerialNo, CustPayment, Changed, SNO, RecieveNo, PersonName, DepositNo, DepositValue, BranchNo, BranchOrderNo,
     ServiceRatio, TaxRatio, Hosp_Flag, PosSerial, CheckNo, ReceiveTime, Otlob, Otlob_OrderNo, OnlineType, RedeemCode, Gift, AddPoints, DeliveryTrack, o_Phone, o_CustName,
-    o_Address, o_Sign, o_PersonName, MobileNo, MyFatoorah, Modified)
+    o_Address, o_Sign, o_PersonName, MobileNo, MyFatoorah, Modified, o_LocationNo)
   SELECT @OrderNo, @ShiftSerial, @BranchShift, @TypeSerial, t.TakeAwayLoc, @Cust, t.TableNo, t.GuestNo, 0, 0, @Date, @Time, @UserNo,
     0, 0, @Shift, t.TransType, @Sub, @Service, 0, @Tax, 0, @Time, @RestDiscount, 0, 0, 'Cash', @Total, 0,
     LEFT(@Remarks, 100), @Pos, CASE WHEN @RestDiscount > 0 THEN t.DiscountType ELSE NULL END, t.HallNo, 1, DATEPART(hour, @Now), '0', NULL, @Total, '0', 0, 0, LEFT(@Label, 50), 0, 0, @Branch, @BranchOrderNo,
     0, @TaxRatio, 0, @PosSerial, @CheckNo, @Time, t.Otlob, '', t.OnlineType, '', '', 0, t.DeliveryTrack, @Phone, LEFT(@Label, 100),
-    LEFT(@Address, 250), LEFT(@Sign, 100), LEFT(@Label, 50), @Phone, 0, 0
+    LEFT(@Address, 250), LEFT(@Sign, 100), LEFT(@Label, 50), @Phone, 0, 0, @LocationNo
   FROM (SELECT TakeAwayLoc, TableNo, GuestNo, TransType, DiscountType, HallNo, Otlob, OnlineType, DeliveryTrack FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderNo = @Tpl
         UNION ALL SELECT TakeAwayLoc, TableNo, GuestNo, TransType, DiscountType, HallNo, Otlob, OnlineType, DeliveryTrack FROM dbo.Orders_M WITH (NOLOCK) WHERE OrderNo = @Tpl AND @TplArchive = 1) t;
   IF @@ROWCOUNT <> 1 THROW 51012, 'template order disappeared', 1;
   INSERT INTO dbo.Orders_D_Daily (OrderNo, ItemNo, SerialNo, Qty, Price, Description, Combo, ItemDetailNo, Rank, ItemsCombo, ItemDiscount, ItemTime, OpenDesc, TimeVal, ItemTax, ItemService, Printed, PrintedSlip, Weight, ItemsNo, SentBy, Finished)
-  SELECT @OrderNo, l.ItemNo, l.SerialNo, l.Qty, l.Price, l.Note, '0', l.ItemNo, NULL, NULL, 0, @Time, '', 0, NULL, NULL, @PrintedFlag, @PrintedFlag, 1, 1, 0, 0 FROM @Lines l;   -- Weight 1, ItemsNo 1 on every Apex online line
+  SELECT @OrderNo, l.ItemNo, l.SerialNo, l.Qty, l.Price, l.Note, '0', l.ItemNo, NULL, NULL, CASE WHEN l.SerialNo = @DiscLine THEN @RestDiscount ELSE 0 END, @Time, '', 0, NULL, NULL, @PrintedFlag, @PrintedFlag, 1, 1, 0, 0 FROM @Lines l;   -- Weight 1, ItemsNo 1 on every Apex online line
   UPDATE dbo.Counter SET OrderNo = @PosSerial, PosSerial = @PosSerial, ShiftOrderNo = @ShiftSerial, OrderDate = @Date, ShiftNo = @Shift WHERE num = @Pos;
   IF @@ROWCOUNT <> 1 THROW 51013, 'counter update failed', 1;
   UPDATE dbo.Customers SET LastOrderNo = @OrderNo, ShiftOrderNo = @ShiftSerial, LastOrderCash = @Total, FirstOrder = ISNULL(FirstOrder, @Date), LastOrder = @Date,
@@ -194,7 +201,7 @@ function Write-Order($c, $job, [string]$mode){
     [void]$cmd.Parameters.AddWithValue("@n$i", [string]$l.note)
   }
   $cmd.CommandText = $decl + $Batch
-  $p = @{ '@Exec' = $(if ($mode -eq 'shadow') { 0 } else { 1 }); '@IsTest' = $(if ($mode -eq 'test') { 1 } else { 0 }); '@Pos' = $WriterPos; '@RefPos' = $(if ($mode -eq 'test') { $RefPosTest } else { $RefPos }); '@Branch' = [int]$job.branchNo
+  $p = @{ '@Exec' = $(if ($mode -eq 'shadow') { 0 } else { 1 }); '@IsTest' = $(if ($mode -eq 'test') { 1 } else { 0 }); '@Pos' = $WriterPos; '@LocationNo' = [int]$job.locationNo; '@ServiceItem' = [string]$TalabatServiceItem; '@RefPos' = $(if ($mode -eq 'test') { $RefPosTest } else { $RefPos }); '@Branch' = [int]$job.branchNo
           '@Marker' = ('M' + $(if ($job.source -eq 'site') { 'S' } else { 'T' }) + ':' + $job.ref); '@Kind' = [string]$job.source; '@Phone' = [string]$job.customer.phone
           '@Label' = [string]$job.label; '@Address' = [string]$job.customer.address; '@Sign' = [string]$job.sign; '@Remarks' = [string]$job.note
           '@RestDiscount' = [decimal]$job.restaurantDiscount; '@AddPrinted' = $(if ($AddPrintedOrders) { 1 } else { 0 }); '@PrintedFlag' = $PrintedFlag; '@UserNo' = $WriterUserNo
