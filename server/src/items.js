@@ -3,7 +3,8 @@
 //  2) the starting list below (the dishes seen on 25-10-2026, weights told apart by price),
 //  3) word by word translation of the dish name,
 // always with the same quantity and a price that fits (Talabat shows the price with tax: about 1.13 × Apex).
-const SEED = {
+import { MENU_SEED } from './menu-seed.js';
+const SEED0 = {
   'stuffed pigeon with rice - piece': ['0107006'], 'grilled half chicken meal offer': ['0116003'], 'half grilled chicken on charcoal': ['0107001'],
   'pepsi can': ['0202001'], '7 up can': ['0202002'], 'miranda cans': ['0202003'], 'orzo soup': ['0102001'], 'lentil soup': ['0102006'], 'vegetable soup': ['0102008'],
   'cream of chicken soup': ['0102002'], 'cream of mushroom soup': ['0102003'], 'pigeon soup': ['0102004', '0102005'], 'shish tawook meal offer': ['0116004'], 'hawawshi offer': ['111'],
@@ -20,6 +21,9 @@ const SEED = {
   'tarb': ['0108008', '0108007', '0108006'], 'potato tagine': ['0106002'], 'plain baked rice casserole': ['0106005'], 'potato tagine with meat': ['0106012'],
   'kebab sandwich combo': ['0104012'], 'spaghetti neapolitan': ['0103016'],
 };
+// The confirmed menu map wins; the old starting list fills in what it does not cover.
+const SEED = { ...SEED0 };
+for (const [n, ids] of Object.entries(MENU_SEED)) SEED[n] = [...new Set([...ids, ...(SEED0[n] || [])])];
 // Word translations for dishes not seen yet.
 const WORDS = {
   grilled: 'مشوي', grill: 'جريل', kofta: 'كفته', kebab: 'كباب', chicken: 'فراخ', rice: 'ارز', soup: 'شوربه', salad: 'سلطه', sandwich: 'ساندوتش', combo: 'كومبو',
