@@ -154,3 +154,18 @@ test('transfer page: a discount under the dish is split by who funds it (real or
     assert.equal(o.target, 301.48, 'Apex must total what the customer pays plus Talabat\'s share');
   } finally { await t.close(); }
 });
+
+test('Talabat: dishes stopped per branch from admin, read by the Talabat screen', async () => {
+  const t = await start({ at: cairoToUtc(2026, 10, 31, 21, 0, 0) });
+  try {
+    const admin = await t.admin();
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    let c = (await admin('GET', '/api/talabat/stock-config')).body;
+    assert.ok(c.products.some(p => p.name === 'Fillet'), 'the Talabat menu is listed');
+    const fillet = c.products.find(p => p.name === 'Fillet').id;
+    assert.equal((await admin('POST', '/api/talabat/stock-config', { store: 'الدهان، مدينتي', stopped: [fillet, 'not-a-dish'] })).body.stopped.length, 1, 'unknown dishes are dropped');
+    assert.equal((await t.call('GET', '/api/talabat/stock')).status, 401);
+    const s = (await t.call('GET', '/api/talabat/stock', { headers: { 'x-talabat-token': token } })).body;
+    assert.deepEqual(s.stopped, { 'الدهان، مدينتي': [fillet] });
+  } finally { await t.close(); }
+});

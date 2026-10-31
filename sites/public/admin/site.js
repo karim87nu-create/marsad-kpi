@@ -348,10 +348,36 @@ window.MarsadSite = function MarsadSite(ctx) {
     try { await api('/api/talabat/actions-config', { method: 'POST', body: { branches } }); $('talActNote').textContent = 'اتحفظ.'; renderTalabatActions(); }
     catch (e) { $('talActNote').textContent = e.message; }
   };
+  // ---------- الإدارة: إيقاف أصناف على طلبات لكل فرع ----------
+  let stock = null; const stockSel = {};
+  function drawStock() {
+    const store = $('stockStore').value, q = $('stockFind').value.trim().toLowerCase(), only = $('stockOnly').checked;
+    const sel = stockSel[store] || (stockSel[store] = new Set(stock.stopped[store] || []));
+    const cats = new Map();
+    for (const p of stock.products) { if ((q && !(p.name + ' ' + p.category).toLowerCase().includes(q)) || (only && !sel.has(p.id))) continue; if (!cats.has(p.category)) cats.set(p.category, []); cats.get(p.category).push(p); }
+    $('stockList').replaceChildren(...[...cats].map(([c, ps]) => h('div', {}, h('strong', { textContent: c }),
+      ...ps.map(p => h('label', { style: 'display:block' }, h('input', { type: 'checkbox', checked: sel.has(p.id), onchange: e => { e.target.checked ? sel.add(p.id) : sel.delete(p.id); } }), ' ' + p.name)))));
+    const a = stock.applied[store];
+    $('stockNote').textContent = (sel.size ? sel.size + ' صنف موقوف في الفرع ده. ' : '') + (a ? 'آخر تطبيق على طلبات: ' + t12(new Date(a.at).toISOString()) + (a.ok ? ' ✓' : ' ✗ ' + a.note) : (stock.ready ? '' : 'الإيقاف بيتحفظ دلوقتي، والشاشة هتطبقه أول ما تتجهز.'));
+  }
+  async function renderStock() {
+    $('stockPanel').hidden = false;
+    stock = await api('/api/talabat/stock-config');
+    const cur = $('stockStore').value;
+    $('stockStore').replaceChildren(...stock.stores.map(s => h('option', { value: s, textContent: s, selected: s === cur })));
+    drawStock();
+  }
+  $('stockStore').onchange = drawStock; $('stockFind').oninput = drawStock; $('stockOnly').onchange = drawStock;
+  $('stockSave').onclick = async () => {
+    const store = $('stockStore').value; if (!store) return;
+    try { await api('/api/talabat/stock-config', { method: 'POST', body: { store, stopped: [...(stockSel[store] || [])] } }); delete stockSel[store]; await renderStock(); $('stockNote').textContent = 'اتحفظ للفرع ' + store + '. ' + $('stockNote').textContent; }
+    catch (e) { $('stockNote').textContent = e.message; }
+  };
   async function renderApexWriter(isAdmin) {
-    $('apexWriterPanel').hidden = !isAdmin; $('talActPanel').hidden = !isAdmin;
+    $('apexWriterPanel').hidden = !isAdmin; $('talActPanel').hidden = !isAdmin; $('stockPanel').hidden = !isAdmin;
     if (!isAdmin) return;
     renderTalabatActions().catch(e => { $('talActNote').textContent = e.message; });
+    renderStock().catch(e => { $('stockNote').textContent = e.message; });
     const s = await api('/api/apex-writer');
     const seen = s.lastSeen ? (Date.now() - s.lastSeen < 120000 ? 'الكاتب شغال (آخر سؤال ' + t12(new Date(s.lastSeen).toISOString()) + ')' : 'الكاتب واقف (آخر سؤال ' + t12(new Date(s.lastSeen).toISOString()) + ')') : (s.linked ? 'الكاتب لسه ماشتغلش' : 'مفيش مفتاح للكاتب');
     $('apexWriterStatus').replaceChildren(pill('الوضع: ' + APX[s.mode], s.mode === 'live' ? 'ok' : 'warn'), ' ', h('span', { className: 'muted', textContent: seen }),

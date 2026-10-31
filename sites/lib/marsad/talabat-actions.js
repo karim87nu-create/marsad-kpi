@@ -6,6 +6,7 @@
 import { businessDay, iso } from './time.js';
 import { parseJson } from './order-match.js';
 import { sha256 } from './security.js';
+import { TALABAT_PRODUCTS } from './menu-seed.js';
 
 const OUT = new Set(['PICKED_UP', 'PICKED UP', 'IN_DELIVERY', 'IN DELIVERY', 'DELIVERED', 'COMPLETED', 'CANCELLED', 'REJECTED']);
 const clean = c => {
@@ -66,6 +67,34 @@ function setup(app) {
       }
     }
     return { accept, onTheWay: onTheWay.slice(0, 20), serverNow: iso(ctx.now) };
+  });
+
+  // ---- إيقاف الأصناف لكل فرع (Karim 31-10): admin ticks the dishes stopped in a branch; the Talabat screen applies it. ----
+  const PRODUCT = new Map(TALABAT_PRODUCTS.map(p => [p[0], { id: p[0], name: p[1], category: p[2] }]));
+  const stockOf = async () => { const v = parseJson(await setting('talabat_stock'), {}); return v && typeof v === 'object' ? v : {}; };
+  app.route('GET', '/api/talabat/stock-config', async ctx => {
+    await app.requireAdmin(ctx);
+    const since = businessDay(ctx.now - 7 * 86400000);
+    const stores = (await db.prepare('SELECT DISTINCT store FROM talabat_orders WHERE day >= ? AND store IS NOT NULL').all(since)).map(r => r.store).filter(Boolean).sort();
+    const stock = await stockOf(), applied = parseJson(await setting('talabat_stock_applied'), {});
+    return { stores: [...new Set([...stores, ...Object.keys(stock)])], products: [...PRODUCT.values()], stopped: stock, applied, ready: false };
+  });
+  app.route('POST', '/api/talabat/stock-config', async ctx => {
+    const who = await app.requireAdmin(ctx, 'write');
+    const store = String(ctx.body?.store || '').trim().slice(0, 120); if (!store) fail(400, 'اختار الفرع');
+    const ids = [...new Set((Array.isArray(ctx.body?.stopped) ? ctx.body.stopped : []).map(String).filter(id => PRODUCT.has(id)))].slice(0, 300);
+    const stock = await stockOf(); stock[store] = ids; await put('talabat_stock', JSON.stringify(stock));
+    await app.audit('talabat_stock', null, { actor: who.name, store, stopped: ids.map(id => PRODUCT.get(id).name) });
+    return { ok: true, store, stopped: ids };
+  });
+  // The screen asks which dishes must be stopped in which branch, and reports what it set.
+  app.route('GET', '/api/talabat/stock', async ctx => { await screen(ctx); return { stopped: await stockOf() }; });
+  app.route('POST', '/api/talabat/stock/result', async ctx => {
+    await screen(ctx);
+    const store = String(ctx.body?.store || '').slice(0, 120), applied = parseJson(await setting('talabat_stock_applied'), {});
+    applied[store] = { at: ctx.now, ok: ctx.body?.ok === true, note: String(ctx.body?.note || '').slice(0, 200), stopped: (Array.isArray(ctx.body?.stopped) ? ctx.body.stopped : []).map(String).slice(0, 300) };
+    await put('talabat_stock_applied', JSON.stringify(applied));
+    return { ok: true };
   });
 
   // What the screen did (or could not do), kept short for admin.

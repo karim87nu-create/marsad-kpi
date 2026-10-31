@@ -387,6 +387,13 @@
         <p id="talActNote" class="muted" role="status"></p>
         <details><summary class="muted">آخر اللي عملته الشاشة</summary><div id="talActLog" class="muted"></div></details>
       </article>
+      <article class="panel" id="stockPanel" hidden><h2>إيقاف أصناف على طلبات لكل فرع</h2>
+        <p class="muted">اختار الفرع وعلّم على الأصناف الموقوفة، واحفظ. شاشة طلبات على جهاز الكاشير هي اللي بتوقفها وبترجّعها.</p>
+        <div class="row"><select id="stockStore"></select> <input id="stockFind" placeholder="دوّر على صنف" style="width:200px"> <label><input type="checkbox" id="stockOnly"> الموقوف بس</label></div>
+        <div id="stockList" style="max-height:420px;overflow:auto;margin-top:8px"></div>
+        <div class="row"><button type="button" id="stockSave">حفظ للفرع ده</button></div>
+        <p id="stockNote" class="muted" role="status"></p>
+      </article>
       <article class="panel" id="ordersKeyPanel"><h2>مرصد الأوردرات (جهاز الكاشير)</h2>
         <p class="muted">السكريبت اللي على جهاز الكاشير بيقرا Apex ويبعت هنا بالمفتاح ده. طلّع المفتاح، وشغّل setup.bat على جهاز الكاشير والصقه لما يطلبه. المفتاح بيظهر مرة واحدة بس؛ لو طلّعت مفتاح جديد القديم بيبطل.</p>
         <p id="ordersKeyStatus"></p>
