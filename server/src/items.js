@@ -55,7 +55,9 @@ function compareItems(talabat, apex, { learned = new Map(), ratio = 1.13 } = {})
   const T = talabat.map((x, i) => ({ ...x, i, unit: x.price && x.qty ? x.price / x.qty : null })), A = apex.map((x, i) => ({ ...x, i }));
   const usedA = new Set(), pairs = [];
   const known = t => [...(learned.get(key(t.name))?.keys() || []), ...(SEED[key(t.name)] || []), ...(SEED_VARIANTS.get(variantKey(t.name)) || [])];
-  // Names and quantities identify dishes; current menu prices vary and never veto a match.
+  // Names and quantities identify dishes; menu prices drift a little, so only a price far off
+  // the usual Talabat/Apex ratio (wrong weight or size, e.g. 1/4 vs 1/2 kilo) blocks a match.
+  const priceFar = (t, a) => !!(t.unit && a.price) && Math.abs(t.unit / a.price - ratio) / ratio > 0.25;
   for (const pass of ['known', 'words']) for (const t of T) {
     if (pairs.some(p => p.t === t)) continue;
     let best = null, bestScore = 0, tied = false;
@@ -65,7 +67,7 @@ function compareItems(talabat, apex, { learned = new Map(), ratio = 1.13 } = {})
       // Talabat can expose Arabic labels too. Match identical normalized names
       // directly, while keeping the same quantity and price checks as other paths.
       const sameName = key(ar(t.name)) === key(ar(a.name)) && key(ar(t.name));
-      const s = sameName ? 2 : pass === 'known' ? (k ? 2 : 0) : wordScore(t.name, a.name);
+      const s = priceFar(t, a) ? 0 : sameName ? 2 : pass === 'known' ? (k ? 2 : 0) : wordScore(t.name, a.name);
       if (s > bestScore) { best = a; bestScore = s; tied = false; }
       else if (s > 0 && s === bestScore && String(a.no) !== String(best?.no)) tied = true;
     }
@@ -91,9 +93,12 @@ function compareItems(talabat, apex, { learned = new Map(), ratio = 1.13 } = {})
   }
   const unmatchedApex = A.filter(a => !usedA.has(a.i));
   extraOnApex.length = 0; extraOnApex.push(...unmatchedApex);
-  const modifierUncertain = extraOnApex.length > 0 && modifierContext;
+  // An extra Apex row that is the known dish of a missing Talabat line, blocked only by its price,
+  // is the wrong weight or size of that dish, not a hidden add-on.
+  const wrongSize = extraOnApex.filter(a => missingOnApex.some(t => known(t).includes(String(a.no).trim()) && priceFar(t, a)));
+  const modifierUncertain = extraOnApex.length > wrongSize.length && modifierContext;
   const uncertain = modifierUncertain || missingOnApex.some(t => !known(t).length && !A.some(a => wordScore(t.name, a.name) >= 0.65));
-  return { ok: !missingOnApex.length && !extraOnApex.length, uncertain, modifierUncertain, pairs: pairs.map(p => ({ talabat: p.t.name, apex: p.a.name, apexNo: p.a.no, how: p.how, ratio: p.t.unit && p.a.price ? p.t.unit / p.a.price : null })),
+  return { ok: !missingOnApex.length && !extraOnApex.length, uncertain, modifierUncertain, wrongSize: wrongSize.map(a => (a.qty || 1) + '× ' + a.name), pairs: pairs.map(p => ({ talabat: p.t.name, apex: p.a.name, apexNo: p.a.no, how: p.how, ratio: p.t.unit && p.a.price ? p.t.unit / p.a.price : null })),
     missingOnApex: missingOnApex.map(t => t.qty + '× ' + t.name), extraOnApex: extraOnApex.map(a => (a.qty || 1) + '× ' + a.name),
     countTalabat: qty(talabat, 'qty'), countApex: qty(apex, 'qty'),
     unmatched: { talabat: missingOnApex.map(({ qty, name, price }) => ({ qty, name, price })), apex: extraOnApex.map(({ no, name, qty, price }) => ({ no, name, qty, price })) } };
