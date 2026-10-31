@@ -127,7 +127,14 @@ function setup(app) {
       const size = WEIGHTS.find(w => (x.options || []).some(o => w[0].test(o.name)) || (x.modifiers || []).some(m => w[0].test(m)));
       const sized = size ? apex.filter(a => a.name && size[1].test(a.name)) : [];
       if (sized.length) apex = sized;
-      return { qty: x.qty, name: x.name, price: x.price ?? null, modifiers: x.modifiers || [], modifiersComplete: x.modifierComplete === true || !withApex, size: size ? size[2] : null, apex };
+      // Options: the size (weight) choice, add-ons that cost money (their own Apex line), and free choices (a note).
+      const opts = Array.isArray(x.options) ? x.options : [];
+      const sizeOpt = opts.find(o => WEIGHTS.some(w => w[0].test(o.name))) || (opts.length && x.price && opts[0].price && Math.abs(opts[0].price - x.price) < 0.01 ? opts[0] : null);
+      const addons = opts.filter(o => o !== sizeOpt && Number(o.price) > 0).map(o => ({ name: o.name, qty: (Number(o.qty) || 1) * (Number(x.qty) || 1), price: Number(o.price),
+        apex: (withApex ? knownNos(o.name, learned) : []).map(no => ({ no, name: apexName.get(no) || null })) }));
+      const free = opts.filter(o => o !== sizeOpt && !(Number(o.price) > 0)).map(o => o.name);
+      return { qty: x.qty, name: x.name, price: x.price ?? null, modifiers: x.modifiers || [], modifiersComplete: x.modifierComplete === true || !withApex, size: size ? size[2] : null, apex,
+        addons, freeOptions: opts.length ? [...(sizeOpt ? [sizeOpt.name] : []), ...free] : x.modifiers || [] };
     };
     const list = [];
 

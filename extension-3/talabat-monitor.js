@@ -281,6 +281,13 @@
       if (!name) name = sectionLines[0].slice(0, 160);
       if (!address) address = sectionLines.slice(1, phoneIndex).join(' ').slice(0, 360);
     }
+    // Floor and flat are their own lines on the live screen («الطابق: الأول»، «الشقة: 1»); keep them with the address.
+    const extra = [];
+    for (const [re, label] of [[/^(?:الطابق|الدور|floor)\s*[:：]?\s*(.+)$/i, 'الدور'], [/^(?:الشقة|شقة|apartment|flat|apt\.?)\s*[:：]?\s*(.+)$/i, 'الشقة'], [/^(?:العمارة|المبنى|building)\s*[:：]?\s*(.+)$/i, 'العمارة']]) {
+      const hit = [...sectionLines, ...customerLines].map(x => String(x).match(re)).find(Boolean);
+      if (hit && !new RegExp(label + '\\s*[:：]').test(address)) extra.push(label + ': ' + hit[1].trim());
+    }
+    if (extra.length) address = (address ? address + ' — ' : '') + extra.join('، ');
     d.customer = { name: name.slice(0, 160), address: address.slice(0, 360), phone: phone || '' };
     d.deliveryType = lines(T('prop-delivery-type'))[1] || null;
     // The bill and payment exactly as this order shows them: label → value pairs from «Subtotal» on

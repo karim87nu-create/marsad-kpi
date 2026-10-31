@@ -22,7 +22,8 @@ $PollSeconds = 10
 $WriterPos   = 70        # a POS number no Apex machine uses (Counter row 70: no orders since 2023). Orders get 70<serial>.
 $RefPos      = 35        # the call-center POS: its Counter row says which business day and shift are open
 $RefPosTest  = 29        # in Resturant_Test the open test day is on POS 29 (orders 291..299)
-$AllowLive   = $false    # second lock for production writes; set to $true only after test mode is verified
+$AllowLive   = $false    # second lock for production writes. Karim turns it on himself by creating allow_live.txt next to
+                         # this file (kept across updates of this script); deleting that file locks production again.
 $PrintedFlag = 0         # Orders_D_Daily.Printed on insert (0 = the branch still has to print it); confirmed by print_trace.txt
 $AddPrintedOrders = $false # whether to add a PrintedOrders row at save time; confirmed by print_trace.txt
 $PriceSource = 'ItemsOnlinePrice'  # proven 2026-10-31: every online line on Apex (1,900+ lines) = Items.OnlinePrice
@@ -30,6 +31,7 @@ $WriterUserNo = 755     # Apex user «MARSAD» (Users.UserNo 755, read 2026-10-3
 $TalabatServiceItem = '0114006'  # «خدمة» line (7.02) that Apex's own Talabat orders start with
 
 $monitorDir = Split-Path -Parent $here
+if (Test-Path (Join-Path $here 'allow_live.txt')) { $AllowLive = $true }
 $logFile = Join-Path $here 'writer_log.txt'
 function L($m){ try { if ((Test-Path $logFile) -and (Get-Item $logFile).Length -gt 5MB) { Move-Item $logFile ($logFile + '.old') -Force }; Add-Content $logFile ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '  ' + $m) -Encoding UTF8 } catch {} }
 
@@ -157,12 +159,12 @@ BEGIN TRY
     ComboDifference, WaiterNo, ShiftNo, TransType, SubTotal, Service, Addition, Tax, Tips, TimeIn, Discount, MinCharge, MinChargeDifference, PayWay, CashPayment, VisaPayment,
     Remarks, PosNo, DiscountType, HallNo, PrintsNo, HourNo, Closed, SerialNo, CustPayment, Changed, SNO, RecieveNo, PersonName, DepositNo, DepositValue, BranchNo, BranchOrderNo,
     ServiceRatio, TaxRatio, Hosp_Flag, PosSerial, CheckNo, ReceiveTime, Otlob, Otlob_OrderNo, OnlineType, RedeemCode, Gift, AddPoints, DeliveryTrack, o_Phone, o_CustName,
-    o_Address, o_Sign, o_PersonName, MobileNo, MyFatoorah, Modified, o_LocationNo)
+    o_Address, o_Sign, o_PersonName, MobileNo, MyFatoorah, Modified, o_LocationNo, o_FloorNo, o_FlatNo)
   SELECT @OrderNo, @ShiftSerial, @BranchShift, @TypeSerial, t.TakeAwayLoc, @Cust, t.TableNo, t.GuestNo, 0, 0, @Date, @Time, @UserNo,
     0, 0, @Shift, t.TransType, @Sub, @Service, 0, @Tax, 0, @Time, @RestDiscount, 0, 0, @PayWay, CASE WHEN @PayWay = 'Ledge' THEN 0 ELSE @Total END, 0,
     LEFT(@Remarks, 100), @Pos, CASE WHEN @RestDiscount > 0 THEN t.DiscountType ELSE NULL END, t.HallNo, 1, DATEPART(hour, @Now), '0', NULL, CASE WHEN @PayWay = 'Ledge' THEN 0 ELSE @Total END, '0', 0, 0, LEFT(@Label, 50), 0, 0, @Branch, @BranchOrderNo,
     0, @TaxRatio, 0, @PosSerial, @CheckNo, @Time, t.Otlob, '', t.OnlineType, '', '', 0, t.DeliveryTrack, @Phone, LEFT(@Label, 100),
-    LEFT(@Address, 250), LEFT(@Sign, 100), LEFT(@Label, 50), @Phone, 0, 0, @LocationNo
+    LEFT(@Address, 250), LEFT(@Sign, 100), LEFT(@Label, 50), @Phone, 0, 0, @LocationNo, LEFT(@Floor, 20), LEFT(@Flat, 20)
   FROM (SELECT TakeAwayLoc, TableNo, GuestNo, TransType, DiscountType, HallNo, Otlob, OnlineType, DeliveryTrack FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderNo = @Tpl
         UNION ALL SELECT TakeAwayLoc, TableNo, GuestNo, TransType, DiscountType, HallNo, Otlob, OnlineType, DeliveryTrack FROM dbo.Orders_M WITH (NOLOCK) WHERE OrderNo = @Tpl AND @TplArchive = 1) t;
   IF @@ROWCOUNT <> 1 THROW 51012, 'template order disappeared', 1;
@@ -209,7 +211,7 @@ function Write-Order($c, $job, [string]$mode){
     [void]$cmd.Parameters.AddWithValue("@n$i", [string]$l.note)
   }
   $cmd.CommandText = $decl + $Batch
-  $p = @{ '@Exec' = $(if ($mode -eq 'shadow') { 0 } else { 1 }); '@IsTest' = $(if ($mode -eq 'test') { 1 } else { 0 }); '@PayWay' = $(if ($job.payment -eq 'paid') { 'Ledge' } else { 'Cash' }); '@Pos' = $WriterPos; '@LocationNo' = [int]$job.locationNo; '@ServiceItem' = [string]$TalabatServiceItem; '@RefPos' = $(if ($mode -eq 'test') { $RefPosTest } else { $RefPos }); '@Branch' = [int]$job.branchNo
+  $p = @{ '@Exec' = $(if ($mode -eq 'shadow') { 0 } else { 1 }); '@IsTest' = $(if ($mode -eq 'test') { 1 } else { 0 }); '@PayWay' = $(if ($job.payment -eq 'paid') { 'Ledge' } else { 'Cash' }); '@Floor' = $(if ([string]$job.customer.address -match '(?:الدور|الطابق)\s*[:：]\s*([^،,—\-]+)') { $Matches[1].Trim() } else { '' }); '@Flat' = $(if ([string]$job.customer.address -match 'الشقة\s*[:：]\s*([^،,—\-]+)') { $Matches[1].Trim() } else { '' }); '@Pos' = $WriterPos; '@LocationNo' = [int]$job.locationNo; '@ServiceItem' = [string]$TalabatServiceItem; '@RefPos' = $(if ($mode -eq 'test') { $RefPosTest } else { $RefPos }); '@Branch' = [int]$job.branchNo
           '@Marker' = ('M' + $(if ($job.source -eq 'site') { 'S' } else { 'T' }) + ':' + $job.ref); '@Kind' = [string]$job.source; '@Phone' = [string]$job.customer.phone
           '@Label' = [string]$job.label; '@Address' = [string]$job.customer.address; '@Sign' = [string]$job.sign; '@Remarks' = [string]$job.note
           '@RestDiscount' = [decimal]$job.restaurantDiscount; '@AddPrinted' = $(if ($AddPrintedOrders) { 1 } else { 0 }); '@PrintedFlag' = $PrintedFlag; '@UserNo' = $WriterUserNo

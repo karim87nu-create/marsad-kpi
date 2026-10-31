@@ -146,21 +146,31 @@ function discountsHtml(o) {
 function itemsHtml(o) {
   if (!o.items?.length) return '<div class="warn">' + (o.detailRead ? 'مفيش أصناف' : 'تفاصيل الأوردر لسه ماتقرتش — افتحه على ' + (o.source === 'talabat' ? 'طلبات' : 'الموقع')) + '</div>';
   return '<ul class="items">' + o.items.map(i => '<li><b>' + esc(i.qty) + '×</b> ' + esc(i.name) + (i.price != null ? ' <span style="color:var(--muted)">(' + money(i.price) + ')</span>' : '') +
-    (i.modifiers?.length ? '<div class="mods">إضافات: ' + i.modifiers.map(esc).join('، ') + '</div>' : '') +
+    ((i.freeOptions || i.modifiers)?.length ? '<div class="mods">اختيارات: ' + (i.freeOptions || i.modifiers).map(esc).join('، ') + '</div>' : '') +
+    (i.addons?.length ? '<div class="warn">إضافات بفلوس (كل واحدة صنف على Apex): ' + i.addons.map(a => esc(a.qty) + '× ' + esc(a.name) + ' (' + money(a.price) + ')' + (a.apex?.length ? ' → ' + a.apex.map(x => esc(x.no) + (x.name ? ' ' + esc(x.name) : '')).join(' أو ') : '')).join('، ') + '</div>' : '') +
     (o.source === 'talabat' && !i.modifiersComplete ? '<div class="warn">الإضافات ماتقرتش كاملة — راجعها على طلبات</div>' : '') +
     (o.source === 'talabat' ? (i.apex?.length ? '<div class="apex">على Apex: ' + i.apex.map(a => esc(a.no) + (a.name ? ' ' + esc(a.name) : '')).join(' أو ') + (i.apex.length > 1 ? ' <span class="warn">(اختار الحجم الصح)</span>' : '') + '</div>'
       : '<div class="apex none">مش مربوط بصنف Apex لسه — اختاره من المنيو</div>') : '') + '</li>').join('') + '</ul>';
 }
 // Automatic transfer: branch and Apex item for each line, confirmed by the employee (nothing is guessed).
+// The Apex lines of an order: each dish, then each of its add-ons that cost money (its own Apex line, not a free note).
+function flatLines(o) {
+  const out = [];
+  for (const i of o.items || []) {
+    out.push({ kind: 'item', qty: i.qty, name: i.name, label: i.name + ((i.freeOptions || i.modifiers || []).length ? ' (' + (i.freeOptions || i.modifiers).join('، ') + ')' : ''), apex: i.apex || [], note: (i.freeOptions || i.modifiers || []).join('، ').slice(0, 60) });
+    for (const a of i.addons || []) out.push({ kind: 'addon', qty: a.qty, name: a.name, label: '+ ' + a.name + ' (' + money(a.price) + ') — إضافة بفلوس على ' + i.name, apex: a.apex || [], note: '' });
+  }
+  return out;
+}
 function autoHtml(o) {
   const mode = data.autoTransfer;
   if (!mode || mode === 'off' || o.apex || /^auto_(?:pending|sending|done|preview)$/.test(o.job?.state || '')) return '';
-  const k = key(o), p = picks[k] || (picks[k] = { branch: o.apexBranch || '', items: (o.items || []).map(i => i.apex?.length === 1 ? i.apex[0].no : '') });
+  const fl = flatLines(o), k = key(o), p = picks[k] || (picks[k] = { branch: o.apexBranch || '', items: fl.map(i => i.apex?.length === 1 ? i.apex[0].no : '') });
   const br = '<select data-pick="branch"><option value="">فرع Apex…</option>' + (data.branches || []).map(b => '<option value="' + b.no + '"' + (String(p.branch) === String(b.no) ? ' selected' : '') + '>' + esc(b.name) + '</option>').join('') + '</select>';
   // Delivery area on Apex (decides the delivery service charge), only the chosen branch's areas.
   const areas = (data.locations || []).filter(l => !p.branch || l.branch == null || String(l.branch) === String(p.branch)).sort((a, b) => a.name.localeCompare(b.name, 'ar'));
   const loc = '<select data-pick="loc"><option value="">منطقة العميل على Apex…</option>' + areas.map(l => '<option value="' + l.no + '"' + (String(p.loc) === String(l.no) ? ' selected' : '') + '>' + esc(l.name) + (l.service != null ? ' (خدمة ' + money(l.service) + ')' : '') + '</option>').join('') + '</select>';
-  const lines = (o.items || []).map((i, n) => '<div class="pay" style="margin-top:4px"><span>' + esc(i.qty) + '× ' + esc(i.name) + (i.modifiers?.length ? ' (' + i.modifiers.map(esc).join('، ') + ')' : '') + '</span> ' +
+  const lines = fl.map((i, n) => '<div class="pay" style="margin-top:4px"><span' + (i.kind === 'addon' ? ' class="warn"' : '') + '>' + esc(i.qty) + '× ' + esc(i.label) + '</span> ' +
     (i.apex?.length > 1 ? '<select data-pick="item" data-n="' + n + '"><option value="">اختار…</option>' + i.apex.map(a => '<option value="' + esc(a.no) + '"' + (p.items[n] === a.no ? ' selected' : '') + '>' + esc(a.no) + (a.name ? ' ' + esc(a.name) : '') + '</option>').join('') + '</select>' : '') +
     '<input data-pick="item" data-n="' + n + '" inputmode="numeric" placeholder="رقم الصنف على Apex" style="width:150px" value="' + esc(p.items[n] || '') + '"></div>').join('');
   const label = mode === 'shadow' ? 'معاينة آلية (من غير كتابة)' : mode === 'test' ? 'تحويل آلي (قاعدة الاختبار)' : 'تحويل آلي لـApex';
@@ -216,7 +226,7 @@ $('list').addEventListener('click', async e => {
     if (!pay) { toast('حدد الأول: كاش ولا مدفوع'); return; }
     if (!p.branch) { toast('اختار فرع Apex'); return; }
     if (!p.loc) { toast('اختار منطقة العميل على Apex'); return; }
-    if ((o.items || []).some((i, n) => !/^\d{4,10}$/.test(String(p.items?.[n] || '')))) { toast('كل صنف لازم يبقى له رقم على Apex'); return; }
+    if (flatLines(o).some((i, n) => !/^\d{4,10}$/.test(String(p.items?.[n] || '')))) { toast('كل صنف وكل إضافة بفلوس لازم يبقى لها رقم على Apex'); return; }
     if (o.discounts?.some(d => !d.who)) { toast('فيه خصم مش واضح مين ممول له — سجله بإيدك'); return; }
     if (o.source === 'talabat' && o.items.some(i => !i.modifiersComplete)) { toast('الإضافات ماتقرتش كاملة — سجله بإيدك'); return; }
     const rest = (o.discounts || []).filter(d => d.who === 'restaurant').reduce((a, d) => a + (Number(d.amount) || 0), 0);
@@ -224,7 +234,9 @@ $('list').addEventListener('click', async e => {
     b.disabled = true;
     try {
       await api('POST', '/api/transfer/job', { source: o.source, ref: o.ref, action: 'auto', payment: pay, branchNo: Number(p.branch), locationNo: Number(p.loc), code: o.code,
-        items: o.items.map((i, n) => ({ itemNo: p.items[n], qty: i.qty, note: (i.modifiers || []).join('، ').slice(0, 60) })),
+        items: flatLines(o).map((i, n) => ({ itemNo: p.items[n], qty: i.qty, note: '' })),
+        // Free choices and the customer's note go in the order comment on Apex (تعليقات الطلب), as the staff do.
+        note: [...flatLines(o).filter(i => i.kind === 'item' && i.note).map(i => i.name + ': ' + i.note), ...(o.note ? ['ملاحظة العميل: ' + o.note] : [])].join(' | ').slice(0, 300),
         label: (o.customer?.name ? o.customer.name + ' ' : '') + labelOf(o, pay), customer: o.customer || {}, sign: plat.map(d => 'خصم طلبات ' + money(d.amount)).join(' + '),
         restaurantDiscount: rest, expectedTotal: (o.subtotal ?? o.total ?? 0) - rest });
       delete picks[key(o)]; await load();
