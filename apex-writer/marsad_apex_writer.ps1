@@ -24,7 +24,9 @@ $RefPos      = 35        # the call-center POS: its Counter row says which busin
 $AllowLive   = $false    # second lock for production writes; set to $true only after test mode is verified
 $PrintedFlag = 0         # Orders_D_Daily.Printed on insert (0 = the branch still has to print it); confirmed by print_trace.txt
 $AddPrintedOrders = $false # whether to add a PrintedOrders row at save time; confirmed by print_trace.txt
-$PriceSource = 'shadow-only'  # where line prices come from; set after the shadow comparison proves the native source
+$PriceSource = 'ItemsOnlinePrice'  # proven 2026-10-31: every online line on Apex (1,900+ lines) = Items.OnlinePrice
+$WriterUserNo = 0       # Apex user the order is saved under (a dedicated «MARSAD» user; 0 until the admin creates one)
+$TalabatServiceItem = '0114006'  # «خدمة» line (7.02) that Apex's own Talabat orders start with
 
 $monitorDir = Split-Path -Parent $here
 $logFile = Join-Path $here 'writer_log.txt'
@@ -82,15 +84,16 @@ SELECT TOP 1 @Tpl = OrderNo FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderDat
   AND ((@Kind = 'talabat' AND (OnlineType LIKE '%TALABAT%' OR OnlineType LIKE N'%طلبات%')) OR (@Kind = 'site' AND (OnlineType LIKE N'%موقع%' OR OnlineType LIKE '%WEB%' OR OnlineType LIKE '%SITE%')))
   ORDER BY CASE WHEN BranchNo = @Branch THEN 0 ELSE 1 END, CheckNo DESC;
 IF @Tpl IS NULL THROW 51005, 'no Apex order of this kind today to take the settings from', 1;
-SELECT @TaxRatio = TaxRatio FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderNo = @Tpl;
+DECLARE @Service money;
+SELECT @TaxRatio = TaxRatio, @Service = ISNULL(Service, 0) FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderNo = @Tpl;
 -- Lines and prices (prices given by the caller from the proven price source; checked against Items here).
 IF EXISTS (SELECT 1 FROM @Lines l LEFT JOIN dbo.Items i WITH (NOLOCK) ON i.ItemNo = l.ItemNo WHERE i.ItemNo IS NULL) THROW 51006, 'an item number is not in Apex Items', 1;
 IF EXISTS (SELECT 1 FROM @Lines l JOIN dbo.Items i WITH (NOLOCK) ON i.ItemNo = l.ItemNo WHERE ISNULL(i.StopItem, 0) <> 0) THROW 51007, 'an item is stopped on Apex', 1;
 SELECT @Sub = SUM(Qty * Price) FROM @Lines;
-SET @Tax = ROUND((@Sub - @RestDiscount) * ISNULL(@TaxRatio, 0) / 100.0, 2);
-SET @Total = @Sub - @RestDiscount + @Tax;
+SET @Tax = ROUND((@Sub + @Service) * ISNULL(@TaxRatio, 0) / 100.0, 2);   -- Apex taxes SubTotal + Service, before the discount (checked on real orders)
+SET @Total = @Sub - @RestDiscount + @Tax + @Service;   -- Apex: CashPayment = SubTotal - Discount + Tax + Service
 IF @Exec = 0 BEGIN
-  SELECT 'preview' AS r, @Date AS OrderDate, @Shift AS ShiftNo, @Tpl AS Template, @Sub AS SubTotal, @Tax AS Tax, @TaxRatio AS TaxRatio, @Total AS Total,
+  SELECT 'preview' AS r, @Date AS OrderDate, @Shift AS ShiftNo, @Tpl AS Template, @Sub AS SubTotal, @Tax AS Tax, @TaxRatio AS TaxRatio, @Service AS Service, @Total AS Total,
     (SELECT ISNULL(MAX(PosSerial), 0) + 1 FROM dbo.Counter WITH (NOLOCK) WHERE num = @Pos) AS PosSerial,
     (SELECT ISNULL(MAX(BranchOrderNo), 0) + 2 FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE BranchNo = @Branch) AS BranchOrderNo,
     (SELECT ISNULL(MAX(TypeSerial), 0) + 1 FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE RTRIM(PayWay) IN ('Cash', 'Ledge', 'Visa')) AS TypeSerial,
@@ -131,15 +134,15 @@ BEGIN TRY
     Remarks, PosNo, DiscountType, HallNo, PrintsNo, HourNo, Closed, SerialNo, CustPayment, Changed, SNO, RecieveNo, PersonName, DepositNo, DepositValue, BranchNo, BranchOrderNo,
     ServiceRatio, TaxRatio, Hosp_Flag, PosSerial, CheckNo, ReceiveTime, Otlob, Otlob_OrderNo, OnlineType, RedeemCode, Gift, AddPoints, DeliveryTrack, o_Phone, o_CustName,
     o_Address, o_Sign, o_PersonName, MobileNo, MyFatoorah, Modified)
-  SELECT @OrderNo, @ShiftSerial, @BranchShift, @TypeSerial, t.TakeAwayLoc, @Cust, t.TableNo, t.GuestNo, 0, 0, @Date, @Time, t.UserNo,
-    0, 0, @Shift, t.TransType, @Sub, 0, 0, @Tax, 0, @Time, @RestDiscount, 0, 0, 'Cash', @Total, 0,
+  SELECT @OrderNo, @ShiftSerial, @BranchShift, @TypeSerial, t.TakeAwayLoc, @Cust, t.TableNo, t.GuestNo, 0, 0, @Date, @Time, @UserNo,
+    0, 0, @Shift, t.TransType, @Sub, @Service, 0, @Tax, 0, @Time, @RestDiscount, 0, 0, 'Cash', @Total, 0,
     LEFT(@Remarks, 100), @Pos, CASE WHEN @RestDiscount > 0 THEN t.DiscountType ELSE NULL END, t.HallNo, 1, DATEPART(hour, @Now), '0', NULL, @Total, '0', 0, 0, LEFT(@Label, 50), 0, 0, @Branch, @BranchOrderNo,
     0, @TaxRatio, 0, @PosSerial, @CheckNo, @Time, t.Otlob, '', t.OnlineType, '', '', 0, t.DeliveryTrack, @Phone, LEFT(@Label, 100),
     LEFT(@Address, 250), LEFT(@Sign, 100), LEFT(@Label, 50), @Phone, 0, 0
   FROM dbo.Orders_M_Daily t WITH (NOLOCK) WHERE t.OrderNo = @Tpl;
   IF @@ROWCOUNT <> 1 THROW 51012, 'template order disappeared', 1;
   INSERT INTO dbo.Orders_D_Daily (OrderNo, ItemNo, SerialNo, Qty, Price, Description, Combo, ItemDetailNo, Rank, ItemsCombo, ItemDiscount, ItemTime, OpenDesc, TimeVal, ItemTax, ItemService, Printed, PrintedSlip, Weight, ItemsNo, SentBy, Finished)
-  SELECT @OrderNo, l.ItemNo, l.SerialNo, l.Qty, l.Price, l.Note, '0', l.ItemNo, NULL, NULL, 0, @Time, '', 0, NULL, NULL, @PrintedFlag, @PrintedFlag, l.Qty, 0, 0, 0 FROM @Lines l;
+  SELECT @OrderNo, l.ItemNo, l.SerialNo, l.Qty, l.Price, l.Note, '0', l.ItemNo, NULL, NULL, 0, @Time, '', 0, NULL, NULL, @PrintedFlag, @PrintedFlag, 1, 1, 0, 0 FROM @Lines l;   -- Weight 1, ItemsNo 1 on every Apex online line
   UPDATE dbo.Counter SET OrderNo = @PosSerial, PosSerial = @PosSerial, ShiftOrderNo = @ShiftSerial, OrderDate = @Date, ShiftNo = @Shift WHERE num = @Pos;
   IF @@ROWCOUNT <> 1 THROW 51013, 'counter update failed', 1;
   UPDATE dbo.Customers SET LastOrderNo = @OrderNo, ShiftOrderNo = @ShiftSerial, LastOrderCash = @Total, FirstOrder = ISNULL(FirstOrder, @Date), LastOrder = @Date,
@@ -179,7 +182,7 @@ function Write-Order($c, $job, [string]$mode){
   $p = @{ '@Exec' = $(if ($mode -eq 'shadow') { 0 } else { 1 }); '@Pos' = $WriterPos; '@RefPos' = $RefPos; '@Branch' = [int]$job.branchNo
           '@Marker' = ('MARSAD:' + $job.source + ':' + $job.ref); '@Kind' = [string]$job.source; '@Phone' = [string]$job.customer.phone
           '@Label' = [string]$job.label; '@Address' = [string]$job.customer.address; '@Sign' = [string]$job.sign; '@Remarks' = [string]$job.note
-          '@RestDiscount' = [decimal]$job.restaurantDiscount; '@AddPrinted' = $(if ($AddPrintedOrders) { 1 } else { 0 }); '@PrintedFlag' = $PrintedFlag
+          '@RestDiscount' = [decimal]$job.restaurantDiscount; '@AddPrinted' = $(if ($AddPrintedOrders) { 1 } else { 0 }); '@PrintedFlag' = $PrintedFlag; '@UserNo' = $WriterUserNo
           '@TimeText' = (Get-Date).ToString('hh:mm:ss tt', [Globalization.CultureInfo]::GetCultureInfo('ar-EG')) }
   foreach($k in $p.Keys){ [void]$cmd.Parameters.AddWithValue($k, $p[$k]) }
   $t = New-Object System.Data.DataTable; $t.Load($cmd.ExecuteReader()); return $t.Rows[0]
@@ -194,10 +197,9 @@ function Price-Lines($c, $job){
     $t = New-Object System.Data.DataTable; $t.Load($cmd.ExecuteReader())
     if (-not $t.Rows.Count) { throw ('item ' + $l.itemNo + ' not in Apex') }
     $r = $t.Rows[0]
-    $cand = [ordered]@{ ItemsOnlineTypes = $r.ot; ItemsBranchesOnPrice = $r.bo; ItemsBranchesPrice = $r.bp; ItemsOnlinePrice = $r.op; ItemsDeliveryPrice = $r.dp }
+    $cand = [ordered]@{ ItemsOnlinePrice = $r.op; ItemsOnlineTypes = $r.ot; ItemsBranchesOnPrice = $r.bo; ItemsBranchesPrice = $r.bp; ItemsDeliveryPrice = $r.dp }
     $l | Add-Member -NotePropertyName candidates -NotePropertyValue ($cand.Keys | Where-Object { $cand[$_] -isnot [DBNull] -and $cand[$_] -ne $null } | ForEach-Object { "$_=$([math]::Round([double]$cand[$_],2))" }) -Force
-    $src = if ($PriceSource -ne 'shadow-only') { $PriceSource } else { 'ItemsOnlineTypes' }
-    $v = $cand[$src]; if ($v -is [DBNull] -or $v -eq $null) { foreach($k in $cand.Keys){ if ($cand[$k] -isnot [DBNull] -and $cand[$k] -ne $null) { $v = $cand[$k]; break } } }
+    $v = $cand[$PriceSource]   # only the proven source; no fallback to another list
     if ($v -is [DBNull] -or $v -eq $null -or [decimal]$v -le 0) { throw ('no price on Apex for item ' + $l.itemNo) }
     $l | Add-Member -NotePropertyName price -NotePropertyValue ([decimal]$v) -Force
   }
@@ -214,14 +216,18 @@ for (;;) {
     if ($n.job) {
       $job = $n.job; $mode = [string]$n.mode
       if ($mode -eq 'live' -and -not $AllowLive) { throw 'live mode is locked on this PC ($AllowLive)' }
-      if ($mode -eq 'live' -and $PriceSource -eq 'shadow-only') { throw 'price source not proven yet' }
+      if ($mode -eq 'live' -and $WriterUserNo -eq 0) { throw 'no Apex user for the writer yet ($WriterUserNo)' }
       $c = Open-Db $mode
+      # Apex's own Talabat orders start with the «خدمة» service line; the employee's lines follow.
+      if ($job.source -eq 'talabat' -and $TalabatServiceItem -and -not ($job.items | Where-Object { $_.itemNo -eq $TalabatServiceItem })) {
+        $job.items = @([pscustomobject]@{ itemNo = $TalabatServiceItem; qty = 1; note = '' }) + @($job.items)
+      }
       Price-Lines $c $job
       $r = Write-Order $c $job $mode
       $res = @{ source = $job.source; ref = $job.ref; db = $mode; ok = $true }
       if ($r.r -eq 'preview') {
         $res.preview = $true; $res.total = [double]$r.Total; $res.branchOrderNo = $r.BranchOrderNo
-        $res.detail = "sub=$($r.SubTotal) tax=$($r.Tax) ratio=$($r.TaxRatio) template=$($r.Template) posSerial=$($r.PosSerial) typeSerial=$($r.TypeSerial) cust=$($r.CustNo) | " + (($job.items | ForEach-Object { "$($_.itemNo)x$($_.qty): $($_.candidates -join ',')" }) -join ' ; ')
+        $res.detail = "sub=$($r.SubTotal) tax=$($r.Tax) ratio=$($r.TaxRatio) service=$($r.Service) template=$($r.Template) posSerial=$($r.PosSerial) typeSerial=$($r.TypeSerial) cust=$($r.CustNo) | " + (($job.items | ForEach-Object { "$($_.itemNo)x$($_.qty): $($_.candidates -join ',')" }) -join ' ; ')
         if ($job.expectedTotal -and [math]::Abs([double]$r.Total - [double]$job.expectedTotal) -gt [math]::Max(1, 0.01 * [double]$job.expectedTotal)) { $res.ok = $false; $res.error = "القيمة $([math]::Round([double]$r.Total,2)) مش زي الأوردر $($job.expectedTotal)" }
       } else {
         $res.orderNo = $r.OrderNo; $res.shiftSerial = $r.ShiftSerial; $res.branchOrderNo = $r.BranchOrderNo; $res.total = [double]$r.Total
