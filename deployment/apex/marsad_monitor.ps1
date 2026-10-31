@@ -880,5 +880,6 @@ while ($true) {
     try { if ($script:conn) { $script:conn.Close() } } catch {}
     $script:conn = $null
   }
-  Start-Sleep -Seconds $PollSeconds
+  # When Apex answers slowly (the server is struggling), read less often so the monitor adds nothing to its load.
+  if ($script:cycleSqlMs -ge 3000) { L "Apex slow (SQL sum=$($script:cycleSqlMs) ms) - next read in 3 minutes"; Start-Sleep -Seconds 180 } else { Start-Sleep -Seconds $PollSeconds }
 }
