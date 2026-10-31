@@ -125,7 +125,7 @@ function createApp({ db, config: input = {}, now = () => Date.now() }) {
         response = send(500, { error: 'server_error' });
       }
     }
-    for (const fn of afterRequest) { try { const p = fn(now()); if (p) waitUntil(Promise.resolve(p)); } catch {} }
+    for (const fn of afterRequest) { try { const p = fn(now(), request.method, url.pathname); if (p) waitUntil(Promise.resolve(p)); } catch {} }
     return response;
   };
   return app;

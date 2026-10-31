@@ -89,6 +89,9 @@ function apexBranchOf(name) {
 
 function setup(app) {
   const { db, fail } = app;
+  const queueCache = new Map(), QUEUE_CACHE_MS = 8000;
+  // Anything that changes the orders (a push from a screen or the monitor, a link, a claim, the writer's answer) rebuilds it.
+  app.afterRequest((now, method, path) => { if (method !== 'GET' && /^\/api\/(?:talabat|site|orders|apex-writer|transfer)\//.test(path || '')) queueCache.clear(); });
   // ---- sign-in with the employee's own PIN (the same one used for work), separate from the admin password ----
   app.route('POST', '/api/transfer/login', async ctx => {
     const pin = ctx.body.pin, key = 'transfer|' + ctx.ip;
@@ -114,11 +117,92 @@ function setup(app) {
   app.route('GET', '/api/transfer/queue', async ctx => {
     const me = await who(ctx);
     const day = validDate(String(ctx.query.day || '')) ? ctx.query.day : businessDay(ctx.now);
-    const snap = parseJson((await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(day))?.data, {});
-    const apexName = new Map(Object.entries(APEX_NAMES));
-    for (const a of [...(snap.online || []), ...(snap.orders || [])]) for (const i of a.items || []) if (i?.no && i?.name) apexName.set(String(i.no).trim(), i.name);
-    const learned = new Map();
-    if (app.learn) for (const [n, m] of await app.learn.pairs('match-v2:item:talabat')) { const ok = new Map([...m].filter(([, c]) => c >= 2)); if (ok.size) learned.set(n, ok); }
+    // The day's orders (heavy: Apex snapshot, matching) are built once every few seconds for everyone on the page;
+    // only the claims (who has which order) are read fresh for each request.
+    const built = queueCache.get(day);
+    const base = built && ctx.now - built.at < QUEUE_CACHE_MS ? built : await (async () => {
+      const snap = parseJson((await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(day))?.data, {});
+      const apexName = new Map(Object.entries(APEX_NAMES));
+      for (const a of [...(snap.online || []), ...(snap.orders || [])]) for (const i of a.items || []) if (i?.no && i?.name) apexName.set(String(i.no).trim(), i.name);
+      const learned = new Map();
+      if (app.learn) for (const [n, m] of await app.learn.pairs('match-v2:item:talabat')) { const ok = new Map([...m].filter(([, c]) => c >= 2)); if (ok.size) learned.set(n, ok); }
+      const itemOut = (x, withApex) => {
+        let apex = (withApex ? knownNos(x.name, learned) : []).map(no => ({ no, name: apexName.get(no) || null }));
+        // A size/weight chosen on Talabat («Quarter Kilo») narrows the Apex choices to that size, when their names say it.
+        const size = WEIGHTS.find(w => (x.options || []).some(o => w[0].test(o.name)) || (x.modifiers || []).some(m => w[0].test(m)));
+        const sized = size ? apex.filter(a => a.name && size[1].test(a.name)) : [];
+        if (sized.length) apex = sized;
+        // Options: the size (weight) choice, add-ons that cost money (their own Apex line), and free choices (a note).
+        // A discount under the dish (minus price, or discount words) is neither an add-on nor a comment: it goes to the discounts.
+        const isDisc = o => Number(o.price) < 0 || DISC_WORDS.test(o.name);
+        // Under a dish Talabat shows the discount, its description, and who funds which part («ممول من قبلك» = the restaurant,
+        // «ممول من قبل Talabat» = Talabat). With the funded parts, those are the discounts; without them the dish's discount
+        // (the largest line, so «خصم» and «خصم 30%…» are not counted twice) is the restaurant's.
+        const amountOf = t => { const m = String(t).match(AMOUNT); return m ? Math.abs(Number(m[1].replace(/[^\d.]/g, ''))) || null : null; };
+        const found = [...(Array.isArray(x.options) ? x.options : []).filter(isDisc).map(o => ({ label: o.name, amount: o.price != null ? Math.abs(Number(o.price)) : null })),
+          ...(x.discountLines || []).map(t => ({ label: String(t).split('|')[0].trim(), amount: String(t).includes('|') ? amountOf(String(t).split('|').slice(1).join('|')) : null }))];
+        const funded = found.filter(d => discountWho(d.label) && d.amount);
+        const top = found.filter(d => d.amount).sort((a, b) => b.amount - a.amount)[0];
+        // The funded parts must add up to the dish's discount; if they don't, who pays what is not clear (entered by hand).
+        const fundedOk = funded.length && (!top || Math.abs(funded.reduce((a, d) => a + d.amount, 0) - top.amount) < 0.05 || funded.some(d => d.amount === top.amount));
+        if (funded.length && !fundedOk) funded.forEach(d => { d.unclear = true; });
+        const itemDiscounts = funded.length && !fundedOk ? [{ text: (top?.label || 'خصم') + ' — ' + x.name + ' (التقسيم مش واضح)', amount: top?.amount ?? null, who: null }] : funded.length ? [...new Map(funded.map(d => [discountWho(d.label) + d.amount, { text: d.label + ' — ' + x.name, amount: d.amount, who: discountWho(d.label) }])).values()]
+          : top ? [{ text: top.label + ' — ' + x.name, amount: top.amount, who: 'restaurant' }] : found.length ? [{ text: found[0].label + ' — ' + x.name, amount: null, who: 'restaurant' }] : [];
+        const opts = (Array.isArray(x.options) ? x.options : []).filter(o => !isDisc(o));
+        const sizeOpt = opts.find(o => WEIGHTS.some(w => w[0].test(o.name))) || (opts.length && x.price && opts[0].price && Math.abs(opts[0].price - x.price) < 0.01 ? opts[0] : null);
+        const addons = opts.filter(o => o !== sizeOpt && Number(o.price) > 0).map(o => ({ name: o.name, qty: Number(o.qty) > 0 ? Number(o.qty) : null, price: Number(o.price),   // the count shown is for all the dishes together
+          apex: (withApex ? knownNos(o.name, learned) : []).map(no => ({ no, name: apexName.get(no) || null })) }));
+        const free = opts.filter(o => o !== sizeOpt && !(Number(o.price) > 0)).map(o => o.name);
+        return { qty: x.qty, name: x.name, price: x.price ?? null, modifiers: x.modifiers || [], modifiersComplete: x.modifierComplete === true || !withApex, size: size ? size[2] : null, apex,
+          // The size picks the Apex item itself (ربع كيلو نيفة): it is neither an add-on nor a comment.
+          addons, sizeOption: sizeOpt ? sizeOpt.name : null, freeOptions: opts.length ? free : (x.modifiers || []).filter(m => !WEIGHTS.some(w => w[0].test(m)) && !DISC_WORDS.test(m)), itemDiscounts };
+      };
+      const list = [];
+
+      // Talabat
+      const tm = app.talabat ? await app.talabat.matchDay(day) : { rows: [], matches: new Map(), states: new Map() };
+      const tProfiles = new Map((await db.prepare("SELECT ref, data FROM match_profiles WHERE source = 'talabat' AND ref IN (SELECT id FROM talabat_orders WHERE day = ?)").all(day)).map(x => [x.ref, parseJson(x.data, {})]));
+      for (const o of tm.rows) {
+        if (TALABAT_DONE.has(o.status)) continue;
+        const p = tProfiles.get(o.id) || {}, a = tm.matches.get(o.id), bill = p.bill || [];
+        const items = parseJson(o.items, []).map(x => itemOut(x, true));
+        // The bill's discount lines are the order's total; the lines under the dishes count only when the bill shows none (never both).
+        // Under the dishes = the restaurant's discount (deducted); in the bill summary = Talabat's (special mark).
+        // A bill line that only repeats the dishes' discount total is the same money, not a second discount.
+        const dishDiscounts = items.flatMap(i => i.itemDiscounts || []), dishTotal = dishDiscounts.reduce((a, d) => a + (Number(d.amount) || 0), 0);
+        const billDiscounts = talabatDiscounts(bill).filter(d => !(dishTotal > 0 && d.amount != null && Math.abs(d.amount - dishTotal) < 0.01 && !/(talabat|طلبات)/i.test(d.text)));
+        const discounts = [...dishDiscounts, ...billDiscounts];
+        list.push({ source: 'talabat', ref: o.id, code: o.code || null, at: iso(o.accepted_at || o.received_at || o.placed_at), status: o.status, out: TALABAT_OUT.has(String(o.status || '').toUpperCase()) || !!o.picked_up_at || !!o.delivered_at, branch: o.store, apexBranch: apexBranchOf(o.store), deliveryType: o.delivery_type || null,
+          customer: { name: /^(?:information|details|customer|العميل)$/i.test(p.name || '') ? null : p.name || null, phone: phoneOut(p.phone), address: p.address || null },
+          // What Apex must total (Karim 31-10): the bill's «مجموع» (what the customer pays) plus Talabat's share of the discounts
+          // (not deducted on Apex). The writer discounts any amount Apex comes out above it.
+          target: (() => { const t = bill.find(x => /^(?:مجموع|المجموع|الإجمالي|total|order total)$/i.test(String(x.k || '').trim())), v = t ? amountOf(String(t.text).split(' | ').slice(1).join(' ')) : o.total ?? null;
+            return v == null ? null : Math.round((v + discounts.filter(d => d.who === 'platform').reduce((a, d) => a + (Number(d.amount) || 0), 0)) * 100) / 100; })(),
+          payment: talabatPayment(bill, p.livePay), bill, discounts, subtotal: o.subtotal ?? null, total: o.total ?? null,
+          items, detailRead: !!o.detail_at,
+          apex: a ? { no: a.no, sn: a.sn ?? null, user: a.user || null, how: a.how || null } : null, matching: tm.states.get(o.id) || null, job: null });
+      }
+
+      // Website
+      const sRows = await db.prepare('SELECT * FROM site_orders WHERE day = ?').all(day);
+      const sm = app.site && sRows.length ? await app.site.apexMatch(day, sRows) : { matches: new Map(), states: new Map() };
+      const sProfiles = new Map((await db.prepare("SELECT ref, data FROM match_profiles WHERE source = 'site' AND ref IN (SELECT CAST(id AS TEXT) FROM site_orders WHERE day = ?)").all(day)).map(x => [x.ref, parseJson(x.data, {})]));
+      for (const o of sRows) {
+        if (SITE_DONE.has(o.status)) continue;
+        const p = sProfiles.get(String(o.id)) || {}, pay = p.payment || null, a = sm.matches.get(o.id);
+        const discounts = pay ? [...(pay.coupons || []).map(c => ({ text: 'كوبون ' + c.code, amount: c.amount, who: 'restaurant' })),
+          ...(!pay.coupons?.length && pay.discount ? [{ text: 'خصم الموقع', amount: pay.discount, who: 'restaurant' }] : [])] : [];
+        list.push({ source: 'site', ref: String(o.id), code: String(o.id), at: iso(o.created_at), status: o.status, out: !!o.out_at || !!o.delivered_at || o.status === 'completed', branch: o.branch || null, apexBranch: apexBranchOf(o.branch), scheduled: !!o.scheduled,
+          customer: { name: p.customer?.name || null, phone: phoneOut(p.customer?.phone || p.customer?.mobile), address: p.customer?.address || null },
+          target: o.total ?? null, payment: sitePayment(pay), paymentTitle: pay?.title || null, note: pay?.note || null, discounts, fees: pay?.fees || [], shipping: pay?.shipping ?? null, total: o.total ?? null,
+          items: (p.items || []).map(x => itemOut(x, false)), detailRead: !!p.items?.length,
+          apex: a ? { no: a.no, sn: a.sn ?? null, user: a.user || null, how: a.how || null } : null, matching: sm.states?.get(o.id) || null, job: null });
+      }
+      list.sort((x, y) => (x.apex ? 1 : 0) - (y.apex ? 1 : 0) || String(x.at || '').localeCompare(String(y.at || '')));
+      return { at: ctx.now, list, snap };
+    })();
+    if (base !== built) queueCache.set(day, base);
+    const snap = base.snap;
     const jobs = new Map((await db.prepare('SELECT * FROM transfer_jobs WHERE day = ?').all(day)).map(j => [j.source + ':' + j.ref, j]));
     const jobOf = (source, ref) => {
       const j = jobs.get(source + ':' + ref);
@@ -126,79 +210,8 @@ function setup(app) {
       const stale = j.state === 'claimed' && ctx.now - j.at > CLAIM_MS;
       return stale ? null : { state: j.state, by: j.employee_name, mine: me.staff && j.employee_id === me.id, payment: j.payment, note: j.note, at: iso(j.at), result: parseJson(j.result, null) };
     };
-    const itemOut = (x, withApex) => {
-      let apex = (withApex ? knownNos(x.name, learned) : []).map(no => ({ no, name: apexName.get(no) || null }));
-      // A size/weight chosen on Talabat («Quarter Kilo») narrows the Apex choices to that size, when their names say it.
-      const size = WEIGHTS.find(w => (x.options || []).some(o => w[0].test(o.name)) || (x.modifiers || []).some(m => w[0].test(m)));
-      const sized = size ? apex.filter(a => a.name && size[1].test(a.name)) : [];
-      if (sized.length) apex = sized;
-      // Options: the size (weight) choice, add-ons that cost money (their own Apex line), and free choices (a note).
-      // A discount under the dish (minus price, or discount words) is neither an add-on nor a comment: it goes to the discounts.
-      const isDisc = o => Number(o.price) < 0 || DISC_WORDS.test(o.name);
-      // Under a dish Talabat shows the discount, its description, and who funds which part («ممول من قبلك» = the restaurant,
-      // «ممول من قبل Talabat» = Talabat). With the funded parts, those are the discounts; without them the dish's discount
-      // (the largest line, so «خصم» and «خصم 30%…» are not counted twice) is the restaurant's.
-      const amountOf = t => { const m = String(t).match(AMOUNT); return m ? Math.abs(Number(m[1].replace(/[^\d.]/g, ''))) || null : null; };
-      const found = [...(Array.isArray(x.options) ? x.options : []).filter(isDisc).map(o => ({ label: o.name, amount: o.price != null ? Math.abs(Number(o.price)) : null })),
-        ...(x.discountLines || []).map(t => ({ label: String(t).split('|')[0].trim(), amount: String(t).includes('|') ? amountOf(String(t).split('|').slice(1).join('|')) : null }))];
-      const funded = found.filter(d => discountWho(d.label) && d.amount);
-      const top = found.filter(d => d.amount).sort((a, b) => b.amount - a.amount)[0];
-      // The funded parts must add up to the dish's discount; if they don't, who pays what is not clear (entered by hand).
-      const fundedOk = funded.length && (!top || Math.abs(funded.reduce((a, d) => a + d.amount, 0) - top.amount) < 0.05 || funded.some(d => d.amount === top.amount));
-      if (funded.length && !fundedOk) funded.forEach(d => { d.unclear = true; });
-      const itemDiscounts = funded.length && !fundedOk ? [{ text: (top?.label || 'خصم') + ' — ' + x.name + ' (التقسيم مش واضح)', amount: top?.amount ?? null, who: null }] : funded.length ? [...new Map(funded.map(d => [discountWho(d.label) + d.amount, { text: d.label + ' — ' + x.name, amount: d.amount, who: discountWho(d.label) }])).values()]
-        : top ? [{ text: top.label + ' — ' + x.name, amount: top.amount, who: 'restaurant' }] : found.length ? [{ text: found[0].label + ' — ' + x.name, amount: null, who: 'restaurant' }] : [];
-      const opts = (Array.isArray(x.options) ? x.options : []).filter(o => !isDisc(o));
-      const sizeOpt = opts.find(o => WEIGHTS.some(w => w[0].test(o.name))) || (opts.length && x.price && opts[0].price && Math.abs(opts[0].price - x.price) < 0.01 ? opts[0] : null);
-      const addons = opts.filter(o => o !== sizeOpt && Number(o.price) > 0).map(o => ({ name: o.name, qty: Number(o.qty) > 0 ? Number(o.qty) : null, price: Number(o.price),   // the count shown is for all the dishes together
-        apex: (withApex ? knownNos(o.name, learned) : []).map(no => ({ no, name: apexName.get(no) || null })) }));
-      const free = opts.filter(o => o !== sizeOpt && !(Number(o.price) > 0)).map(o => o.name);
-      return { qty: x.qty, name: x.name, price: x.price ?? null, modifiers: x.modifiers || [], modifiersComplete: x.modifierComplete === true || !withApex, size: size ? size[2] : null, apex,
-        // The size picks the Apex item itself (ربع كيلو نيفة): it is neither an add-on nor a comment.
-        addons, sizeOption: sizeOpt ? sizeOpt.name : null, freeOptions: opts.length ? free : (x.modifiers || []).filter(m => !WEIGHTS.some(w => w[0].test(m)) && !DISC_WORDS.test(m)), itemDiscounts };
-    };
-    const list = [];
-
-    // Talabat
-    const tm = app.talabat ? await app.talabat.matchDay(day) : { rows: [], matches: new Map(), states: new Map() };
-    const tProfiles = new Map((await db.prepare("SELECT ref, data FROM match_profiles WHERE source = 'talabat' AND ref IN (SELECT id FROM talabat_orders WHERE day = ?)").all(day)).map(x => [x.ref, parseJson(x.data, {})]));
-    for (const o of tm.rows) {
-      if (TALABAT_DONE.has(o.status)) continue;
-      const p = tProfiles.get(o.id) || {}, a = tm.matches.get(o.id), bill = p.bill || [];
-      const items = parseJson(o.items, []).map(x => itemOut(x, true));
-      // The bill's discount lines are the order's total; the lines under the dishes count only when the bill shows none (never both).
-      // Under the dishes = the restaurant's discount (deducted); in the bill summary = Talabat's (special mark).
-      // A bill line that only repeats the dishes' discount total is the same money, not a second discount.
-      const dishDiscounts = items.flatMap(i => i.itemDiscounts || []), dishTotal = dishDiscounts.reduce((a, d) => a + (Number(d.amount) || 0), 0);
-      const billDiscounts = talabatDiscounts(bill).filter(d => !(dishTotal > 0 && d.amount != null && Math.abs(d.amount - dishTotal) < 0.01 && !/(talabat|طلبات)/i.test(d.text)));
-      const discounts = [...dishDiscounts, ...billDiscounts];
-      list.push({ source: 'talabat', ref: o.id, code: o.code || null, at: iso(o.accepted_at || o.received_at || o.placed_at), status: o.status, out: TALABAT_OUT.has(String(o.status || '').toUpperCase()) || !!o.picked_up_at || !!o.delivered_at, branch: o.store, apexBranch: apexBranchOf(o.store), deliveryType: o.delivery_type || null,
-        customer: { name: /^(?:information|details|customer|العميل)$/i.test(p.name || '') ? null : p.name || null, phone: phoneOut(p.phone), address: p.address || null },
-        // What Apex must total (Karim 31-10): the bill's «مجموع» (what the customer pays) plus Talabat's share of the discounts
-        // (not deducted on Apex). The writer discounts any amount Apex comes out above it.
-        target: (() => { const t = bill.find(x => /^(?:مجموع|المجموع|الإجمالي|total|order total)$/i.test(String(x.k || '').trim())), v = t ? amountOf(String(t.text).split(' | ').slice(1).join(' ')) : o.total ?? null;
-          return v == null ? null : Math.round((v + discounts.filter(d => d.who === 'platform').reduce((a, d) => a + (Number(d.amount) || 0), 0)) * 100) / 100; })(),
-        payment: talabatPayment(bill, p.livePay), bill, discounts, subtotal: o.subtotal ?? null, total: o.total ?? null,
-        items, detailRead: !!o.detail_at,
-        apex: a ? { no: a.no, sn: a.sn ?? null, user: a.user || null, how: a.how || null } : null, matching: tm.states.get(o.id) || null, job: jobOf('talabat', o.id) });
-    }
-
-    // Website
-    const sRows = await db.prepare('SELECT * FROM site_orders WHERE day = ?').all(day);
-    const sm = app.site && sRows.length ? await app.site.apexMatch(day, sRows) : { matches: new Map(), states: new Map() };
-    const sProfiles = new Map((await db.prepare("SELECT ref, data FROM match_profiles WHERE source = 'site' AND ref IN (SELECT CAST(id AS TEXT) FROM site_orders WHERE day = ?)").all(day)).map(x => [x.ref, parseJson(x.data, {})]));
-    for (const o of sRows) {
-      if (SITE_DONE.has(o.status)) continue;
-      const p = sProfiles.get(String(o.id)) || {}, pay = p.payment || null, a = sm.matches.get(o.id);
-      const discounts = pay ? [...(pay.coupons || []).map(c => ({ text: 'كوبون ' + c.code, amount: c.amount, who: 'restaurant' })),
-        ...(!pay.coupons?.length && pay.discount ? [{ text: 'خصم الموقع', amount: pay.discount, who: 'restaurant' }] : [])] : [];
-      list.push({ source: 'site', ref: String(o.id), code: String(o.id), at: iso(o.created_at), status: o.status, out: !!o.out_at || !!o.delivered_at || o.status === 'completed', branch: o.branch || null, apexBranch: apexBranchOf(o.branch), scheduled: !!o.scheduled,
-        customer: { name: p.customer?.name || null, phone: phoneOut(p.customer?.phone || p.customer?.mobile), address: p.customer?.address || null },
-        target: o.total ?? null, payment: sitePayment(pay), paymentTitle: pay?.title || null, note: pay?.note || null, discounts, fees: pay?.fees || [], shipping: pay?.shipping ?? null, total: o.total ?? null,
-        items: (p.items || []).map(x => itemOut(x, false)), detailRead: !!p.items?.length,
-        apex: a ? { no: a.no, sn: a.sn ?? null, user: a.user || null, how: a.how || null } : null, matching: sm.states?.get(o.id) || null, job: jobOf('site', String(o.id)) });
-    }
-    list.sort((x, y) => (x.apex ? 1 : 0) - (y.apex ? 1 : 0) || String(x.at || '').localeCompare(String(y.at || '')));
+    // Orders already on Apex or out with the rider: their bill lines are not needed (lighter page).
+    const list = base.list.map(o => ({ ...o, ...(o.apex || o.out ? { bill: undefined } : {}), job: jobOf(o.source, o.source === 'site' ? String(o.ref) : o.ref) }));
     // Until an admin chooses, the automatic transfer only previews (shadow): it never writes to Apex.
     const mode = (await db.prepare("SELECT value FROM settings WHERE key = 'apex_bridge_mode'").get())?.value || 'shadow';
     const locations = (Array.isArray(snap.locations) ? snap.locations : []).filter(l => Number.isInteger(l?.no)).map(l => ({ no: l.no, name: String(l.name || ''), branch: l.branch ?? null, service: l.service ?? null }));
