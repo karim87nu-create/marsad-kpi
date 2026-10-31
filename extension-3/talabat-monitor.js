@@ -368,7 +368,7 @@
     d.bill = [];
     if (subAt >= 0) for (let i = subAt; i < content.length && d.bill.length < 24; ) {
       const x = content[i], y = content[i + 1];
-      if (/^(?:ONLINE|CASH|CREDIT_CARD|DEBIT_CARD|WALLET)$/i.test(x) || /^تم الدفع بواسطة/.test(x)) { d.bill.push({ k: 'payment', text: x.slice(0, 200) }); i += 1; continue; }
+      if (/^(?:ONLINE|CASH|CREDIT_CARD|DEBIT_CARD|WALLET|كاش|نقدي|نقدا|الدفع عند الاستلام)$/i.test(x) || /^تم الدفع بواسطة/.test(x)) { d.bill.push({ k: 'payment', text: x.slice(0, 200) }); i += 1; continue; }
       if (y == null) break;
       d.bill.push({ k: x.slice(0, 60), text: (x + ' | ' + y).slice(0, 200) }); i += 2;
     }
