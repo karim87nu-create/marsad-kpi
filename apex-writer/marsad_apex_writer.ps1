@@ -51,10 +51,15 @@ if ($readerSec) { $readerSec.MakeReadOnly() }
 $writerSec = ReadSecret (Join-Path $here 'writer_cred.dat')
 if ($writerSec) { $writerSec.MakeReadOnly() }
 $writerUser = if (Test-Path (Join-Path $here 'writer_user.txt')) { (Get-Content (Join-Path $here 'writer_user.txt') -Raw).Trim() } else { $null }
+# Production writer login (separate from the test one), saved by Setup-ApexWriter with «الإنتاج».
+$liveSec = ReadSecret (Join-Path $here 'writer_live_cred.dat')
+if ($liveSec) { $liveSec.MakeReadOnly() }
+$liveUser = if (Test-Path (Join-Path $here 'writer_live_user.txt')) { (Get-Content (Join-Path $here 'writer_live_user.txt') -Raw).Trim() } else { $null }
 
 function Open-Db([string]$mode){
   $db = if ($mode -eq 'test') { 'Resturant_Test' } else { 'Resturant' }
   if ($mode -eq 'shadow') { if (-not $readerSec) { throw 'cred.dat (read-only) missing' }; $cred = New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec) }
+  elseif ($mode -eq 'live') { if (-not $liveSec -or -not $liveUser) { throw 'production writer login not set up (Setup-ApexWriter.cmd)' }; $cred = New-Object System.Data.SqlClient.SqlCredential($liveUser, $liveSec) }
   else { if (-not $writerSec -or -not $writerUser) { throw 'writer login not set up (Setup-ApexWriter.cmd)' }; $cred = New-Object System.Data.SqlClient.SqlCredential($writerUser, $writerSec) }
   foreach($s in $Servers){
     try { $c = New-Object System.Data.SqlClient.SqlConnection("Server=$s;Database=$db;Application Name=MarsadApexWriter-$mode;Connect Timeout=10", $cred); $c.Open(); return $c } catch { L "connect $s/$db failed: $($_.Exception.Message)" }
@@ -239,6 +244,19 @@ function Self-Test {
   $c = $null
   try {
     $job = Get-Content $f -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($job.mode -eq 'inspect-user') {
+      # Read-only, production: the Apex user named MARSAD (the user the writer saves orders under).
+      $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[0]);Database=Resturant;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec)))
+      try { $c.Open() } catch { $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[1]);Database=Resturant;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec))); $c.Open() }
+      $out.mode = 'inspect-user'; $rows = @()
+      $cmd = $c.CreateCommand(); $cmd.CommandText = "SELECT t.name AS tb, (SELECT TOP 1 c2.name FROM sys.columns c2 WHERE c2.object_id = t.object_id AND c2.name IN ('UserName','Name','UName','LoginName','User_Name') ORDER BY CASE c2.name WHEN 'UserName' THEN 0 ELSE 1 END) AS nc FROM sys.tables t WHERE EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name = 'UserNo') AND EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name IN ('UserName','Name','UName','LoginName','User_Name')) AND t.name NOT LIKE '%Log%' AND t.name NOT LIKE 'Orders%'"
+      $tabs = New-Object System.Data.DataTable; $tabs.Load($cmd.ExecuteReader())
+      foreach($t in $tabs.Rows){
+        try { $q = $c.CreateCommand(); $q.CommandText = "SELECT TOP 5 UserNo, [$($t.nc)] AS nm FROM [$($t.tb)] WITH (NOLOCK) WHERE [$($t.nc)] LIKE '%MARSAD%'"; $rd = $q.ExecuteReader(); while ($rd.Read()) { $rows += [ordered]@{ table = $t.tb; UserNo = "$($rd.GetValue(0))"; name = "$($rd.GetValue(1))".Trim() } }; $rd.Close() } catch { $rows += @{ table = $t.tb; error = $_.Exception.Message } }
+      }
+      $out.saved = $rows; $out.ok = $true
+      throw 'INSPECT_DONE'
+    }
     if ($job.mode -eq 'inspect-print') {
       # Read-only, test copy: the print flags Apex's own client left on the orders it created there (no branch printer runs on the test copy).
       $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[0]);Database=Resturant_Test;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec)))
@@ -254,7 +272,10 @@ function Self-Test {
       $out.saved = $rows; $out.ok = $true
       throw 'INSPECT_DONE'
     }
-    $mode = if ($job.mode -eq 'test') { 'test' } else { 'shadow' }
+    # One production order may be written from a self-test only when the file says liveOnce (an approved branch trial).
+    $mode = if ($job.mode -eq 'test') { 'test' } elseif ($job.mode -eq 'live' -and $job.liveOnce -eq $true) { 'live' } else { 'shadow' }
+    if ($mode -eq 'live' -and $WriterUserNo -eq 0 -and -not $job.userNo) { throw 'no Apex user for the writer yet' }
+    if ($mode -eq 'live' -and $job.userNo) { $script:WriterUserNo = [int]$job.userNo }
     $out.mode = $mode
     $c = Open-Db $mode
     if ($job.source -eq 'talabat' -and $TalabatServiceItem -and -not ($job.items | Where-Object { $_.itemNo -eq $TalabatServiceItem })) { $job.items = @([pscustomobject]@{ itemNo = $TalabatServiceItem; qty = 1; note = '' }) + @($job.items) }
@@ -262,7 +283,7 @@ function Self-Test {
     $out.lines = @($job.items | ForEach-Object { "$($_.itemNo) x$($_.qty) @ $($_.price) [$($_.candidates -join ',')]" })
     $r = Write-Order $c $job $mode
     $out.answer = @{}; foreach($col in $r.Table.Columns){ $out.answer[$col.ColumnName] = "$($r[$col.ColumnName])" }
-    if ($r.OrderNo -and $mode -eq 'test') {
+    if ($r.OrderNo -and ($mode -eq 'test' -or $mode -eq 'live')) {
       $cmd = $c.CreateCommand(); $cmd.CommandText = "SELECT 'M' k, OrderNo, ShiftSerial, BranchShiftSerial, TypeSerial, BranchNo, BranchOrderNo, PosNo, PosSerial, CheckNo, CustNo, OrderDate, TimeIn, RTRIM(PayWay) PayWay, OnlineType, Otlob, SubTotal, Service, Tax, Discount, CashPayment, UserNo FROM Orders_M_Daily WHERE OrderNo = @o; SELECT 'D' k, ItemNo, SerialNo, Qty, Price, Printed, PrintedSlip, Weight, ItemsNo, ItemDetailNo FROM Orders_D_Daily WHERE OrderNo = @o ORDER BY SerialNo; SELECT 'C' k, num, OrderNo, PosSerial, ShiftOrderNo, OrderDate, ShiftNo FROM Counter WHERE num = @p; SELECT 'L' k, COUNT(*) n FROM OrderLog WHERE OrderNo = @o; SELECT 'P' k, COUNT(*) n FROM PrintedOrders WHERE OrderNo = @o"
       [void]$cmd.Parameters.AddWithValue('@o', $r.OrderNo); [void]$cmd.Parameters.AddWithValue('@p', $WriterPos)
       $rd = $cmd.ExecuteReader(); $rows = @()
