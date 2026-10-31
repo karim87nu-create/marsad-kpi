@@ -124,12 +124,12 @@ test('automatic transfer: off by default, cash only, frozen order handed to the 
   } finally { await t.close(); }
 });
 
-test('Talabat live screen (Arabic) payment: collect from customer decides cash/paid/mixed', () => {
+test('Talabat live screen (Arabic) payment: the payment line decides, never «التحصيل من العميل»', () => {
   return import('../src/transfer.js').then(({ talabatPayment }) => {
     const paid = [{ k: 'المجموع الفرعي', text: 'المجموع الفرعي | 389.00 ج.م' }, { k: 'رسوم التوصيل', text: 'رسوم التوصيل | 40.00 ج.م' }, { k: 'التحصيل من العميل', text: 'التحصيل من العميل | 0.00 ج.م' }, { k: 'payment', text: 'ONLINE' }, { k: 'payment', text: 'تم الدفع بواسطة CREDIT_CARD' }];
     assert.equal(talabatPayment(paid), 'paid', 'real live screen 2026-10-31: online card, nothing to collect');
-    assert.equal(talabatPayment([{ k: 'التحصيل من العميل', text: 'التحصيل من العميل | 437.00 ج.م' }]), 'cash');
-    assert.equal(talabatPayment([{ k: 'التحصيل من العميل', text: 'التحصيل من العميل | 120.00 ج.م' }, { k: 'payment', text: 'ONLINE' }]), 'mixed');
+    assert.equal(talabatPayment([{ k: 'التحصيل من العميل', text: 'التحصيل من العميل | 437.00 ج.م' }]), null, 'the collect amount alone says nothing');
+    assert.equal(talabatPayment([{ k: 'التحصيل من العميل', text: 'التحصيل من العميل | 0.00 ج.م' }, { k: 'payment', text: 'CASH' }]), 'cash', 'a cash order can show 0.00 to collect');
   });
 });
 

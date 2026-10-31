@@ -32,14 +32,14 @@ function payWord(v) {
 const amountOf = t => { const m = String(t || '').replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace(/,/g, '').match(/-?\d+(?:\.\d+)?/); return m ? Number(m[0]) : null; };
 function talabatPayment(bill, liveBadge) {
   const rows = bill || [];
-  // Live order screen (Arabic, 2026-10-31): «التحصيل من العميل» = what the rider collects. Above zero means cash;
-  // zero together with «ONLINE» / «تم الدفع بواسطة CREDIT_CARD» means paid. Both above zero and online = mixed → review.
-  const collect = rows.find(x => /^(?:التحصيل من العميل|collect from customer|cash to collect|amount to collect)$/i.test(String(x.k || '').trim()));
-  const online = rows.some(x => /\bONLINE\b|تم الدفع بواسطة|paid by|CREDIT_CARD|DEBIT_CARD|WALLET/i.test(String(x.text || '')));
-  if (collect) {
-    const due = amountOf(String(collect.text).split(' | ').slice(1).join(' '));
-    if (due != null) { if (due > 0 && online) return 'mixed'; if (due > 0) return 'cash'; if (due === 0 && online) return 'paid'; }
-  }
+  // Live order screen (Karim 31-10): the payment line at the bottom says it — «ONLINE» / «تم الدفع بواسطة CREDIT_CARD» = paid,
+  // a cash line = cash. «التحصيل من العميل» is not used: it can read 0.00 on a cash order.
+  const text = rows.map(x => String(x.text || '')).join('\n');
+  const online = /\bONLINE\b|تم الدفع بواسطة|paid by|CREDIT_CARD|DEBIT_CARD|WALLET/i.test(text);
+  const cash = /\bCASH\b|cash on delivery|الدفع عند الاستلام|نقد(?:ي|ا)?\b|كاش/i.test(text.replace(/cash to collect|التحصيل من العميل[^\n]*/gi, ''));
+  if (online && !cash) return 'paid';
+  if (cash && !online) return 'cash';
+  if (cash && online) return 'mixed';
   const line = rows.find(x => /^(?:payment method|payment|طريقة الدفع)$/i.test(String(x.k || '').trim()));
   const fromBill = line ? payWord(String(line.text).split(' | ').slice(1).join(' | ')) : null;
   return fromBill || payWord(liveBadge) || null;
