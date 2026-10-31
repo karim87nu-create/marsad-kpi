@@ -129,7 +129,8 @@ function setup(app) {
       }
       const items = d && Array.isArray(d.items) ? JSON.stringify(d.items.slice(0, 60).map(x => ({ qty: Number(x.qty) || 1, name: String(x.name || '').slice(0, 120), price: Number(x.price) || null,
         modifiers: Array.isArray(x.modifiers) ? [...new Set(x.modifiers.map(v => String(v || '').trim().slice(0, 120)).filter(Boolean))].slice(0, 20) : [], modifierRead: x.modifierRead === true, modifierComplete: x.modifierComplete === true,
-        options: Array.isArray(x.options) ? x.options.slice(0, 20).map(v => ({ qty: Number(v?.qty) || 1, name: String(v?.name || '').slice(0, 120), price: Number(v?.price) || null })).filter(v => v.name) : [] }))) : null;
+        options: Array.isArray(x.options) ? x.options.slice(0, 20).map(v => ({ qty: Number(v?.qty) || 1, name: String(v?.name || '').slice(0, 120), price: Number(v?.price) || null })).filter(v => v.name) : [],
+        discountLines: Array.isArray(x.discountLines) ? x.discountLines.slice(0, 6).map(v => String(v || '').trim().slice(0, 160)).filter(Boolean) : [] }))) : null;
       orderWrites.push(db.prepare(`INSERT INTO talabat_orders (id, day, vendor_id, store, status, billable, placed_at, total, received_at, accept_seconds, accepted_at, picked_up_at, delivered_at,
           cancelled_at, cancel_owner, cancel_reason, items, subtotal, delivery_type, milestones, detail_at, first_seen, updated_at)
         SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE ${guard}

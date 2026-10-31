@@ -210,8 +210,12 @@
       const options = [...p.querySelectorAll('[data-testid^="existing-option__"]')].filter(o => String(o.dataset.testid).endsWith('_for_' + pid)).map(o => {
         const parts = [...o.querySelectorAll('p')].map(x => (x.textContent || '').trim()).filter(Boolean);
         const q = parts.find(x => /^\d+(?:\.\d+)?\s*[x×]$|^[x×]\s*\d+$/i.test(x)), pr = parts.find(x => /(?:E£|EGP|£E|ج\.م)/.test(x));
-        return { qty: Number((q || '1').replace(/[^\d.]/g, '')) || 1, name: parts.filter(x => x !== q && x !== pr).join(' ').slice(0, 120), price: pr ? money(pr) : null };
+        // A discount under the dish shows like an add-on with a minus price: keep the sign so it is never taken for a paid add-on.
+        const neg = pr && /-\s*(?:E£|EGP|£E|ج\.م)|(?:E£|EGP|£E|ج\.م)\s*-|^-|\u2212/.test(pr);
+        return { qty: Number((q || '1').replace(/[^\d.]/g, '')) || 1, name: parts.filter(x => x !== q && x !== pr).join(' ').slice(0, 120), price: pr ? (neg ? -money(pr) : money(pr)) : null };
       }).filter(o => o.name).slice(0, 20);
+      // Discount lines shown under the dish (not as option elements): kept as written, for the transfer page.
+      const discountLines = raw.filter(x => /discount|voucher|promo|coupon|خصم|قسيمة|كوبون|ممول/i.test(x)).slice(0, 6);
       // Every product row is itself a button (aria-expanded="false"), so «something to expand» means the expand icon.
       // Checked on the real page 2026-10-31: plain products have no icon and no option elements.
       const hasExpandIcon = /\b(?:expand_more|expand_less|keyboard_arrow_down|keyboard_arrow_up)\b/i.test(p.textContent || '');
@@ -219,7 +223,7 @@
       const modifierComplete = fromOptions || (productModifierExpanded(control) && !iconStillCollapsed);
       const mods = fromOptions ? options.map(o => (o.qty > 1 ? o.qty + '× ' : '') + o.name) : modifiers;
       d.items.push({ qty: Number((l[0] || '').replace(/[^\d]/g, '')) || 1, name, price: money(l.find(x => /E£|EGP/.test(x))), modifiers: [...new Set(mods)],
-        options, modifierRead: mods.length > 0 || modifierComplete, modifierComplete });
+        options, discountLines, modifierRead: mods.length > 0 || modifierComplete, modifierComplete });
     }
     // The list time has seconds (placedAt); the timeline only minutes. Received = placed, accepted = received + "Accepted in".
     if (d.receivedAt && Number.isFinite(placed) && Math.abs(Date.parse(d.receivedAt) - Math.floor(placed / 60000) * 60000) < 60000) d.receivedAt = new Date(placed).toISOString();

@@ -40,7 +40,7 @@ test('talabat: monitor key, orders with details, Apex match (auto and manual), a
     await admin('POST', '/api/talabat/link', { talabatId: '3977400001', apexNo: 7001 });
     assert.equal(o['3977400002'].apex, null, '7002 was entered before the order existed');
     assert.equal(o['3977400003'].cancelReason, 'Unable to find or reach customer');
-    assert.deepEqual(o['3977400001'].items, [{ qty: 2, name: 'Kofta', price: 280, modifiers: [], modifierRead: false, modifierComplete: false, options: [] }]);
+    assert.deepEqual(o['3977400001'].items, [{ qty: 2, name: 'Kofta', price: 280, modifiers: [], modifierRead: false, modifierComplete: false, options: [], discountLines: [] }]);
     // Manual link.
     assert.equal((await admin('POST', '/api/talabat/link', { talabatId: '3977400002', apexNo: 7002 })).status, 200);
     d = (await admin('GET', '/api/talabat/day?day=2026-10-22')).body; o = Object.fromEntries(d.orders.map(x => [x.id, x]));

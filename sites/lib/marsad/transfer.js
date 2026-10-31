@@ -51,15 +51,17 @@ function sitePayment(p) {
 }
 // Discounts: whose money it is, only when the source says it.
 const AMOUNT = /(-?\s*(?:E£|EGP|£E|ج\.م)?\s*-?\d[\d,]*(?:\.\d+)?)/;
+const DISC_WORDS = /discount|voucher|promo|coupon|خصم|قسيمة|كوبون/i;
+const discountWho = t => /(talabat|platform|طلبات)[\s-]*(funded|ممول)|funded by talabat|(?:ممول|مدعوم|على حساب)\s*(?:من\s*)?طلبات/i.test(t) ? 'platform'
+  : /(vendor|restaurant|المطعم)[\s-]*(funded|ممول)|funded by (?:the )?(?:vendor|restaurant)|(?:ممول|مدعوم|على حساب)\s*(?:من\s*)?(?:المطعم|الشريك)/i.test(t) ? 'restaurant' : null;
 function talabatDiscounts(bill) {
   const out = [];
   for (const x of bill || []) {
     const t = x.k + ' ' + x.text;
     if (!/discount|voucher|promo|coupon|خصم|قسيمة|كوبون/i.test(t)) continue;
     const m = String(x.text).match(AMOUNT), amount = m ? Math.abs(Number(m[1].replace(/[^\d.]/g, ''))) || null : null;
-    const who = /(talabat|platform|طلبات)[\s-]*(funded|ممول)|funded by talabat|ممول من طلبات/i.test(t) ? 'platform'
-      : /(vendor|restaurant|المطعم)[\s-]*(funded|ممول)|funded by (?:the )?(?:vendor|restaurant)|ممول من المطعم/i.test(t) ? 'restaurant' : null;
-    out.push({ text: x.text, amount, who });
+    // Karim 31-10: a discount in the bill summary (not the ones under the dishes) is Talabat's, unless the line says otherwise.
+    out.push({ text: x.text, amount, who: discountWho(t) || 'platform' });
   }
   return out;
 }
@@ -131,14 +133,18 @@ function setup(app) {
       const sized = size ? apex.filter(a => a.name && size[1].test(a.name)) : [];
       if (sized.length) apex = sized;
       // Options: the size (weight) choice, add-ons that cost money (their own Apex line), and free choices (a note).
-      const opts = Array.isArray(x.options) ? x.options : [];
+      // A discount under the dish (minus price, or discount words) is neither an add-on nor a comment: it goes to the discounts.
+      const isDisc = o => Number(o.price) < 0 || DISC_WORDS.test(o.name);
+      const itemDiscounts = [...(Array.isArray(x.options) ? x.options : []).filter(isDisc).map(o => ({ text: o.name + ' — ' + x.name, amount: o.price != null ? Math.abs(Number(o.price)) : null, who: discountWho(o.name) || 'restaurant' })),
+        ...(x.discountLines || []).map(t => { const m = String(t).match(AMOUNT); return { text: t + ' — ' + x.name, amount: m ? Math.abs(Number(m[1].replace(/[^\d.]/g, ''))) || null : null, who: discountWho(t) || 'restaurant' }; })];
+      const opts = (Array.isArray(x.options) ? x.options : []).filter(o => !isDisc(o));
       const sizeOpt = opts.find(o => WEIGHTS.some(w => w[0].test(o.name))) || (opts.length && x.price && opts[0].price && Math.abs(opts[0].price - x.price) < 0.01 ? opts[0] : null);
       const addons = opts.filter(o => o !== sizeOpt && Number(o.price) > 0).map(o => ({ name: o.name, qty: (Number(o.qty) || 1) * (Number(x.qty) || 1), price: Number(o.price),
         apex: (withApex ? knownNos(o.name, learned) : []).map(no => ({ no, name: apexName.get(no) || null })) }));
       const free = opts.filter(o => o !== sizeOpt && !(Number(o.price) > 0)).map(o => o.name);
       return { qty: x.qty, name: x.name, price: x.price ?? null, modifiers: x.modifiers || [], modifiersComplete: x.modifierComplete === true || !withApex, size: size ? size[2] : null, apex,
         // The size picks the Apex item itself (ربع كيلو نيفة): it is neither an add-on nor a comment.
-        addons, sizeOption: sizeOpt ? sizeOpt.name : null, freeOptions: opts.length ? free : (x.modifiers || []).filter(m => !WEIGHTS.some(w => w[0].test(m))) };
+        addons, sizeOption: sizeOpt ? sizeOpt.name : null, freeOptions: opts.length ? free : (x.modifiers || []).filter(m => !WEIGHTS.some(w => w[0].test(m)) && !DISC_WORDS.test(m)), itemDiscounts };
     };
     const list = [];
 
@@ -148,11 +154,17 @@ function setup(app) {
     for (const o of tm.rows) {
       if (TALABAT_DONE.has(o.status)) continue;
       const p = tProfiles.get(o.id) || {}, a = tm.matches.get(o.id), bill = p.bill || [];
-      const discounts = talabatDiscounts(bill);
+      const items = parseJson(o.items, []).map(x => itemOut(x, true));
+      // The bill's discount lines are the order's total; the lines under the dishes count only when the bill shows none (never both).
+      // Under the dishes = the restaurant's discount (deducted); in the bill summary = Talabat's (special mark).
+      // A bill line that only repeats the dishes' discount total is the same money, not a second discount.
+      const dishDiscounts = items.flatMap(i => i.itemDiscounts || []), dishTotal = dishDiscounts.reduce((a, d) => a + (Number(d.amount) || 0), 0);
+      const billDiscounts = talabatDiscounts(bill).filter(d => !(dishTotal > 0 && d.amount != null && Math.abs(d.amount - dishTotal) < 0.01 && !/(talabat|طلبات)/i.test(d.text)));
+      const discounts = [...dishDiscounts, ...billDiscounts];
       list.push({ source: 'talabat', ref: o.id, code: o.code || null, at: iso(o.accepted_at || o.received_at || o.placed_at), status: o.status, out: TALABAT_OUT.has(String(o.status || '').toUpperCase()) || !!o.picked_up_at || !!o.delivered_at, branch: o.store, apexBranch: apexBranchOf(o.store), deliveryType: o.delivery_type || null,
         customer: { name: /^(?:information|details|customer|العميل)$/i.test(p.name || '') ? null : p.name || null, phone: phoneOut(p.phone), address: p.address || null },
         payment: talabatPayment(bill, p.livePay), bill, discounts, subtotal: o.subtotal ?? null, total: o.total ?? null,
-        items: parseJson(o.items, []).map(x => itemOut(x, true)), detailRead: !!o.detail_at,
+        items, detailRead: !!o.detail_at,
         apex: a ? { no: a.no, sn: a.sn ?? null, user: a.user || null, how: a.how || null } : null, matching: tm.states.get(o.id) || null, job: jobOf('talabat', o.id) });
     }
 

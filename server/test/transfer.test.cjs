@@ -67,7 +67,7 @@ test('transfer page: payment and discounts only from the source words', () => {
     assert.equal(talabatPayment([{ k: 'Delivery type', text: 'Delivery type | Vendor delivery' }]), null, 'other lines never decide payment');
     assert.equal(talabatPayment([], 'Paid'), 'paid', 'live card badge');
     assert.equal(talabatPayment([], 'Cash Online'), null, 'conflicting → for review');
-    assert.deepEqual(talabatDiscounts([{ k: 'discount', text: 'Discount | -E£ 30' }]), [{ text: 'Discount | -E£ 30', amount: 30, who: null }], 'unknown funder stays unknown');
+    assert.deepEqual(talabatDiscounts([{ k: 'discount', text: 'Discount | -E£ 30' }]), [{ text: 'Discount | -E£ 30', amount: 30, who: 'platform' }], 'a bill-summary discount is Talabat funded unless it says otherwise');
     assert.equal(talabatDiscounts([{ k: 'discount', text: 'Vendor-funded discount | -E£ 15.50' }])[0].who, 'restaurant');
     assert.equal(sitePayment({ method: 'cod' }), 'cash');
     assert.equal(sitePayment({ method: 'paymob', paid: true }), 'paid');
