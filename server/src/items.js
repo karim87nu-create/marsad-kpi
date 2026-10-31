@@ -29,6 +29,9 @@ const WORDS = {
   tahini: 'طحينه', garlic: 'توميه', pickled: 'مخلل', pickles: 'مخلل', eggplant: 'باذنجان', yogurt: 'زبادي', spaghetti: 'اسباجتي', bolognese: 'بلونيز', mombar: 'ممبار',
   vegetables: 'خضار', vegetable: 'خضار', stuffed: 'محشي', grape: 'عنب', leaves: 'ورق', water: 'مياه', pepsi: 'بيبسي', diet: 'دايت', moussaka: 'مسقعه', meat: 'لحمه',
   pane: 'بانيه', kids: 'اطفال', half: 'نصف', quarter: 'ربع', orzo: 'لسان', lentil: 'عدس', mushroom: 'مشروم', cream: 'كريمه', basmati: 'بسمتي', white: 'سادة',
+  vine: 'عنب', mahashi: 'محشي', khalta: 'خلطه', plain: 'ساده', up: 'سفن', mirinda: 'ميرندا', miranda: 'ميرندا', apple: 'تفاح', orange: 'برتقال', baba: 'بابا', ghanoush: 'غنوج',
+  ghannoug: 'غنوج', cucumber: 'خيار', marinated: 'متبله', sesame: 'طحينه', fillet: 'فيليه', knuckles: 'كوارع', kaware: 'كوارع', fatteh: 'فته', boneless: 'مخليه', onions: 'بصل',
+  mineral: 'مياه', dip: 'توميه', caramel: 'كراميل', ali: 'علي', om: 'ام', um: 'ام', felto: 'فيلتو', tabk: 'طبق',
   baladi: 'بلدي', oriental: 'بلدي', tomatoes: 'طماطم', tomato: 'طماطم', sweet: 'حلو', pudding: 'لبن', nefa: 'نيفه', tarb: 'طرب', alexandrian: 'اسكندراني', sobia: 'سوبيا',
 };
 const ar = s => String(s || '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/[ًٌٍَُِّْ]/g, '').toLowerCase();

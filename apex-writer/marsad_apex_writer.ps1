@@ -246,6 +246,17 @@ function Self-Test {
   $c = $null
   try {
     $job = Get-Content $f -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($job.mode -eq 'inspect-menu') {
+      # Read-only, production: the Apex items sold online (number, name, online price, group), for the menu mapping.
+      $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[0]);Database=Resturant;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec)))
+      try { $c.Open() } catch { $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[1]);Database=Resturant;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec))); $c.Open() }
+      $out.mode = 'inspect-menu'; $rows = @()
+      $cmd = $c.CreateCommand(); $cmd.CommandTimeout = 30
+      $cmd.CommandText = "SELECT RTRIM(i.ItemNo) AS no, RTRIM(i.ItemName) AS nm, i.OnlinePrice AS op, i.GroupNo AS g, ISNULL(i.StopItem,0) AS st, ISNULL(i.StopOnline,0) AS so, (SELECT COUNT(*) FROM Orders_D_Daily d WITH (NOLOCK) JOIN Orders_M_Daily m WITH (NOLOCK) ON m.OrderNo = d.OrderNo WHERE d.ItemNo = i.ItemNo AND ISNULL(m.OnlineType,'') <> '') AS sold FROM Items i WITH (NOLOCK) WHERE ISNULL(i.OnlinePrice,0) > 0 ORDER BY i.ItemNo"
+      $rd = $cmd.ExecuteReader(); while ($rd.Read()) { $rows += ,@("$($rd['no'])", "$($rd['nm'])", [double]$rd['op'], "$($rd['g'])", [int]$rd['st'], [int]$rd['so'], [int]$rd['sold']) }; $rd.Close()
+      $out.saved = $rows; $out.ok = $true
+      throw 'INSPECT_DONE'
+    }
     if ($job.mode -eq 'inspect-user') {
       # Read-only, production: the Apex user named MARSAD (the user the writer saves orders under).
       $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[0]);Database=Resturant;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec)))
