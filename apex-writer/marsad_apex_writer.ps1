@@ -281,6 +281,19 @@ function Self-Test {
       $out.saved = $rows; $out.ok = $true
       throw 'INSPECT_DONE'
     }
+    if ($job.mode -eq 'inspect-serial') {
+      # Read-only, production: today's order numbering columns (numbers and times only, no customer columns) — to see
+      # where a serial jumped and which order did it.
+      $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[0]);Database=Resturant;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec)))
+      try { $c.Open() } catch { $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[1]);Database=Resturant;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec))); $c.Open() }
+      $out.mode = 'inspect-serial'; $rows = @()
+      foreach($q in @("SELECT 'M' k, OrderNo, BranchNo, PosNo, UserNo, ShiftNo, OrderDate, TimeIn, OrderTime, ShiftSerial, BranchShiftSerial, TypeSerial, SNo, SerialNo, BranchOrderNo, RecieveNo, PosSerial, CheckNo, RTRIM(PayWay) PayWay, OnlineType, TransType FROM Orders_M_Daily WITH (NOLOCK) ORDER BY TimeIn",
+                      "SELECT 'S' k, * FROM Orders_Serials WITH (NOLOCK) WHERE OrderNo IN (SELECT OrderNo FROM Orders_M_Daily WITH (NOLOCK))")){
+        try { $cmd = $c.CreateCommand(); $cmd.CommandTimeout = 30; $cmd.CommandText = $q; $rd = $cmd.ExecuteReader(); while ($rd.Read()) { $h = [ordered]@{}; for ($i = 0; $i -lt $rd.FieldCount; $i++) { $h[$rd.GetName($i)] = "$($rd.GetValue($i))".Trim() }; $rows += $h }; $rd.Close() } catch { $rows += @{ error = $_.Exception.Message } }
+      }
+      $out.saved = $rows; $out.ok = $true
+      throw 'INSPECT_DONE'
+    }
     if ($job.mode -eq 'inspect-print') {
       # Read-only, test copy: the print flags Apex's own client left on the orders it created there (no branch printer runs on the test copy).
       $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[0]);Database=Resturant_Test;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec)))
