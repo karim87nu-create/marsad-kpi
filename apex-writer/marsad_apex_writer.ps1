@@ -38,8 +38,10 @@ if (-not $created) { exit 0 }
 
 function ReadSecret($file){ if (-not (Test-Path $file)) { return $null }; return ((Get-Content $file -Raw).Trim() | ConvertTo-SecureString) }
 function Plain($sec){ return [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)) }
+# Its own key if one was set up, otherwise the monitor's orders key (same PC, same Windows user).
 $tokenSec = ReadSecret (Join-Path $here 'writer_token.dat')
-if (-not $tokenSec) { L 'FATAL: writer_token.dat missing - run Setup-ApexWriter.cmd'; exit 1 }
+if (-not $tokenSec) { $tokenSec = ReadSecret (Join-Path (Split-Path -Parent $here) 'orders_key.dat') }
+if (-not $tokenSec) { L 'FATAL: no key (writer_token.dat / orders_key.dat)'; exit 1 }
 $Token = Plain $tokenSec
 # Read-only login of the monitor (shadow mode only).
 $readerSec = ReadSecret (Join-Path $monitorDir 'cred.dat')

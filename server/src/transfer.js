@@ -149,7 +149,8 @@ function setup(app) {
         apex: a ? { no: a.no, sn: a.sn ?? null, user: a.user || null, how: a.how || null } : null, matching: sm.states?.get(o.id) || null, job: jobOf('site', String(o.id)) });
     }
     list.sort((x, y) => (x.apex ? 1 : 0) - (y.apex ? 1 : 0) || String(x.at || '').localeCompare(String(y.at || '')));
-    const mode = (await db.prepare("SELECT value FROM settings WHERE key = 'apex_bridge_mode'").get())?.value || 'off';
+    // Until an admin chooses, the automatic transfer only previews (shadow): it never writes to Apex.
+    const mode = (await db.prepare("SELECT value FROM settings WHERE key = 'apex_bridge_mode'").get())?.value || 'shadow';
     return { day, me: { name: me.name, staff: me.staff }, serverNow: iso(ctx.now), autoTransfer: mode, branches: APEX_BRANCHES, orders: list };
   });
 
@@ -183,7 +184,7 @@ function setup(app) {
     } else if (b.action === 'auto') {
       // Automatic transfer: the employee confirms the Apex items, branch and payment; the order is frozen
       // and handed to the Apex writer on the restaurant PC. Off until an admin turns it on (test first).
-      const mode = await setting('apex_bridge_mode');
+      const mode = await setting('apex_bridge_mode') || 'shadow';
       if (!['shadow', 'test', 'live'].includes(mode)) fail(409, 'التحويل الآلي مقفول — سجّل على Apex بإيدك');
       if (othersClaim) fail(409, 'الأوردر مع ' + (cur.employee_name || 'حد تاني'));
       if (cur && /^auto_(?:pending|sending|done|preview)$/.test(cur.state)) fail(409, 'الأوردر اتبعت للتحويل الآلي بالفعل');
@@ -210,13 +211,14 @@ function setup(app) {
   const setting = async k => (await db.prepare('SELECT value FROM settings WHERE key = ?').get(k))?.value ?? null;
   const put = (k, v) => v == null ? db.prepare('DELETE FROM settings WHERE key = ?').run(k) : db.prepare('INSERT INTO settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(k, String(v));
   const writer = async ctx => {
-    const hash = await setting('apex_writer_token_hash'), given = ctx.header('x-apex-writer');
-    if (!hash || !given || sha256(given) !== hash) fail(401, 'مفتاح كاتب Apex غير صحيح');
+    // The writer runs on the cashier PC next to the monitor, so the monitor's own orders key also opens it.
+    const given = ctx.header('x-apex-writer'), hashes = [await setting('apex_writer_token_hash'), await setting('orders_token_hash')].filter(Boolean);
+    if (!given || !hashes.includes(sha256(given))) fail(401, 'مفتاح كاتب Apex غير صحيح');
   };
   app.route('GET', '/api/apex-writer', async ctx => {
     await app.requireAdmin(ctx);
     const jobs = await db.prepare("SELECT source, ref, state, employee_name, at, result FROM transfer_jobs WHERE state LIKE 'auto_%' ORDER BY at DESC LIMIT 50").all();
-    return { mode: await setting('apex_bridge_mode') || 'off', linked: !!await setting('apex_writer_token_hash'), lastSeen: Number(await setting('apex_writer_seen')) || null,
+    return { mode: await setting('apex_bridge_mode') || 'shadow', linked: !!await setting('apex_writer_token_hash'), lastSeen: Number(await setting('apex_writer_seen')) || null,
       jobs: jobs.map(j => ({ source: j.source, ref: j.ref, state: j.state, by: j.employee_name, at: iso(j.at), result: parseJson(j.result, null) })) };
   });
   app.route('POST', '/api/apex-writer', async ctx => {
@@ -234,7 +236,7 @@ function setup(app) {
   // twice (the writer also checks Apex for its own marker before writing, so a lost answer cannot double an order).
   app.route('POST', '/api/apex-writer/next', async ctx => {
     await writer(ctx); await put('apex_writer_seen', ctx.now);
-    const mode = await setting('apex_bridge_mode') || 'off';
+    const mode = await setting('apex_bridge_mode') || 'shadow';
     if (mode === 'off') return { mode, job: null };
     const stuck = await db.prepare("SELECT source, ref, payload FROM transfer_jobs WHERE state = 'auto_sending' ORDER BY at LIMIT 1").get();
     if (stuck) return { mode, job: { ...parseJson(stuck.payload, {}), resume: true } };   // finish (or confirm) the one in flight first
