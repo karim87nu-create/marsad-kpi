@@ -42,7 +42,8 @@ function setup(app) {
   app.route('GET', '/api/talabat/token', async ctx => {
     await app.requireAdmin(ctx);
     const last = Number(await setting('talabat_last_push')) || null;
-    return { linked: !!await setting('talabat_token_hash'), lastPush: iso(last), ageSeconds: last ? Math.round((ctx.now - last) / 1000) : null };
+    const screens = Object.entries(parseJson(await setting('talabat_screens'), {})).map(([id, x]) => ({ id, ...x, at: iso(x.at), ageSeconds: Math.round((ctx.now - x.at) / 1000) }));
+    return { linked: !!await setting('talabat_token_hash'), lastPush: iso(last), ageSeconds: last ? Math.round((ctx.now - last) / 1000) : null, screens };
   });
   app.route('POST', '/api/talabat/token', async ctx => {
     const who = await app.requireAdmin(ctx, 'admin');
@@ -65,6 +66,16 @@ function setup(app) {
     const device = !given && app.config.deviceTokens.includes(ctx.header('x-device-token') || '');
     if (!device && (!given || (!main && !extras.includes(sha256(given))))) fail(401, 'مفتاح شاشة طلبات غير صحيح');
     const now = ctx.now, list = (Array.isArray(ctx.body?.orders) ? ctx.body.orders : []).slice(0, 800), writes = [];
+    // Each Talabat screen says it is alive every minute: its version, how many live orders it sees, the last detail read.
+    const sc = ctx.body?.screen;
+    if (sc && /^[a-z0-9]{4,12}$/.test(String(sc.id || ''))) {
+      const all = parseJson(await setting('talabat_screens'), {});
+      all[sc.id] = { at: now, version: String(sc.version || '').slice(0, 12), kind: ['main', 'extra', 'device'].includes(sc.kind) ? sc.kind : null, live: Number(sc.live) || 0,
+        readAt: sc.readAt ? String(sc.readAt).slice(0, 30) : all[sc.id]?.readAt ?? null, readCode: sc.readCode ? String(sc.readCode).replace(/\D/g, '').slice(0, 10) : all[sc.id]?.readCode ?? null,
+        readOk: sc.readAt ? sc.readOk === true : all[sc.id]?.readOk ?? null, readFail: sc.readAt ? (sc.readFail ? String(sc.readFail).slice(0, 80) : null) : all[sc.id]?.readFail ?? null };
+      const keep = Object.entries(all).sort((a, b) => b[1].at - a[1].at).slice(0, 20);
+      await put('talabat_screens', JSON.stringify(Object.fromEntries(keep)));
+    }
     // From Live Orders: the short code (#2703) next to the full number; it is what is written on Apex next to the customer.
     for (const c of (Array.isArray(ctx.body?.codes) ? ctx.body.codes : []).slice(0, 200)) {
       const id = String(c.id || '').replace(/\D/g, '').slice(0, 20), code = String(c.code || '').replace(/\D/g, '').slice(0, 10);

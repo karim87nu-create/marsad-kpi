@@ -102,7 +102,7 @@
       // The text node with the full number, inside a card; never a button or anything inside one.
       const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT); let target = null;
       for (let n; (n = w.nextNode());) if (n.nodeValue.includes(id) && !n.parentElement.closest('button,[role="button"] button,a,[data-testid="details-order-id"]')) { target = n.parentElement; break; }
-      if (!target || ACTION.test((target.innerText || '').trim())) return null;
+      if (!target || ACTION.test((target.innerText || '').trim())) return { fail: 'رقم الأوردر مش ظاهر في اللايف' };
       target.click();
       let d = null;
       for (let i = 0; i < 25 && !d; i++) { await sleep(200); d = (T('details-order-id')?.innerText || '').includes(id) ? readDetail((T('details-order-id').innerText || '').trim()) : null; }
@@ -115,7 +115,7 @@
       await sleep(400);
       // The branch: the live card does not always name it (single-account view); the order window does («الدهان، مدينتي - ساوث بارك»).
       const store = (lines(document.body).find(x => /الدهان[،,]/.test(x) && x.length < 80) || '').trim() || null;
-      return d && d.detail ? { id, store, detail: { ...d.detail, status: undefined } } : null;   // the live screen's status words are not Order History statuses
+      return d && d.detail ? { id, store, detail: { ...d.detail, status: undefined } } : { fail: T('details-order-id') ? 'شباك التفاصيل اتفتح بس ماتقراش' : document.querySelector('[data-testid^="existing-product__"]') ? 'الأصناف ظاهرة بس رقم الأوردر لأ' : 'شباك التفاصيل ماتفتحش' };   // the live screen's status words are not Order History statuses
     }
     // A sample of the screen's controls (button words, test ids, roles) for admin, so clicks are built on the real page.
     // Text is kept only for buttons/options (never names, phones or addresses).
@@ -159,15 +159,16 @@
       await sleep(400);
       return res;
     }
-    let actions = null, actionsAt = 0; const tried = new Map();
+    let actions = null, actionsAt = 0, lastDiag = {}; const tried = new Map();
     let lastKey = '', lastAt = 0;
     for (;;) {
       try {
         // «Please allow notifications»: close it (English or Arabic), only inside that window.
         for (const d of document.querySelectorAll('[role="dialog"]')) if (/notification|إشعار/i.test(d.innerText || '')) [...d.querySelectorAll('button')].find(b => /^(?:got it|حسنًا|حسنا|فهمت|تمام)$/i.test(b.textContent.trim()))?.click();
         const codes = readCodes(), key = JSON.stringify(codes);
-        if (codes.length && (key !== lastKey || Date.now() - lastAt > 60000)) {
-          const r = await bg({ type: 'TALABAT_PUSH', orders: [], codes }).catch(() => null);
+        // Every minute even with no orders: the screen tells admin it is alive (version, last detail read and why it failed).
+        if (key !== lastKey || Date.now() - lastAt > 60000) {
+          const r = await bg({ type: 'TALABAT_PUSH', orders: [], codes, diag: { live: codes.length, ...lastDiag } }).catch(() => null);
           if (r?.ok) { lastKey = key; lastAt = Date.now(); }
         }
         // Orders from admin (every 30 s): the branches' delivery times, and the orders to mark «في الطريق».
@@ -186,7 +187,9 @@
           if (liveRead.get(c.id) > Date.now() - 10 * 60000 || newOrderDialog()) continue;
           liveRead.set(c.id, Date.now());
           const d = await readLiveDetail(c.id);
-          if (d) { await bg({ type: 'TALABAT_PUSH', orders: [{ ...d, store: c.store || d.store || undefined }], codes: [] }).catch(() => null); }
+          lastDiag = { readAt: new Date().toISOString(), readCode: c.code, readOk: !!d?.detail, readFail: d?.fail || null };
+          if (d?.detail) { await bg({ type: 'TALABAT_PUSH', orders: [{ ...d, store: c.store || d.store || undefined }], codes: [] }).catch(() => null); }
+          else liveRead.set(c.id, Date.now() - 9 * 60000);   // not read: try again in a minute, not ten
         }
         say(codes.length + ' أوردر لايف · ' + new Date().toLocaleTimeString('ar-EG-u-nu-latn', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
       } catch {}

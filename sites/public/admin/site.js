@@ -273,6 +273,11 @@ window.MarsadSite = function MarsadSite(ctx) {
       $('talKeyStatus').replaceChildren(k.lastPush ? h('span', { className: k.ageSeconds < 120 ? 'ok' : 'error', textContent: 'آخر قراءة من شاشة المراقبة ' + t12(k.lastPush) + (k.ageSeconds < 120 ? ' — شغالة' : ' — واقفة') }) : h('span', { className: 'muted', textContent: 'لسه مفيش جهاز متربط' }),
         ' · ', h('span', { className: 'muted', textContent: ext ? (ext.linked ? (ext.extra ? 'البروفايل ده متربط كلايف فرع' : 'الجهاز ده هو شاشة المراقبة') : 'الإضافة موجودة على الجهاز ده (نسخة ' + ext.version + ')') : 'الإضافة مش على الجهاز ده (أو نسخة قديمة)' }));
     }
+    // Every Talabat screen (each Firefox profile with the extension): alive?, version, live orders seen, last detail read.
+    const KIND = { main: 'الأساسية', extra: 'لايف فرع (مربوط)', device: 'لايف (من غير ربط)' };
+    $('talScreens').replaceChildren(...(k.screens || []).map(x => h('div', { className: 'muted', textContent:
+      (x.ageSeconds < 150 ? '🟢 ' : '⚪ ') + (KIND[x.kind] || 'شاشة') + ' · نسخة ' + (x.version || '?') + ' · ' + x.live + ' أوردر لايف · آخر ظهور ' + t12(x.at) +
+      (x.readAt ? ' · آخر قراية تفاصيل #' + (x.readCode || '') + ': ' + (x.readOk ? 'تمام ✓' : 'ماتقريتش ✗ — ' + (x.readFail || '')) : ' · لسه ماقريتش تفاصيل') })));
   }
   $('talLinkExtra').onclick = async () => {
     $('talKeyNote').textContent = 'جارٍ الربط…';

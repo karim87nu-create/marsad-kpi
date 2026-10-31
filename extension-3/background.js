@@ -174,6 +174,8 @@ browser.runtime.onMessage.addListener(async (m, sender) => {
 
 // ---------- شاشة مراقبة طلبات: only on the PC linked from the admin page ----------
 const TALABAT = 'talabatMonitor', talabatTabs = {};
+// One id per Firefox profile, so admin can tell the Talabat screens apart (random; nothing about the PC).
+const screenId = async () => { let v = await store.get('talabatScreenId', null); if (!v) { v = Math.random().toString(36).slice(2, 10); await store.set('talabatScreenId', v); } return v; };
 const adminSender = sender => { try { const u = new URL(sender.url); return globalThis.MARSAD.ADMIN_ORIGINS.includes(u.origin) && (u.hostname !== 'karim87nu-create.github.io' || u.pathname.startsWith('/marsad-kpi/')); } catch { return false; } };
 const talabatSender = sender => { try { return !!sender.tab && ['partner-app.talabat.com', 'web.whatsapp.com'].includes(new URL(sender.url).hostname); } catch { return false; } };
 const waSender = sender => { try { return new URL(sender.url).hostname === 'web.whatsapp.com'; } catch { return false; } };
@@ -214,7 +216,8 @@ async function talabatMessage(m, sender) {
   }
   if (m.type === 'TALABAT_PUSH') {
     if (!t) return { ok: false, error: 'not_linked' };
-    const r = await api('/api/talabat/push', { method: 'POST', headers: { 'content-type': 'application/json', ...auth(t) }, body: JSON.stringify({ orders: Array.isArray(m.orders) ? m.orders.slice(0, 800) : [], codes: Array.isArray(m.codes) ? m.codes.slice(0, 200) : [] }), timeout: 30000 });
+    const r = await api('/api/talabat/push', { method: 'POST', headers: { 'content-type': 'application/json', ...auth(t) }, body: JSON.stringify({ orders: Array.isArray(m.orders) ? m.orders.slice(0, 800) : [], codes: Array.isArray(m.codes) ? m.codes.slice(0, 200) : [],
+      ...(m.diag ? { screen: { id: await screenId(), version: VERSION, kind: t.device ? 'device' : t.extra ? 'extra' : 'main', ...m.diag } } : {}) }), timeout: 30000 });
     const d = r.json();
     // WhatsApp messages on: keep one WhatsApp Web tab open on this PC (it sends them).
     if (r.ok && d.phones && !t.extra && !(talabatTabs.wa != null && await browser.tabs.get(talabatTabs.wa).then(() => true, () => false))) {
