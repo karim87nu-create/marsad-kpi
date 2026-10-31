@@ -213,6 +213,18 @@ async function talabatMessage(m, sender) {
     }
     return r.ok ? { ok: true, want: d.want || [], phones: !!d.phones } : { ok: false, status: r.status, error: d.error };
   }
+  // Live screen orders (per branch, set in admin): what to do, what was done, and a sample of the screen's buttons.
+  if (m.type === 'TALABAT_ACTIONS') {
+    if (!t) return { ok: false };
+    const r = await api('/api/talabat/actions', { headers: { 'x-talabat-token': t.token }, timeout: 20000 });
+    return r.ok ? { ok: true, ...r.json() } : { ok: false };
+  }
+  if (m.type === 'TALABAT_ACTION_RESULT' || m.type === 'TALABAT_UI') {
+    if (!t) return { ok: false };
+    const r = await api(m.type === 'TALABAT_UI' ? '/api/talabat/ui' : '/api/talabat/actions/result', { method: 'POST', headers: { 'content-type': 'application/json', 'x-talabat-token': t.token },
+      body: JSON.stringify(m.body || {}), timeout: 20000 });
+    return { ok: r.ok };
+  }
   if (m.type === 'TALABAT_WA_ACTIVE') {
     if (!t || !waSender(sender)) return { active: false };
     if (talabatTabs.wa != null && talabatTabs.wa !== sender.tab.id && await browser.tabs.get(talabatTabs.wa).then(() => true, () => false)) return { active: false };   // one sender tab

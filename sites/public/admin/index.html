@@ -380,6 +380,13 @@
         <p><button type="button" id="apexWriterKey" class="secondary">مفتاح جديد للكاتب</button> <code id="apexWriterToken"></code></p>
         <p id="apexWriterNote" class="muted" role="status"></p>
       </article>
+      <article class="panel" id="talActPanel" hidden><h2>شاشة طلبات: وقت التوصيل والقبول و«في الطريق» لكل فرع</h2>
+        <p class="muted">وقت التوصيل بيتحفظ هنا ويوصل لشاشة طلبات خلال 30 ثانية. «في الطريق» بيتداس لوحده على طلبات أول ما الأوردر يخرج مع الطيار على Apex، وده بس للفروع اللي متعلّم عليها.</p>
+        <div id="talActRows"></div>
+        <div class="row"><button type="button" id="talActSave">حفظ</button></div>
+        <p id="talActNote" class="muted" role="status"></p>
+        <details><summary class="muted">آخر اللي عملته الشاشة</summary><div id="talActLog" class="muted"></div></details>
+      </article>
       <article class="panel" id="ordersKeyPanel"><h2>مرصد الأوردرات (جهاز الكاشير)</h2>
         <p class="muted">السكريبت اللي على جهاز الكاشير بيقرا Apex ويبعت هنا بالمفتاح ده. طلّع المفتاح، وشغّل setup.bat على جهاز الكاشير والصقه لما يطلبه. المفتاح بيظهر مرة واحدة بس؛ لو طلّعت مفتاح جديد القديم بيبطل.</p>
         <p id="ordersKeyStatus"></p>

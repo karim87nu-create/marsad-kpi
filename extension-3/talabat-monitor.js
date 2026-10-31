@@ -2,7 +2,8 @@
 // شاشة مراقبة طلبات: runs only on the one PC linked from the admin page (الإدارة ← شاشة مراقبة طلبات), in a Firefox
 // window signed in with the call center's Talabat account. It keeps Order History open on the operating day, reads the
 // list every few seconds, and opens each order the server asks for to read its timeline, cancellation and items.
-// It never accepts, rejects or changes an order, and it reads available customer matching fields inside the current order only.
+// It never accepts, rejects or cancels an order; the only change it makes is «في الطريق», when admin turns it on for a branch
+// and the order's Apex order left with its pilot. It reads customer matching fields inside the current order only.
 (async () => {
   if (location.hostname !== 'partner-app.talabat.com' || window.top !== window || window.__marsadTalabat === globalThis.MARSAD.VERSION) return;
   window.__marsadTalabat = globalThis.MARSAD.VERSION;
@@ -111,6 +112,47 @@
       await sleep(400);
       return d && d.detail ? { id, detail: { ...d.detail, status: undefined } } : null;   // the live screen's status words are not Order History statuses
     }
+    // A sample of the screen's controls (button words, test ids, roles) for admin, so clicks are built on the real page.
+    // Text is kept only for buttons/options (never names, phones or addresses).
+    const controlsOf = root => [...(root || document).querySelectorAll('button,[role="button"],[role="option"],[role="radio"],[role="menuitem"],[data-testid],input,select')].slice(0, 120).map(e => {
+      const clickable = e.matches('button,[role="button"],[role="option"],[role="radio"],[role="menuitem"]');
+      return { tag: e.tagName.toLowerCase(), testid: e.dataset?.testid || '', role: e.getAttribute('role') || '', aria: e.getAttribute('aria-label') || '',
+        text: clickable ? (e.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 60) : '' };
+    });
+    const uiSent = {};
+    const sendUi = (kind, root) => { if (uiSent[kind] > Date.now() - 30 * 60000) return; uiSent[kind] = Date.now(); bg({ type: 'TALABAT_UI', body: { kind, controls: controlsOf(root) } }).catch(() => null); };
+    const newOrderDialog = () => document.querySelector('[role="dialog"] button[data-testid="dialog_confirm_button"]:not([hidden])')?.closest('[role="dialog"]') || null;
+    const drawer = () => T('details-order-id')?.closest('[data-testid*="drawer"], [role="dialog"], aside') || T('order-details-drawer__content') || null;
+    // «في الطريق» for one order whose Apex order left with the pilot: open it (a click on its number), press the button
+    // with exactly these words, confirm only a dialog that asks about it, close. Anything unexpected: stop and report.
+    async function pressOnTheWay(id) {
+      const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT); let target = null;
+      for (let n; (n = w.nextNode());) if (n.nodeValue.includes(id) && !n.parentElement.closest('button,[role="button"] button,a,[data-testid="details-order-id"]')) { target = n.parentElement; break; }
+      if (!target || ACTION.test((target.innerText || '').trim())) return { ok: false, note: 'الأوردر مش ظاهر على اللايف' };
+      target.click();
+      let box = null;
+      for (let i = 0; i < 25 && !box; i++) { await sleep(200); box = (T('details-order-id')?.innerText || '').includes(id) ? drawer() || document.body : null; }
+      if (!box) return { ok: false, note: 'تفاصيل الأوردر ماتفتحتش' };
+      sendUi('accepted', box);
+      const btn = [...box.querySelectorAll('button,[role="button"]')].find(b => /^(?:في الطريق|on the way)$/i.test((b.innerText || '').trim()));
+      let res;
+      if (!btn) res = { ok: false, note: 'زرار «في الطريق» مش موجود' };
+      else {
+        btn.click(); await sleep(1200);
+        const dlg = [...document.querySelectorAll('[role="dialog"]')].find(d => d !== box && !d.contains(box) && /في الطريق|on the way|تأكيد|confirm/i.test(d.innerText || ''));
+        if (dlg) {
+          sendUi('onTheWay', dlg);
+          const ok = [...dlg.querySelectorAll('button,[role="button"]')].find(b => /^(?:تأكيد|نعم|confirm|yes|في الطريق|on the way)$/i.test((b.innerText || '').trim()));
+          if (ok) { ok.click(); await sleep(1200); res = { ok: true, note: 'اتداس «في الطريق» واتأكد' }; }
+          else res = { ok: false, note: 'ظهرت رسالة تأكيد مش معروفة — اتبعتت عينتها للإدارة' };
+        } else res = { ok: true, note: 'اتداس «في الطريق»' };
+      }
+      const close = T('close-button') || [...document.querySelectorAll('button,[role="button"]')].find(b => /^(?:close|إغلاق|×|✕)$/i.test((b.getAttribute('aria-label') || b.innerText || '').trim()));
+      if (close && !ACTION.test((close.innerText || '').trim())) close.click(); else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await sleep(400);
+      return res;
+    }
+    let actions = null, actionsAt = 0; const tried = new Map();
     let lastKey = '', lastAt = 0;
     for (;;) {
       try {
@@ -119,6 +161,16 @@
         if (codes.length && (key !== lastKey || Date.now() - lastAt > 60000)) {
           const r = await bg({ type: 'TALABAT_PUSH', orders: [], codes }).catch(() => null);
           if (r?.ok) { lastKey = key; lastAt = Date.now(); }
+        }
+        // Orders from admin (every 30 s): the branches' delivery times, and the orders to mark «في الطريق».
+        if (Date.now() - actionsAt > 30000) { actionsAt = Date.now(); const a = await bg({ type: 'TALABAT_ACTIONS' }).catch(() => null); if (a?.ok) actions = a; }
+        const nd = newOrderDialog();
+        if (nd) sendUi('new', nd);   // the new-order window: read only (accepting is built once its controls are known)
+        else for (const o of actions?.onTheWay || []) {
+          if (tried.get(o.id) > Date.now() - 10 * 60000 || !codes.some(c => c.id === o.id)) continue;
+          tried.set(o.id, Date.now());
+          const r = await pressOnTheWay(o.id);
+          await bg({ type: 'TALABAT_ACTION_RESULT', body: { id: o.id, action: 'onTheWay', ok: r.ok, note: r.note } }).catch(() => null);
         }
         // Payment and bill come only from the live screen (Order History shows them a day later): open each live
         // order's details once (a click on its number, never on a button), read, and close. Nothing is changed.

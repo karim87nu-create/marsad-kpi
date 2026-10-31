@@ -6,7 +6,7 @@ $selfStamp = (Get-Item $self).LastWriteTimeUtc
 Set-Location $here
 
 # ===== settings =====
-$PollSeconds     = 15
+$PollSeconds     = 60
 $LateMinutes     = 30
 $VeryLateMinutes = 45
 $DiscPctPlatform = 35
@@ -64,7 +64,18 @@ function Q([string]$q, $params){
   $c.CommandText = 'SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED; ' + $q
   if ($params) { foreach($k in $params.Keys){ [void]$c.Parameters.AddWithValue($k, $params[$k]) } }
   $da = New-Object System.Data.SqlClient.SqlDataAdapter($c); $dt = New-Object System.Data.DataTable
-  [void]$da.Fill($dt); return ,$dt
+  $sqlTimer = [Diagnostics.Stopwatch]::StartNew()
+  try { [void]$da.Fill($dt) }
+  finally {
+    $sqlTimer.Stop()
+    if ($null -ne $script:cycleSqlMs) { $script:cycleSqlMs += $sqlTimer.ElapsedMilliseconds }
+    if ($sqlTimer.ElapsedMilliseconds -ge 1000) {
+      $sourceTable = 'unknown'
+      if ($q -match '(?i)\bFROM\s+([A-Za-z0-9_\.\[\]]+)') { $sourceTable = $matches[1] }
+      L "slow SQL read [$sourceTable]: $($sqlTimer.ElapsedMilliseconds) ms"
+    }
+  }
+  return ,$dt
 }
 
 # ===== helpers =====
@@ -247,6 +258,102 @@ try {
     [void]$out.Add("  $(S $x.OrderNo) | $(S $x.ShiftSerial) | $(S $x.TimeIn) | $(S $x.BranchNo) | $(S $x.SubTotal) | $(KindOf (S $x.OnlineType)) | " + ($nums -join ' ; ')) }
   Add-Content (Join-Path $here 'schema_log.txt') ("`r`n=== probe ===`r`n" + ($out -join "`r`n")) -Encoding UTF8
 } catch { L "probe: $($_.Exception.Message)" }
+# ===== probe 2 (once per start, read-only, numbers only, no customer columns): how Apex numbers and prints a call-center order =====
+try {
+  $o2 = New-Object System.Collections.ArrayList
+  $d2 = [datetime](Q 'SELECT MAX(OrderDate) AS d FROM Orders_M_Daily').Rows[0].d
+  $p2 = @{ '@d' = $d2 }
+  [void]$o2.Add("day=$($d2.ToString('yyyy-MM-dd'))")
+  [void]$o2.Add('--- Counter: num | OrderNo | PosSerial | SerialNo | ShiftOrderNo | OrderDate | ShiftNo | BranchNo | BranchOrderNo | DeliverySerial | OrderCounter')
+  foreach($x in (Q 'SELECT num, OrderNo, PosSerial, SerialNo, ShiftOrderNo, OrderDate, ShiftNo, BranchNo, BranchOrderNo, DeliverySerial, OrderCounter FROM Counter WITH (NOLOCK) ORDER BY num').Rows){
+    [void]$o2.Add('  ' + ((@('num','OrderNo','PosSerial','SerialNo','ShiftOrderNo','OrderDate','ShiftNo','BranchNo','BranchOrderNo','DeliverySerial','OrderCounter') | ForEach-Object { S $x[$_] }) -join ' | ')) }
+  [void]$o2.Add('--- per POS: PosNo | orders | minPosSerial | maxPosSerial | branches | shifts | online')
+  foreach($x in (Q "SELECT PosNo, COUNT(*) n, MIN(PosSerial) a, MAX(PosSerial) b, COUNT(DISTINCT BranchNo) br, COUNT(DISTINCT ShiftNo) sh, SUM(CASE WHEN ISNULL(OnlineType,'')<>'' THEN 1 ELSE 0 END) onl FROM Orders_M_Daily WITH (NOLOCK) WHERE OrderDate=@d GROUP BY PosNo ORDER BY PosNo" $p2).Rows){
+    [void]$o2.Add("  $(S $x.PosNo) | $($x.n) | $(S $x.a) | $(S $x.b) | $($x.br) | $($x.sh) | $($x.onl)") }
+  [void]$o2.Add('--- BranchOrderNo per branch: BranchNo | orders | distinct | even | min | max | duplicated values | POSes')
+  foreach($x in (Q "SELECT BranchNo, COUNT(*) n, COUNT(DISTINCT BranchOrderNo) dn, SUM(CASE WHEN CAST(BranchOrderNo AS bigint)%2=0 THEN 1 ELSE 0 END) ev, MIN(BranchOrderNo) a, MAX(BranchOrderNo) b, COUNT(DISTINCT PosNo) np FROM Orders_M_Daily WITH (NOLOCK) WHERE OrderDate=@d GROUP BY BranchNo ORDER BY BranchNo" $p2).Rows){
+    [void]$o2.Add("  $(S $x.BranchNo) | $($x.n) | $($x.dn) | $($x.ev) | $(S $x.a) | $(S $x.b) | $($x.n - $x.dn) | $($x.np)") }
+  [void]$o2.Add('--- branch 1 sequence (BranchOrderNo:PosNo:ShiftSerial:TimeIn), oldest first, last 40')
+  $seq = (Q "SELECT TOP 40 BranchOrderNo, PosNo, ShiftSerial, BranchShiftSerial, TimeIn FROM Orders_M_Daily WITH (NOLOCK) WHERE OrderDate=@d AND BranchNo=1 ORDER BY BranchOrderNo DESC" $p2).Rows | ForEach-Object { "$(S $_.BranchOrderNo):$(S $_.PosNo):$(S $_.ShiftSerial):$(S $_.BranchShiftSerial):$(S $_.TimeIn)" }
+  [void]$o2.Add('  ' + ((@($seq))[-1..-(@($seq).Count)] -join ' , '))
+  [void]$o2.Add('--- TypeSerial: PayWay | orders | min | max | distinct')
+  foreach($x in (Q "SELECT RTRIM(PayWay) pw, COUNT(*) n, MIN(TypeSerial) a, MAX(TypeSerial) b, COUNT(DISTINCT TypeSerial) dn FROM Orders_M_Daily WITH (NOLOCK) WHERE OrderDate=@d GROUP BY RTRIM(PayWay)" $p2).Rows){ [void]$o2.Add("  $(S $x.pw) | $($x.n) | $(S $x.a) | $(S $x.b) | $($x.dn)") }
+  [void]$o2.Add('--- printing (by PosNo): PosNo | has PrintedOrders row | Printed | Modified | OrderPrinted | orders')
+  foreach($x in (Q "SELECT m.PosNo, CASE WHEN p.OrderNo IS NULL THEN 0 ELSE 1 END hp, ISNULL(p.Printed,-1) pr, ISNULL(p.Modified,-1) md, ISNULL(m.OrderPrinted,-1) op, COUNT(*) n FROM Orders_M_Daily m WITH (NOLOCK) LEFT JOIN PrintedOrders p WITH (NOLOCK) ON p.OrderNo=m.OrderNo WHERE m.OrderDate=@d GROUP BY m.PosNo, CASE WHEN p.OrderNo IS NULL THEN 0 ELSE 1 END, ISNULL(p.Printed,-1), ISNULL(p.Modified,-1), ISNULL(m.OrderPrinted,-1) ORDER BY 1,2" $p2).Rows){
+    [void]$o2.Add("  $(S $x.PosNo) | $($x.hp) | $(S $x.pr) | $(S $x.md) | $(S $x.op) | $($x.n)") }
+  [void]$o2.Add('--- detail flags (by PosNo): PosNo | Printed | PrintedSlip | SentBy | Finished | rows')
+  foreach($x in (Q "SELECT m.PosNo, ISNULL(d.Printed,-1) pr, ISNULL(d.PrintedSlip,-1) ps, ISNULL(d.SentBy,-1) sb, ISNULL(d.Finished,-1) fi, COUNT(*) n FROM Orders_D_Daily d WITH (NOLOCK) JOIN Orders_M_Daily m WITH (NOLOCK) ON m.OrderNo=d.OrderNo WHERE m.OrderDate=@d GROUP BY m.PosNo, ISNULL(d.Printed,-1), ISNULL(d.PrintedSlip,-1), ISNULL(d.SentBy,-1), ISNULL(d.Finished,-1) ORDER BY 1" $p2).Rows){
+    [void]$o2.Add("  $(S $x.PosNo) | $(S $x.pr) | $(S $x.ps) | $(S $x.sb) | $(S $x.fi) | $($x.n)") }
+  [void]$o2.Add('--- PrintedOrders overall: rows for this day | min/max OrderNo')
+  $po = (Q "SELECT COUNT(*) n, MIN(OrderNo) a, MAX(OrderNo) b FROM PrintedOrders WITH (NOLOCK) WHERE OrderDate=@d" $p2).Rows[0]
+  [void]$o2.Add("  $($po.n) | $(S $po.a) | $(S $po.b)")
+  [void]$o2.Add('--- triggers: table | trigger | disabled')
+  foreach($x in (Q "SELECT OBJECT_NAME(parent_id) t, name, is_disabled FROM sys.triggers WHERE parent_class=1 ORDER BY 1").Rows){ [void]$o2.Add("  $(S $x.t) | $(S $x.name) | $(S $x.is_disabled)") }
+  [void]$o2.Add('--- online customers: OnlineType | PayWay | orders | distinct CustNo | top CustNo (count)')
+  foreach($x in (Q "SELECT OnlineType, RTRIM(PayWay) pw, COUNT(*) n, COUNT(DISTINCT CustNo) dc FROM Orders_M_Daily WITH (NOLOCK) WHERE OrderDate=@d AND ISNULL(OnlineType,'')<>'' GROUP BY OnlineType, RTRIM(PayWay)" $p2).Rows){
+    $top = (Q "SELECT TOP 3 CustNo, COUNT(*) n FROM Orders_M_Daily WITH (NOLOCK) WHERE OrderDate=@d AND OnlineType=@t GROUP BY CustNo ORDER BY COUNT(*) DESC" @{ '@d'=$d2; '@t'=(S $x.OnlineType) }).Rows | ForEach-Object { "$(S $_.CustNo)($($_.n))" }
+    [void]$o2.Add("  $(KindOf (S $x.OnlineType)) [$((S $x.OnlineType).Length)ch] | $(S $x.pw) | $($x.n) | $($x.dc) | $($top -join ' ')") }
+  [void]$o2.Add('--- online add-ons: Modify rows | Components rows | sample Modify (ItemNo:TypeNo:Price:Qty)')
+  $mc = (Q "SELECT COUNT(*) n FROM Orders_Modify_Daily x WITH (NOLOCK) JOIN Orders_M_Daily m WITH (NOLOCK) ON m.OrderNo=x.OrderNo WHERE m.OrderDate=@d AND ISNULL(m.OnlineType,'')<>''" $p2).Rows[0].n
+  $cc = (Q "SELECT COUNT(*) n FROM Orders_Components_Daily x WITH (NOLOCK) JOIN Orders_M_Daily m WITH (NOLOCK) ON m.OrderNo=x.OrderNo WHERE m.OrderDate=@d AND ISNULL(m.OnlineType,'')<>''" $p2).Rows[0].n
+  $ms = (Q "SELECT TOP 12 x.ItemNo, x.TypeNo, x.Price, x.Qty FROM Orders_Modify_Daily x WITH (NOLOCK) JOIN Orders_M_Daily m WITH (NOLOCK) ON m.OrderNo=x.OrderNo WHERE m.OrderDate=@d AND ISNULL(m.OnlineType,'')<>''" $p2).Rows | ForEach-Object { "$(S $_.ItemNo):$(S $_.TypeNo):$(S $_.Price):$(S $_.Qty)" }
+  [void]$o2.Add("  $mc | $cc | $($ms -join ' ')")
+  [void]$o2.Add('--- online detail fields: ItemDetailNo / Rank / ItemsCombo / Combo / Weight non-empty counts')
+  $r2 = (Q "SELECT COUNT(*) n, SUM(CASE WHEN ISNULL(d.ItemDetailNo,'')<>'' THEN 1 ELSE 0 END) idn, SUM(CASE WHEN ISNULL(d.Rank,'')<>'' THEN 1 ELSE 0 END) rk, SUM(CASE WHEN ISNULL(d.ItemsCombo,'')<>'' THEN 1 ELSE 0 END) ic, SUM(CASE WHEN ISNULL(d.Combo,'0')<>'0' THEN 1 ELSE 0 END) cb, SUM(CASE WHEN ISNULL(d.Weight,0)<>0 THEN 1 ELSE 0 END) wt FROM Orders_D_Daily d WITH (NOLOCK) JOIN Orders_M_Daily m WITH (NOLOCK) ON m.OrderNo=d.OrderNo WHERE m.OrderDate=@d AND ISNULL(m.OnlineType,'')<>''" $p2).Rows[0]
+  [void]$o2.Add("  rows=$($r2.n) ItemDetailNo=$($r2.idn) Rank=$($r2.rk) ItemsCombo=$($r2.ic) Combo=$($r2.cb) Weight=$($r2.wt)")
+  try { $bt = Q "SELECT * FROM Branches"; [void]$o2.Add('--- Branches columns: ' + (($bt.Columns | ForEach-Object { $_.ColumnName }) -join ','))
+    foreach($x in $bt.Rows){ $nm = ($bt.Columns | Where-Object { $_.ColumnName -match '(?i)name' } | Select-Object -First 1); [void]$o2.Add("  $(S $x.BranchNo) | $(if($nm){S $x[$nm.ColumnName]})") } } catch { [void]$o2.Add('branches: ' + $_.Exception.Message) }
+  [void]$o2.Add('--- write contract columns: table | column | type | nullable | identity | default')
+  foreach($x in (Q "SELECT t.name AS tb, c.name AS cn, ty.name AS tp, c.is_nullable AS nl, c.is_identity AS idn, OBJECT_DEFINITION(c.default_object_id) AS df FROM sys.columns c JOIN sys.tables t ON t.object_id = c.object_id JOIN sys.types ty ON ty.user_type_id = c.user_type_id WHERE t.name IN ('Customers','Orders_M_Daily','Orders_D_Daily','Counter','PrintedOrders','Orders_Serials','Orders_Checks','OrderLog','Orders_M_Prints','Orders_D_Prints','CLedges','Orders_Modify_Daily','Orders_Components_Daily') ORDER BY t.name, c.column_id").Rows){
+    [void]$o2.Add("  $(S $x.tb) | $(S $x.cn) | $(S $x.tp) | $(S $x.nl) | $(S $x.idn) | $(S $x.df)") }
+  [void]$o2.Add('--- keys and indexes: table | index | unique | pk | columns')
+  foreach($x in (Q "SELECT t.name AS tb, i.name AS ix, i.is_unique AS u, i.is_primary_key AS pk, STUFF((SELECT ',' + c.name FROM sys.index_columns ic JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id WHERE ic.object_id = i.object_id AND ic.index_id = i.index_id ORDER BY ic.key_ordinal FOR XML PATH('')),1,1,'') AS cols FROM sys.indexes i JOIN sys.tables t ON t.object_id = i.object_id WHERE i.index_id > 0 AND t.name IN ('Customers','Orders_M_Daily','Orders_D_Daily','Counter','PrintedOrders','Orders_Serials','Orders_Checks','Orders_M','CustomersPhones')").Rows){
+    [void]$o2.Add("  $(S $x.tb) | $(S $x.ix) | $(S $x.u) | $(S $x.pk) | $(S $x.cols)") }
+  [void]$o2.Add('--- customers numbering: max CustNo | customers | created today (by CustNo above yesterday max is unknown; count of CustNo used today not in yesterday)')
+  $cs = (Q "SELECT MAX(CustNo) mx, COUNT(*) n FROM Customers WITH (NOLOCK)").Rows[0]
+  [void]$o2.Add("  $(S $cs.mx) | $($cs.n)")
+  [void]$o2.Add('--- online orders CustNo vs max: CustNo values of the last 10 Talabat orders by check (numbers only)')
+  $cn = (Q "SELECT TOP 10 CustNo, CheckNo FROM Orders_M_Daily WITH (NOLOCK) WHERE ISNULL(OnlineType,'') <> '' ORDER BY CheckNo DESC").Rows | ForEach-Object { "$(S $_.CustNo)@$(S $_.CheckNo)" }
+  [void]$o2.Add('  ' + ($cn -join ' '))
+  [void]$o2.Add('--- online line prices vs price lists: OnlineType | PayWay | lines | =Items.DeliveryPrice | =Items.Tableprice | =Items.OnlinePrice | =ItemsBranches.Price | =ItemsBranches.OnPrice | =ItemsOnlineTypes.Price')
+  foreach($x in (Q "SELECT m.OnlineType AS ot, RTRIM(m.PayWay) AS pw, COUNT(*) AS n, SUM(CASE WHEN ABS(d.Price - i.DeliveryPrice) < 0.01 THEN 1 ELSE 0 END) AS dp, SUM(CASE WHEN ABS(d.Price - i.Tableprice) < 0.01 THEN 1 ELSE 0 END) AS tp, SUM(CASE WHEN ABS(d.Price - i.OnlinePrice) < 0.01 THEN 1 ELSE 0 END) AS op, SUM(CASE WHEN ABS(d.Price - ib.Price) < 0.01 THEN 1 ELSE 0 END) AS bp, SUM(CASE WHEN ABS(d.Price - ib.OnPrice) < 0.01 THEN 1 ELSE 0 END) AS bo, SUM(CASE WHEN ABS(d.Price - it.p) < 0.01 OR ABS(d.Price - it.q) < 0.01 THEN 1 ELSE 0 END) AS it FROM Orders_D_Daily d WITH (NOLOCK) JOIN Orders_M_Daily m WITH (NOLOCK) ON m.OrderNo = d.OrderNo LEFT JOIN Items i WITH (NOLOCK) ON i.ItemNo = d.ItemNo LEFT JOIN (SELECT ItemNo, BranchNo, MIN(Price) AS Price, MIN(OnPrice) AS OnPrice FROM ItemsBranches WITH (NOLOCK) GROUP BY ItemNo, BranchNo) ib ON ib.ItemNo = d.ItemNo AND ib.BranchNo = m.BranchNo LEFT JOIN (SELECT ItemNo, BranchNo, MIN(Price) AS p, MAX(Price) AS q FROM ItemsOnlineTypes WITH (NOLOCK) GROUP BY ItemNo, BranchNo) it ON it.ItemNo = d.ItemNo AND it.BranchNo = m.BranchNo WHERE m.OrderDate = @d GROUP BY m.OnlineType, RTRIM(m.PayWay)" $p2).Rows){
+    [void]$o2.Add("  $(KindOf (S $x.ot)) [$((S $x.ot).Length)] | $(S $x.pw) | $($x.n) | $($x.dp) | $($x.tp) | $($x.op) | $($x.bp) | $($x.bo) | $($x.it)") }
+  foreach($x in (Q "SELECT OnlineTypeNo AS t, COUNT(*) AS n, COUNT(DISTINCT BranchNo) AS b FROM ItemsOnlineTypes WITH (NOLOCK) GROUP BY OnlineTypeNo").Rows){ [void]$o2.Add("  ItemsOnlineTypes type=$(S $x.t) rows=$($x.n) branches=$($x.b)") }
+  [void]$o2.Add('--- OnlineType values (exact text, these are labels not customer data) | orders')
+  foreach($x in (Q "SELECT OnlineType AS ot, COUNT(*) AS n FROM Orders_M_Daily WITH (NOLOCK) WHERE OrderDate = @d GROUP BY OnlineType" $p2).Rows){ [void]$o2.Add("  [$(S $x.ot)] | $($x.n)") }
+  [void]$o2.Add('--- online header shape (Talabat cash, newest 5): TransType | Otlob | DiscountType | Discount | TaxRatio | ServiceRatio | Service | Addition | CashPayment | CustPayment | UserNo | HallNo | TakeAwayLoc | Closed | State | Payed | o_Sign length | o_CustName length | PersonName length | o_PersonName length')
+  foreach($x in (Q "SELECT TOP 5 TransType, Otlob, DiscountType, Discount, TaxRatio, ServiceRatio, Service, Addition, CashPayment, CustPayment, UserNo, HallNo, TakeAwayLoc, Closed, State, Payed, LEN(o_Sign) AS ls, LEN(o_CustName) AS lc, LEN(PersonName) AS lp, LEN(o_PersonName) AS lo FROM Orders_M_Daily WITH (NOLOCK) WHERE OrderDate = @d AND ISNULL(OnlineType,'') <> '' AND RTRIM(PayWay) = 'Cash' ORDER BY CheckNo DESC" $p2).Rows){
+    [void]$o2.Add('  ' + ((@('TransType','Otlob','DiscountType','Discount','TaxRatio','ServiceRatio','Service','Addition','CashPayment','CustPayment','UserNo','HallNo','TakeAwayLoc','Closed','State','Payed','ls','lc','lp','lo') | ForEach-Object { S $x[$_] }) -join ' | ')) }
+  [void]$o2.Add('--- online detail sample: ItemNo | SerialNo | Qty | Price | Description | Combo | ItemDetailNo | Rank | ItemsCombo | ItemDiscount | OpenDesc | TimeVal | ItemTax | ItemService | Weight | ItemsNo || Items.VariantWeight | Items.IWeight | Items.PiecesNo | Items.ItemName')
+  foreach($x in (Q "SELECT TOP 12 d.ItemNo, d.SerialNo, d.Qty, d.Price, d.Description, d.Combo, d.ItemDetailNo, d.Rank, d.ItemsCombo, d.ItemDiscount, d.OpenDesc, d.TimeVal, d.ItemTax, d.ItemService, d.Weight, d.ItemsNo, i.VariantWeight, i.IWeight, i.PiecesNo, i.ItemName FROM Orders_D_Daily d WITH (NOLOCK) JOIN Orders_M_Daily m WITH (NOLOCK) ON m.OrderNo = d.OrderNo LEFT JOIN Items i WITH (NOLOCK) ON i.ItemNo = d.ItemNo WHERE m.OrderDate = @d AND ISNULL(m.OnlineType,'') <> '' ORDER BY m.CheckNo DESC, d.SerialNo" $p2).Rows){
+    [void]$o2.Add('  ' + ((@('ItemNo','SerialNo','Qty','Price','Description','Combo','ItemDetailNo','Rank','ItemsCombo','ItemDiscount','OpenDesc','TimeVal','ItemTax','ItemService','Weight','ItemsNo') | ForEach-Object { S $x[$_] }) -join ' | ') + ' || ' + ((@('VariantWeight','IWeight','PiecesNo','ItemName') | ForEach-Object { S $x[$_] }) -join ' | ')) }
+  # How the staff write an online order (names hidden: only known label words, # codes and amounts are kept; other words become ▢).
+  $keep = '^(?:#?\d{1,6}|#|/|-|\+|:|\(|\)|%|اطلب|أطلب|اطلب/كاش|طلبات|كاش|نقدي|مدفوع|مدفوعه|مدفوعة|فيزا|خصم|الخصم|ممول|مموله|ممولة|من|على|عرض|كوبون|موقع|موقعنا|الموقع|طلب|توصيل|خدمة|ج|جنيه|cash|visa|paid|talabat|voucher|off|online|discount)$'
+  $mask = { param($v) $v = [regex]::Replace([string]$v, '(?:\+?20|0)?1[0125]\d{8}', '[phone]'); (($v -split '\s+') | Where-Object { $_ } | ForEach-Object { $w = $_; if ($w -match $keep -or $w -eq '[phone]' -or $w -match '^#\d+$' -or $w -match '^\d+(?:\.\d+)?$') { $w } elseif ($w -match '^(اطلب|كاش|مدفوع|خصم|طلبات)[/#\d]*') { $w } else { '▢' } }) -join ' ' }
+  [void]$o2.Add('--- how online orders are written (newest 30; names hidden): OnlineType | PayWay | o_CustName | PersonName | o_PersonName | o_Sign | Remarks | DiscountType | Discount | line discounts | Service | SubTotal | lines | service line')
+  foreach($x in (Q "SELECT TOP 30 m.OnlineType, RTRIM(m.PayWay) AS pw, m.o_CustName, m.PersonName, m.o_PersonName, m.o_Sign, m.Remarks, m.DiscountType, m.Discount, m.Service, m.SubTotal, (SELECT SUM(ISNULL(d.ItemDiscount,0)) FROM Orders_D_Daily d WITH (NOLOCK) WHERE d.OrderNo = m.OrderNo) AS idisc, (SELECT COUNT(*) FROM Orders_D_Daily d WITH (NOLOCK) WHERE d.OrderNo = m.OrderNo) AS n, (SELECT COUNT(*) FROM Orders_D_Daily d WITH (NOLOCK) WHERE d.OrderNo = m.OrderNo AND RTRIM(d.ItemNo) = '0114006') AS svc FROM Orders_M_Daily m WITH (NOLOCK) WHERE m.OrderDate = @d AND ISNULL(m.OnlineType,'') <> '' ORDER BY m.CheckNo DESC" $p2).Rows){
+    [void]$o2.Add("  $(S $x.OnlineType) | $(S $x.pw) | $(& $mask (S $x.o_CustName)) | $(& $mask (S $x.PersonName)) | $(& $mask (S $x.o_PersonName)) | $(& $mask (S $x.o_Sign)) | $(& $mask (S $x.Remarks)) | $(S $x.DiscountType) | $(S $x.Discount) | $(S $x.idisc) | $(S $x.Service) | $(S $x.SubTotal) | $($x.n) | $($x.svc)") }
+  [void]$o2.Add('--- service line 0114006 in Talabat orders: orders | with the line')
+  $sv = (Q "SELECT COUNT(DISTINCT m.OrderNo) AS n, COUNT(DISTINCT d.OrderNo) AS w FROM Orders_M_Daily m WITH (NOLOCK) LEFT JOIN Orders_D_Daily d WITH (NOLOCK) ON d.OrderNo = m.OrderNo AND RTRIM(d.ItemNo) = '0114006' WHERE m.OrderDate = @d AND m.OnlineType LIKE 'TALABAT%'" $p2).Rows[0]
+  [void]$o2.Add("  $($sv.n) | $(S $sv.w)")
+  [void]$o2.Add('--- service (delivery) by branch and location, online orders: BranchNo | o_LocationNo | Service values (count)')
+  foreach($x in (Q "SELECT BranchNo AS b, ISNULL(o_LocationNo, -1) AS l, Service AS s, COUNT(*) AS n FROM Orders_M_Daily WITH (NOLOCK) WHERE OrderDate = @d GROUP BY BranchNo, ISNULL(o_LocationNo, -1), Service ORDER BY 1, 2" $p2).Rows){ [void]$o2.Add("  $(S $x.b) | $(S $x.l) | $(S $x.s) | $($x.n)") }
+  try { $lt = Q "SELECT TOP 5 * FROM Location WITH (NOLOCK)"; [void]$o2.Add('--- Location columns: ' + (($lt.Columns | ForEach-Object { $_.ColumnName }) -join ','))
+    foreach($x in $lt.Rows){ [void]$o2.Add('  ' + (($lt.Columns | ForEach-Object { S $x[$_.ColumnName] }) -join ' | ')) } } catch { [void]$o2.Add('location: ' + $_.Exception.Message) }
+  [void]$o2.Add('--- restaurant discount lines: which line carries ItemDiscount (online, newest 15 discounted orders): serial of discounted line / lines | discount | that line price x qty | top-priced line?')
+  foreach($x in (Q "SELECT TOP 15 m.OrderNo, (SELECT COUNT(*) FROM Orders_D_Daily d WITH (NOLOCK) WHERE d.OrderNo = m.OrderNo) AS n, (SELECT TOP 1 CAST(d.SerialNo AS varchar(5)) + ':' + RTRIM(d.ItemNo) + ':' + CAST(d.ItemDiscount AS varchar(20)) + ':' + CAST(d.Price * d.Qty AS varchar(20)) FROM Orders_D_Daily d WITH (NOLOCK) WHERE d.OrderNo = m.OrderNo AND ISNULL(d.ItemDiscount,0) <> 0 ORDER BY d.ItemDiscount DESC) AS dl, (SELECT COUNT(*) FROM Orders_D_Daily d WITH (NOLOCK) WHERE d.OrderNo = m.OrderNo AND ISNULL(d.ItemDiscount,0) <> 0) AS dn, (SELECT TOP 1 CAST(d.SerialNo AS varchar(5)) FROM Orders_D_Daily d WITH (NOLOCK) WHERE d.OrderNo = m.OrderNo ORDER BY d.Price * d.Qty DESC) AS top1 FROM Orders_M_Daily m WITH (NOLOCK) WHERE m.OrderDate = @d AND ISNULL(m.OnlineType,'') <> '' AND ISNULL(m.Discount,0) <> 0 ORDER BY m.CheckNo DESC" $p2).Rows){
+    [void]$o2.Add("  lines=$($x.n) discountedLines=$($x.dn) first=$(S $x.dl) topPricedSerial=$(S $x.top1)") }
+  [void]$o2.Add('--- prepaid (Ledge) online orders and their CLedges rows (numbers only): OnlineType | CashPayment | VisaPayment | CustPayment | total | rows | CL.CustNo=order | PayType | TotalCash | Payments | Reminder | PosNo=order | UserNo=order | BranchNo=order | SNo | HourNo | PayTime | PayDate=OrderDate | Remarks length | ShiftNo')
+  foreach($x in (Q "SELECT TOP 12 m.OnlineType, m.CashPayment, m.VisaPayment, m.CustPayment, (m.SubTotal - m.Discount + m.Tax + m.Service + m.Addition) AS tot, (SELECT COUNT(*) FROM CLedges c WITH (NOLOCK) WHERE c.OrderNo = m.OrderNo) AS n, c.CustNo AS ccust, m.CustNo AS mcust, c.PayType, c.TotalCash, c.Payments, c.Reminder, c.PosNo AS cpos, m.PosNo AS mpos, c.UserNo AS cuser, m.UserNo AS muser, c.BranchNo AS cb, m.BranchNo AS mb, c.SNo, c.HourNo, c.PayTime, c.PayDate, m.OrderDate, LEN(c.Remarks) AS lr, c.ShiftNo FROM Orders_M_Daily m WITH (NOLOCK) LEFT JOIN CLedges c WITH (NOLOCK) ON c.OrderNo = m.OrderNo WHERE m.OrderDate = @d AND RTRIM(m.PayWay) = 'Ledge' AND ISNULL(m.OnlineType,'') <> '' ORDER BY m.CheckNo DESC" $p2).Rows){
+    [void]$o2.Add("  $(S $x.OnlineType) | $(S $x.CashPayment) | $(S $x.VisaPayment) | $(S $x.CustPayment) | $(S $x.tot) | $($x.n) | $((S $x.ccust) -eq (S $x.mcust)) | $(S $x.PayType) | $(S $x.TotalCash) | $(S $x.Payments) | $(S $x.Reminder) | $((S $x.cpos) -eq (S $x.mpos)) | $((S $x.cuser) -eq (S $x.muser)) | $((S $x.cb) -eq (S $x.mb)) | $(S $x.SNo) | $(S $x.HourNo) | $(S $x.PayTime) | $((S $x.PayDate) -eq (S $x.OrderDate)) | $(S $x.lr) | $(S $x.ShiftNo)") }
+  [void]$o2.Add('--- prepaid order headers: DiscountType | TypeSerial in Cash/Ledge/Visa sequence | Closed | Payed | State')
+  foreach($x in (Q "SELECT TOP 3 DiscountType, TypeSerial, Closed, Payed, State, Otlob FROM Orders_M_Daily WITH (NOLOCK) WHERE OrderDate = @d AND RTRIM(PayWay) = 'Ledge' AND ISNULL(OnlineType,'') <> '' ORDER BY CheckNo DESC" $p2).Rows){ [void]$o2.Add("  $(S $x.DiscountType) | $(S $x.TypeSerial) | $(S $x.Closed) | $(S $x.Payed) | $(S $x.State) | $(S $x.Otlob)") }
+  [void]$o2.Add('--- tables with customer phone columns: table | columns')
+  foreach($x in (Q "SELECT t.name AS tb, STUFF((SELECT ',' + c2.name FROM sys.columns c2 WHERE c2.object_id = t.object_id AND (c2.name LIKE '%phone%' OR c2.name LIKE '%mobile%' OR c2.name LIKE '%tel%') FOR XML PATH('')),1,1,'') AS cols FROM sys.tables t WHERE t.name LIKE 'Cust%' OR t.name LIKE '%Phone%' OR t.name LIKE '%Address%'").Rows){
+    [void]$o2.Add("  $(S $x.tb) | $(S $x.cols)") }
+  Add-Content (Join-Path $here 'schema_log.txt') ("`r`n=== probe2 ===`r`n" + ($o2 -join "`r`n")) -Encoding UTF8
+} catch { Add-Content (Join-Path $here 'schema_log.txt') ("`r`n=== probe2 (stopped: " + $_.Exception.Message + ") ===`r`n" + ($o2 -join "`r`n")) -Encoding UTF8 }
+
 function UName($n){ $k=[int](N $n); if ($script:Users.ContainsKey($k)) { return $script:Users[$k] } if ($k -eq 0) { return '' } return "#$k" }
 function BName($n){ $k=[int](N $n); if ($script:Branches.ContainsKey($k)) { return $script:Branches[$k] } return "فرع $k" }
 
@@ -270,29 +377,6 @@ function ReadOutbox {
 if (Test-Path $outboxFile) {
   # A corrupt or unreadable queue must stop startup, never silently discard unacknowledged alerts.
   foreach ($entry in (ReadOutbox)) { if ($entry) { [void]$pending.Add($entry) } }
-}
-function ConvertTo-JsonPlain([object]$value,[int]$depth=0){
-  if ($null -eq $value -or $value -is [DBNull]) { return $null }
-  if ($depth -gt 12) { throw 'payload nesting exceeded safe JSON depth' }
-  if ($value -is [string]) { return $value }
-  if ($value -is [datetime] -or $value -is [datetimeoffset]) { return ([DateTimeOffset][datetime]$value).ToString('yyyy-MM-ddTHH:mm:sszzz',$inv) }
-  if ($value -is [System.Collections.IDictionary]) {
-    $d=New-Object 'System.Collections.Generic.Dictionary[string,object]'
-    foreach($key in $value.Keys){ $d.Add([string]$key,(ConvertTo-JsonPlain -value $value[$key] -depth ($depth + 1))) }
-    return ,$d
-  }
-  if ($value -is [System.Collections.IEnumerable]) {
-    $a=New-Object 'System.Collections.Generic.List[object]'
-    foreach($item in $value){ [void]$a.Add((ConvertTo-JsonPlain -value $item -depth ($depth + 1))) }
-    return ,$a
-  }
-  if ($value -is [pscustomobject]) {
-    $d=New-Object 'System.Collections.Generic.Dictionary[string,object]'
-    foreach($prop in $value.PSObject.Properties){ if($prop.MemberType -in @('Property','NoteProperty','AliasProperty','ScriptProperty')){ $d[[string]$prop.Name]=ConvertTo-JsonPlain -value $prop.Value -depth ($depth + 1) } }
-    return ,$d
-  }
-  if ($value.GetType().IsPrimitive -or $value -is [decimal]) { return $value }
-  return [string]$value
 }
 function SaveOutbox {
   $tmp = $outboxFile + '.tmp'
@@ -326,26 +410,72 @@ function Raise($key, $kind, $text, [bool]$silent, $branch, $sn, $status){
 }
 
 $script:pushFails = 0
+$script:pushAttempt = 0
 $script:OfficerValues = @()
 $script:ServerFollow = $false   # the server answers follow-ups (status changes, reminders) only once updated
-function Push($payload){
+function Measure-PayloadNode([object]$value,[string]$path,[int]$depth){
+  if ($null -eq $value) { return }
+  if ($value -is [string]) { $script:probeStrings++; $script:probeChars += $value.Length; if ($value.Length -gt $script:probeMax) { $script:probeMax = $value.Length; $script:probeMaxPath = $path }; return }
+  if ($depth -ge 12) { return }
+  $script:probeNodes++
+  if ($script:probeNodes -gt 100000) { $script:probeCapped = $true; return }
+  if ($value -is [System.Collections.IDictionary]) { foreach($key in $value.Keys){ Measure-PayloadNode $value[$key] ($path + '.' + [string]$key) ($depth + 1); if($script:probeCapped){return} }; return }
+  if ($value -is [System.Collections.IEnumerable]) { $i=0; foreach($item in $value){ Measure-PayloadNode $item ($path + '[' + $i + ']') ($depth + 1); $i++; if($script:probeCapped){return} }; return }
+  if ($value -is [pscustomobject]) { foreach($prop in $value.PSObject.Properties){ if($prop.MemberType -match 'Property|NoteProperty|AliasProperty|ScriptProperty'){ Measure-PayloadNode $prop.Value ($path + '.' + $prop.Name) ($depth + 1); if($script:probeCapped){return} } } }
+}
+function Probe-Payload($payload){
+  $script:probeStrings=0; $script:probeChars=0L; $script:probeMax=0; $script:probeMaxPath=''; $script:probeNodes=0; $script:probeCapped=$false
+  foreach($key in $payload.Keys){ Measure-PayloadNode $payload[$key] ([string]$key) 0; if($script:probeCapped){break} }
+  L ("push shape (no values): sections={0}; nodes={1}; strings={2}; chars={3}; maxString={4} at {5}; capped={6}" -f $payload.Count,$script:probeNodes,$script:probeStrings,$script:probeChars,$script:probeMax,$script:probeMaxPath,$script:probeCapped)
+  return (-not $script:probeCapped -and $script:probeChars -le 700000)
+}function ConvertTo-JsonPlain([object]$value,[int]$depth=0){
+  if ($null -eq $value -or $value -is [DBNull]) { return $null }
+  if ($depth -gt 12) { throw 'payload nesting exceeded safe JSON depth' }
+  if ($value -is [string]) { return $value }
+  if ($value -is [datetime] -or $value -is [datetimeoffset]) { return ([DateTimeOffset][datetime]$value).ToString('yyyy-MM-ddTHH:mm:sszzz',$inv) }
+  if ($value -is [System.Collections.IDictionary]) {
+    $d=New-Object 'System.Collections.Generic.Dictionary[string,object]'
+    foreach($key in $value.Keys){ $d.Add([string]$key,(ConvertTo-JsonPlain -value $value[$key] -depth ($depth + 1))) }
+    return ,$d
+  }
+  if ($value -is [System.Collections.IEnumerable]) {
+    $a=New-Object 'System.Collections.Generic.List[object]'
+    foreach($item in $value){ [void]$a.Add((ConvertTo-JsonPlain -value $item -depth ($depth + 1))) }
+    return ,$a
+  }
+  if ($value -is [pscustomobject]) {
+    $d=New-Object 'System.Collections.Generic.Dictionary[string,object]'
+    foreach($prop in $value.PSObject.Properties){ if($prop.MemberType -in @('Property','NoteProperty','AliasProperty','ScriptProperty')){ $d[[string]$prop.Name]=ConvertTo-JsonPlain -value $prop.Value -depth ($depth + 1) } }
+    return ,$d
+  }
+  if ($value.GetType().IsPrimitive -or $value -is [decimal]) { return $value }
+  return [string]$value
+}function Push($payload){
   if (-not $OrdersKey) { return }
+  $script:pushAttempt++
+  $tracePush = ($script:pushAttempt -le 3 -or $script:pushFails -gt 0)
+  $serializeTimer = [Diagnostics.Stopwatch]::StartNew()
+  if (-not (Probe-Payload $payload)) { $script:pushFails++; L "push withheld by safety guard before serialization; outbox retained"; return }
   Add-Type -AssemblyName System.Web.Extensions
   $serializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
   $serializer.MaxJsonLength = [int]::MaxValue
-  $json = $serializer.Serialize((ConvertTo-JsonPlain -value $payload))
+  $wire = ConvertTo-JsonPlain -value $payload
+  $json = $serializer.Serialize($wire)
   $bodyBytes = [Text.Encoding]::UTF8.GetBytes($json)
-  if ($bodyBytes.Length -gt 900000) { L "push withheld above safe body limit: $($bodyBytes.Length) bytes; pending alerts retained"; return }
+  if ($tracePush) { L "push payload ready: $($bodyBytes.Length) bytes; JSON $($serializeTimer.ElapsedMilliseconds) ms" }
+  if ($bodyBytes.Length -gt 900000) { $script:pushFails++; L "push withheld after serialization safety limit: $($bodyBytes.Length) bytes; outbox retained"; return }
   try {
     try {
-      $resp = Invoke-RestMethod -Method Post -Uri "$ServerUrl/api/orders/push" -Headers @{ 'x-orders-token' = $OrdersKey } -Body ([Text.Encoding]::UTF8.GetBytes($json)) -ContentType 'application/json; charset=utf-8' -TimeoutSec 20
+            $requestTimer = [Diagnostics.Stopwatch]::StartNew()
+      $resp = Invoke-RestMethod -Method Post -Uri "$ServerUrl/api/orders/push" -Headers @{ 'x-orders-token' = $OrdersKey } -Body $bodyBytes -ContentType 'application/json; charset=utf-8' -TimeoutSec 20
+      if ($tracePush) { L "push response received: $($requestTimer.ElapsedMilliseconds) ms" }
     } catch {
+      if ($tracePush -and $requestTimer) { L "push request failed after $($requestTimer.ElapsedMilliseconds) ms" }
       # Server error: try once more at once with a lighter day (online orders without their item lines), and say so in the log.
       if ("$($_.Exception.Message)" -notmatch '\(500\)' -or -not $payload.online) { throw }
       $light = [ordered]@{}; foreach($k in $payload.Keys){ $light[$k] = $payload[$k] }
       $light.online = @($payload.online | ForEach-Object { $x = [ordered]@{}; foreach($k in $_.Keys){ if ($k -ne 'items') { $x[$k] = $_[$k] } }; $x })
       $json2 = $serializer.Serialize((ConvertTo-JsonPlain -value $light))
-      if ([Text.Encoding]::UTF8.GetByteCount($json2) -gt 900000) { throw 'light snapshot exceeded safe body limit' }
       $resp = Invoke-RestMethod -Method Post -Uri "$ServerUrl/api/orders/push" -Headers @{ 'x-orders-token' = $OrdersKey } -Body ([Text.Encoding]::UTF8.GetBytes($json2)) -ContentType 'application/json; charset=utf-8' -TimeoutSec 20
       if (-not $script:lightLogged) { L "push ok only without online item lines (full $([Text.Encoding]::UTF8.GetByteCount($json)) bytes, light $([Text.Encoding]::UTF8.GetByteCount($json2)) bytes)"; $script:lightLogged = $true }
     }
@@ -361,6 +491,7 @@ function Push($payload){
     if ($script:pushFails -gt 0) { L "push ok again after $($script:pushFails) failures" }
     $script:pushFails = 0
   } catch {
+    if ($tracePush -and $requestTimer) { L "push attempt ended after $($requestTimer.ElapsedMilliseconds) ms" }
     $script:pushFails++
     $body = ''; try { if ($_.ErrorDetails -and $_.ErrorDetails.Message) { $body = $_.ErrorDetails.Message } } catch {}
     if (-not $body) { try { $rs = $_.Exception.Response.GetResponseStream(); $body = (New-Object IO.StreamReader($rs, [Text.Encoding]::UTF8)).ReadToEnd(); } catch {} }
@@ -388,8 +519,8 @@ function Cycle {
   $orders = Q @"
 SELECT OrderNo, BranchNo, PosNo, UserNo, TransType, PayWay, OnlineType, TimeIn, SendDate, OrderTime, ReturnTime,
        WaiterNo, SubTotal, Discount, Tax, Service, Addition$selSn,
-       o_LocationNo, Remarks, CustNo, o_Phone, o_CustName, o_PersonName, o_Address, o_BuildingNo, o_FloorNo, o_FlatNo, o_Sign,
-       ISNULL(o_CustName,'') AS NameTxt, ISNULL(o_PersonName,'') AS NameTxt2, ISNULL(PersonName,'') AS NameTxt3
+       o_LocationNo, Remarks,
+       ISNULL(o_CustName,'') AS NameTxt, ISNULL(o_PersonName,'') AS NameTxt2, ISNULL(PersonName,'') AS NameTxt3, CustNo, o_Phone, o_Address, o_BuildingNo, o_FloorNo, o_FlatNo, o_Sign
 FROM Orders_M_Daily WITH (NOLOCK) WHERE OrderDate = @d
 "@ $p
   $dels = Q @"
@@ -630,7 +761,7 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
   } catch { L "item lines: $($_.Exception.Message)" }
   # Online orders (anything but Hotline), so the server can tie each website order to the Apex order and who entered it.
   $onlineList = @($list | Where-Object { $_.Kind -ne 'Hotline' -and $_.Entry } | Sort-Object Entry | ForEach-Object {
-    [ordered]@{ no = $_.No; sn = $_.Sn; branch = BName $_.Branch; kind = $_.Kind; at = IsoT $_.Entry; user = UName $_.User; amount = R2 $_.Amt; customer = $_.Customer; tag = $tags[$_.No]; items = @($lines[$_.No]) } })
+    [ordered]@{ no = $_.No; sn = $_.Sn; branch = BName $_.Branch; kind = $_.Kind; at = IsoT $_.Entry; out = $(if ($_.Out) { IsoT $_.Out } else { $null }); user = UName $_.User; amount = R2 $_.Amt; customer = $_.Customer; tag = $tags[$_.No]; items = @($lines[$_.No]) } })
   # Sales: per branch, platform, payment and service type (officer orders not included).
   $salesList = @($list | Group-Object { "$($_.Branch)|$($_.Kind)|$($_.Pay)|$($_.Trans)" } | ForEach-Object {
     $f = $_.Group[0]; [ordered]@{ branch = BName $f.Branch; kind = $f.Kind; pay = $f.Pay; trans = $f.Trans; orders = $_.Count; sales = SumOf $_.Group 'Amt'; discounts = SumOf $_.Group 'Disc' } })
@@ -694,15 +825,55 @@ while ($true) {
   try {
     $cycleNo++
     if ($cycleNo % 240 -eq 0) { LoadRefs }
+    $script:cycleSqlMs = 0
+    $cycleTimer = [Diagnostics.Stopwatch]::StartNew()
     $payload = Cycle
+    $cycleTimer.Stop()
+    if ($cycleTimer.ElapsedMilliseconds -ge 10000) { L "cycle timing: total=$($cycleTimer.ElapsedMilliseconds) ms; SQL sum=$($script:cycleSqlMs) ms" }
     if ($payload) {
       $currentAlerts = @($pending | Where-Object { $_.day -eq $payload.day } | Select-Object -First 400)
       $payload.alerts = @($currentAlerts + $(if ($script:ServerFollow -and $currentAlerts.Count -lt 400) { @($script:follow | Select-Object -First (400 - $currentAlerts.Count)) } else { @() }))
+      # Apex delivery areas (number, name, branch) with the service charge Apex used most for each today, every 30 minutes,
+      # for the transfer page's area choice and the Apex writer.
+      try {
+        if (-not $script:locsAt -or ((Get-Date) - $script:locsAt).TotalMinutes -ge 30) {
+          $svc = @{}; foreach($r in (Q "SELECT BranchNo AS b, o_LocationNo AS l, Service AS s, COUNT(*) AS n FROM Orders_M_Daily WITH (NOLOCK) WHERE o_LocationNo IS NOT NULL AND ISNULL(Service,0) > 0 GROUP BY BranchNo, o_LocationNo, Service").Rows){ $k = "$(S $r.b)|$(S $r.l)"; if (-not $svc[$k] -or $svc[$k].n -lt $r.n) { $svc[$k] = @{ s = [double]$r.s; n = [int]$r.n } } }
+          $script:locs = @((Q "SELECT LocationNo, LocationName, BranchNo FROM Location WITH (NOLOCK)").Rows | ForEach-Object { $k = "$(S $_.BranchNo)|$(S $_.LocationNo)"; [ordered]@{ no = [int]$_.LocationNo; name = (S $_.LocationName).TrimEnd('.'); branch = $(if ($_.BranchNo -is [DBNull]) { $null } else { [int]$_.BranchNo }); service = $(if ($svc[$k]) { $svc[$k].s } else { $null }) } })
+          $script:locsAt = Get-Date
+        }
+        if ($script:locs) { $payload.locations = $script:locs }
+      } catch { L "locations: $($_.Exception.Message)" }
       Push $payload
       foreach ($oldDay in @($pending | Where-Object { $_.day -ne $payload.day } | ForEach-Object { $_.day } | Sort-Object -Unique)) {
         Push ([ordered]@{ day = $oldDay; replayAlerts = $true; alerts = @($pending | Where-Object { $_.day -eq $oldDay } | Select-Object -First 400) })
       }
     }
+    # Keep the Apex writer (apex-writer\marsad_apex_writer.ps1) running next to the monitor; it holds its own mutex.
+    try {
+      $wr = Join-Path $here 'apex-writer\marsad_apex_writer.ps1'
+      if (Test-Path $wr) {
+        $wfree = $false
+        try { $wm = [System.Threading.Mutex]::OpenExisting('Local\MarsadApexWriter'); $wm.Dispose() } catch { $wfree = $true }
+        if ($wfree) { Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $wr + '"'); L 'apex writer started' }
+      }
+    } catch { L "apex writer start: $($_.Exception.Message)" }
+    # Print trace (read-only, numbers only): how a new order's print flags change after it is saved, so the
+    # Marsad → Apex bridge can create orders exactly the way the branch printers expect. One line per change.
+    try {
+      if (-not $script:ptSeen -or $script:ptSeen.Count -gt 3000) { $script:ptSeen = @{} }
+      $pt = Q "SELECT TOP 25 m.OrderNo, m.PosNo, m.BranchNo, m.CheckNo, RTRIM(m.TimeIn) AS t, ISNULL(m.OrderPrinted,-1) AS op, CASE WHEN p.OrderNo IS NULL THEN -9 ELSE ISNULL(p.Printed,-1) END AS pr, ISNULL(p.Modified,-1) AS md, (SELECT MIN(ISNULL(d.Printed,-1)) FROM Orders_D_Daily d WITH (NOLOCK) WHERE d.OrderNo = m.OrderNo) AS dmin, (SELECT MAX(ISNULL(d.Printed,-1)) FROM Orders_D_Daily d WITH (NOLOCK) WHERE d.OrderNo = m.OrderNo) AS dmax, (SELECT MIN(ISNULL(d.PrintedSlip,-1)) FROM Orders_D_Daily d WITH (NOLOCK) WHERE d.OrderNo = m.OrderNo) AS smin, (SELECT COUNT(*) FROM Orders_D_Daily d WITH (NOLOCK) WHERE d.OrderNo = m.OrderNo) AS dn FROM Orders_M_Daily m WITH (NOLOCK) LEFT JOIN PrintedOrders p WITH (NOLOCK) ON p.OrderNo = m.OrderNo ORDER BY m.CheckNo DESC"
+      $ptLines = @()
+      foreach ($r in $pt.Rows) {
+        $k = "$(S $r.op)/$(S $r.pr)/$(S $r.md)/$(S $r.dmin)/$(S $r.dmax)/$(S $r.smin)/$(S $r.dn)"
+        $id = S $r.OrderNo
+        if ($script:ptSeen[$id] -ne $k) {
+          $ptLines += "$(Get-Date -Format 'HH:mm:ss') order=$id pos=$(S $r.PosNo) branch=$(S $r.BranchNo) check=$(S $r.CheckNo) timeIn=$(S $r.t) orderPrinted/printed/modified/dPrintedMin/dPrintedMax/slipMin/lines=$k" + $(if ($script:ptSeen.ContainsKey($id)) { ' (was ' + $script:ptSeen[$id] + ')' } else { '' })
+          $script:ptSeen[$id] = $k
+        }
+      }
+      if ($ptLines.Count -and $script:ptStarted) { Add-Content (Join-Path $here 'print_trace.txt') ($ptLines -join "`r`n") -Encoding UTF8 }
+      $script:ptStarted = $true
+    } catch { L "print trace: $($_.Exception.Message)" }
     if (-not $script:tagsBackfilled -and $script:pushFails -eq 0 -and $script:ServerFollow -and (-not $script:tagsRetryAt -or (Get-Date) -gt $script:tagsRetryAt)) { BackfillTags }
   } catch {
     L "cycle error: $($_.Exception.Message)"

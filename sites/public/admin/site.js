@@ -330,9 +330,28 @@ window.MarsadSite = function MarsadSite(ctx) {
   // ---------- الإدارة: كاتب Apex (التحويل الآلي) ----------
   const APX = { off: 'متوقف', shadow: 'معاينة بس', test: 'تجربة على قاعدة الاختبار', live: 'شغال على Apex' };
   const APX_STATE = { auto_pending: 'مستني', auto_sending: 'بيتكتب', auto_done: 'اتكتب', auto_failed: 'ماتمش', auto_preview: 'معاينة' };
+  // ---------- الإدارة: شاشة طلبات — وقت التوصيل والقبول و«في الطريق» لكل فرع ----------
+  async function renderTalabatActions() {
+    $('talActPanel').hidden = false;
+    const c = await api('/api/talabat/actions-config');
+    $('talActRows').replaceChildren(...c.branches.map(b => h('div', { className: 'row', dataset: { store: b.store } },
+      h('strong', { textContent: b.store }),
+      h('label', {}, 'وقت التوصيل (دقيقة) ', h('input', { type: 'number', min: 5, max: 180, step: 5, value: b.minutes ?? '', className: 'talMin', style: 'width:80px' })),
+      h('label', {}, h('input', { type: 'checkbox', checked: b.accept, className: 'talAccept' }), ' قبول آلي'),
+      h('label', {}, h('input', { type: 'checkbox', checked: b.onTheWay, className: 'talOut' }), ' «في الطريق» لما يخرج مع الطيار'))));
+    $('talActNote').textContent = c.acceptReady ? '' : 'القبول الآلي لسه بيتجهز: الشاشة بتسجل شكل شباك الأوردر الجديد الأول، ولحد ما يخلص مش هتقبل أوردرات. وقت التوصيل بيتحفظ دلوقتي.';
+    $('talActLog').replaceChildren(...c.log.map(l => h('div', { textContent: t12(new Date(l.at).toISOString()) + ' — ' + (l.action === 'onTheWay' ? 'في الطريق' : l.action === 'accept' ? 'قبول' : l.action) + ' — ' + l.id + ' — ' + (l.ok ? '✓ ' : '✗ ') + l.note })));
+  }
+  $('talActSave').onclick = async () => {
+    const branches = {};
+    document.querySelectorAll('#talActRows [data-store]').forEach(r => { branches[r.dataset.store] = { minutes: Number(r.querySelector('.talMin').value) || null, accept: r.querySelector('.talAccept').checked, onTheWay: r.querySelector('.talOut').checked }; });
+    try { await api('/api/talabat/actions-config', { method: 'POST', body: { branches } }); $('talActNote').textContent = 'اتحفظ.'; renderTalabatActions(); }
+    catch (e) { $('talActNote').textContent = e.message; }
+  };
   async function renderApexWriter(isAdmin) {
-    $('apexWriterPanel').hidden = !isAdmin;
+    $('apexWriterPanel').hidden = !isAdmin; $('talActPanel').hidden = !isAdmin;
     if (!isAdmin) return;
+    renderTalabatActions().catch(e => { $('talActNote').textContent = e.message; });
     const s = await api('/api/apex-writer');
     const seen = s.lastSeen ? (Date.now() - s.lastSeen < 120000 ? 'الكاتب شغال (آخر سؤال ' + t12(new Date(s.lastSeen).toISOString()) + ')' : 'الكاتب واقف (آخر سؤال ' + t12(new Date(s.lastSeen).toISOString()) + ')') : (s.linked ? 'الكاتب لسه ماشتغلش' : 'مفيش مفتاح للكاتب');
     $('apexWriterStatus').replaceChildren(pill('الوضع: ' + APX[s.mode], s.mode === 'live' ? 'ok' : 'warn'), ' ', h('span', { className: 'muted', textContent: seen }),
