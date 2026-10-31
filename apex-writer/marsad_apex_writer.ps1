@@ -21,6 +21,7 @@ $Servers     = @('196.218.94.154', '192.168.1.15')
 $PollSeconds = 10
 $WriterPos   = 70        # a POS number no Apex machine uses (Counter row 70: no orders since 2023). Orders get 70<serial>.
 $RefPos      = 35        # the call-center POS: its Counter row says which business day and shift are open
+$RefPosTest  = 29        # in Resturant_Test the open test day is on POS 29 (orders 291..299)
 $AllowLive   = $false    # second lock for production writes; set to $true only after test mode is verified
 $PrintedFlag = 0         # Orders_D_Daily.Printed on insert (0 = the branch still has to print it); confirmed by print_trace.txt
 $AddPrintedOrders = $false # whether to add a PrintedOrders row at save time; confirmed by print_trace.txt
@@ -76,7 +77,7 @@ DECLARE @Date datetime, @Shift numeric(18,0), @Now datetime = GETDATE(), @Time v
 SET @Time = @TimeText;  -- Apex's own time text (hh:mm:ss ص/م)
 SELECT @Date = OrderDate, @Shift = ShiftNo FROM dbo.Counter WITH (NOLOCK) WHERE num = @RefPos;
 IF @Date IS NULL THROW 51001, 'reference POS has no open day', 1;
-IF NOT EXISTS (SELECT 1 FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderDate = @Date) THROW 51002, 'the business day is not open on Apex yet', 1;
+IF @IsTest = 0 AND NOT EXISTS (SELECT 1 FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderDate = @Date) THROW 51002, 'the business day is not open on Apex yet', 1;
 IF EXISTS (SELECT 1 FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderDate > @Date) THROW 51003, 'a later day is open; reference POS is stale', 1;
 SELECT TOP 1 @Existing = OrderNo FROM dbo.OrderLog WITH (NOLOCK) WHERE OrderDate = @Date AND Description = @Marker;
 IF @Existing IS NOT NULL BEGIN SELECT 'exists' AS r, @Existing AS OrderNo; RETURN; END;
@@ -85,9 +86,18 @@ IF (SELECT COUNT(*) FROM dbo.Counter WITH (NOLOCK) WHERE num = @Pos) <> 1 THROW 
 SELECT TOP 1 @Tpl = OrderNo FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderDate = @Date AND RTRIM(PayWay) = 'Cash' AND PosNo <> @Pos
   AND ((@Kind = 'talabat' AND (OnlineType LIKE '%TALABAT%' OR OnlineType LIKE N'%طلبات%')) OR (@Kind = 'site' AND (OnlineType LIKE N'%موقع%' OR OnlineType LIKE '%WEB%' OR OnlineType LIKE '%SITE%')))
   ORDER BY CASE WHEN BranchNo = @Branch THEN 0 ELSE 1 END, CheckNo DESC;
+-- The test copy may have its day closed (orders moved to Orders_M): take the template from there.
+DECLARE @TplArchive bit = 0;
+IF @Tpl IS NULL AND @IsTest = 1 BEGIN
+  SELECT TOP 1 @Tpl = OrderNo FROM dbo.Orders_M WITH (NOLOCK) WHERE RTRIM(PayWay) = 'Cash' AND PosNo <> @Pos
+    AND ((@Kind = 'talabat' AND (OnlineType LIKE '%TALABAT%' OR OnlineType LIKE N'%طلبات%')) OR (@Kind = 'site' AND (OnlineType LIKE N'%موقع%' OR OnlineType LIKE '%WEB%' OR OnlineType LIKE '%SITE%')))
+    ORDER BY CASE WHEN BranchNo = @Branch THEN 0 ELSE 1 END, OrderDate DESC, CheckNo DESC;
+  SET @TplArchive = 1;
+END;
 IF @Tpl IS NULL THROW 51005, 'no Apex order of this kind today to take the settings from', 1;
 DECLARE @Service money;
 SELECT @TaxRatio = TaxRatio, @Service = ISNULL(Service, 0) FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderNo = @Tpl;
+IF @TaxRatio IS NULL SELECT @TaxRatio = TaxRatio, @Service = ISNULL(Service, 0) FROM dbo.Orders_M WITH (NOLOCK) WHERE OrderNo = @Tpl;
 -- Lines and prices (prices given by the caller from the proven price source; checked against Items here).
 IF EXISTS (SELECT 1 FROM @Lines l LEFT JOIN dbo.Items i WITH (NOLOCK) ON i.ItemNo = l.ItemNo WHERE i.ItemNo IS NULL) THROW 51006, 'an item number is not in Apex Items', 1;
 IF EXISTS (SELECT 1 FROM @Lines l JOIN dbo.Items i WITH (NOLOCK) ON i.ItemNo = l.ItemNo WHERE ISNULL(i.StopItem, 0) <> 0) THROW 51007, 'an item is stopped on Apex', 1;
@@ -141,7 +151,8 @@ BEGIN TRY
     LEFT(@Remarks, 100), @Pos, CASE WHEN @RestDiscount > 0 THEN t.DiscountType ELSE NULL END, t.HallNo, 1, DATEPART(hour, @Now), '0', NULL, @Total, '0', 0, 0, LEFT(@Label, 50), 0, 0, @Branch, @BranchOrderNo,
     0, @TaxRatio, 0, @PosSerial, @CheckNo, @Time, t.Otlob, '', t.OnlineType, '', '', 0, t.DeliveryTrack, @Phone, LEFT(@Label, 100),
     LEFT(@Address, 250), LEFT(@Sign, 100), LEFT(@Label, 50), @Phone, 0, 0
-  FROM dbo.Orders_M_Daily t WITH (NOLOCK) WHERE t.OrderNo = @Tpl;
+  FROM (SELECT TakeAwayLoc, TableNo, GuestNo, TransType, DiscountType, HallNo, Otlob, OnlineType, DeliveryTrack FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderNo = @Tpl
+        UNION ALL SELECT TakeAwayLoc, TableNo, GuestNo, TransType, DiscountType, HallNo, Otlob, OnlineType, DeliveryTrack FROM dbo.Orders_M WITH (NOLOCK) WHERE OrderNo = @Tpl AND @TplArchive = 1) t;
   IF @@ROWCOUNT <> 1 THROW 51012, 'template order disappeared', 1;
   INSERT INTO dbo.Orders_D_Daily (OrderNo, ItemNo, SerialNo, Qty, Price, Description, Combo, ItemDetailNo, Rank, ItemsCombo, ItemDiscount, ItemTime, OpenDesc, TimeVal, ItemTax, ItemService, Printed, PrintedSlip, Weight, ItemsNo, SentBy, Finished)
   SELECT @OrderNo, l.ItemNo, l.SerialNo, l.Qty, l.Price, l.Note, '0', l.ItemNo, NULL, NULL, 0, @Time, '', 0, NULL, NULL, @PrintedFlag, @PrintedFlag, 1, 1, 0, 0 FROM @Lines l;   -- Weight 1, ItemsNo 1 on every Apex online line
@@ -181,7 +192,7 @@ function Write-Order($c, $job, [string]$mode){
     [void]$cmd.Parameters.AddWithValue("@n$i", [string]$l.note)
   }
   $cmd.CommandText = $decl + $Batch
-  $p = @{ '@Exec' = $(if ($mode -eq 'shadow') { 0 } else { 1 }); '@Pos' = $WriterPos; '@RefPos' = $RefPos; '@Branch' = [int]$job.branchNo
+  $p = @{ '@Exec' = $(if ($mode -eq 'shadow') { 0 } else { 1 }); '@IsTest' = $(if ($mode -eq 'test') { 1 } else { 0 }); '@Pos' = $WriterPos; '@RefPos' = $(if ($mode -eq 'test') { $RefPosTest } else { $RefPos }); '@Branch' = [int]$job.branchNo
           '@Marker' = ('MARSAD:' + $job.source + ':' + $job.ref); '@Kind' = [string]$job.source; '@Phone' = [string]$job.customer.phone
           '@Label' = [string]$job.label; '@Address' = [string]$job.customer.address; '@Sign' = [string]$job.sign; '@Remarks' = [string]$job.note
           '@RestDiscount' = [decimal]$job.restaurantDiscount; '@AddPrinted' = $(if ($AddPrintedOrders) { 1 } else { 0 }); '@PrintedFlag' = $PrintedFlag; '@UserNo' = $WriterUserNo
