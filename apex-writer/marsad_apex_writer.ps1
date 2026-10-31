@@ -288,7 +288,9 @@ function Self-Test {
       try { $c.Open() } catch { $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[1]);Database=Resturant;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec))); $c.Open() }
       $out.mode = 'inspect-serial'; $rows = @()
       foreach($q in @("SELECT 'M' k, OrderNo, BranchNo, PosNo, UserNo, ShiftNo, OrderDate, TimeIn, OrderTime, ShiftSerial, BranchShiftSerial, TypeSerial, SNo, SerialNo, BranchOrderNo, RecieveNo, PosSerial, CheckNo, RTRIM(PayWay) PayWay, OnlineType, TransType FROM Orders_M_Daily WITH (NOLOCK) ORDER BY TimeIn",
-                      "SELECT 'S' k, * FROM Orders_Serials WITH (NOLOCK) WHERE OrderNo IN (SELECT OrderNo FROM Orders_M_Daily WITH (NOLOCK))")){
+                      "SELECT 'S' k, * FROM Orders_Serials WITH (NOLOCK) WHERE OrderNo IN (SELECT OrderNo FROM Orders_M_Daily WITH (NOLOCK))",
+                      "SELECT 'T' k, create_date AS sql_started FROM sys.databases WHERE name = 'tempdb'",
+                      "SELECT 'I' k, IDENT_CURRENT('Orders_Serials') AS ident_now, IDENT_INCR('Orders_Serials') AS incr")){
         try { $cmd = $c.CreateCommand(); $cmd.CommandTimeout = 30; $cmd.CommandText = $q; $rd = $cmd.ExecuteReader(); while ($rd.Read()) { $h = [ordered]@{}; for ($i = 0; $i -lt $rd.FieldCount; $i++) { $h[$rd.GetName($i)] = "$($rd.GetValue($i))".Trim() }; $rows += $h }; $rd.Close() } catch { $rows += @{ error = $_.Exception.Message } }
       }
       $out.saved = $rows; $out.ok = $true
