@@ -95,6 +95,22 @@
       }
       return [...out.values()];
     };
+    const liveRead = new Map();
+    const ACTION = /^(?:accept|reject|ready|picked up|on the way|delay|cancel|قبول|رفض|جاهز|في الطريق|تأخير|إلغاء|تعديل|طباعة)$/i;
+    async function readLiveDetail(id) {
+      // The text node with the full number, inside a card; never a button or anything inside one.
+      const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT); let target = null;
+      for (let n; (n = w.nextNode());) if (n.nodeValue.includes(id) && !n.parentElement.closest('button,[role="button"] button,a,[data-testid="details-order-id"]')) { target = n.parentElement; break; }
+      if (!target || ACTION.test((target.innerText || '').trim())) return null;
+      target.click();
+      let d = null;
+      for (let i = 0; i < 25 && !d; i++) { await sleep(200); d = (T('details-order-id')?.innerText || '').includes(id) ? readDetail((T('details-order-id').innerText || '').trim()) : null; }
+      if (!d) { for (let i = 0; i < 25 && !d; i++) { await sleep(200); if ((document.body.innerText || '').includes('المجموع الفرعي') || /Subtotal/.test(document.body.innerText || '')) break; } }
+      const close = T('close-button') || [...document.querySelectorAll('button,[role="button"]')].find(b => /^(?:close|إغلاق|×|✕)$/i.test((b.getAttribute('aria-label') || b.innerText || '').trim()));
+      if (close && !ACTION.test((close.innerText || '').trim())) close.click(); else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await sleep(400);
+      return d && d.detail ? { id, detail: { ...d.detail, status: undefined } } : null;   // the live screen's status words are not Order History statuses
+    }
     let lastKey = '', lastAt = 0;
     for (;;) {
       try {
@@ -103,6 +119,14 @@
         if (codes.length && (key !== lastKey || Date.now() - lastAt > 60000)) {
           const r = await bg({ type: 'TALABAT_PUSH', orders: [], codes }).catch(() => null);
           if (r?.ok) { lastKey = key; lastAt = Date.now(); }
+        }
+        // Payment and bill come only from the live screen (Order History shows them a day later): open each live
+        // order's details once (a click on its number, never on a button), read, and close. Nothing is changed.
+        for (const c of codes) {
+          if (liveRead.get(c.id) > Date.now() - 10 * 60000 || document.querySelector('[role="dialog"] button[data-testid="dialog_confirm_button"]:not([hidden])')) continue;
+          liveRead.set(c.id, Date.now());
+          const d = await readLiveDetail(c.id);
+          if (d) { await bg({ type: 'TALABAT_PUSH', orders: [{ ...d, store: c.store || undefined }], codes: [] }).catch(() => null); }
         }
         say(codes.length + ' أوردر لايف · ' + new Date().toLocaleTimeString('ar-EG-u-nu-latn', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
       } catch {}
@@ -207,9 +231,10 @@
     // The live order screen has no timeline: use the order drawer itself.
     if (!box) box = T('details-order-id')?.closest('[data-testid*="drawer"], [role="dialog"], aside') || T('order-details-drawer__content') || null;
     const customerLines = lines(box).filter(Boolean);
-    const customerHeading = /^(?:customer details|customer information|تفاصيل الزبون|تفاصيل العميل)$/i;
+    const customerHeading = /^(?:customer details|customer information|customer|تفاصيل الزبون|تفاصيل العميل|العميل)$/i;
     const sectionEnd = /^(?:order timeline|timeline|order details|تفاصيل الطلب|الجدول الزمني للطلب)$/i;
-    const iconLine = /^(?:info|person(?:_outline)?|location_on|place|call(?:_outgoing)?|phone|check_circle|expand_more)$/i;
+    // Section words that can come on their own line («Customer» / «information») are never a name or an address.
+    const iconLine = /^(?:info|person(?:_outline)?|location_on|place|call(?:_outgoing)?|phone|check_circle|expand_more|customer|information|details|العميل|معلومات|تفاصيل|pro)$/i;
     const fieldLabel = /^(?:customer name|name|customer address|delivery address|address|customer phone(?: number)?|phone(?: number)?|mobile(?: number)?|اسم العميل|الاسم|عنوان العميل|عنوان التوصيل|العنوان|رقم هاتف العميل|رقم الهاتف|رقم الموبايل)$/i;
     const customerPanel = box?.querySelector('[data-testid="customer-details"]');
     let sectionRaw = customerPanel ? lines(customerPanel) : [];

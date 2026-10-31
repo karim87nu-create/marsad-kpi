@@ -16,6 +16,8 @@ const TOKEN_MS = 12 * 3600000;
 const CLAIM_MS = 10 * 60000;               // a claim left untouched for 10 minutes is free again
 const TALABAT_DONE = new Set(['CANCELLED', 'REJECTED']);
 const SITE_DONE = new Set(['cancelled', 'failed', 'wallet-failed', 'refunded']);
+// Already left the branch: it was entered on Apex long ago (by hand or otherwise), so it is not waiting for transfer.
+const TALABAT_OUT = new Set(['PICKED_UP', 'PICKED UP', 'IN_DELIVERY', 'IN DELIVERY', 'DELIVERED', 'COMPLETED']);
 
 // Payment, from the source's own words only.
 // Talabat shows «Payment method | Online» (or Cash) once its billing data is ready; the live card may show a
@@ -136,8 +138,8 @@ function setup(app) {
       if (TALABAT_DONE.has(o.status)) continue;
       const p = tProfiles.get(o.id) || {}, a = tm.matches.get(o.id), bill = p.bill || [];
       const discounts = talabatDiscounts(bill);
-      list.push({ source: 'talabat', ref: o.id, code: o.code || null, at: iso(o.accepted_at || o.received_at || o.placed_at), status: o.status, branch: o.store, apexBranch: apexBranchOf(o.store), deliveryType: o.delivery_type || null,
-        customer: { name: p.name || null, phone: phoneOut(p.phone), address: p.address || null },
+      list.push({ source: 'talabat', ref: o.id, code: o.code || null, at: iso(o.accepted_at || o.received_at || o.placed_at), status: o.status, out: TALABAT_OUT.has(String(o.status || '').toUpperCase()) || !!o.picked_up_at || !!o.delivered_at, branch: o.store, apexBranch: apexBranchOf(o.store), deliveryType: o.delivery_type || null,
+        customer: { name: /^(?:information|details|customer|العميل)$/i.test(p.name || '') ? null : p.name || null, phone: phoneOut(p.phone), address: p.address || null },
         payment: talabatPayment(bill, p.livePay), bill, discounts, subtotal: o.subtotal ?? null, total: o.total ?? null,
         items: parseJson(o.items, []).map(x => itemOut(x, true)), detailRead: !!o.detail_at,
         apex: a ? { no: a.no, sn: a.sn ?? null, user: a.user || null, how: a.how || null } : null, matching: tm.states.get(o.id) || null, job: jobOf('talabat', o.id) });
@@ -152,7 +154,7 @@ function setup(app) {
       const p = sProfiles.get(String(o.id)) || {}, pay = p.payment || null, a = sm.matches.get(o.id);
       const discounts = pay ? [...(pay.coupons || []).map(c => ({ text: 'كوبون ' + c.code, amount: c.amount, who: 'restaurant' })),
         ...(!pay.coupons?.length && pay.discount ? [{ text: 'خصم الموقع', amount: pay.discount, who: 'restaurant' }] : [])] : [];
-      list.push({ source: 'site', ref: String(o.id), code: String(o.id), at: iso(o.created_at), status: o.status, branch: o.branch || null, apexBranch: apexBranchOf(o.branch), scheduled: !!o.scheduled,
+      list.push({ source: 'site', ref: String(o.id), code: String(o.id), at: iso(o.created_at), status: o.status, out: !!o.out_at || !!o.delivered_at || o.status === 'completed', branch: o.branch || null, apexBranch: apexBranchOf(o.branch), scheduled: !!o.scheduled,
         customer: { name: p.customer?.name || null, phone: phoneOut(p.customer?.phone || p.customer?.mobile), address: p.customer?.address || null },
         payment: sitePayment(pay), paymentTitle: pay?.title || null, note: pay?.note || null, discounts, fees: pay?.fees || [], shipping: pay?.shipping ?? null, total: o.total ?? null,
         items: (p.items || []).map(x => itemOut(x, false)), detailRead: !!p.items?.length,

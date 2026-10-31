@@ -111,7 +111,7 @@ document.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { source = 
 // What the employee writes next to the customer name on Apex.
 function labelOf(o, pay) {
   const tag = o.code ? ' #' + o.code : '';
-  if (o.source === 'talabat') return (pay === 'paid' ? 'مدفوع' : pay === 'cash' ? 'اطلب/كاش' : '؟؟') + tag;
+  if (o.source === 'talabat') return (pay === 'paid' ? 'اطلب/مدفوع' : pay === 'cash' ? 'اطلب/كاش' : 'اطلب/؟؟') + tag;
   return (pay === 'paid' ? 'مدفوع' : pay === 'cash' ? 'كاش' : '؟؟') + ' موقع' + tag;
 }
 const key = o => o.source + ':' + o.ref;
@@ -125,6 +125,7 @@ function stateOf(o) {
   if (o.job?.state === 'auto_preview') return { cls: r?.ok ? 'wait' : 'other', text: 'معاينة بس (إجمالي Apex ' + money(r?.total) + ')' + (r?.error ? ' — ' + r.error : '') + ' — سجله بإيدك' };
   if (o.job?.state === 'entered') return { cls: 'wait', text: (o.job.mine ? 'إنت سجلته' : o.job.by + ' سجله') + ' — مستني يظهر في Apex' };
   if (o.job?.state === 'claimed') return o.job.mine ? { cls: 'mine', text: 'معاك دلوقتي' } : { cls: 'other', text: 'مع ' + o.job.by };
+  if (o.out) return { cls: 'in', text: 'خرج مع الطيار (اتسجل قبل كده)' };
   return { cls: '', text: 'جديد' };
 }
 function payText(o) {
@@ -194,8 +195,10 @@ function card(o) {
 }
 function render() {
   if (!data) return;
-  const list = data.orders.filter(o => (!source || o.source === source) && (filter === 'all' || !o.apex));
-  const todo = data.orders.filter(o => !o.apex).length;
+  // «لسه»: not on Apex yet and not already out with the rider (those were entered before; see «الكل»).
+  const waiting = o => !o.apex && !o.out && !/^(?:entered|auto_done)$/.test(o.job?.state || '');
+  const list = data.orders.filter(o => (!source || o.source === source) && (filter === 'all' || waiting(o)));
+  const todo = data.orders.filter(waiting).length;
   $('count').textContent = 'لسه: ' + todo + ' · الكل: ' + data.orders.length;
   $('list').innerHTML = list.length ? list.map(card).join('') : '<div class="empty">مفيش أوردرات هنا دلوقتي</div>';
 }
