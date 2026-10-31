@@ -226,3 +226,18 @@ test('orders: a comment alone never sends anything, and is never pasted under ot
  const reply=await t.app.db.prepare('SELECT * FROM telegram_log WHERE reply_to=?').get(warning.key);assert.ok(reply);assert.match(reply.text,/أوردر 7/);assert.doesNotMatch(reply.text,/قديم|كومنت/);
  }finally{await t.close();}
 });
+
+test('a late warning carries the order\'s area and comment on their own lines (no literal \\n)', async () => {
+  const t = await start();
+  try {
+    const admin = await t.admin();
+    const { token } = (await admin('POST', '/api/orders/token')).body;
+    const push = body => t.call('POST', '/api/orders/push', { body: payload(body), headers: { 'x-orders-token': token } });
+    const open = [{ no: 3527001, sn: 701, branch: 'التجمع', kind: 'Hotline', at: '2026-10-22T09:00:00Z', wait: 31 }];
+    await push({ open, details: { '3527001': { loc: 'النرجس', note: 'الدور التالت' } }, alerts: [{ key: 'late:3527001', kind: 'ordersLate', text: 'late 701', sn: 701 }] });
+    const sent = t.app.db.raw.prepare("SELECT text FROM telegram_log WHERE key LIKE 'orders:%late:3527001'").get();
+    assert.match(sent.text, /\n📍 المنطقة: النرجس/);
+    assert.match(sent.text, /\n💬 ملاحظة الأوردر: الدور التالت/);
+    assert.doesNotMatch(sent.text, /\\n/);
+  } finally { await t.close(); }
+});

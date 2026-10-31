@@ -264,7 +264,7 @@
         const q = parts.find(x => /^\d+(?:\.\d+)?\s*[x×]$|^[x×]\s*\d+$/i.test(x)), pr = parts.find(x => /(?:E£|EGP|£E|ج\.م)/.test(x));
         // A discount under the dish shows like an add-on with a minus price: keep the sign so it is never taken for a paid add-on.
         const neg = pr && /-\s*(?:E£|EGP|£E|ج\.م)|(?:E£|EGP|£E|ج\.م)\s*-|^-|\u2212/.test(pr);
-        return { qty: Number((q || '1').replace(/[^\d.]/g, '')) || 1, name: parts.filter(x => x !== q && x !== pr).join(' ').slice(0, 120), price: pr ? (neg ? -money(pr) : money(pr)) : null };
+        return { qty: q ? Number(q.replace(/[^\d.]/g, '')) || null : null, name: parts.filter(x => x !== q && x !== pr).join(' ').slice(0, 120), price: pr ? (neg ? -money(pr) : money(pr)) : null };
       }).filter(o => o.name).slice(0, 20);
       // Discount lines shown under the dish (not as option elements): kept as written, for the transfer page.
       // Seen 31-10 under a dish: «خصم | -89.70», «خصم 30% على بعض المنتجات | -89.70», «ممول من قبلك | -44.85», «ممول من قبل Talabat | -44.85».
@@ -286,7 +286,7 @@
       const hasExpandIcon = /\b(?:expand_more|expand_less|keyboard_arrow_down|keyboard_arrow_up)\b/i.test(p.textContent || '');
       const fromOptions = options.length > 0 || !hasExpandIcon;   // options found, or nothing to expand: the list is complete
       const modifierComplete = fromOptions || (productModifierExpanded(control) && !iconStillCollapsed);
-      const mods = fromOptions ? options.map(o => (o.qty > 1 ? o.qty + '× ' : '') + o.name) : modifiers;
+      const mods = fromOptions ? options.map(o => (o.qty == null ? '?× ' : o.qty > 1 ? o.qty + '× ' : '') + o.name) : modifiers;
       d.items.push({ qty: Number((l[0] || '').replace(/[^\d]/g, '')) || 1, name, price: money(l.find(x => /E£|EGP/.test(x))), modifiers: [...new Set(mods)],
         options, discountLines, modifierRead: mods.length > 0 || modifierComplete, modifierComplete });
     }

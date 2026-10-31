@@ -159,7 +159,7 @@ function flatLines(o) {
   const out = [];
   for (const i of o.items || []) {
     out.push({ kind: 'item', qty: i.qty, name: i.name, label: i.name + (i.sizeOption ? ' — ' + i.sizeOption : '') + ((i.freeOptions || []).length ? ' (' + i.freeOptions.join('، ') + ')' : ''), apex: i.apex || [], note: (i.freeOptions || []).join('، ').slice(0, 60) });
-    for (const a of i.addons || []) out.push({ kind: 'addon', qty: a.qty, name: a.name, label: '+ ' + a.name + ' (' + money(a.price) + ') — إضافة بفلوس على ' + i.name, apex: a.apex || [], note: '' });
+    for (const a of i.addons || []) out.push({ kind: 'addon', qty: a.qty ?? '?', name: a.name, label: '+ ' + a.name + ' (' + money(a.price) + ') — إضافة بفلوس على ' + i.name, apex: a.apex || [], note: '' });
   }
   return out;
 }
@@ -234,6 +234,7 @@ $('list').addEventListener('click', async e => {
     if (flatLines(o).some((i, n) => !/^\d{4,10}$/.test(String(p.items?.[n] || '')))) { toast('كل صنف وكل إضافة بفلوس لازم يبقى لها رقم على Apex'); return; }
     if (o.discounts?.some(d => !d.who)) { toast('فيه خصم مش واضح مين ممول له — سجله بإيدك'); return; }
     if (o.source === 'talabat' && o.items.some(i => !i.modifiersComplete)) { toast('الإضافات ماتقرتش كاملة — سجله بإيدك'); return; }
+    if (o.items.some(i => (i.addons || []).some(a => a.qty == null))) { toast('عدد إضافة مش واضح — سجله بإيدك'); return; }
     const rest = (o.discounts || []).filter(d => d.who === 'restaurant').reduce((a, d) => a + (Number(d.amount) || 0), 0);
     const plat = (o.discounts || []).filter(d => d.who === 'platform');
     b.disabled = true;

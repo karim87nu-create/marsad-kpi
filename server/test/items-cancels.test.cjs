@@ -75,3 +75,12 @@ test('items: a Talabat dish entered with Apex\'s own «طلبات» item (known 
     assert.equal(o['3977200030'].apex.items.ok, false, 'a differently named dish needs review before learning');
   } finally { await t.close(); }
 });
+
+test('add-ons: the count is per dish (2 dishes × 2 = 4 on Apex) and an unreadable count is never taken as 1', async () => {
+  const { compareItems } = await import('../src/items.js');
+  const T = m => [{ qty: 2, name: 'Kofta', price: 600, modifiers: [m], modifierRead: true, modifierComplete: true }];
+  const A = q => [{ no: '0108001', name: 'ك كفته', qty: 2, price: 263 }, { no: '0103001', name: 'Mombar', qty: q, price: 50 }];
+  assert.equal(compareItems(T('2× Mombar'), A(4)).extraOnApex.length, 0, '2 per dish × 2 dishes');
+  assert.equal(compareItems(T('2× Mombar'), A(2)).extraOnApex.length, 1, 'only 2 on Apex is short');
+  assert.equal(compareItems(T('?× Mombar'), A(2)).extraOnApex.length, 1, 'unknown count: not confirmed');
+});

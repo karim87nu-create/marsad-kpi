@@ -107,11 +107,11 @@ function setup(app) {
     const apexDetails = app.apexDetails ? await app.apexDetails(b.day) : null;
     const withOrderContext = (text, no, kind) => {
       if (!DELAY_KINDS.has(kind) || !no || !apexDetails?.extra) return text;
-      const lines = apexDetails.extra(no).split(/\\r?\\n/);
+      const lines = apexDetails.extra(no).split(/\r?\n/);
       let result = text;
       for (const prefix of ['📍 المنطقة:', '💬 ملاحظة الأوردر:']) {
         const line = lines.find(value => value.trimStart().startsWith(prefix));
-        if (line && !result.split(/\\r?\\n/).some(value => value.trimStart().startsWith(prefix))) result += '\\n' + line.trim();
+        if (line && !result.split(/\r?\n/).some(value => value.trimStart().startsWith(prefix))) result += '\n' + line.trim();
       }
       return result;
     };

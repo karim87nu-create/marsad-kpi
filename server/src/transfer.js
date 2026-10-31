@@ -150,7 +150,7 @@ function setup(app) {
         : top ? [{ text: top.label + ' — ' + x.name, amount: top.amount, who: 'restaurant' }] : found.length ? [{ text: found[0].label + ' — ' + x.name, amount: null, who: 'restaurant' }] : [];
       const opts = (Array.isArray(x.options) ? x.options : []).filter(o => !isDisc(o));
       const sizeOpt = opts.find(o => WEIGHTS.some(w => w[0].test(o.name))) || (opts.length && x.price && opts[0].price && Math.abs(opts[0].price - x.price) < 0.01 ? opts[0] : null);
-      const addons = opts.filter(o => o !== sizeOpt && Number(o.price) > 0).map(o => ({ name: o.name, qty: (Number(o.qty) || 1) * (Number(x.qty) || 1), price: Number(o.price),
+      const addons = opts.filter(o => o !== sizeOpt && Number(o.price) > 0).map(o => ({ name: o.name, qty: Number(o.qty) > 0 ? Number(o.qty) * (Number(x.qty) || 1) : null, price: Number(o.price),
         apex: (withApex ? knownNos(o.name, learned) : []).map(no => ({ no, name: apexName.get(no) || null })) }));
       const free = opts.filter(o => o !== sizeOpt && !(Number(o.price) > 0)).map(o => o.name);
       return { qty: x.qty, name: x.name, price: x.price ?? null, modifiers: x.modifiers || [], modifiersComplete: x.modifierComplete === true || !withApex, size: size ? size[2] : null, apex,
