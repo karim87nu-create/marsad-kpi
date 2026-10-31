@@ -348,7 +348,7 @@ for (;;) {
         $res.detail = "gap=$($r.Gap) discount=$($r.RestDiscountAll) sub=$($r.SubTotal) tax=$($r.Tax) ratio=$($r.TaxRatio) service=$($r.Service) template=$($r.Template) posSerial=$($r.PosSerial) typeSerial=$($r.TypeSerial) cust=$($r.CustNo) | " + (($job.items | ForEach-Object { "$($_.itemNo)x$($_.qty): $($_.candidates -join ',')" }) -join ' ; ')
         $want = $(if ($job.targetTotal) { $job.targetTotal } else { $job.expectedTotal })
         if ([double]$r.Gap -gt [math]::Max(15, 0.05 * [double]$want)) { $res.ok = $false; $res.error = "فرق كبير: Apex أزيد من الأوردر بـ $([math]::Round([double]$r.Gap,2)) — راجع الأصناف" }
-        elseif ($want -and [math]::Abs([double]$r.Total - [double]$want) -gt [math]::Max(1, 0.01 * [double]$job.expectedTotal)) { $res.ok = $false; $res.error = "القيمة $([math]::Round([double]$r.Total,2)) مش زي الأوردر $want" }
+        elseif ($want -and [math]::Abs([double]$r.Total - [double]$want) -gt [math]::Max(1, 0.01 * [double]$want)) { $res.ok = $false; $res.error = "القيمة $([math]::Round([double]$r.Total,2)) مش زي الأوردر $want" }
       } else {
         $res.orderNo = $r.OrderNo; $res.shiftSerial = $r.ShiftSerial; $res.branchOrderNo = $r.BranchOrderNo; $res.total = [double]$r.Total
         if ($r.r -eq 'written' -and [int]$r.SameBranchNo -gt 1) { $res.error = 'رقم الفرع اتكرر مع أوردر تاني؛ راجعه' }
