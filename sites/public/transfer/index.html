@@ -146,7 +146,8 @@ function discountsHtml(o) {
 function itemsHtml(o) {
   if (!o.items?.length) return '<div class="warn">' + (o.detailRead ? 'مفيش أصناف' : 'تفاصيل الأوردر لسه ماتقرتش — افتحه على ' + (o.source === 'talabat' ? 'طلبات' : 'الموقع')) + '</div>';
   return '<ul class="items">' + o.items.map(i => '<li><b>' + esc(i.qty) + '×</b> ' + esc(i.name) + (i.price != null ? ' <span style="color:var(--muted)">(' + money(i.price) + ')</span>' : '') +
-    ((i.freeOptions || i.modifiers)?.length ? '<div class="mods">اختيارات: ' + (i.freeOptions || i.modifiers).map(esc).join('، ') + '</div>' : '') +
+    (i.sizeOption ? '<div class="mods">الحجم: ' + esc(i.sizeOption) + ' (بيحدد صنف Apex)</div>' : '') +
+    ((i.freeOptions || [])?.length ? '<div class="mods">اختيارات مجانية (تتكتب في تعليقات الطلب): ' + i.freeOptions.map(esc).join('، ') + '</div>' : '') +
     (i.addons?.length ? '<div class="warn">إضافات بفلوس (كل واحدة صنف على Apex): ' + i.addons.map(a => esc(a.qty) + '× ' + esc(a.name) + ' (' + money(a.price) + ')' + (a.apex?.length ? ' → ' + a.apex.map(x => esc(x.no) + (x.name ? ' ' + esc(x.name) : '')).join(' أو ') : '')).join('، ') + '</div>' : '') +
     (o.source === 'talabat' && !i.modifiersComplete ? '<div class="warn">الإضافات ماتقرتش كاملة — راجعها على طلبات</div>' : '') +
     (o.source === 'talabat' ? (i.apex?.length ? '<div class="apex">على Apex: ' + i.apex.map(a => esc(a.no) + (a.name ? ' ' + esc(a.name) : '')).join(' أو ') + (i.apex.length > 1 ? ' <span class="warn">(اختار الحجم الصح)</span>' : '') + '</div>'
@@ -157,7 +158,7 @@ function itemsHtml(o) {
 function flatLines(o) {
   const out = [];
   for (const i of o.items || []) {
-    out.push({ kind: 'item', qty: i.qty, name: i.name, label: i.name + ((i.freeOptions || i.modifiers || []).length ? ' (' + (i.freeOptions || i.modifiers).join('، ') + ')' : ''), apex: i.apex || [], note: (i.freeOptions || i.modifiers || []).join('، ').slice(0, 60) });
+    out.push({ kind: 'item', qty: i.qty, name: i.name, label: i.name + (i.sizeOption ? ' — ' + i.sizeOption : '') + ((i.freeOptions || []).length ? ' (' + i.freeOptions.join('، ') + ')' : ''), apex: i.apex || [], note: (i.freeOptions || []).join('، ').slice(0, 60) });
     for (const a of i.addons || []) out.push({ kind: 'addon', qty: a.qty, name: a.name, label: '+ ' + a.name + ' (' + money(a.price) + ') — إضافة بفلوس على ' + i.name, apex: a.apex || [], note: '' });
   }
   return out;
