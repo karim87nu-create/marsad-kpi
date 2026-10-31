@@ -204,6 +204,8 @@
     // Matching never depends on the WhatsApp setting. Read explicit customer labels only;
     // do not guess a name/address from arbitrary order text or a masked phone number.
     let box = T('details-order-id'); while (box && !box.querySelector('[data-testid^="milestone-for__"]')) box = box.parentElement;
+    // The live order screen has no timeline: use the order drawer itself.
+    if (!box) box = T('details-order-id')?.closest('[data-testid*="drawer"], [role="dialog"], aside') || T('order-details-drawer__content') || null;
     const customerLines = lines(box).filter(Boolean);
     const customerHeading = /^(?:customer details|customer information|تفاصيل الزبون|تفاصيل العميل)$/i;
     const sectionEnd = /^(?:order timeline|timeline|order details|تفاصيل الطلب|الجدول الزمني للطلب)$/i;
@@ -261,9 +263,14 @@
     // discounts only once its billing data is ready (usually later); until then these lines are absent.
     const content = lines(box).map(x => x.trim()).filter(x => x && !/^(?:expand_more|expand_less|info|info_outline|help_outline)$/i.test(x));
     const subAt = content.findIndex(x => /^(?:subtotal|المجموع الفرعي)$/i.test(x));
+    // Lines of the live screen that stand alone (no amount next to them): the payment way, e.g. «ONLINE», «تم الدفع بواسطة CREDIT_CARD».
     d.bill = [];
-    if (subAt >= 0) for (let i = subAt; i + 1 < content.length && d.bill.length < 20; i += 2)
-      d.bill.push({ k: content[i].slice(0, 60), text: (content[i] + ' | ' + content[i + 1]).slice(0, 200) });
+    if (subAt >= 0) for (let i = subAt; i < content.length && d.bill.length < 24; ) {
+      const x = content[i], y = content[i + 1];
+      if (/^(?:ONLINE|CASH|CREDIT_CARD|DEBIT_CARD|WALLET)$/i.test(x) || /^تم الدفع بواسطة/.test(x)) { d.bill.push({ k: 'payment', text: x.slice(0, 200) }); i += 1; continue; }
+      if (y == null) break;
+      d.bill.push({ k: x.slice(0, 60), text: (x + ' | ' + y).slice(0, 200) }); i += 2;
+    }
     return { id, vendorId, placedAt: Number.isFinite(placed) ? new Date(placed).toISOString() : null, status: d.status, detail: d, ...(phone ? { phone } : {}) };
   }
 

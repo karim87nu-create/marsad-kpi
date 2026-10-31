@@ -130,6 +130,7 @@ function stateOf(o) {
 function payText(o) {
   if (o.payment === 'cash') return '<span class="ok">كاش (من بيانات الأوردر)</span>';
   if (o.payment === 'paid') return '<span class="ok">مدفوع (من بيانات الأوردر)</span>';
+  if (o.payment === 'mixed') return '<span class="warn">مختلط: جزء أونلاين والباقي تحصيل كاش — راجع الأوردر واختار</span>';
   if (o.payment === 'unpaid') return '<span class="bad">أونلاين ولسه مادفعش — ماتسجلوش قبل الدفع</span>';
   return '<span class="warn">طريقة الدفع مش واضحة من المصدر — بص على الأوردر واختار</span>';
 }

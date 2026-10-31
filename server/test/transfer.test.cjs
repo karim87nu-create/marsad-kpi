@@ -123,3 +123,12 @@ test('automatic transfer: off by default, cash only, frozen order handed to the 
     assert.equal(pj.state, 'auto_preview'); assert.equal(pj.result.preview, true); assert.equal(pj.result.detail, 'sub=105.7');
   } finally { await t.close(); }
 });
+
+test('Talabat live screen (Arabic) payment: collect from customer decides cash/paid/mixed', () => {
+  return import('../src/transfer.js').then(({ talabatPayment }) => {
+    const paid = [{ k: 'المجموع الفرعي', text: 'المجموع الفرعي | 389.00 ج.م' }, { k: 'رسوم التوصيل', text: 'رسوم التوصيل | 40.00 ج.م' }, { k: 'التحصيل من العميل', text: 'التحصيل من العميل | 0.00 ج.م' }, { k: 'payment', text: 'ONLINE' }, { k: 'payment', text: 'تم الدفع بواسطة CREDIT_CARD' }];
+    assert.equal(talabatPayment(paid), 'paid', 'real live screen 2026-10-31: online card, nothing to collect');
+    assert.equal(talabatPayment([{ k: 'التحصيل من العميل', text: 'التحصيل من العميل | 437.00 ج.م' }]), 'cash');
+    assert.equal(talabatPayment([{ k: 'التحصيل من العميل', text: 'التحصيل من العميل | 120.00 ج.م' }, { k: 'payment', text: 'ONLINE' }]), 'mixed');
+  });
+});

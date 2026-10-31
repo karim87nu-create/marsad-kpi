@@ -25,8 +25,18 @@ function payWord(v) {
   const cash = /\bcash\b|كاش|نقد[اًي]?|الدفع عند الاستلام/i.test(t), paid = /\bonline\b|\bpaid\b|card|wallet|apple pay|مدفوع|بطاقة|محفظة|أونلاين/i.test(t);
   return cash && !paid ? 'cash' : paid && !cash ? 'paid' : null;
 }
+const amountOf = t => { const m = String(t || '').replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace(/,/g, '').match(/-?\d+(?:\.\d+)?/); return m ? Number(m[0]) : null; };
 function talabatPayment(bill, liveBadge) {
-  const line = (bill || []).find(x => /^(?:payment method|payment|طريقة الدفع)$/i.test(String(x.k || '').trim()));
+  const rows = bill || [];
+  // Live order screen (Arabic, 2026-10-31): «التحصيل من العميل» = what the rider collects. Above zero means cash;
+  // zero together with «ONLINE» / «تم الدفع بواسطة CREDIT_CARD» means paid. Both above zero and online = mixed → review.
+  const collect = rows.find(x => /^(?:التحصيل من العميل|collect from customer|cash to collect|amount to collect)$/i.test(String(x.k || '').trim()));
+  const online = rows.some(x => /\bONLINE\b|تم الدفع بواسطة|paid by|CREDIT_CARD|DEBIT_CARD|WALLET/i.test(String(x.text || '')));
+  if (collect) {
+    const due = amountOf(String(collect.text).split(' | ').slice(1).join(' '));
+    if (due != null) { if (due > 0 && online) return 'mixed'; if (due > 0) return 'cash'; if (due === 0 && online) return 'paid'; }
+  }
+  const line = rows.find(x => /^(?:payment method|payment|طريقة الدفع)$/i.test(String(x.k || '').trim()));
   const fromBill = line ? payWord(String(line.text).split(' | ').slice(1).join(' | ')) : null;
   return fromBill || payWord(liveBadge) || null;
 }
