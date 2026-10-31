@@ -6,7 +6,7 @@
 #            the order it WOULD write. Nothing is written. The employee still enters the order by hand.
 #   test   : writes into Resturant_Test with the writer login (writer_cred.dat). Never production.
 #   live   : writes into Resturant. Needs BOTH the server mode «live» AND $AllowLive = $true below.
-# Every order carries a marker in OrderLog (MARSAD:<source>:<ref>), checked before writing, so an order is never
+# Every order carries a marker in OrderLog (MT:<talabat id> / MS:<site id>), checked before writing, so an order is never
 # written twice even if the answer to the server is lost. No delete, no reseed, no settings change, ever.
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -164,6 +164,8 @@ BEGIN TRY
   VALUES (0, @OrderNo, @Date, @Time, '', '', '', 0, @Marker, 'MARSAD', @Branch, '', 'MARSAD', @Shift, @Pos);
   INSERT INTO dbo.OrderLog (TOrderNo, OrderNo, OrderDate, ItemTime, TableNo, ItemNo, ItemName, Qty, Description, Status, BranchNo, WaiterName, UserName, ShiftNo, PosNo)
   SELECT 0, @OrderNo, @Date, @Time, '', l.ItemNo, RTRIM(i.ItemName), l.Qty, '', 'Add', @Branch, '', 'MARSAD', @Shift, @Pos FROM @Lines l JOIN dbo.Items i WITH (NOLOCK) ON i.ItemNo = l.ItemNo;
+  -- The marker is what stops a second write of the same order: it must be stored exactly, or nothing is saved.
+  IF NOT EXISTS (SELECT 1 FROM dbo.OrderLog WHERE OrderNo = @OrderNo AND Description = @Marker) THROW 51015, 'marker not stored exactly', 1;
   IF @AddPrinted = 1 INSERT INTO dbo.PrintedOrders (OrderNo, OrderDate, Printed, Modified) VALUES (@OrderNo, @Date, 0, 0);
   IF NOT EXISTS (SELECT 1 FROM dbo.Orders_M_Daily m JOIN dbo.Orders_Serials s ON s.OrderNo = m.OrderNo AND s.ShiftSerial = m.ShiftSerial
                  JOIN dbo.Orders_Checks c ON c.OrderNo = m.OrderNo AND c.CheckNo = m.CheckNo WHERE m.OrderNo = @OrderNo)
@@ -193,7 +195,7 @@ function Write-Order($c, $job, [string]$mode){
   }
   $cmd.CommandText = $decl + $Batch
   $p = @{ '@Exec' = $(if ($mode -eq 'shadow') { 0 } else { 1 }); '@IsTest' = $(if ($mode -eq 'test') { 1 } else { 0 }); '@Pos' = $WriterPos; '@RefPos' = $(if ($mode -eq 'test') { $RefPosTest } else { $RefPos }); '@Branch' = [int]$job.branchNo
-          '@Marker' = ('MARSAD:' + $job.source + ':' + $job.ref); '@Kind' = [string]$job.source; '@Phone' = [string]$job.customer.phone
+          '@Marker' = ('M' + $(if ($job.source -eq 'site') { 'S' } else { 'T' }) + ':' + $job.ref); '@Kind' = [string]$job.source; '@Phone' = [string]$job.customer.phone
           '@Label' = [string]$job.label; '@Address' = [string]$job.customer.address; '@Sign' = [string]$job.sign; '@Remarks' = [string]$job.note
           '@RestDiscount' = [decimal]$job.restaurantDiscount; '@AddPrinted' = $(if ($AddPrintedOrders) { 1 } else { 0 }); '@PrintedFlag' = $PrintedFlag; '@UserNo' = $WriterUserNo
           '@TimeText' = (Get-Date).ToString('hh:mm:ss tt', [Globalization.CultureInfo]::GetCultureInfo('ar-EG')) }
