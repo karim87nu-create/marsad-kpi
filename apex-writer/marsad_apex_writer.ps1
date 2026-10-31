@@ -22,8 +22,8 @@ $PollSeconds = 10
 $WriterPos   = 70        # a POS number no Apex machine uses (Counter row 70: no orders since 2023). Orders get 70<serial>.
 $RefPos      = 35        # the call-center POS: its Counter row says which business day and shift are open
 $RefPosTest  = 29        # in Resturant_Test the open test day is on POS 29 (orders 291..299)
-$AllowLive   = $true     # production verified 2026-10-31: trial order 75 at مدينة نصر printed and showed on the branch screen
-$PrintedFlag = 0         # Orders_D_Daily.Printed on insert; with 0 the branch print service printed the trial order within 40 s
+$AllowLive   = $false    # second lock for production writes; set to $true only after test mode is verified
+$PrintedFlag = 0         # Orders_D_Daily.Printed on insert (0 = the branch still has to print it); confirmed by print_trace.txt
 $AddPrintedOrders = $false # whether to add a PrintedOrders row at save time; confirmed by print_trace.txt
 $PriceSource = 'ItemsOnlinePrice'  # proven 2026-10-31: every online line on Apex (1,900+ lines) = Items.OnlinePrice
 $WriterUserNo = 755     # Apex user «MARSAD» (Users.UserNo 755, read 2026-10-31): orders are counted on it, not on an employee
