@@ -26,7 +26,7 @@ $AllowLive   = $false    # second lock for production writes; set to $true only 
 $PrintedFlag = 0         # Orders_D_Daily.Printed on insert (0 = the branch still has to print it); confirmed by print_trace.txt
 $AddPrintedOrders = $false # whether to add a PrintedOrders row at save time; confirmed by print_trace.txt
 $PriceSource = 'ItemsOnlinePrice'  # proven 2026-10-31: every online line on Apex (1,900+ lines) = Items.OnlinePrice
-$WriterUserNo = 0       # Apex user the order is saved under (a dedicated «MARSAD» user; 0 until the admin creates one)
+$WriterUserNo = 755     # Apex user «MARSAD» (Users.UserNo 755, read 2026-10-31): orders are counted on it, not on an employee
 $TalabatServiceItem = '0114006'  # «خدمة» line (7.02) that Apex's own Talabat orders start with
 
 $monitorDir = Split-Path -Parent $here
