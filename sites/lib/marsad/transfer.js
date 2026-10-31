@@ -51,9 +51,9 @@ function sitePayment(p) {
 }
 // Discounts: whose money it is, only when the source says it.
 const AMOUNT = /(-?\s*(?:E£|EGP|£E|ج\.م)?\s*-?\d[\d,]*(?:\.\d+)?)/;
-const DISC_WORDS = /discount|voucher|promo|coupon|خصم|قسيمة|كوبون/i;
-const discountWho = t => /(talabat|platform|طلبات)[\s-]*(funded|ممول)|funded by talabat|(?:ممول|مدعوم|على حساب)\s*(?:من\s*)?طلبات/i.test(t) ? 'platform'
-  : /(vendor|restaurant|المطعم)[\s-]*(funded|ممول)|funded by (?:the )?(?:vendor|restaurant)|(?:ممول|مدعوم|على حساب)\s*(?:من\s*)?(?:المطعم|الشريك)/i.test(t) ? 'restaurant' : null;
+const DISC_WORDS = /discount|voucher|promo|coupon|خصم|قسيمة|كوبون|ممول|funded/i;
+const discountWho = t => /(talabat|platform|طلبات)[\s-]*(funded|ممول)|funded by talabat|(?:ممول|مدعوم|على حساب)\s*(?:من\s*)?(?:قبل\s*)?(?:طلبات|talabat)/i.test(t) ? 'platform'
+  : /(vendor|restaurant|المطعم)[\s-]*(funded|ممول)|funded by (?:the )?(?:vendor|restaurant)|(?:ممول|مدعوم|على حساب)\s*(?:من\s*)?(?:المطعم|الشريك)|ممول\s*من\s*قبلك|funded by you/i.test(t) ? 'restaurant' : null;
 function talabatDiscounts(bill) {
   const out = [];
   for (const x of bill || []) {
@@ -135,8 +135,19 @@ function setup(app) {
       // Options: the size (weight) choice, add-ons that cost money (their own Apex line), and free choices (a note).
       // A discount under the dish (minus price, or discount words) is neither an add-on nor a comment: it goes to the discounts.
       const isDisc = o => Number(o.price) < 0 || DISC_WORDS.test(o.name);
-      const itemDiscounts = [...(Array.isArray(x.options) ? x.options : []).filter(isDisc).map(o => ({ text: o.name + ' — ' + x.name, amount: o.price != null ? Math.abs(Number(o.price)) : null, who: discountWho(o.name) || 'restaurant' })),
-        ...(x.discountLines || []).map(t => { const m = String(t).match(AMOUNT); return { text: t + ' — ' + x.name, amount: m ? Math.abs(Number(m[1].replace(/[^\d.]/g, ''))) || null : null, who: discountWho(t) || 'restaurant' }; })];
+      // Under a dish Talabat shows the discount, its description, and who funds which part («ممول من قبلك» = the restaurant,
+      // «ممول من قبل Talabat» = Talabat). With the funded parts, those are the discounts; without them the dish's discount
+      // (the largest line, so «خصم» and «خصم 30%…» are not counted twice) is the restaurant's.
+      const amountOf = t => { const m = String(t).match(AMOUNT); return m ? Math.abs(Number(m[1].replace(/[^\d.]/g, ''))) || null : null; };
+      const found = [...(Array.isArray(x.options) ? x.options : []).filter(isDisc).map(o => ({ label: o.name, amount: o.price != null ? Math.abs(Number(o.price)) : null })),
+        ...(x.discountLines || []).map(t => ({ label: String(t).split('|')[0].trim(), amount: String(t).includes('|') ? amountOf(String(t).split('|').slice(1).join('|')) : null }))];
+      const funded = found.filter(d => discountWho(d.label) && d.amount);
+      const top = found.filter(d => d.amount).sort((a, b) => b.amount - a.amount)[0];
+      // The funded parts must add up to the dish's discount; if they don't, who pays what is not clear (entered by hand).
+      const fundedOk = funded.length && (!top || Math.abs(funded.reduce((a, d) => a + d.amount, 0) - top.amount) < 0.05 || funded.some(d => d.amount === top.amount));
+      if (funded.length && !fundedOk) funded.forEach(d => { d.unclear = true; });
+      const itemDiscounts = funded.length && !fundedOk ? [{ text: (top?.label || 'خصم') + ' — ' + x.name + ' (التقسيم مش واضح)', amount: top?.amount ?? null, who: null }] : funded.length ? [...new Map(funded.map(d => [discountWho(d.label) + d.amount, { text: d.label + ' — ' + x.name, amount: d.amount, who: discountWho(d.label) }])).values()]
+        : top ? [{ text: top.label + ' — ' + x.name, amount: top.amount, who: 'restaurant' }] : found.length ? [{ text: found[0].label + ' — ' + x.name, amount: null, who: 'restaurant' }] : [];
       const opts = (Array.isArray(x.options) ? x.options : []).filter(o => !isDisc(o));
       const sizeOpt = opts.find(o => WEIGHTS.some(w => w[0].test(o.name))) || (opts.length && x.price && opts[0].price && Math.abs(opts[0].price - x.price) < 0.01 ? opts[0] : null);
       const addons = opts.filter(o => o !== sizeOpt && Number(o.price) > 0).map(o => ({ name: o.name, qty: (Number(o.qty) || 1) * (Number(x.qty) || 1), price: Number(o.price),

@@ -267,7 +267,20 @@
         return { qty: Number((q || '1').replace(/[^\d.]/g, '')) || 1, name: parts.filter(x => x !== q && x !== pr).join(' ').slice(0, 120), price: pr ? (neg ? -money(pr) : money(pr)) : null };
       }).filter(o => o.name).slice(0, 20);
       // Discount lines shown under the dish (not as option elements): kept as written, for the transfer page.
-      const discountLines = raw.filter(x => /discount|voucher|promo|coupon|خصم|قسيمة|كوبون|ممول/i.test(x)).slice(0, 6);
+      // Seen 31-10 under a dish: «خصم | -89.70», «خصم 30% على بعض المنتجات | -89.70», «ممول من قبلك | -44.85», «ممول من قبل Talabat | -44.85».
+      // Each label is kept with its amount (the nearest money line next to it), as «label | amount».
+      const isMoney = x => /(?:E£|EGP|£E|ج\.م)/.test(x) && /\d/.test(x) && !/[a-z\u0600-\u06ff]{3,}/i.test(x.replace(/E£|EGP|£E|ج\.م\.?/g, ''));
+      const isLabel = x => !isMoney(x) && /discount|voucher|promo|coupon|خصم|قسيمة|كوبون|ممول|funded/i.test(x);
+      // Amount after its label (usual) or before it: whichever fits more labels on this dish.
+      const after = raw.filter((x, i) => isLabel(x) && raw[i + 1] && isMoney(raw[i + 1])).length, before = raw.filter((x, i) => isLabel(x) && raw[i - 1] && isMoney(raw[i - 1])).length;
+      const near = before > after ? [-1, 1] : [1, -1];
+      const used = new Set(), discountLines = [];
+      raw.forEach((x, i) => {
+        if (!isLabel(x)) return;
+        const j = near.map(d => i + d).find(k => raw[k] && isMoney(raw[k]) && !used.has(k));
+        if (j != null) used.add(j);
+        if (discountLines.length < 8) discountLines.push(x.slice(0, 80) + (j != null ? ' | ' + raw[j] : ''));
+      });
       // Every product row is itself a button (aria-expanded="false"), so «something to expand» means the expand icon.
       // Checked on the real page 2026-10-31: plain products have no icon and no option elements.
       const hasExpandIcon = /\b(?:expand_more|expand_less|keyboard_arrow_down|keyboard_arrow_up)\b/i.test(p.textContent || '');
