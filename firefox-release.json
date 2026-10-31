@@ -1,8 +1,8 @@
 {
   "status": "ready",
   "addon_id": "arabicss-kpi@eldahan.local",
-  "version": "3.1.24",
-  "sha256": "d7ead19fc0ca4fd39175bdcd6bfe035ab9d2cab383ed01faa01b80c7c0689d58",
+  "version": "3.1.25",
+  "sha256": "20f7b4240801512dd75572a89d6e96a04b91e7ab7022b85c6aace1d3dbac5ed2",
   "install_url": "https://karim87nu-create.github.io/marsad-kpi/arabicss-kpi-latest.xpi",
   "update_manifest_url": "https://karim87nu-create.github.io/marsad-kpi/firefox-updates.json",
   "minimum_firefox_version": "142.0"
