@@ -208,6 +208,7 @@ CREATE INDEX IF NOT EXISTS audit_time ON audit(occurred_at);
 // Telegram tables live here too so a fresh database has everything.
 const EXTRA_SCHEMA = `
 CREATE TABLE IF NOT EXISTS telegram_config (id INTEGER PRIMARY KEY CHECK (id = 1), bot_token TEXT, bot_name TEXT, chat_id TEXT, chat_title TEXT, enabled INTEGER NOT NULL DEFAULT 0, rules TEXT, updated_at INTEGER);
+CREATE TABLE IF NOT EXISTS transfer_cache (day TEXT PRIMARY KEY, at INTEGER NOT NULL, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS translations (src TEXT PRIMARY KEY, ar TEXT NOT NULL, how TEXT NOT NULL, at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS talabat_closures (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, outlet TEXT NOT NULL, name TEXT, branch TEXT, state TEXT NOT NULL, reason TEXT, until_text TEXT, raw TEXT, started_at INTEGER NOT NULL, ended_at INTEGER, alert_key TEXT);
 CREATE INDEX IF NOT EXISTS talabat_closures_day ON talabat_closures(day);

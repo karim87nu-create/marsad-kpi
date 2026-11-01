@@ -95,7 +95,6 @@ function setup(app) {
   // The Talabat screens and the cashier PC push every few seconds: clearing on each push meant every employee's refresh
   // rebuilt the whole day (Karim 01-11: «الصفحة تقيلة»). The orders are now at most 8 s old; only the page's own actions
   // (claim, entered, auto) and the writer's answers are shown at once (claims are read fresh on every request anyway).
-  app.afterRequest((now, method, path) => { if (method !== 'GET' && /^\/api\/(?:apex-writer|transfer)\//.test(path || '')) queueCache.clear(); });
   // ---- alerts for the automatic transfer (call center group) ----
   // Apex's English errors in the words the employee needs (same as the transfer page).
   function plainError(e) {
@@ -152,8 +151,94 @@ function setup(app) {
     const day = validDate(String(ctx.query.day || '')) ? ctx.query.day : businessDay(ctx.now);
     // The day's orders (heavy: Apex snapshot, matching) are built once every few seconds for everyone on the page;
     // only the claims (who has which order) are read fresh for each request.
-    const built = queueCache.get(day);
-    const base = built && ctx.now - built.at < QUEUE_CACHE_MS ? built : await (async () => {
+    const base = await baseFor(day, ctx.now);
+    const snap = { locations: base.locations };
+    const jobs = new Map((await db.prepare('SELECT * FROM transfer_jobs WHERE day = ?').all(day)).map(j => [j.source + ':' + j.ref, j]));
+    const jobOf = (source, ref) => {
+      const j = jobs.get(source + ':' + ref);
+      if (!j) return null;
+      const stale = j.state === 'claimed' && ctx.now - j.at > CLAIM_MS;
+      return stale ? null : { state: j.state, by: j.employee_name, mine: me.staff && j.employee_id === me.id, payment: j.payment, note: j.note, at: iso(j.at), result: parseJson(j.result, null) };
+    };
+    // Orders already on Apex or out with the rider: their bill lines are not needed (lighter page).
+    // On a Talabat live screen now (sent by a screen in the last 3 minutes).
+    const liveNow = parseJson((await db.prepare("SELECT value FROM settings WHERE key = 'talabat_live_now'").get())?.value, {});
+    const onLive = id => ctx.now - (liveNow[id] || 0) < 3 * 60000;
+    // Orders already on Apex or out with the rider: a short line only (no items, bill or customer) — most of the day's orders.
+    const slim = o => ({ source: o.source, ref: o.ref, code: o.code, at: o.at, status: o.status, out: o.out, branch: o.branch, apexBranch: o.apexBranch, total: o.total, apex: o.apex, done: true });
+    const list = base.list.map(o => ({ ...(o.apex || o.out ? slim(o) : o), ...(o.source === 'talabat' ? { onLive: onLive(o.ref) } : {}), job: jobOf(o.source, o.source === 'site' ? String(o.ref) : o.ref) }));
+    // English typed by the customer (address, name, comments) shown and sent in Arabic (Karim 01-11); the original is kept.
+    if (app.toArabic) {
+      const open = list.filter(o => !o.done), texts = [];
+      for (const o of open) texts.push(o.customer?.name, o.customer?.address, o.customer?.area, o.note, ...(o.items || []).map(i => i.note));
+      const ar = await app.toArabic(texts.filter(Boolean), { waitUntil: ctx.waitUntil });
+      const tr = v => (v && ar.get(v)) || v, changed = v => v && ar.get(v) && ar.get(v) !== v;
+      for (let i = 0; i < list.length; i++) {
+        const o = list[i]; if (o.done) continue;
+        const c = o.customer;
+        list[i] = { ...o,
+          ...(c ? { customer: { ...c, name: tr(c.name), address: tr(c.address), area: tr(c.area), ...(changed(c.address) || changed(c.name) ? { original: [c.name, c.address].filter(Boolean).join(' — ') } : {}) } } : {}),
+          ...(changed(o.note) ? { note: tr(o.note), noteOriginal: o.note } : {}),
+          ...(o.items?.some(x => changed(x.note)) ? { items: o.items.map(x => changed(x.note) ? { ...x, note: tr(x.note) } : x) } : {}) };
+      }
+    }
+    // Until an admin chooses, the automatic transfer only previews (shadow): it never writes to Apex.
+    const mode = (await db.prepare("SELECT value FROM settings WHERE key = 'apex_bridge_mode'").get())?.value || 'shadow';
+    const locations = (Array.isArray(snap.locations) ? snap.locations : []).filter(l => Number.isInteger(l?.no)).map(l => ({ no: l.no, name: String(l.name || ''), branch: l.branch ?? null, service: l.service ?? null }));
+    // The Apex items list and the areas change rarely: sent only when the page does not have this version yet.
+    const items = mode && mode !== 'off' ? APEX_ITEM_LIST : [];
+    const staticKey = items.length + ':' + locations.length + ':' + locations.reduce((a, l) => a + l.no * (l.branch || 1) + (Number(l.service) || 0), 0).toFixed(2);
+    const fresh = String(ctx.query.have || '') !== staticKey;
+    return { day, me: { name: me.name, staff: me.staff }, serverNow: iso(ctx.now), liveScreen: ctx.now - (liveNow._screen || 0) < 3 * 60000, autoTransfer: mode, branches: APEX_BRANCHES, staticKey,
+      ...(fresh ? { locations, apexItems: items } : {}), orders: list };
+  });
+
+  // The day's orders (heavy: Apex snapshot, matching): built in the background after every push and kept in the
+  // database too (Karim 01-11: the page was slow on first opening — a cold server rebuilt the whole day while the
+  // employee waited). The page reads the last build; only one older than a minute is rebuilt while it waits.
+  // Per day: the last build, whether something changed since (a push), and the build running now.
+  const st = new Map(), S = day => st.get(day) || (st.set(day, { dirty: true, run: null }), st.get(day));
+  function rebuild(day) {
+    const x = S(day);
+    if (x.run) return x.run;
+    x.run = (async () => {
+      let base;
+      do {
+        x.dirty = false;
+        base = await buildBase(day, app.now());
+        queueCache.set(day, base);
+      } while (x.dirty);
+      const keep = { at: base.at, locations: base.locations, list: base.list.map(o => o.apex || o.out ? { source: o.source, ref: o.ref, code: o.code, at: o.at, status: o.status, out: o.out, branch: o.branch, apexBranch: o.apexBranch, total: o.total, apex: o.apex } : o) };
+      await db.prepare('INSERT INTO transfer_cache (day, at, data) VALUES (?,?,?) ON CONFLICT(day) DO UPDATE SET at = excluded.at, data = excluded.data').run(day, base.at, JSON.stringify(keep)).catch(() => {});
+      return base;
+    })().finally(() => { x.run = null; });
+    return x.run;
+  }
+  async function baseFor(day, now) {
+    const x = S(day);
+    if (x.run) return x.run;                                    // a build is running here: its result is the freshest
+    const b = queueCache.get(day);
+    if (b && !x.dirty && now - b.at < QUEUE_CACHE_MS) return b;
+    // Pushes may reach another server: the last build any server saved (Karim 01-11: a fresh server rebuilt the whole
+    // day on the first opening while the employee waited).
+    const r = await db.prepare('SELECT at, data FROM transfer_cache WHERE day = ?').get(day);
+    if (r && r.at > (b?.at || 0) && now - r.at < 30000) { const d = parseJson(r.data, null); if (d) { queueCache.set(day, d); x.dirty = false; return d; } }
+    if (b && !x.dirty && now - b.at < 30000) return b;
+    return rebuild(day);
+  }
+  // Every push from the Talabat screens, the cashier PC or the website (and the page's own actions): the next read
+  // is built in the background, so the page usually finds it ready.
+  app.afterRequest((now, method, path) => {
+    if (method !== 'POST') return;
+    const day = businessDay(now), x = S(day);
+    // The page's own actions (claim, entered, auto) and the writer's answers: shown at once.
+    if (/^\/api\/(?:apex-writer|transfer)\//.test(path || '')) { x.dirty = true; return rebuild(day).catch(() => {}); }
+    // A push (a new order, a status): built again in the background — one build at a time, pushes during a build
+    // fold into one more — so a new order is on the page at once and the page itself never waits for a full build.
+    if (/^\/api\/(?:talabat|orders|site)\/push$/.test(path || '')) { x.dirty = true; return rebuild(day).catch(() => {}); }
+  });
+  async function buildBase(day, now) {
+    {
       const snap = parseJson((await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(day))?.data, {});
       const apexName = new Map(Object.entries(APEX_NAMES));
       for (const a of [...(snap.online || []), ...(snap.orders || [])]) for (const i of a.items || []) if (i?.no && i?.name) apexName.set(String(i.no).trim(), i.name);
@@ -245,50 +330,9 @@ function setup(app) {
           apex: a ? { no: a.no, sn: a.sn ?? null, user: a.user || null, how: a.how || null } : null, matching: sm.states?.get(o.id) || null, job: null });
       }
       list.sort((x, y) => (x.apex ? 1 : 0) - (y.apex ? 1 : 0) || String(x.at || '').localeCompare(String(y.at || '')));
-      return { at: ctx.now, list, snap };
-    })();
-    if (base !== built) queueCache.set(day, base);
-    const snap = base.snap;
-    const jobs = new Map((await db.prepare('SELECT * FROM transfer_jobs WHERE day = ?').all(day)).map(j => [j.source + ':' + j.ref, j]));
-    const jobOf = (source, ref) => {
-      const j = jobs.get(source + ':' + ref);
-      if (!j) return null;
-      const stale = j.state === 'claimed' && ctx.now - j.at > CLAIM_MS;
-      return stale ? null : { state: j.state, by: j.employee_name, mine: me.staff && j.employee_id === me.id, payment: j.payment, note: j.note, at: iso(j.at), result: parseJson(j.result, null) };
-    };
-    // Orders already on Apex or out with the rider: their bill lines are not needed (lighter page).
-    // On a Talabat live screen now (sent by a screen in the last 3 minutes).
-    const liveNow = parseJson((await db.prepare("SELECT value FROM settings WHERE key = 'talabat_live_now'").get())?.value, {});
-    const onLive = id => ctx.now - (liveNow[id] || 0) < 3 * 60000;
-    // Orders already on Apex or out with the rider: a short line only (no items, bill or customer) — most of the day's orders.
-    const slim = o => ({ source: o.source, ref: o.ref, code: o.code, at: o.at, status: o.status, out: o.out, branch: o.branch, apexBranch: o.apexBranch, total: o.total, apex: o.apex, done: true });
-    const list = base.list.map(o => ({ ...(o.apex || o.out ? slim(o) : o), ...(o.source === 'talabat' ? { onLive: onLive(o.ref) } : {}), job: jobOf(o.source, o.source === 'site' ? String(o.ref) : o.ref) }));
-    // English typed by the customer (address, name, comments) shown and sent in Arabic (Karim 01-11); the original is kept.
-    if (app.toArabic) {
-      const open = list.filter(o => !o.done), texts = [];
-      for (const o of open) texts.push(o.customer?.name, o.customer?.address, o.customer?.area, o.note, ...(o.items || []).map(i => i.note));
-      const ar = await app.toArabic(texts.filter(Boolean), { waitUntil: ctx.waitUntil });
-      const tr = v => (v && ar.get(v)) || v, changed = v => v && ar.get(v) && ar.get(v) !== v;
-      for (let i = 0; i < list.length; i++) {
-        const o = list[i]; if (o.done) continue;
-        const c = o.customer;
-        list[i] = { ...o,
-          ...(c ? { customer: { ...c, name: tr(c.name), address: tr(c.address), area: tr(c.area), ...(changed(c.address) || changed(c.name) ? { original: [c.name, c.address].filter(Boolean).join(' — ') } : {}) } } : {}),
-          ...(changed(o.note) ? { note: tr(o.note), noteOriginal: o.note } : {}),
-          ...(o.items?.some(x => changed(x.note)) ? { items: o.items.map(x => changed(x.note) ? { ...x, note: tr(x.note) } : x) } : {}) };
-      }
+      return { at: now, list, locations: (Array.isArray(snap.locations) ? snap.locations : []) };
     }
-    // Until an admin chooses, the automatic transfer only previews (shadow): it never writes to Apex.
-    const mode = (await db.prepare("SELECT value FROM settings WHERE key = 'apex_bridge_mode'").get())?.value || 'shadow';
-    const locations = (Array.isArray(snap.locations) ? snap.locations : []).filter(l => Number.isInteger(l?.no)).map(l => ({ no: l.no, name: String(l.name || ''), branch: l.branch ?? null, service: l.service ?? null }));
-    // The Apex items list and the areas change rarely: sent only when the page does not have this version yet.
-    const items = mode && mode !== 'off' ? APEX_ITEM_LIST : [];
-    const staticKey = items.length + ':' + locations.length + ':' + locations.reduce((a, l) => a + l.no * (l.branch || 1) + (Number(l.service) || 0), 0).toFixed(2);
-    const fresh = String(ctx.query.have || '') !== staticKey;
-    return { day, me: { name: me.name, staff: me.staff }, serverNow: iso(ctx.now), liveScreen: ctx.now - (liveNow._screen || 0) < 3 * 60000, autoTransfer: mode, branches: APEX_BRANCHES, staticKey,
-      ...(fresh ? { locations, apexItems: items } : {}), orders: list };
-  });
-
+  }
   // ---- claim / entered / release ----
   app.route('POST', '/api/transfer/job', async ctx => {
     const me = await who(ctx);
