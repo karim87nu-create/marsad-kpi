@@ -95,17 +95,23 @@ SELECT TOP 1 @Tpl = OrderNo FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderDat
   -- The kind that matches the payment first (one «TALABAT VISA» order was saved as cash today; never copy that one for cash).
   ORDER BY CASE WHEN (@PayWay = 'Ledge' AND (OnlineType LIKE '%VISA%' OR OnlineType LIKE N'%مدفوع%')) OR (@PayWay = 'Cash' AND (OnlineType LIKE '%CASH%' OR OnlineType LIKE N'%كاش%')) THEN 0 ELSE 1 END, CASE WHEN BranchNo = @Branch THEN 0 ELSE 1 END, CheckNo DESC;
 -- The test copy may have its day closed (orders moved to Orders_M): take the template from there.
+IF @NoTpl = 1 AND @IsTest = 1 SET @Tpl = NULL;   -- test copy only: try the «first order of the day» path
 DECLARE @TplArchive bit = 0;
-IF @Tpl IS NULL AND @IsTest = 1 BEGIN
+IF @Tpl IS NULL AND @IsTest = 1 AND @NoTpl = 0 BEGIN
   SELECT TOP 1 @Tpl = OrderNo FROM dbo.Orders_M WITH (NOLOCK) WHERE RTRIM(PayWay) = @PayWay AND PosNo <> @Pos
     AND ((@Kind = 'talabat' AND (OnlineType LIKE '%TALABAT%' OR OnlineType LIKE N'%طلبات%')) OR (@Kind = 'site' AND (OnlineType LIKE N'%موقع%' OR OnlineType LIKE '%WEB%' OR OnlineType LIKE '%SITE%')))
     ORDER BY CASE WHEN (@PayWay = 'Ledge' AND (OnlineType LIKE '%VISA%' OR OnlineType LIKE N'%مدفوع%')) OR (@PayWay = 'Cash' AND (OnlineType LIKE '%CASH%' OR OnlineType LIKE N'%كاش%')) THEN 0 ELSE 1 END, CASE WHEN BranchNo = @Branch THEN 0 ELSE 1 END, OrderDate DESC, CheckNo DESC;
   SET @TplArchive = 1;
 END;
-IF @Tpl IS NULL THROW 51005, 'no Apex order of this kind today to take the settings from', 1;
+-- No such order yet today (the first of the day): the settings every online order on Apex has (read 01-11 from all 353
+-- online orders of the day: Delivery, guest 1, hall 0, Otlob 1, track 0, «voucher» discount, tax 14%) — Karim: «احنا عارفين».
+-- The kind's name always follows the payment: TALABAT VISA / TALABAT CASH / موقعنا مدفوع / موقعنا كاش.
+DECLARE @OnlineType nvarchar(50) = CASE WHEN @Kind = 'talabat' THEN CASE WHEN @PayWay = 'Ledge' THEN 'TALABAT VISA' ELSE 'TALABAT CASH' END
+                                       ELSE CASE WHEN @PayWay = 'Ledge' THEN N'موقعنا مدفوع' ELSE N'موقعنا كاش' END END;
 DECLARE @Service money;
 SELECT @TaxRatio = TaxRatio FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderNo = @Tpl;
 IF @TaxRatio IS NULL SELECT @TaxRatio = TaxRatio FROM dbo.Orders_M WITH (NOLOCK) WHERE OrderNo = @Tpl;
+IF @TaxRatio IS NULL SET @TaxRatio = 14;
 -- Delivery service: what Apex charged most for this branch and area today (the archive is only searched on the test copy: it is big).
 SELECT TOP 1 @Service = Service FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE BranchNo = @Branch AND o_LocationNo = @LocationNo AND ISNULL(Service, 0) > 0 GROUP BY Service ORDER BY COUNT(*) DESC;
 IF @Service IS NULL AND @IsTest = 1 SELECT TOP 1 @Service = Service FROM (SELECT TOP 300 Service FROM dbo.Orders_M WITH (NOLOCK) WHERE BranchNo = @Branch AND o_LocationNo = @LocationNo AND ISNULL(Service, 0) > 0 ORDER BY OrderDate DESC) x GROUP BY Service ORDER BY COUNT(*) DESC;
@@ -182,10 +188,12 @@ BEGIN TRY
   SELECT @OrderNo, @ShiftSerial, @BranchShift, @TypeSerial, t.TakeAwayLoc, @Cust, t.TableNo, t.GuestNo, 0, 0, @Date, @Time, @UserNo,
     0, 0, @Shift, t.TransType, @Sub, @Service, 0, @Tax, 0, @Time, @RestDiscount, 0, 0, @PayWay, CASE WHEN @PayWay = 'Ledge' THEN 0 ELSE @Total END, 0,
     LEFT(@Remarks, 100), @Pos, CASE WHEN @RestDiscount > 0 THEN t.DiscountType ELSE NULL END, t.HallNo, 1, DATEPART(hour, @Now), '0', NULL, CASE WHEN @PayWay = 'Ledge' THEN 0 ELSE @Total END, '0', 0, 0, LEFT(@Label, 50), 0, 0, @Branch, @BranchOrderNo,
-    0, @TaxRatio, 0, @PosSerial, @CheckNo, @Time, t.Otlob, '', t.OnlineType, '', '', 0, t.DeliveryTrack, @Phone, LEFT(@Label, 100),
+    0, @TaxRatio, 0, @PosSerial, @CheckNo, @Time, t.Otlob, '', @OnlineType, '', '', 0, t.DeliveryTrack, @Phone, LEFT(@Label, 100),
     LEFT(@Address, 250), LEFT(@Sign, 100), LEFT(@Label, 50), @Phone, 0, 0, @LocationNo, LEFT(@Floor, 20), LEFT(@Flat, 20)
-  FROM (SELECT TakeAwayLoc, TableNo, GuestNo, TransType, DiscountType, HallNo, Otlob, OnlineType, DeliveryTrack FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderNo = @Tpl
-        UNION ALL SELECT TakeAwayLoc, TableNo, GuestNo, TransType, DiscountType, HallNo, Otlob, OnlineType, DeliveryTrack FROM dbo.Orders_M WITH (NOLOCK) WHERE OrderNo = @Tpl AND @TplArchive = 1) t;
+  FROM (SELECT TOP 1 * FROM (
+          SELECT 0 AS o, TakeAwayLoc, TableNo, GuestNo, TransType, DiscountType, HallNo, Otlob, DeliveryTrack FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderNo = @Tpl
+          UNION ALL SELECT 0, TakeAwayLoc, TableNo, GuestNo, TransType, DiscountType, HallNo, Otlob, DeliveryTrack FROM dbo.Orders_M WITH (NOLOCK) WHERE OrderNo = @Tpl AND @TplArchive = 1
+          UNION ALL SELECT 1, '', '', 1, 'Delivery', 'voucher', 0, 1, 0) x ORDER BY o) t;
   IF @@ROWCOUNT <> 1 THROW 51012, 'template order disappeared', 1;
   INSERT INTO dbo.Orders_D_Daily (OrderNo, ItemNo, SerialNo, Qty, Price, Description, Combo, ItemDetailNo, Rank, ItemsCombo, ItemDiscount, ItemTime, OpenDesc, TimeVal, ItemTax, ItemService, Printed, PrintedSlip, Weight, ItemsNo, SentBy, Finished)
   SELECT @OrderNo, l.ItemNo, l.SerialNo, l.Qty, l.Price, l.Note, '0', l.ItemNo, NULL, NULL, CASE WHEN l.SerialNo = @DiscLine THEN @RestDiscount ELSE 0 END, @Time, '', 0, NULL, NULL, @PrintedFlag, @PrintedFlag, 1, 1, 0, 0 FROM @Lines l;   -- Weight 1, ItemsNo 1 on every Apex online line
@@ -233,7 +241,7 @@ function Write-Order($c, $job, [string]$mode){
   $p = @{ '@Exec' = $(if ($mode -eq 'shadow') { 0 } else { 1 }); '@IsTest' = $(if ($mode -eq 'test') { 1 } else { 0 }); '@PayWay' = $(if ($job.payment -eq 'paid') { 'Ledge' } else { 'Cash' }); '@Floor' = $(if ([string]$job.customer.address -match '(?:الدور|الطابق)\s*[:：]\s*([^،,—\-]+)') { $Matches[1].Trim() } else { '' }); '@Flat' = $(if ([string]$job.customer.address -match 'الشقة\s*[:：]\s*([^،,—\-]+)') { $Matches[1].Trim() } else { '' }); '@Pos' = $WriterPos; '@LocationNo' = [int]$job.locationNo; '@ServiceItem' = [string]$TalabatServiceItem; '@RefPos' = $(if ($mode -eq 'test') { $RefPosTest } else { $RefPos }); '@Branch' = [int]$job.branchNo
           '@Marker' = ('M' + $(if ($job.source -eq 'site') { 'S' } else { 'T' }) + ':' + $job.ref); '@Kind' = [string]$job.source; '@Phone' = [string]$job.customer.phone
           '@Label' = [string]$job.label; '@Address' = [string]$job.customer.address; '@Sign' = [string]$job.sign; '@Remarks' = [string]$job.note
-          '@AreaService' = $(if ($job.areaService -ne $null -and "$($job.areaService)" -ne '') { [decimal]$job.areaService } else { [decimal]-1 }); '@RestDiscount' = [decimal]$job.restaurantDiscount; '@Target' = $(if ($job.targetTotal) { [decimal]$job.targetTotal } else { [decimal]0 }); '@AddPrinted' = $(if ($AddPrintedOrders) { 1 } else { 0 }); '@PrintedFlag' = $PrintedFlag; '@UserNo' = $WriterUserNo
+          '@NoTpl' = $(if ($mode -eq 'test' -and $job.noTemplate) { 1 } else { 0 }); '@AreaService' = $(if ($job.areaService -ne $null -and "$($job.areaService)" -ne '') { [decimal]$job.areaService } else { [decimal]-1 }); '@RestDiscount' = [decimal]$job.restaurantDiscount; '@Target' = $(if ($job.targetTotal) { [decimal]$job.targetTotal } else { [decimal]0 }); '@AddPrinted' = $(if ($AddPrintedOrders) { 1 } else { 0 }); '@PrintedFlag' = $PrintedFlag; '@UserNo' = $WriterUserNo
           '@TimeText' = (Get-Date).ToString('hh:mm:ss tt', [Globalization.CultureInfo]::GetCultureInfo('ar-EG')) }
   foreach($k in $p.Keys){ [void]$cmd.Parameters.AddWithValue($k, $p[$k]) }
   # Amounts as money (Karim 01-11, «Arithmetic overflow»): a parameter takes its size from its value, so a restaurant
@@ -381,6 +389,17 @@ function Self-Test {
       try { $c.Open() } catch { $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[1]);Database=Resturant;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec))); $c.Open() }
       $out.mode = 'inspect-tal'; $rows = @()
       foreach($q in @("SELECT TOP 60 'T' k, m.OrderNo, m.ShiftSerial, m.BranchNo, RTRIM(m.OnlineType) ot, RTRIM(m.PayWay) pw, m.SubTotal, m.Service, m.Tax, m.Discount, (m.SubTotal + m.Service + m.Tax - m.Discount) AS tot, m.o_LocationNo, LEFT(RTRIM(ISNULL(m.o_Sign,'')),60) sign, m.UserNo, m.TimeIn, (SELECT COUNT(*) FROM Orders_D_Daily d WITH (NOLOCK) WHERE d.OrderNo = m.OrderNo) lines, (SELECT SUM(d.ItemDiscount) FROM Orders_D_Daily d WITH (NOLOCK) WHERE d.OrderNo = m.OrderNo) idisc FROM Orders_M_Daily m WITH (NOLOCK) WHERE m.OnlineType LIKE 'TALABAT%' ORDER BY m.OrderNo DESC")){
+        try { $cmd = $c.CreateCommand(); $cmd.CommandTimeout = 30; $cmd.CommandText = $q; $rd = $cmd.ExecuteReader(); while ($rd.Read()) { $h = [ordered]@{}; for ($i = 0; $i -lt $rd.FieldCount; $i++) { $h[$rd.GetName($i)] = "$($rd.GetValue($i))".Trim() }; $rows += $h }; $rd.Close() } catch { $rows += @{ q = $q.Substring(0, 40); error = $_.Exception.Message } }
+      }
+      $out.saved = $rows; $out.ok = $true
+      throw 'INSPECT_DONE'
+    }
+    if ($job.mode -eq 'inspect-idx') {
+      # Read-only: the indexes of the archive (Orders_M), to know if «yesterday's» order can be found cheaply.
+      $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[0]);Database=Resturant;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec)))
+      try { $c.Open() } catch { $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[1]);Database=Resturant;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec))); $c.Open() }
+      $out.mode = 'inspect-idx'; $rows = @()
+      foreach($q in @("SELECT 'F' k, RTRIM(OnlineType) ot, RTRIM(PayWay) pw, RTRIM(ISNULL(TakeAwayLoc,'')) tal, RTRIM(ISNULL(TableNo,'')) tn, GuestNo, RTRIM(ISNULL(TransType,'')) tt, ISNULL(CONVERT(varchar(20), DiscountType),'NULL') dt, ISNULL(CONVERT(varchar(20), HallNo),'NULL') hn, ISNULL(CONVERT(varchar(20), Otlob),'NULL') ob, ISNULL(CONVERT(varchar(20), DeliveryTrack),'NULL') dtr, TaxRatio, COUNT(*) n FROM Orders_M_Daily WITH (NOLOCK) WHERE OnlineType IS NOT NULL AND RTRIM(OnlineType) <> '' AND PosNo <> 70 GROUP BY RTRIM(OnlineType), RTRIM(PayWay), RTRIM(ISNULL(TakeAwayLoc,'')), RTRIM(ISNULL(TableNo,'')), GuestNo, RTRIM(ISNULL(TransType,'')), ISNULL(CONVERT(varchar(20), DiscountType),'NULL'), ISNULL(CONVERT(varchar(20), HallNo),'NULL'), ISNULL(CONVERT(varchar(20), Otlob),'NULL'), ISNULL(CONVERT(varchar(20), DeliveryTrack),'NULL'), TaxRatio")){
         try { $cmd = $c.CreateCommand(); $cmd.CommandTimeout = 30; $cmd.CommandText = $q; $rd = $cmd.ExecuteReader(); while ($rd.Read()) { $h = [ordered]@{}; for ($i = 0; $i -lt $rd.FieldCount; $i++) { $h[$rd.GetName($i)] = "$($rd.GetValue($i))".Trim() }; $rows += $h }; $rd.Close() } catch { $rows += @{ q = $q.Substring(0, 40); error = $_.Exception.Message } }
       }
       $out.saved = $rows; $out.ok = $true
