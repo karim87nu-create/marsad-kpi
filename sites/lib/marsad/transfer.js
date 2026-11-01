@@ -11,6 +11,7 @@ import { businessDay, iso, validDate } from './time.js';
 import { parseJson } from './order-match.js';
 import { knownNos } from './items.js';
 import { APEX_NAMES, APEX_PRICES } from './menu-seed.js';
+import { APEX_SECTIONS } from './apex-sections.js';
 import { canonicalStore } from './store-names.js';
 const APEX_ITEM_LIST = Object.entries(APEX_NAMES).map(([no, name]) => ({ no, name, price: APEX_PRICES[no] ?? null }));
 import { sha256, randomToken } from './security.js';
@@ -187,10 +188,11 @@ function setup(app) {
     const locations = (Array.isArray(snap.locations) ? snap.locations : []).filter(l => Number.isInteger(l?.no)).map(l => ({ no: l.no, name: String(l.name || ''), branch: l.branch ?? null, service: l.service ?? null }));
     // The Apex items list and the areas change rarely: sent only when the page does not have this version yet.
     const items = mode && mode !== 'off' ? APEX_ITEM_LIST : [];
-    const staticKey = items.length + ':' + locations.length + ':' + locations.reduce((a, l) => a + l.no * (l.branch || 1) + (Number(l.service) || 0), 0).toFixed(2);
+    const sections = items.length ? APEX_SECTIONS.map(x => ({ name: x.name, items: x.items.filter(no => APEX_NAMES[no]) })).filter(x => x.items.length) : [];
+    const staticKey = 's' + sections.length + ':' + items.length + ':' + locations.length + ':' + locations.reduce((a, l) => a + l.no * (l.branch || 1) + (Number(l.service) || 0), 0).toFixed(2);
     const fresh = String(ctx.query.have || '') !== staticKey;
     return { day, me: { name: me.name, staff: me.staff }, serverNow: iso(ctx.now), liveScreen: ctx.now - (liveNow._screen || 0) < 3 * 60000, autoTransfer: mode, branches: APEX_BRANCHES, staticKey,
-      ...(fresh ? { locations, apexItems: items } : {}), orders: list };
+      ...(fresh ? { locations, apexItems: items, sections } : {}), orders: list };
   });
 
   // The day's orders (heavy: Apex snapshot, matching): built in the background after every push and kept in the

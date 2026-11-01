@@ -209,23 +209,37 @@ function compareHtml(o, fl, p) {
   const r2 = v => Math.round(v * 100) / 100, f = v => v == null ? '<span style="color:var(--muted)">لسه</span>' : typeof v === 'string' ? v : money(r2(v));
   const rest = (o.discounts || []).filter(d => d.who === 'restaurant').reduce((a, d) => a + (Number(d.amount) || 0), 0);
   const plat = (o.discounts || []).filter(d => d.who === 'platform').reduce((a, d) => a + (Number(d.amount) || 0), 0);
-  const tb = [['الأصناف', o.subtotal ?? line('^(?:المجموع الفرعي|subtotal)$')], ['التوصيل', line('توصيل|delivery')], ['رسوم الخدمة', line('رسوم الخدمة|service')],
-    ['خصم المطعم', rest ? -rest : 0], ['خصم طلبات', plat ? -plat : 0], ['العميل يدفع', line('^(?:مجموع|total)$') ?? o.total], ['المطلوب على Apex', o.target]];
-  // Everything with tax (as Talabat shows its prices): Apex's online price × 1.14.
+  // Karim 01-11 («الفروقات دي بسبب إيه»): both sides line by line as they will really be recorded, and the reason in words.
+  const pay = choice[key(o)] || o.job?.payment || (o.payment === 'cash' || o.payment === 'paid' ? o.payment : null), paid = pay === 'paid';
+  const billRead = !!o.bill?.length, tItems = o.subtotal ?? line('^(?:المجموع الفرعي|subtotal)$'), tDel = line('توصيل|delivery') ?? (billRead ? 0 : null), tFee = line('رسوم الخدمة|service') ?? (billRead ? 0 : null);
+  const tTotal = line('^(?:مجموع|total)$') ?? o.total;
+  const want = o.target == null ? null : paid ? r2(o.target - plat) : o.target;   // paid: what the customer paid; cash: before Talabat's discount
+  const tb = [['الأصناف', tItems], ['التوصيل', tDel], ['رسوم الخدمة', tFee], ['خصم المطعم', rest ? -rest : 0], ['خصم طلبات', plat ? -plat : 0], ['العميل ' + (paid ? 'دفع' : 'يدفع'), tTotal]];
+  // Apex: online price + 14% tax, the «خدمة» line every Talabat order starts with, the area's delivery charge.
   let items = 0, missing = 0;
   fl.forEach((i, n) => { const pr = apexPrices.get(p.items[n]); if (pr == null || !p.items[n]) missing++; else items += pr * (Number(i.qty) || 1); });
-  const fee = o.source === 'talabat' ? (apexPrices.get('0114006') || 7.02) : 0;   // the «خدمة» line Apex's Talabat orders start with
-  const loc = (data.locations || []).find(l => String(l.no) === String(p.loc)), service = loc?.service ?? null;
+  const fee = o.source === 'talabat' ? (apexPrices.get('0114006') || 7.02) : 0;
+  const loc = (data.locations || []).find(l => String(l.no) === String(p.loc) && (l.branch == null || String(l.branch) === String(p.branch))) || (data.locations || []).find(l => String(l.no) === String(p.loc));
+  const service = loc?.service ?? null;
   const T = v => r2(v * 1.14);
-  const before = service == null ? null : r2(T(items) + T(fee) + T(service));
-  const gap = before == null || o.target == null ? null : r2(before - rest - o.target);
-  // Apex's delivery charge is taken off in the discount when Talabat delivered for free (as staff do), plus a small margin.
-  const limit = (service == null ? 0 : T(service)) + (o.target ? Math.max(15, 0.05 * o.target) : 15);
-  const ap = [['الأصناف', T(items)], ['التوصيل', service == null ? null : T(service)], ['رسوم الخدمة', T(fee)], ['خصم المطعم', rest ? -rest : 0],
-    ['خصم طلبات', plat ? 'في العلامة المميزة' : 0], ['فرق سعر يتخصم', gap > 0.009 ? -gap : 0], ['إجمالي Apex', gap == null ? null : gap > 0.009 ? o.target : before - rest]];
+  const off = rest + (paid ? plat : 0);                    // what comes off on Apex before matching the total
+  const before = service == null ? null : r2(T(items) + T(fee) + T(service) - off);
+  const gap = before == null || want == null ? null : r2(before - want);
+  const back = gap != null && gap < 0 ? Math.min(-gap, off) : 0;   // Apex lower: the discount is given back first (writer)
+  const left = gap != null && gap < 0 ? r2(-gap - back) : 0;
+  const ap = [['الأصناف', T(items)], ['خدمة طلبات', T(fee)], ['التوصيل (' + (loc?.name || 'المنطقة') + ')', service == null ? null : T(service)], ['خصم المطعم', rest ? -rest : 0],
+    ['خصم طلبات', plat ? (paid ? -plat : 'في العلامة المميزة') : 0], ['فرق يتخصم', gap > 0.009 ? -gap : 0], ['خصم يترجع', back > 0.009 ? back : 0],
+    ['يتسجل على Apex', gap == null ? null : gap > 0.009 ? want : r2(before + back)]];
+  // Why: item prices against Talabat's, delivery against Talabat's delivery + service fee.
+  const why = [];
+  if (!missing && tItems != null) { const d = r2(T(items) - tItems); if (Math.abs(d) > 1) why.push('الأصناف على Apex ' + (d > 0 ? 'أغلى' : 'أرخص') + ' من طلبات بـ ' + money(Math.abs(d)) + (Math.abs(d) > 0.1 * tItems ? ' — غالبًا صنف أو حجم غلط' : ' (فرق أسعار المنيو)')); }
+  if (service != null) { const d = r2(T(service) + T(fee) - (tDel || 0) - (tFee || 0)); if (Math.abs(d) > 1) why.push('التوصيل على Apex (' + money(T(service) + T(fee)) + ') ' + (d > 0 ? 'أكتر' : 'أقل') + ' من توصيل طلبات' + (tFee ? ' ورسومها' : '') + ' (' + money((tDel || 0) + (tFee || 0)) + ') بـ ' + money(Math.abs(d))); }
   const verdict = missing ? '<span class="warn">فاضل ' + missing + ' صنف لسه ماختارتوش</span>' : service == null ? '<span class="warn">اختار المنطقة عشان التوصيل يتحسب</span>'
-    : gap > limit ? '<span class="warn">⚠️ Apex أزيد من طلبات بـ ' + money(gap) + ' — هيتسجل ويتخصم الفرق، بس اتأكد من الأصناف والأحجام</span>' : gap < -1 ? '<span class="warn">⚠️ Apex أقل من طلبات بـ ' + money(-gap) + ' — هيتسجل بسعر Apex، بس اتأكد إن مفيش صنف أو إضافة ناقصة</span>'
-    : '<span style="color:var(--ok,#2c9)">✓ الإجمالي هيطلع زي طلبات' + (gap > 0.009 ? ' (بعد خصم فرق ' + money(gap) + ')' : '') + '</span>';
+    : (Math.abs(gap) <= 0.009 ? '<span style="color:var(--ok,#2c9)">✓ الإجمالي هيطلع زي طلبات بالظبط</span>'
+      : gap > 0 ? '<span' + (gap > 0.1 * want + 15 ? ' class="warn"' : ' style="color:var(--ok,#2c9)"') + '>Apex أزيد بـ ' + money(gap) + ' — هيتخصم ويتسجل ' + money(want) + '</span>'
+      : left <= 0.009 ? '<span style="color:var(--ok,#2c9)">Apex أقل بـ ' + money(-gap) + ' — هيرجع من الخصم ويتسجل ' + money(want) + '</span>'
+      : '<span class="warn">⚠️ Apex أقل من ' + (paid ? 'المدفوع' : 'طلبات') + ' بـ ' + money(left) + ' حتى بعد الخصم — اتأكد من الأصناف والأحجام</span>') +
+      (why.length ? '<div style="font-size:12px;color:var(--muted);margin-top:4px">السبب: ' + why.map(esc).join(' · ') + '</div>' : '');
   // Only the lines that have something (a zero discount is not a line); «لسه» when it is not known yet.
   const has = r => r[1] !== 0 && r[1] !== '0';
   tb.splice(0, tb.length, ...tb.filter(has)); ap.splice(0, ap.length, ...ap.filter(has));
@@ -259,17 +273,20 @@ function autoHtml(o) {
   const br = '<select data-pick="branch"><option value="">اختار الفرع…</option>' + (data.branches || []).map(b => '<option value="' + b.no + '"' + (String(p.branch) === String(b.no) ? ' selected' : '') + '>' + esc(b.name) + '</option>').join('') + '</select>';
   // Delivery area on Apex: the AREA decides the branch, as on Apex (Karim 01-11: a Nasr City customer who ordered
   // from the Tagamoa outlet went to Tagamoa). Every area is listed with its branch; picking one moves the branch to it.
-  const areas = areaList();
+  const all = areaList();
+  // Karim 01-11: the list shows only the chosen branch's areas (the address suggestion still searches them all and
+  // moves the branch when the area belongs to another one).
+  const areas = all.filter(l => !p.branch || !l.branches.length || l.branches.some(b => String(b) === String(p.branch)));
   // Suggested area: the Apex area whose name appears in the customer's address or Talabat area (the longest one).
   if (!p.loc && !p.locTried && (o.customer?.address || o.customer?.area)) {
     p.locTried = true;
     const nz = v => String(v || '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/[ًٌٍَُِّْـ]/g, '').replace(/[^\u0600-\u06ffa-z0-9 ]/gi, ' ').replace(/\s+/g, ' ').trim();
     const addr = ' ' + nz((o.customer.area || '') + ' ' + (o.customer.address || '')) + ' ';
-    const hit = areas.filter(l => nz(l.name).length >= 3 && addr.includes(' ' + nz(l.name) + ' ')).sort((a, b) => nz(b.name).length - nz(a.name).length)[0];
+    const hit = all.filter(l => nz(l.name).length >= 3 && addr.includes(' ' + nz(l.name) + ' ')).sort((a, b) => nz(b.name).length - nz(a.name).length)[0];
     if (hit) { pickArea(p, hit.no); p.locGuess = true; }
   }
-  const cur = areas.find(l => String(l.no) === String(p.loc)), bname = no => (data.branches || []).find(b => String(b.no) === String(no))?.name || ('فرع ' + no);
-  const loc = '<select data-pick="loc"><option value="">اختار المنطقة…</option>' + areas.map(l => '<option value="' + l.no + '"' + (String(p.loc) === String(l.no) ? ' selected' : '') + '>' + esc(l.name) + (l.branches.length ? ' — ' + esc(l.branches.map(bname).join(' / ')) : '') + (l.service != null ? ' (توصيل ' + money(l.service) + ')' : '') + '</option>').join('') + '</select>' +
+  const cur = all.find(l => String(l.no) === String(p.loc)), bname = no => (data.branches || []).find(b => String(b.no) === String(no))?.name || ('فرع ' + no);
+  const loc = '<select data-pick="loc"><option value="">اختار المنطقة…</option>' + areas.map(l => '<option value="' + l.no + '"' + (String(p.loc) === String(l.no) ? ' selected' : '') + '>' + esc(l.name) + (l.service != null ? ' (توصيل ' + money(l.service) + ')' : '') + '</option>').join('') + '</select>' +
     (cur && cur.branches.length && !cur.branches.some(b => String(b) === String(p.branch)) ? ' <span class="bad">المنطقة دي تبع ' + esc(cur.branches.map(bname).join(' / ')) + ' — غيّر الفرع</span>' : '') +
     (p.moved ? ' <span class="warn">الفرع اتغير لـ ' + esc(bname(p.branch)) + ' عشان المنطقة تبعه' + (o.apexBranch && String(o.apexBranch) !== String(p.branch) ? ' (الأوردر جه على ' + esc(bname(o.apexBranch)) + ' في طلبات)' : '') + '</span>' : '');
   // The employee picks by name (nobody knows the Apex numbers): the suggestion is shown by name, other sizes in a list, and a search by name for anything else.
@@ -277,7 +294,10 @@ function autoHtml(o) {
   const lines = fl.map((i, n) => '<div class="pay" style="margin-top:6px;flex-wrap:wrap"><span' + (i.kind === 'addon' ? ' class="warn"' : '') + '>' + esc(i.qty) + '× ' + esc(i.label) + '</span> ← ' +
     (p.items[n] ? '<b>' + esc(nameOf(p.items[n]) || ((i.apex || []).find(a => a.no === p.items[n])?.name) || 'صنف ' + p.items[n]) + '</b>' : '<span class="warn">اختار الصنف على Apex</span>') + ' ' +
     (i.apex?.length > 1 ? '<select data-pick="item" data-n="' + n + '"><option value="">' + (p.items[n] ? 'غيّر الحجم/الصنف…' : 'اختار…') + '</option>' + i.apex.map(a => '<option value="' + esc(a.no) + '"' + (p.items[n] === a.no ? ' selected' : '') + '>' + esc(a.name || nameOf(a.no) || a.no) + '</option>').join('') + '</select>' : '') +
-    '<input data-pick="item" data-find="1" data-n="' + n + '" list="apexItems" placeholder="' + (p.items[n] ? 'صنف تاني؟ اكتب اسمه' : 'اكتب اسم الصنف على Apex') + '" style="width:190px"></div>').join('');
+    // Karim 01-11: another item picked like on Apex — the section first, then its items in Apex's order.
+    (data.sections?.length ? '<select data-pick="sec" data-n="' + n + '"><option value="">' + (p.secs?.[n] != null ? 'قسم تاني…' : 'اختار من أقسام Apex…') + '</option>' + data.sections.map((x, k) => '<option value="' + k + '"' + (String(p.secs?.[n]) === String(k) ? ' selected' : '') + '>' + esc(x.name) + '</option>').join('') + '</select>' +
+      (p.secs?.[n] != null && data.sections[p.secs[n]] ? '<select data-pick="item" data-n="' + n + '"><option value="">اختار الصنف…</option>' + data.sections[p.secs[n]].items.map(no => '<option value="' + esc(no) + '"' + (p.items[n] === no ? ' selected' : '') + '>' + esc(nameOf(no) || no) + (apexPrices.get(no) != null ? ' — ' + money(Math.round(apexPrices.get(no) * 114) / 100) : '') + '</option>').join('') + '</select>' : '') : '') +
+    '<input data-pick="item" data-find="1" data-n="' + n + '" list="apexItems" placeholder="' + (p.items[n] ? 'أو اكتب اسمه' : 'أو اكتب اسم الصنف') + '" style="width:150px"></div>').join('');
   const label = mode === 'shadow' ? 'جرّب التسجيل (مش هيتسجل فعلاً)' : mode === 'test' ? 'سجّله على نسخة التجربة' : 'سجّله على Apex من هنا';
   // Closed: only the title (the lists of areas and items are built when it is opened — the page stays light).
   if (!p.open) return '<details class="box" data-pick-box><summary>' + label + '</summary></details>';
@@ -408,8 +428,14 @@ $('list').addEventListener('click', async e => {
 $('list').addEventListener('change', e => {
   const el = e.target.closest('[data-pick]'); if (!el) return;
   const c = el.closest('.card'), p = picks[c.dataset.k]; if (!p) return;
-  if (el.dataset.pick === 'branch') { p.branch = el.value; p.moved = false; render(true); return; }
+  if (el.dataset.pick === 'branch') {
+    p.branch = el.value; p.moved = false;
+    const a = areaList().find(l => String(l.no) === String(p.loc));
+    if (a && a.branches.length && !a.branches.some(b => String(b) === String(p.branch))) { p.loc = ''; p.locGuess = false; }   // its area is another branch's
+    render(true); return;
+  }
   if (el.dataset.pick === 'loc') { pickArea(p, el.value); render(true); return; }
+  if (el.dataset.pick === 'sec') { (p.secs || (p.secs = {}))[Number(el.dataset.n)] = el.value === '' ? null : Number(el.value); p.open = true; render(true); return; }
   if (el.dataset.pick === 'item') {
     const v = el.value.trim(); if (!v) return;
     // A name typed in the search box → its Apex number (an exact name, else the one name that contains what was typed).
@@ -424,7 +450,7 @@ async function load() {
   try {
     // The Apex items and areas come once (and again only when they change): the page stays light.
     const prev = data, d = await api('GET', '/api/transfer/queue' + (prev?.staticKey ? '?have=' + encodeURIComponent(prev.staticKey) : ''));
-    if (!d.apexItems && prev) { d.apexItems = prev.apexItems; d.locations = prev.locations; }
+    if (!d.apexItems && prev) { d.apexItems = prev.apexItems; d.locations = prev.locations; d.sections = prev.sections; }
     data = d; $('me').textContent = data.me.name; const a = $('auto'); a.textContent = { off: 'التحويل الآلي متوقف — سجّل على Apex بإيدك', shadow: 'التحويل الآلي: معاينة بس — سجّل بإيدك', test: 'التحويل الآلي: تجربة على قاعدة الاختبار — سجّل بإيدك', live: 'التحويل الآلي شغال' }[data.autoTransfer] || ''; a.className = 'pill' + (data.autoTransfer === 'live' ? '' : ' off'); if (!$('list').contains(document.activeElement) || !/^(INPUT|SELECT)$/.test(document.activeElement.tagName)) render(); }
   catch (e) { if (token) toast(e.message); }
 }
