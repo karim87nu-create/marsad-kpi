@@ -170,6 +170,14 @@ function autoHtml(o) {
   const br = '<select data-pick="branch"><option value="">فرع Apex…</option>' + (data.branches || []).map(b => '<option value="' + b.no + '"' + (String(p.branch) === String(b.no) ? ' selected' : '') + '>' + esc(b.name) + '</option>').join('') + '</select>';
   // Delivery area on Apex (decides the delivery service charge), only the chosen branch's areas.
   const areas = (data.locations || []).filter(l => !p.branch || l.branch == null || String(l.branch) === String(p.branch)).sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+  // Suggested area: the Apex area whose name appears in the customer's address (the longest one), when none is chosen yet.
+  if (!p.loc && p.branch && o.customer?.address && !p.locTried) {
+    p.locTried = true;
+    const nz = v => String(v || '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/[ًٌٍَُِّْـ]/g, '').replace(/[^\u0600-\u06ffa-z0-9 ]/gi, ' ').replace(/\s+/g, ' ').trim();
+    const addr = ' ' + nz(o.customer.address) + ' ';
+    const hit = areas.filter(l => nz(l.name).length >= 3 && addr.includes(' ' + nz(l.name) + ' ')).sort((a, b) => nz(b.name).length - nz(a.name).length)[0];
+    if (hit) { p.loc = hit.no; p.locGuess = true; }
+  }
   const loc = '<select data-pick="loc"><option value="">منطقة العميل على Apex…</option>' + areas.map(l => '<option value="' + l.no + '"' + (String(p.loc) === String(l.no) ? ' selected' : '') + '>' + esc(l.name) + (l.service != null ? ' (خدمة ' + money(l.service) + ')' : '') + '</option>').join('') + '</select>';
   // The employee picks by name (nobody knows the Apex numbers): the suggestion is shown by name, other sizes in a list, and a search by name for anything else.
   const nameOf = no => apexNames.get(no) || '';
@@ -180,7 +188,7 @@ function autoHtml(o) {
   const label = mode === 'shadow' ? 'معاينة آلية (من غير كتابة)' : mode === 'test' ? 'تحويل آلي (قاعدة الاختبار)' : 'تحويل آلي لـApex';
   // Closed: only the title (the lists of areas and items are built when it is opened — the page stays light).
   if (!p.open) return '<details class="box" data-pick-box><summary>' + label + '</summary></details>';
-  return '<details class="box"' + (p.open ? ' open' : '') + ' data-pick-box><summary>' + label + '</summary><div class="pay" style="margin-top:6px"><span>الفرع على Apex:</span> ' + br + '</div>' + lines +
+  return '<details class="box"' + (p.open ? ' open' : '') + ' data-pick-box><summary>' + label + '</summary><div class="pay" style="margin-top:6px"><span>الفرع على Apex:</span> ' + br + '</div><div class="pay" style="margin-top:6px"><span>المنطقة على Apex:</span> ' + loc + (p.locGuess ? ' <span class="warn">اقتراح من العنوان — اتأكد</span>' : '') + '</div>' + lines +
     '<div class="actions" style="margin-top:8px"><button data-act="auto">' + label + '</button></div></details>';
 }
 function card(o) {
@@ -277,8 +285,8 @@ $('list').addEventListener('click', async e => {
 $('list').addEventListener('change', e => {
   const el = e.target.closest('[data-pick]'); if (!el) return;
   const c = el.closest('.card'), p = picks[c.dataset.k]; if (!p) return;
-  if (el.dataset.pick === 'branch') { p.branch = el.value; p.loc = ''; render(); return; }
-  if (el.dataset.pick === 'loc') p.loc = el.value;
+  if (el.dataset.pick === 'branch') { p.branch = el.value; p.loc = ''; p.locTried = false; p.locGuess = false; render(); return; }
+  if (el.dataset.pick === 'loc') { p.loc = el.value; p.locGuess = false; }
   if (el.dataset.pick === 'item') {
     const v = el.value.trim(); if (!v) return;
     // A name typed in the search box → its Apex number (an exact name, else the one name that contains what was typed).
