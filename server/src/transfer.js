@@ -292,6 +292,12 @@ function setup(app) {
       // The area's own delivery charge on Apex (as the read-only monitor sent it), for an area nobody ordered to today.
       const daySnap = parseJson((await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(row.day))?.data, {});
       const areas = (Array.isArray(daySnap.locations) ? daySnap.locations : []).filter(l => l?.no === locationNo);
+      // The area decides the branch, as on Apex (Karim 01-11: a Nasr City area was sent to Tagamoa).
+      const owners = [...new Set(areas.map(l => l.branch).filter(x => x != null).map(Number))];
+      if (owners.length && !owners.includes(branchNo)) {
+        const names = new Map(APEX_BRANCHES.map(x => [Number(x.no), x.name]));
+        fail(400, 'المنطقة دي تبع ' + owners.map(n => names.get(n) || ('فرع ' + n)).join(' / ') + ' — غيّر الفرع');
+      }
       const area = areas.find(l => l.branch === branchNo) || areas.find(l => l.branch == null) || areas[0];
       const areaService = Number.isFinite(Number(area?.service)) && area?.service !== null ? Number(area.service) : null;
       const restaurantDiscount = Math.max(0, Number(b.restaurantDiscount) || 0), expectedTotal = Number(b.expectedTotal) || null, targetTotal = Number(b.targetTotal) > 0 ? Math.round(Number(b.targetTotal) * 100) / 100 : null;

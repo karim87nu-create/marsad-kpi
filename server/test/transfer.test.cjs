@@ -96,6 +96,12 @@ test('automatic transfer: off by default, cash only, frozen order handed to the 
     assert.equal((await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'test' })).status, 200);
     assert.equal((await as('POST', '/api/transfer/job', { ...job, payment: 'unknown' })).status, 400, 'payment must be stated');
     assert.equal((await as('POST', '/api/transfer/job', { ...job, items: [{ itemNo: 'x', qty: 1 }] })).status, 400);
+    // The area decides the branch (Karim 01-11): an area of Madinaty (3) cannot go to Tagamoa (1).
+    const okey0 = (await admin('POST', '/api/orders/token')).body.token;
+    await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': okey0 }, body: { v: 1, day: '2026-10-22', online: [], locations: [{ no: 370, name: 'مدنتى', branch: 3, service: 39.47 }, { no: 218, name: 'التجمع الخامس', branch: 1, service: 54.15 }] } });
+    const wrong = await as('POST', '/api/transfer/job', job);
+    assert.equal(wrong.status, 400); assert.match(wrong.body.error, /المنطقة دي تبع مدينتى/);
+    await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': okey0 }, body: { v: 1, day: '2026-10-22', online: [], locations: [{ no: 370, name: 'مدنتى', branch: 1, service: 39.47 }] } });
     assert.equal((await as('POST', '/api/transfer/job', job)).status, 200);
     assert.equal((await as('POST', '/api/transfer/job', job)).status, 409, 'not sent twice');
     const wtoken = (await admin('POST', '/api/apex-writer', { action: 'token' })).body.token;
