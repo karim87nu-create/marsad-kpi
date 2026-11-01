@@ -172,13 +172,11 @@ function payText(o) {
   if (o.payment === 'unpaid') return '<span class="bad">أونلاين ولسه مادفعش — ماتسجلوش قبل الدفع</span>';
   return '<span class="warn">طريقة الدفع مش واضحة من المصدر — بص على الأوردر واختار</span>';
 }
-function discountsHtml(o) {
-  if (!o.discounts?.length) return '<span style="color:var(--muted)">مفيش خصم ظاهر</span>';
-  return o.discounts.map(d => {
-    const where = d.who === 'platform' ? '<span class="ok">على حساب طلبات — مايتخصمش، بيتكتب في العلامة المميزة</span>'
-      : d.who === 'restaurant' ? '<span class="ok">على حساب المطعم — يتخصم من الأوردر</span>' : '<span class="warn">مش واضح الخصم على حساب مين — اسأل المشرف قبل ما تسجل</span>';
-    return '<div>' + esc(d.text) + (d.amount != null ? ' — ' + money(d.amount) : '') + '<br>' + where + '</div>';
-  }).join('');
+function discountsHtml(o, pay) {
+  if (!o.discounts?.length) return '';
+  return o.discounts.map(d => '<div style="font-size:13px">' + esc(d.text) + (d.amount != null ? ' <b>' + money(d.amount) + '</b>' : '') + ' — ' +
+    (d.who === 'platform' ? '<span class="ok">على طلبات: ' + (pay === 'paid' ? 'يتخصم ويتكتب في العلامة المميزة' : 'في العلامة المميزة بس') + '</span>'
+      : d.who === 'restaurant' ? '<span class="ok">على المطعم: يتخصم</span>' : '<span class="warn">مش واضح على حساب مين — اسأل المشرف</span>') + '</div>').join('');
 }
 function itemsHtml(o) {
   if (!o.items?.length) return '<div class="warn">' + (o.detailRead ? 'مفيش أصناف' : 'تفاصيل الأوردر لسه ماوصلتش — بص عليه في ' + (o.source === 'talabat' ? 'طلبات' : 'الموقع')) + '</div>';
@@ -248,7 +246,7 @@ function compareHtml(o, fl, p) {
   const rows = Math.max(tb.length, ap.length);
   let h = '<table style="width:100%;font-size:13px;margin-top:8px;border-collapse:collapse"><tr><th style="text-align:start">' + (o.source === 'talabat' ? 'طلبات' : 'الموقع') + '</th><th></th><th style="text-align:start">على Apex (بالضريبة)</th><th></th></tr>';
   for (let i = 0; i < rows; i++) h += '<tr><td>' + (tb[i]?.[0] || '') + '</td><td>' + (tb[i] ? f(tb[i][1]) : '') + '</td><td>' + (ap[i]?.[0] || '') + '</td><td>' + (ap[i] ? f(ap[i][1]) : '') + '</td></tr>';
-  return '<div class="pay" style="margin-top:8px">' + verdict + '</div><details style="margin-top:4px"><summary style="color:var(--muted);font-size:13px">تفاصيل الفلوس</summary>' + h + '</table>' + whyHtml + '</details>';
+  return h + '</table><div class="pay" style="margin-top:4px">' + verdict + '</div>' + whyHtml;
 }
 // One row per Apex area with the branches it belongs to (LocationBranches) and its delivery charge.
 let areaCache = null, areaSrc = null;
@@ -304,9 +302,8 @@ function autoHtml(o) {
     '<input data-pick="item" data-find="1" data-n="' + n + '" list="apexItems" placeholder="' + (p.items[n] ? 'أو اكتب اسمه' : 'أو اكتب اسم الصنف') + '" style="width:150px"></div></div>')).join('');
   const label = mode === 'shadow' ? 'جرّب التسجيل (مش هيتسجل فعلاً)' : mode === 'test' ? 'سجّله على نسخة التجربة' : 'سجّله على Apex من هنا';
   // Closed: only the title (the lists of areas and items are built when it is opened — the page stays light).
-  if (!p.open) return '<details class="box" data-pick-box><summary>' + label + '</summary></details>';
-  return '<details class="box"' + (p.open ? ' open' : '') + ' data-pick-box><summary>' + label + '</summary><div class="pay" style="margin-top:6px"><span>الفرع:</span> ' + br + '</div><div class="pay" style="margin-top:6px"><span>المنطقة:</span> ' + loc + (p.locGuess ? ' <span class="warn">اخترناها من العنوان — اتأكد منها</span>' : '') + '</div>' + lines + compareHtml(o, fl, p) +
-    '<div class="actions" style="margin-top:8px"><button data-act="auto">' + label + '</button></div></details>';
+  return '<div class="box" data-pick-box><h3>التسجيل على Apex من هنا</h3><div class="pay" style="margin-top:6px"><span>الفرع:</span> ' + br + '</div><div class="pay" style="margin-top:6px"><span>المنطقة:</span> ' + loc + (p.locGuess ? ' <span class="warn">اخترناها من العنوان — اتأكد منها</span>' : '') + '</div>' + lines + compareHtml(o, fl, p) +
+    '<div class="actions" style="margin-top:8px"><button data-act="auto">' + label + '</button></div></div>';
 }
 function card(o) {
   // Already on Apex or out with the rider: one short line (the server sends no details for them).
@@ -327,10 +324,10 @@ function card(o) {
         (o.customer?.original ? '<div style="color:var(--muted);font-size:12px;margin-top:4px" dir="auto">مترجم من: ' + esc(o.customer.original) + '</div>' : '') + '</div>' +
     '</div>' +
     (o.note ? '<div class="box"><h3>ملاحظة العميل</h3>' + esc(o.note) + (o.noteOriginal ? '<div style="color:var(--muted);font-size:12px;margin-top:4px" dir="auto">الأصل: ' + esc(o.noteOriginal) + '</div>' : '') + '</div>' : '') +
-    // Karim 01-11 («ابسط»): the total in one line; the discount boxes and Talabat's bill only when opened.
-    '<div class="pay"><span>الإجمالي:</span> <b>' + (o.total != null ? money(o.total) : '—') + '</b>' + ((o.discounts || []).length ? ' <span style="color:var(--muted);font-size:13px">· فيه خصم</span>' : '') + '</div>' +
-    '<details><summary style="color:var(--muted);font-size:13px">الخصم والفاتورة</summary><div class="grid">' + '<div class="box"><h3>الخصم</h3>' + discountsHtml(o) + '</div>' + '<div class="box"><h3>القيم</h3>' + (o.subtotal != null ? 'قبل الخصم: ' + money(o.subtotal) + '<br>' : '') + (o.total != null ? 'الإجمالي: ' + money(o.total) : '') + (o.target != null ? '<br><b>لازم Apex يطلع: ' + money(o.target) + '</b>' : '') + (o.shipping ? '<br>توصيل: ' + money(o.shipping) : '') + (o.paymentTitle ? '<br>' + esc(o.paymentTitle) : '') + '</div>' + '</div>' +
-      (o.bill?.length ? o.bill.map(b => '<div style="font-size:13px">' + esc(b.text) + '</div>').join('') : '') + '</details>' +
+    // Karim 01-11: nothing folded, few short lines — the total, each discount and Talabat's bill in one line.
+    '<div class="pay"><span>الإجمالي:</span> <b>' + (o.total != null ? money(o.total) : '—') + '</b>' + (o.subtotal != null && o.subtotal !== o.total ? ' <span style="color:var(--muted);font-size:13px">(الأصناف ' + money(o.subtotal) + ')</span>' : '') + '</div>' +
+    discountsHtml(o, pay) +
+    (o.bill?.length ? '<div style="font-size:12px;color:var(--muted);margin-top:4px">فاتورة طلبات: ' + o.bill.map(b => esc(String(b.text).replace(/\s*\|\s*/, ': '))).join(' · ') + '</div>' : '') +
     itemsHtml(o) + autoHtml(o) +
     (done ? '' : '<div class="actions">' +
       (freeJob ? '<button data-act="claim">أنا هسجله</button>' : '') +
