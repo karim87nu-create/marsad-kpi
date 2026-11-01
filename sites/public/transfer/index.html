@@ -298,11 +298,12 @@ function card(o) {
     '<div class="pay"><span>الدفع:</span> ' + payText(o) + ' <button class="' + (pay === 'cash' ? 'on' : 'ghost') + ' copy" data-pay="cash">كاش</button><button class="' + (pay === 'paid' ? 'on' : 'ghost') + ' copy" data-pay="paid">مدفوع</button></div>' +
     '<div class="grid">' +
       '<div class="box"><h3>العميل</h3>' + esc(o.customer?.name || '—') + '<br>' + (o.customer?.phone ? esc(o.customer.phone) + ' <button class="ghost copy" data-copytext="' + esc(o.customer.phone) + '">نسخ</button>' : '<span class="warn">الرقم مش ظاهر</span>') + '</div>' +
-      '<div class="box"><h3>العنوان</h3>' + (o.customer?.address ? esc(o.customer.address) : '<span class="warn">العنوان مش ظاهر — خده من الأوردر</span>') + '</div>' +
+      '<div class="box"><h3>العنوان</h3>' + (o.customer?.address ? esc(o.customer.address) : '<span class="warn">العنوان مش ظاهر — خده من الأوردر</span>') +
+        (o.customer?.original ? '<div style="color:var(--muted);font-size:12px;margin-top:4px" dir="auto">مترجم من: ' + esc(o.customer.original) + '</div>' : '') + '</div>' +
       '<div class="box"><h3>الخصم</h3>' + discountsHtml(o) + '</div>' +
       '<div class="box"><h3>القيم</h3>' + (o.subtotal != null ? 'قبل الخصم: ' + money(o.subtotal) + '<br>' : '') + (o.total != null ? 'الإجمالي: ' + money(o.total) : '') + (o.target != null ? '<br><b>لازم Apex يطلع: ' + money(o.target) + '</b>' : '') + (o.shipping ? '<br>توصيل: ' + money(o.shipping) : '') + (o.paymentTitle ? '<br>' + esc(o.paymentTitle) : '') + '</div>' +
     '</div>' +
-    (o.note ? '<div class="box"><h3>ملاحظة العميل</h3>' + esc(o.note) + '</div>' : '') +
+    (o.note ? '<div class="box"><h3>ملاحظة العميل</h3>' + esc(o.note) + (o.noteOriginal ? '<div style="color:var(--muted);font-size:12px;margin-top:4px" dir="auto">الأصل: ' + esc(o.noteOriginal) + '</div>' : '') + '</div>' : '') +
     (o.bill?.length ? '<details><summary style="color:var(--muted);font-size:13px">الفاتورة زي ما طلبات كاتباها</summary>' + o.bill.map(b => '<div style="font-size:13px">' + esc(b.text) + '</div>').join('') + '</details>' : '') +
     itemsHtml(o) + autoHtml(o) +
     (done ? '' : '<div class="actions">' +

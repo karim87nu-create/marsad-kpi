@@ -5,7 +5,7 @@ import { buildCore } from '../../../lib/marsad/core.js';
 // @ts-ignore
 import { d1Adapter } from '../../../lib/marsad/db.js';
 
-type Env = { DB: unknown; MARSAD_SECRET?: string; MARSAD_ADMIN_PASSWORD?: string; TELEGRAM_API?: string };
+type Env = { DB: unknown; MARSAD_SECRET?: string; MARSAD_ADMIN_PASSWORD?: string; TELEGRAM_API?: string; OPENAI_API_KEY?: string };
 let app: { fetch(request: Request, options: { waitUntil(p: Promise<unknown>): void }): Promise<Response> } | null = null;
 
 function server() {
@@ -16,6 +16,7 @@ function server() {
     secret: e.MARSAD_SECRET || undefined,
     adminPassword: e.MARSAD_ADMIN_PASSWORD || undefined,
     telegramApi: e.TELEGRAM_API || undefined,
+    openaiKey: e.OPENAI_API_KEY || undefined,   // optional: English addresses/comments → Arabic (Karim 01-11)
     telegramTimer: 'requests',
     allowedOrigins: ['https://karim87nu-create.github.io'],
   });

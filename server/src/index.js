@@ -29,6 +29,7 @@ function configFromEnv(env = process.env) {
     deviceTokens: list(env.DEVICE_TOKENS),
     allowedOrigins: list(env.ALLOWED_ORIGINS || 'https://karim87nu-create.github.io'),
     telegramApi: env.TELEGRAM_API || undefined,
+    openaiKey: env.OPENAI_API_KEY || undefined,
   };
 }
 

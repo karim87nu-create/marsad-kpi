@@ -33,7 +33,7 @@ test('transfer page: employee PIN sign-in, queue with label data, one claim at a
     const o = q.orders[0];
     assert.equal(o.code, '2701'); assert.equal(o.payment, 'cash');
     assert.deepEqual(o.discounts, [{ text: 'Talabat-funded discount | -E£40.00', amount: 40, who: 'platform' }]);
-    assert.deepEqual(o.customer, { name: 'Mona', phone: '01000000000', address: 'Street 9' });
+    assert.deepEqual(o.customer, { name: 'Mona', phone: '01000000000', address: 'شارع 9', original: 'Mona — Street 9' });
     assert.deepEqual(o.items[0].modifiers, ['Extra bread']);
     assert.ok(o.items[0].apex.some(a => a.no), 'known Apex item suggested');
 

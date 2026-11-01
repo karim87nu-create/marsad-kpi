@@ -234,6 +234,21 @@ function setup(app) {
     // Orders already on Apex or out with the rider: a short line only (no items, bill or customer) — most of the day's orders.
     const slim = o => ({ source: o.source, ref: o.ref, code: o.code, at: o.at, status: o.status, out: o.out, branch: o.branch, apexBranch: o.apexBranch, total: o.total, apex: o.apex, done: true });
     const list = base.list.map(o => ({ ...(o.apex || o.out ? slim(o) : o), ...(o.source === 'talabat' ? { onLive: onLive(o.ref) } : {}), job: jobOf(o.source, o.source === 'site' ? String(o.ref) : o.ref) }));
+    // English typed by the customer (address, name, comments) shown and sent in Arabic (Karim 01-11); the original is kept.
+    if (app.toArabic) {
+      const open = list.filter(o => !o.done), texts = [];
+      for (const o of open) texts.push(o.customer?.name, o.customer?.address, o.customer?.area, o.note, ...(o.items || []).map(i => i.note));
+      const ar = await app.toArabic(texts.filter(Boolean), { waitUntil: ctx.waitUntil });
+      const tr = v => (v && ar.get(v)) || v, changed = v => v && ar.get(v) && ar.get(v) !== v;
+      for (let i = 0; i < list.length; i++) {
+        const o = list[i]; if (o.done) continue;
+        const c = o.customer;
+        list[i] = { ...o,
+          ...(c ? { customer: { ...c, name: tr(c.name), address: tr(c.address), area: tr(c.area), ...(changed(c.address) || changed(c.name) ? { original: [c.name, c.address].filter(Boolean).join(' — ') } : {}) } } : {}),
+          ...(changed(o.note) ? { note: tr(o.note), noteOriginal: o.note } : {}),
+          ...(o.items?.some(x => changed(x.note)) ? { items: o.items.map(x => changed(x.note) ? { ...x, note: tr(x.note) } : x) } : {}) };
+      }
+    }
     // Until an admin chooses, the automatic transfer only previews (shadow): it never writes to Apex.
     const mode = (await db.prepare("SELECT value FROM settings WHERE key = 'apex_bridge_mode'").get())?.value || 'shadow';
     const locations = (Array.isArray(snap.locations) ? snap.locations : []).filter(l => Number.isInteger(l?.no)).map(l => ({ no: l.no, name: String(l.name || ''), branch: l.branch ?? null, service: l.service ?? null }));
