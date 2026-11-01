@@ -179,10 +179,10 @@ BEGIN TRY
     -- The same fields Apex's own customer screen fills (Karim 01-11: our customers opened empty in Apex — it reads Phone,
     -- the area (LocationNo), CType and UBranchNo, not Mobile/BranchNo); and one Customers_Log row like every save there.
     INSERT INTO dbo.Customers (CustNo, Name, CType, Phone, Address, FlatNo, FloorNo, Sign, CLedge, LocationNo, Note, UBranchNo, StreetNo, ZoneNo, FirstOrder, LastOrder, LastOrderNo, ShiftOrderNo, LastOrderCash)
-    VALUES (@Cust, LEFT(@Label, 50), N'أفراد', @Phone, LEFT(@Address, 200), LEFT(@Flat, 20), LEFT(@Floor, 20), LEFT(@Sign, 50), '0', @LocationNo, '.', @Branch, 0, 0, @Date, @Date, 0, 0, 0);
+    VALUES (@Cust, LEFT(@Label, 50), N'أفراد', @Phone, LEFT(@Address, 100), LEFT(@Flat, 20), LEFT(@Floor, 20), LEFT(@Sign, 50), '0', @LocationNo, '.', @Branch, 0, 0, @Date, @Date, 0, 0, 0);
     IF HAS_PERMS_BY_NAME('dbo.Customers_Log', 'OBJECT', 'INSERT') = 1
       INSERT INTO dbo.Customers_Log (CustNo, SNo, Name, CType, Phone, Address, FlatNo, FloorNo, Sign, CLedge, LocationNo, Note, UBranchNo, StreetNo, TransDate, ModifyUser)
-      VALUES (@Cust, 1, LEFT(@Label, 50), N'أفراد', @Phone, LEFT(@Address, 200), LEFT(@Flat, 20), LEFT(@Floor, 20), LEFT(@Sign, 50), '0', @LocationNo, '.', @Branch, 0, @Now, 'MARSAD');
+      VALUES (@Cust, 1, LEFT(@Label, 50), N'أفراد', @Phone, LEFT(@Address, 100), LEFT(@Flat, 20), LEFT(@Floor, 20), LEFT(@Sign, 50), '0', @LocationNo, '.', @Branch, 0, @Now, 'MARSAD');
   END
   ELSE BEGIN
     -- A customer found by phone: this order's name, address, area, floor and flat replace the saved ones, as staff do on
@@ -190,7 +190,7 @@ BEGIN TRY
     -- Apex prints the customer card, not the order). One Customers_Log row, like every change there.
     UPDATE dbo.Customers SET Phone = CASE WHEN ISNULL(RTRIM(Phone), '') = '' THEN @Phone ELSE Phone END, CType = ISNULL(CType, N'أفراد'), Note = ISNULL(Note, '.'),
       Name = CASE WHEN @Label <> '' THEN LEFT(@Label, 50) ELSE Name END,
-      Address = CASE WHEN @Address <> '' THEN LEFT(@Address, 200) ELSE Address END,
+      Address = CASE WHEN @Address <> '' THEN LEFT(@Address, 100) ELSE Address END,
       LocationNo = ISNULL(@LocationNo, LocationNo), UBranchNo = @Branch,
       FloorNo = CASE WHEN @Floor <> '' THEN LEFT(@Floor, 20) ELSE FloorNo END, FlatNo = CASE WHEN @Flat <> '' THEN LEFT(@Flat, 20) ELSE FlatNo END,   -- none in the order: the saved ones stay
       Sign = CASE WHEN @Sign <> '' THEN LEFT(@Sign, 50) ELSE Sign END
@@ -215,8 +215,8 @@ BEGIN TRY
   SELECT @OrderNo, @ShiftSerial, @BranchShift, @TypeSerial, t.TakeAwayLoc, @Cust, t.TableNo, t.GuestNo, 0, 0, @Date, @Time, @UserNo,
     0, 0, @Shift, t.TransType, @Sub, @Service, 0, @Tax, 0, @Time, @RestDiscount, 0, 0, @PayWay, CASE WHEN @PayWay = 'Ledge' THEN 0 ELSE @Total END, 0,
     LEFT(@Remarks, 100), @Pos, CASE WHEN @RestDiscount > 0 THEN t.DiscountType ELSE NULL END, t.HallNo, 1, DATEPART(hour, @Now), '0', NULL, CASE WHEN @PayWay = 'Ledge' THEN 0 ELSE @Total END, '0', 0, 0, '', 0, 0, @Branch, @BranchOrderNo,
-    0, @TaxRatio, 0, @PosSerial, @CheckNo, @Time, t.Otlob, '', @OnlineType, '', '', 0, t.DeliveryTrack, @Phone, LEFT(@Label, 100),
-    LEFT(@Address, 250), LEFT(@Sign, 100), '', @Phone, 0, 1, @LocationNo, LEFT(@Floor, 20), LEFT(@Flat, 20), 0, NEWID()
+    0, @TaxRatio, 0, @PosSerial, @CheckNo, @Time, t.Otlob, '', @OnlineType, '', '', 0, t.DeliveryTrack, @Phone, LEFT(@Label, 50),
+    LEFT(@Address, 100), LEFT(@Sign, 100), '', @Phone, 0, 1, @LocationNo, LEFT(@Floor, 20), LEFT(@Flat, 20), 0, NEWID()
   FROM (SELECT TOP 1 * FROM (
           SELECT 0 AS o, TakeAwayLoc, TableNo, GuestNo, TransType, DiscountType, HallNo, Otlob, DeliveryTrack FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderNo = @Tpl
           UNION ALL SELECT 0, TakeAwayLoc, TableNo, GuestNo, TransType, DiscountType, HallNo, Otlob, DeliveryTrack FROM dbo.Orders_M WITH (NOLOCK) WHERE OrderNo = @Tpl AND @TplArchive = 1
@@ -281,9 +281,10 @@ function Write-Order($c, $job, [string]$mode){
     [void]$cmd.Parameters.AddWithValue("@n$i", [string]$l.note)
   }
   $cmd.CommandText = $decl + $Batch
+  # The address loses the floor/flat parts and «، القاهرة»: Apex keeps 100 characters of it (Karim 01-11: «String or binary data would be truncated»).
   $p = @{ '@Exec' = $(if ($mode -eq 'shadow') { 0 } else { 1 }); '@IsTest' = $(if ($mode -eq 'test') { 1 } else { 0 }); '@PayWay' = $(if ($job.payment -eq 'paid') { 'Ledge' } else { 'Cash' }); '@Floor' = $(if ([string]$job.customer.address -match '(?:الدور|الطابق)\s*[:：]\s*([^،,—\-]+)') { $Matches[1].Trim() } else { '' }); '@Flat' = $(if ([string]$job.customer.address -match 'الشقة\s*[:：]\s*([^،,—\-]+)') { $Matches[1].Trim() } else { '' }); '@Pos' = $WriterPos; '@LocationNo' = [int]$job.locationNo; '@ServiceItem' = [string]$TalabatServiceItem; '@RefPos' = $(if ($mode -eq 'test') { $RefPosTest } else { $RefPos }); '@Branch' = [int]$job.branchNo
           '@Marker' = ('M' + $(if ($job.source -eq 'site') { 'S' } else { 'T' }) + ':' + $job.ref); '@Kind' = [string]$job.source; '@Phone' = [string]$job.customer.phone
-          '@Label' = [string]$job.label; '@Address' = (([string]$job.customer.address) -replace '\s*—\s*(?:الدور|الطابق|الشقة)\s*[:：]\s*[^—]*', '').Trim(); '@Sign' = [string]$job.sign; '@Remarks' = [string]$job.note
+          '@Label' = [string]$job.label; '@Address' = ((([string]$job.customer.address) -replace '\s*—\s*(?:الدور|الطابق|الشقة)\s*[:：]\s*[^—]*', '') -replace '\s*[،,]\s*(?:القاهرة|Cairo|Egypt|مصر)\s*(?=—|$)', '').Trim(); '@Sign' = [string]$job.sign; '@Remarks' = [string]$job.note
           '@NoTpl' = $(if ($mode -eq 'test' -and $job.noTemplate) { 1 } else { 0 }); '@AreaService' = $(if ($job.areaService -ne $null -and "$($job.areaService)" -ne '') { [decimal]$job.areaService } else { [decimal]-1 }); '@RestDiscount' = [decimal]$job.restaurantDiscount; '@Target' = $(if ($job.targetTotal) { [decimal]$job.targetTotal } else { [decimal]0 }); '@AddPrinted' = $(if ($AddPrintedOrders) { 1 } else { 0 }); '@PrintedFlag' = $PrintedFlag; '@UserNo' = $WriterUserNo
           '@TimeText' = (Get-Date).ToString('hh:mm:ss tt', [Globalization.CultureInfo]::GetCultureInfo('ar-EG')) }
   foreach($k in $p.Keys){ [void]$cmd.Parameters.AddWithValue($k, $p[$k]) }
