@@ -4,6 +4,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>مرصد الدهان — تحويل الأوردرات</title>
 <style>
+#login>*{min-width:0;width:100%}#login input{text-align:center;font-size:18px}
 @font-face{font-family:"Plex Arabic";src:url(../admin/fonts/plex-arabic-arabic-400.woff2) format("woff2");font-weight:400;font-display:swap;unicode-range:U+0600-06FF,U+0750-077F,U+FB50-FDFF,U+FE70-FEFF}
 @font-face{font-family:"Plex Arabic";src:url(../admin/fonts/plex-arabic-arabic-700.woff2) format("woff2");font-weight:700;font-display:swap;unicode-range:U+0600-06FF,U+0750-077F,U+FB50-FDFF,U+FE70-FEFF}
 @font-face{font-family:"Plex Arabic";src:url(../admin/fonts/plex-arabic-latin-400.woff2) format("woff2");font-weight:400;font-display:swap;unicode-range:U+0000-00FF,U+2000-206F}
@@ -22,7 +23,7 @@ header h1{font-size:18px;margin:0 0 0 auto}
 .pill{border-radius:999px;padding:3px 10px;font-size:13px;border:1px solid var(--line);color:var(--muted)}
 .pill.off{border-color:#7f1d1d;color:#fca5a5}
 main{max-width:1100px;margin:0 auto;padding:16px}
-#login{max-width:340px;margin:12vh auto;padding:24px;background:var(--panel);border:1px solid var(--line);border-radius:14px;display:grid;gap:12px;text-align:center}
+#login{width:calc(100% - 32px);max-width:340px;margin:12vh auto;padding:24px;background:var(--panel);border:1px solid var(--line);border-radius:14px;display:grid;gap:12px;text-align:center}
 .bar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;align-items:center}
 .count{color:var(--muted);font-size:13px;margin-inline-start:auto}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px;display:grid;gap:10px}
@@ -96,15 +97,27 @@ function toast(t) { const el = $('toast'); el.textContent = t; el.style.display 
 async function api(method, path, body) {
   const r = await fetch(API + path, { method, headers: { 'content-type': 'application/json', ...(token ? { 'x-transfer-session': token } : {}) }, body: body ? JSON.stringify(body) : undefined });
   const j = await r.json().catch(() => ({}));
-  if (r.status === 401 && path !== '/api/transfer/login') { logout(); throw new Error('سجل دخول تاني'); }
+  if (r.status === 401 && path !== '/api/transfer/login') { logout(); $('loginErr').textContent = j.error || 'سجل دخول تاني'; throw new Error('سجل دخول تاني'); }
   if (!r.ok) throw new Error(j.error || 'حصل خطأ');
   return j;
 }
 function logout() { token = null; try { sessionStorage.removeItem('marsadTransfer'); } catch {} $('app').hidden = true; $('login').hidden = false; }
+// Phones with an Arabic keyboard type ٠١٢٣ (Karim 01-11: «بدوس دخول مش بيدخل»): the PIN is turned into 0123 first,
+// the button says it is working, a slow network ends in a message, and any failure is written under the button.
+const latin = v => String(v || '').replace(/[\u0660-\u0669]/g, d => d.charCodeAt(0) - 0x660).replace(/[\u06F0-\u06F9]/g, d => d.charCodeAt(0) - 0x6F0).replace(/\D/g, '');
 $('go').onclick = async () => {
-  $('loginErr').textContent = '';
-  try { const r = await api('POST', '/api/transfer/login', { pin: $('pin').value.trim() }); token = r.token; try { sessionStorage.setItem('marsadTransfer', token); } catch {} $('pin').value = ''; boot(); }
-  catch (e) { $('loginErr').textContent = e.message; }
+  const go = $('go'), err = $('loginErr'), pin = latin($('pin').value);
+  if (go.disabled) return;
+  err.textContent = '';
+  if (!pin) { err.textContent = 'اكتب الرقم السري (أرقام بس)'; return; }
+  go.disabled = true; go.textContent = 'جاري الدخول…';
+  const slow = setTimeout(() => { err.textContent = 'النت بطيء… لسه بيحاول'; }, 6000);
+  try {
+    const r = await api('POST', '/api/transfer/login', { pin });
+    token = r.token; try { sessionStorage.setItem('marsadTransfer', token); } catch {}
+    $('pin').value = ''; err.textContent = ''; boot();
+  } catch (e) { err.textContent = /fetch|network|load/i.test(e.message) ? 'مفيش اتصال بالسيرفر — جرّب تاني' : e.message; }
+  finally { clearTimeout(slow); go.disabled = false; go.textContent = 'دخول'; }
 };
 $('pin').onkeydown = e => { if (e.key === 'Enter') $('go').click(); };
 $('out').onclick = logout;

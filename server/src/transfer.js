@@ -98,7 +98,7 @@ function setup(app) {
   app.afterRequest((now, method, path) => { if (method !== 'GET' && /^\/api\/(?:apex-writer|transfer)\//.test(path || '')) queueCache.clear(); });
   // ---- sign-in with the employee's own PIN (the same one used for work), separate from the admin password ----
   app.route('POST', '/api/transfer/login', async ctx => {
-    const pin = ctx.body.pin, key = 'transfer|' + ctx.ip;
+    const pin = typeof ctx.body.pin === 'string' ? ctx.body.pin.trim().replace(/[\u0660-\u0669]/g, d => d.charCodeAt(0) - 0x660).replace(/[\u06F0-\u06F9]/g, d => d.charCodeAt(0) - 0x6F0) : ctx.body.pin, key = 'transfer|' + ctx.ip;
     if (typeof pin !== 'string' || !/^\d{1,32}$/.test(pin)) fail(400, 'اكتب الرقم السري');
     if (app.limiters.employeeLogin.blocked(key, ctx.now)) fail(429, 'محاولات كثيرة؛ انتظر 15 دقيقة');
     const e = await app.employeeByPin(pin);
