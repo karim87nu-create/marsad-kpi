@@ -96,6 +96,35 @@ function setup(app) {
   // rebuilt the whole day (Karim 01-11: «الصفحة تقيلة»). The orders are now at most 8 s old; only the page's own actions
   // (claim, entered, auto) and the writer's answers are shown at once (claims are read fresh on every request anyway).
   app.afterRequest((now, method, path) => { if (method !== 'GET' && /^\/api\/(?:apex-writer|transfer)\//.test(path || '')) queueCache.clear(); });
+  // ---- alerts for the automatic transfer (call center group) ----
+  // Apex's English errors in the words the employee needs (same as the transfer page).
+  function plainError(e) {
+    const t = String(e || '').replace(/^Exception calling "\w+" with "\d+" argument\(s\): /, '').replace(/^"|"$/g, '');
+    const M = [[/no delivery charge known/i, 'المنطقة ملهاش سعر توصيل على Apex'], [/not in Apex/i, 'فيه صنف مش موجود على Apex'], [/stopped on Apex/i, 'فيه صنف موقوف على Apex'],
+      [/no price on Apex/i, 'فيه صنف ملوش سعر أونلاين على Apex'], [/business day is not open|no open day/i, 'يوم Apex لسه ما اتفتحش'], [/later day is open|stale/i, 'Apex فاتح يوم تاني'],
+      [/timed out|Unable to connect|remote name|connection/i, 'Apex مش بيرد'], [/truncated/i, 'كلام أطول من خانة على Apex'], [/overflow/i, 'رقم مش مظبوط في الأوردر']];
+    for (const [re, msg] of M) if (re.test(t)) return msg;
+    return /[\u0600-\u06ff]/.test(t) ? t.slice(0, 120) : 'مشكلة على Apex';
+  }
+  async function transferAlert(key, payload, source, ref, why, now) {
+    const c = await db.prepare('SELECT rules FROM telegram_config WHERE id = 1').get();
+    const rules = parseJson(c?.rules, {}); if (rules.transferFailed === false) return;
+    const branch = APEX_BRANCHES.find(b => b.no === Number(payload.branchNo))?.name;
+    const text = '🔴 التحويل الآلي | ' + (source === 'talabat' ? 'طلبات' : 'الموقع') + ' ' + (payload.code ? '#' + payload.code : ref) + (branch ? ' — ' + branch : '') +
+      '\n' + why + (payload.by ? '\nبعته: ' + payload.by : '') + '\nسجّله على Apex بإيدك دلوقتي (بالكود في خانة الاسم)';
+    await db.prepare("INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, sent_at, target) VALUES (?, 'transferFailed', NULL, ?, ?, NULL, 'online')").run(key, text, now);
+  }
+  // Sent to the writer and not answered in 3 minutes: the writer on the cashier PC is not working.
+  let lastStuck = 0;
+  app.afterRequest(async now => {
+    if (now - lastStuck < 60000) return; lastStuck = now;
+    const rows = await db.prepare("SELECT source, ref, at, payload FROM transfer_jobs WHERE state IN ('auto_pending', 'auto_sending') AND at < ? AND at > ?").all(now - 3 * 60000, now - 6 * 3600000);
+    for (const j of rows) {
+      const p = parseJson(j.payload, {}); if (p.db !== 'live') continue;
+      await transferAlert('transfer:stuck:' + j.source + ':' + j.ref, p, j.source, j.ref, 'مستني من ' + Math.round((now - j.at) / 60000) + ' دقيقة وكاتب Apex على جهاز الكاشير مارد', now);
+    }
+  });
+
   // ---- sign-in with the employee's own PIN (the same one used for work), separate from the admin password ----
   app.route('POST', '/api/transfer/login', async ctx => {
     const pin = typeof ctx.body.pin === 'string' ? ctx.body.pin.trim().replace(/[\u0660-\u0669]/g, d => d.charCodeAt(0) - 0x660).replace(/[\u06F0-\u06F9]/g, d => d.charCodeAt(0) - 0x6F0) : ctx.body.pin, key = 'transfer|' + ctx.ip;
@@ -399,6 +428,11 @@ function setup(app) {
       .run(state, JSON.stringify(result), ctx.now, source, ref);
     if (!r.changes) fail(409, 'الأوردر مش في حالة إرسال');
     await app.audit('apex_writer_result', null, { source, ref, ...result });
+    // Karim 01-11 (#53 stayed «ماتسجلش» for 3 hours): a failed automatic transfer is told to the call center at once.
+    if (state === 'auto_failed' && result.db === 'live') {
+      const job = await db.prepare('SELECT payload FROM transfer_jobs WHERE source = ? AND ref = ?').get(source, ref);
+      await transferAlert('transfer:failed:' + source + ':' + ref, parseJson(job?.payload, {}), source, ref, 'ماتسجلش على Apex — ' + plainError(result.error), ctx.now);
+    }
     return { ok: true };
   });
 }

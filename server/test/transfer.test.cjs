@@ -255,3 +255,32 @@ test('transfer page: a live order read from the page data (real shape, 01-11-202
     assert.deepEqual(o.items[0].freeOptions, ['رول']);
   } finally { await t.close(); }
 });
+
+test('a failed or stuck live automatic transfer is told to the call center at once (Karim 01-11: #53)', async () => {
+  const t = await start({ at: Date.now() });
+  try {
+    const admin = await t.admin();
+    await t.employee(admin, { name: 'سارة', code: 'E1', pin: '1111' });
+    const sara = (await t.call('POST', '/api/transfer/login', { body: { pin: '1111' } })).body.token;
+    const as = (method, path, body) => t.call(method, path, { body, headers: { 'x-transfer-session': sara } });
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const push = id => t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { codes: [{ id, code: id.slice(-2), store: 'الدهان، التجمع الخامس' }], orders: [{ id, store: 'الدهان، التجمع الخامس - البنفسج', status: 'ACCEPTED', placedAt: new Date(t.clock.now).toISOString(), total: 300 }] } });
+    await push('3977600053'); await push('3977600054');
+    assert.equal((await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'live', confirm: 'LIVE' })).status, 200);
+    const job = ref => ({ source: 'talabat', ref, action: 'auto', payment: 'cash', branchNo: 1, locationNo: 218, items: [{ itemNo: '0108004', qty: 2 }], expectedTotal: 300, code: ref.slice(-2), label: 'x' });
+    assert.equal((await as('POST', '/api/transfer/job', job('3977600053'))).status, 200);
+    const wtoken = (await admin('POST', '/api/apex-writer', { action: 'token' })).body.token;
+    const w = (path, body) => t.call('POST', path, { body: body || {}, headers: { 'x-apex-writer': wtoken } });
+    assert.equal((await w('/api/apex-writer/next')).body.job.ref, '3977600053');
+    await w('/api/apex-writer/result', { source: 'talabat', ref: '3977600053', ok: false, db: 'live', error: 'Exception calling "ExecuteReader" with "0" argument(s): "String or binary data would be truncated."' });
+    const log = () => t.app.db.raw.prepare("SELECT key, text, target FROM telegram_log WHERE kind = 'transferFailed' ORDER BY id").all();
+    let l = log();
+    assert.equal(l.length, 1); assert.equal(l[0].target, 'online'); assert.match(l[0].text, /#53/); assert.match(l[0].text, /كلام أطول من خانة/); assert.match(l[0].text, /سجّله على Apex بإيدك/);
+    // Sent and never answered: after 3 minutes, one message.
+    assert.equal((await as('POST', '/api/transfer/job', job('3977600054'))).status, 200);
+    t.advance(4 * 60000); await admin('GET', '/api/apex-writer'); await new Promise(r => setTimeout(r, 30));
+    l = log(); assert.equal(l.length, 2); assert.match(l[1].text, /#54/); assert.match(l[1].text, /مارد/);
+    t.advance(2 * 60000); await admin('GET', '/api/apex-writer'); await new Promise(r => setTimeout(r, 30));
+    assert.equal(log().length, 2, 'once');
+  } finally { await t.close(); }
+});
