@@ -185,9 +185,10 @@ function itemsHtml(o) {
   return '<ul class="items">' + o.items.map(i => '<li><b>' + esc(i.qty) + '×</b> ' + esc(i.name) + (i.price != null ? ' <span style="color:var(--muted)">(' + money(i.price) + ')</span>' : '') +
     (i.sizeOption ? '<div class="mods">الحجم: ' + esc(i.sizeOption) + '</div>' : '') +
     ((i.freeOptions || [])?.length ? '<div class="mods">اختيارات ببلاش (تتكتب في تعليق الأوردر): ' + i.freeOptions.map(esc).join('، ') + '</div>' : '') +
-    (i.addons?.length ? '<div class="warn">إضافات بفلوس (كل واحدة بتتسجل صنف لوحدها): ' + i.addons.map(a => esc(a.qty) + '× ' + esc(a.name) + ' (' + money(a.price) + ')' + (a.apex?.length ? ' → ' + a.apex.map(x => esc(x.no) + (x.name ? ' ' + esc(x.name) : '')).join(' أو ') : '')).join('، ') + '</div>' : '') +
+    (i.addons?.length ? '<div class="warn">إضافات بفلوس (كل واحدة بتتسجل صنف لوحدها): ' + i.addons.map(a => esc(a.qty) + '× ' + esc(a.name) + ' (' + money(a.price) + ')' + (a.apex?.length ? ' → ' + a.apex.map(x => esc(x.name || x.no)).join(' أو ') : '')).join('، ') + '</div>' : '') +
     (o.source === 'talabat' && !i.modifiersComplete ? '<div class="warn">الإضافات مش ظاهرة كاملة — بص عليها في طلبات</div>' : '') +
-    (o.source === 'talabat' ? (i.apex?.length ? '<div class="apex">على Apex: ' + i.apex.map(a => esc(a.no) + (a.name ? ' ' + esc(a.name) : '')).join(' أو ') + (i.apex.length > 1 ? ' <span class="warn">(اختار الحجم الصح)</span>' : '') + '</div>'
+    // Names only, at most three (Karim 01-11: «ابسط»); the numbers and the full list are in the picker below.
+    (o.source === 'talabat' ? (i.apex?.length ? '<div class="apex">على Apex: ' + i.apex.slice(0, 3).map(a => esc(a.name || a.no)).join(' أو ') + (i.apex.length > 3 ? ' (+' + (i.apex.length - 3) + ')' : '') + (i.apex.length > 1 ? ' <span class="warn">— اختار الحجم الصح</span>' : '') + '</div>'
       : '<div class="apex none">لسه مش معروف على Apex — اختاره بالاسم</div>') : '') + '</li>').join('') + '</ul>';
 }
 // Automatic transfer: branch and Apex item for each line, confirmed by the employee (nothing is guessed).
@@ -239,14 +240,15 @@ function compareHtml(o, fl, p) {
       : gap > 0 ? '<span' + (gap > 0.1 * want + 15 ? ' class="warn"' : ' style="color:var(--ok,#2c9)"') + '>Apex أزيد بـ ' + money(gap) + ' — هيتخصم ويتسجل ' + money(want) + '</span>'
       : left <= 0.009 ? '<span style="color:var(--ok,#2c9)">Apex أقل بـ ' + money(-gap) + ' — هيرجع من الخصم ويتسجل ' + money(want) + '</span>'
       : '<span class="warn">⚠️ Apex أقل من ' + (paid ? 'المدفوع' : 'طلبات') + ' بـ ' + money(left) + ' حتى بعد الخصم — اتأكد من الأصناف والأحجام</span>') +
-      (why.length ? '<div style="font-size:12px;color:var(--muted);margin-top:4px">السبب: ' + why.map(esc).join(' · ') + '</div>' : '');
+      '';
+  const whyHtml = why.length ? '<div style="font-size:12px;color:var(--muted);margin-top:4px">السبب: ' + why.map(esc).join(' · ') + '</div>' : '';
   // Only the lines that have something (a zero discount is not a line); «لسه» when it is not known yet.
   const has = r => r[1] !== 0 && r[1] !== '0';
   tb.splice(0, tb.length, ...tb.filter(has)); ap.splice(0, ap.length, ...ap.filter(has));
   const rows = Math.max(tb.length, ap.length);
   let h = '<table style="width:100%;font-size:13px;margin-top:8px;border-collapse:collapse"><tr><th style="text-align:start">' + (o.source === 'talabat' ? 'طلبات' : 'الموقع') + '</th><th></th><th style="text-align:start">على Apex (بالضريبة)</th><th></th></tr>';
   for (let i = 0; i < rows; i++) h += '<tr><td>' + (tb[i]?.[0] || '') + '</td><td>' + (tb[i] ? f(tb[i][1]) : '') + '</td><td>' + (ap[i]?.[0] || '') + '</td><td>' + (ap[i] ? f(ap[i][1]) : '') + '</td></tr>';
-  return h + '</table><div class="pay" style="margin-top:4px">' + verdict + '</div>';
+  return '<div class="pay" style="margin-top:8px">' + verdict + '</div><details style="margin-top:4px"><summary style="color:var(--muted);font-size:13px">تفاصيل الفلوس</summary>' + h + '</table>' + whyHtml + '</details>';
 }
 // One row per Apex area with the branches it belongs to (LocationBranches) and its delivery charge.
 let areaCache = null, areaSrc = null;
@@ -291,13 +293,15 @@ function autoHtml(o) {
     (p.moved ? ' <span class="warn">الفرع اتغير لـ ' + esc(bname(p.branch)) + ' عشان المنطقة تبعه' + (o.apexBranch && String(o.apexBranch) !== String(p.branch) ? ' (الأوردر جه على ' + esc(bname(o.apexBranch)) + ' في طلبات)' : '') + '</span>' : '');
   // The employee picks by name (nobody knows the Apex numbers): the suggestion is shown by name, other sizes in a list, and a search by name for anything else.
   const nameOf = no => apexNames.get(no) || '';
+  // Karim 01-11 («ابسط»): a chosen item is one line with «تغيير»; the lists show only when changing it or not chosen yet.
   const lines = fl.map((i, n) => '<div class="pay" style="margin-top:6px;flex-wrap:wrap"><span' + (i.kind === 'addon' ? ' class="warn"' : '') + '>' + esc(i.qty) + '× ' + esc(i.label) + '</span> ← ' +
     (p.items[n] ? '<b>' + esc(nameOf(p.items[n]) || ((i.apex || []).find(a => a.no === p.items[n])?.name) || 'صنف ' + p.items[n]) + '</b>' : '<span class="warn">اختار الصنف على Apex</span>') + ' ' +
+    (p.items[n] && !p.edit?.[n] ? ' <button class="ghost copy" data-edit="' + n + '">تغيير</button></div>' : '') + (p.items[n] && !p.edit?.[n] ? '' : '<div style="display:flex;gap:6px;flex-wrap:wrap;width:100%">' +
     (i.apex?.length > 1 ? '<select data-pick="item" data-n="' + n + '"><option value="">' + (p.items[n] ? 'غيّر الحجم/الصنف…' : 'اختار…') + '</option>' + i.apex.map(a => '<option value="' + esc(a.no) + '"' + (p.items[n] === a.no ? ' selected' : '') + '>' + esc(a.name || nameOf(a.no) || a.no) + '</option>').join('') + '</select>' : '') +
     // Karim 01-11: another item picked like on Apex — the section first, then its items in Apex's order.
     (data.sections?.length ? '<select data-pick="sec" data-n="' + n + '"><option value="">' + (p.secs?.[n] != null ? 'قسم تاني…' : 'اختار من أقسام Apex…') + '</option>' + data.sections.map((x, k) => '<option value="' + k + '"' + (String(p.secs?.[n]) === String(k) ? ' selected' : '') + '>' + esc(x.name) + '</option>').join('') + '</select>' +
       (p.secs?.[n] != null && data.sections[p.secs[n]] ? '<select data-pick="item" data-n="' + n + '"><option value="">اختار الصنف…</option>' + data.sections[p.secs[n]].items.map(no => '<option value="' + esc(no) + '"' + (p.items[n] === no ? ' selected' : '') + '>' + esc(nameOf(no) || no) + (apexPrices.get(no) != null ? ' — ' + money(Math.round(apexPrices.get(no) * 114) / 100) : '') + '</option>').join('') + '</select>' : '') : '') +
-    '<input data-pick="item" data-find="1" data-n="' + n + '" list="apexItems" placeholder="' + (p.items[n] ? 'أو اكتب اسمه' : 'أو اكتب اسم الصنف') + '" style="width:150px"></div>').join('');
+    '<input data-pick="item" data-find="1" data-n="' + n + '" list="apexItems" placeholder="' + (p.items[n] ? 'أو اكتب اسمه' : 'أو اكتب اسم الصنف') + '" style="width:150px"></div></div>')).join('');
   const label = mode === 'shadow' ? 'جرّب التسجيل (مش هيتسجل فعلاً)' : mode === 'test' ? 'سجّله على نسخة التجربة' : 'سجّله على Apex من هنا';
   // Closed: only the title (the lists of areas and items are built when it is opened — the page stays light).
   if (!p.open) return '<details class="box" data-pick-box><summary>' + label + '</summary></details>';
@@ -315,17 +319,18 @@ function card(o) {
     '<div class="top"><span class="src ' + o.source + '">' + (o.source === 'talabat' ? 'طلبات' : 'الموقع') + '</span><span class="code">' + (o.code ? '#' + esc(o.code) : esc(o.ref)) + '</span>' +
       '<span style="color:var(--muted)">' + time(o.at) + ' · ' + esc(o.branch || 'الفرع مش معروف') + (o.deliveryType ? ' · ' + esc(o.deliveryType) : '') + (o.scheduled ? ' · <span class="warn">بميعاد</span>' : '') + '</span>' +
       '<span class="state ' + st.cls + '">' + esc(st.text) + '</span></div>' +
-    '<div class="label"><span style="color:var(--muted)">في خانة اسم العميل (الكود الأول عشان Apex بيشيل 20 حرف بس):</span><input readonly value="' + esc(fullLabel(o, pay)) + '"><button class="ghost copy" data-copy>نسخ</button></div>' +
+    '<div class="label"><span style="color:var(--muted)">في خانة الاسم:</span><input readonly value="' + esc(fullLabel(o, pay)) + '"><button class="ghost copy" data-copy>نسخ</button></div>' +
     '<div class="pay"><span>الدفع:</span> ' + payText(o) + ' <button class="' + (pay === 'cash' ? 'on' : 'ghost') + ' copy" data-pay="cash">كاش</button><button class="' + (pay === 'paid' ? 'on' : 'ghost') + ' copy" data-pay="paid">مدفوع</button></div>' +
     '<div class="grid">' +
       '<div class="box"><h3>العميل</h3>' + esc(o.customer?.name || '—') + '<br>' + (o.customer?.phone ? esc(o.customer.phone) + ' <button class="ghost copy" data-copytext="' + esc(o.customer.phone) + '">نسخ</button>' : '<span class="warn">الرقم مش ظاهر</span>') + '</div>' +
       '<div class="box"><h3>العنوان</h3>' + (o.customer?.address ? esc(o.customer.address) : '<span class="warn">العنوان مش ظاهر — خده من الأوردر</span>') +
         (o.customer?.original ? '<div style="color:var(--muted);font-size:12px;margin-top:4px" dir="auto">مترجم من: ' + esc(o.customer.original) + '</div>' : '') + '</div>' +
-      '<div class="box"><h3>الخصم</h3>' + discountsHtml(o) + '</div>' +
-      '<div class="box"><h3>القيم</h3>' + (o.subtotal != null ? 'قبل الخصم: ' + money(o.subtotal) + '<br>' : '') + (o.total != null ? 'الإجمالي: ' + money(o.total) : '') + (o.target != null ? '<br><b>لازم Apex يطلع: ' + money(o.target) + '</b>' : '') + (o.shipping ? '<br>توصيل: ' + money(o.shipping) : '') + (o.paymentTitle ? '<br>' + esc(o.paymentTitle) : '') + '</div>' +
     '</div>' +
     (o.note ? '<div class="box"><h3>ملاحظة العميل</h3>' + esc(o.note) + (o.noteOriginal ? '<div style="color:var(--muted);font-size:12px;margin-top:4px" dir="auto">الأصل: ' + esc(o.noteOriginal) + '</div>' : '') + '</div>' : '') +
-    (o.bill?.length ? '<details><summary style="color:var(--muted);font-size:13px">الفاتورة زي ما طلبات كاتباها</summary>' + o.bill.map(b => '<div style="font-size:13px">' + esc(b.text) + '</div>').join('') + '</details>' : '') +
+    // Karim 01-11 («ابسط»): the total in one line; the discount boxes and Talabat's bill only when opened.
+    '<div class="pay"><span>الإجمالي:</span> <b>' + (o.total != null ? money(o.total) : '—') + '</b>' + ((o.discounts || []).length ? ' <span style="color:var(--muted);font-size:13px">· فيه خصم</span>' : '') + '</div>' +
+    '<details><summary style="color:var(--muted);font-size:13px">الخصم والفاتورة</summary><div class="grid">' + '<div class="box"><h3>الخصم</h3>' + discountsHtml(o) + '</div>' + '<div class="box"><h3>القيم</h3>' + (o.subtotal != null ? 'قبل الخصم: ' + money(o.subtotal) + '<br>' : '') + (o.total != null ? 'الإجمالي: ' + money(o.total) : '') + (o.target != null ? '<br><b>لازم Apex يطلع: ' + money(o.target) + '</b>' : '') + (o.shipping ? '<br>توصيل: ' + money(o.shipping) : '') + (o.paymentTitle ? '<br>' + esc(o.paymentTitle) : '') + '</div>' + '</div>' +
+      (o.bill?.length ? o.bill.map(b => '<div style="font-size:13px">' + esc(b.text) + '</div>').join('') : '') + '</details>' +
     itemsHtml(o) + autoHtml(o) +
     (done ? '' : '<div class="actions">' +
       (freeJob ? '<button data-act="claim">أنا هسجله</button>' : '') +
@@ -382,6 +387,7 @@ function render(force) {
 $('list').addEventListener('click', async e => {
   const b = e.target.closest('button'); if (!b) return;
   const c = b.closest('.card'), o = data.orders.find(x => key(x) === c.dataset.k); if (!o) return;
+  if (b.dataset.edit !== undefined) { const p = picks[key(o)]; if (p) { (p.edit || (p.edit = {}))[Number(b.dataset.edit)] = true; p.open = true; render(true); } return; }
   if (b.dataset.copy !== undefined || b.dataset.copytext) {
     const text = b.dataset.copytext || c.querySelector('.label input').value;
     try { await navigator.clipboard.writeText(text); b.textContent = 'اتنسخ ✓'; setTimeout(() => b.textContent = 'نسخ', 1500); } catch { c.querySelector('.label input').select(); }
@@ -441,7 +447,7 @@ $('list').addEventListener('change', e => {
     // A name typed in the search box → its Apex number (an exact name, else the one name that contains what was typed).
     let no = v;
     if (el.dataset.find) { const all = data.apexItems || [], hit = all.find(a => a.name === v) || (all.filter(a => a.name.includes(v)).length === 1 ? all.find(a => a.name.includes(v)) : null) || all.find(a => a.no === v); if (!hit) { toast('الصنف ده مش في Apex — اختاره من القايمة'); return; } no = hit.no; }
-    p.items[Number(el.dataset.n)] = no; p.open = true; render(true);
+    p.items[Number(el.dataset.n)] = no; if (p.edit) delete p.edit[Number(el.dataset.n)]; p.open = true; render(true);
   }
 });
 $('list').addEventListener('focusout', () => setTimeout(() => { if (render.pending && !$('list').contains(document.activeElement)) render(); }, 0));
