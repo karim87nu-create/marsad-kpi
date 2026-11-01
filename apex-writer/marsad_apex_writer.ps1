@@ -186,7 +186,7 @@ BEGIN TRY
       Name = CASE WHEN @Label <> '' THEN LEFT(@Label, 50) ELSE Name END,
       Address = CASE WHEN @Address <> '' THEN LEFT(@Address, 200) ELSE Address END,
       LocationNo = ISNULL(@LocationNo, LocationNo), UBranchNo = @Branch,
-      FloorNo = CASE WHEN @Address <> '' THEN LEFT(@Floor, 20) ELSE FloorNo END, FlatNo = CASE WHEN @Address <> '' THEN LEFT(@Flat, 20) ELSE FlatNo END,
+      FloorNo = CASE WHEN @Floor <> '' THEN LEFT(@Floor, 20) ELSE FloorNo END, FlatNo = CASE WHEN @Flat <> '' THEN LEFT(@Flat, 20) ELSE FlatNo END,   -- none in the order: the saved ones stay
       Sign = CASE WHEN @Sign <> '' THEN LEFT(@Sign, 50) ELSE Sign END
     WHERE CustNo = @Cust;
     IF HAS_PERMS_BY_NAME('dbo.Customers_Log', 'OBJECT', 'INSERT') = 1
