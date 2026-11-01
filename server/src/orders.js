@@ -130,7 +130,8 @@ function setup(app) {
     const branchOfNo = no => no && ['open', 'lateOut', 'cancels', 'online', 'issues'].map(k => rows(k).find(o => String(o.no) === no)).find(Boolean)?.branch || null;
     const orderNo = a => String(a.orderNo ?? a.orderId ?? (/^(?:v?late|del|disc|pay|dup|entry|entrylate|lateentry|duplicate|cancel|note):([0-9]+)(?::|$)/i.exec(String(a.key))?.[1] || ''));
     // The Talabat side is looked up only when a delay message is about a Talabat order.
-    const needTalabat = rows('open').some(o => o.kind === 'طلبات') && (Array.isArray(b.alerts) ? b.alerts : []).some(a => a && DELAY_KINDS.has(a.kind));
+    const needTalabat = (rows('open').some(o => o.kind === 'طلبات') && (Array.isArray(b.alerts) ? b.alerts : []).some(a => a && DELAY_KINDS.has(a.kind))) ||
+      Object.values(states).some(x => x?.kind === 'ordersLate' && !['resolved', 'deleted', 'merged', 'learned'].includes(x.status) && rows('lateOut').some(o => String(o.no) === x.no && o.out && o.kind === 'طلبات'));
     const apexDetails = app.apexDetails ? await app.apexDetails(b.day, { talabat: needTalabat }) : null;
     const withOrderContext = (text, no, kind) => {
       if (!DELAY_KINDS.has(kind) || !no || !apexDetails?.extra) return text;
@@ -194,7 +195,9 @@ function setup(app) {
       const clockOf = v => new Date(v).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit' });
       // Cancelled on Apex: closed without a message (only Talabat cancellations are sent).
       if (old.kind === 'ordersLate' && cancel && !out) { old.status = 'resolved'; continue; }
-      if (old.kind === 'ordersLate' && out) text = '🖥️ Apex | ✅ أوردر ' + shown + ' خرج مع الطيار' + (out.pilot ? ' (' + out.pilot + ')' : '') + (out.out ? ' الساعة ' + clockOf(out.out) : '') + (out.wait != null ? '\nخرج بعد ' + out.wait + ' دقيقة من وقت الضرب' : '') + (out.sched ? '\nالميعاد المطلوب كان ' + clockOf(out.sched) : '');
+      if (old.kind === 'ordersLate' && out) text = '🖥️ Apex | ✅ أوردر ' + shown + ' خرج مع الطيار' + (out.pilot ? ' (' + out.pilot + ')' : '') + (out.out ? ' الساعة ' + clockOf(out.out) : '') + (out.wait != null ? '\nخرج بعد ' + out.wait + ' دقيقة من وقت الضرب' : '') + (out.sched ? '\nالميعاد المطلوب كان ' + clockOf(out.sched) : '')
+        // Every message carries the same context (Karim 01-11): branch, area, comments, and how the branch stands now.
+        + (old.branch ? '\nالفرع: ' + old.branch : '') + (apexDetails ? apexDetails.extra(old.no) + apexDetails.status(old.branch) : '');
       // Only a complete issues snapshot can prove that a recorded entry issue disappeared.
       if (old.kind === 'ordersEntry' && Array.isArray(b.issues) && Number.isInteger(b.totals?.issues) && b.totals.issues === b.issues.length &&
           old.observedIssue && !b.issues.some(o => String(o.no) === old.no)) text = '🖥️ Apex | ✅ أوردر ' + shown + ': غلطة الضرب اتصلّحت على Apex';

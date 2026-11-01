@@ -135,11 +135,12 @@ test('orders: state replies stay in their original department, missing groups ne
     const warning=sent.find(x=>x.text==='entry');assert.equal(warning.chat_id,'-300');
     const branchId=(await t.app.db.prepare("SELECT message_id FROM telegram_log WHERE key='b:orders:2026-10-22:late:9'").get()).message_id;
     await admin('POST','/api/telegram',{action:'chat',chatId:'-400',title:'فرع التجمع الجديد',target:'branch',branch:'التجمع'});
-    await push({lateOut:[{no:9,sn:484,out:'2026-10-22T10:10:00Z'}],issues:[]}); // incomplete snapshot cannot clear entry
+    await push({lateOut:[{no:9,sn:484,out:'2026-10-22T10:10:00Z'}],issues:[],details:{'9':{loc:'الرحاب.',note:'من غير بصل',items:[],msgs:[]}},branchStatus:{'التجمع':'📊 حالة الفرع دلوقتي: 0 أوردر لسه ماخرجوش'}}); // incomplete snapshot cannot clear entry
     await t.app.telegramTick();
     assert.equal(sent.filter(x=>x.text.includes('غلطة الضرب اتصلّحت')).length,0);
     const reply=sent.find(x=>x.text.includes('خرج مع الطيار'));
     assert.match(reply.text,/أوردر 484 /,'the state change shows the small serial, not the internal number');
+    assert.match(reply.text,/الفرع: التجمع/); assert.match(reply.text,/📍 المنطقة: الرحاب/); assert.match(reply.text,/💬 ملاحظة الأوردر: من غير بصل/); assert.match(reply.text,/حالة الفرع دلوقتي/);
     assert.equal(reply.chat_id,'-250','a reply stays where its warning went');assert.equal(reply.reply_parameters.message_id,branchId);
     await push({lateOut:[{no:9,out:'2026-10-22T10:10:00Z'}],issues:[],totals:{issues:0}});
     await t.app.telegramTick();

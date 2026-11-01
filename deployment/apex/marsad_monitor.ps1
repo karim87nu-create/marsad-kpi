@@ -647,14 +647,14 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
     $thr = if ($o.Kind -eq 'Hotline' -or $o.Kind -eq 'الموقع') { $DiscPctHotline } else { $DiscPctPlatform }
     if ($o.Sub -gt 0 -and $o.Disc -gt 0 -and (100 * $o.Disc / $o.Sub) -ge $thr) {
       $pct = [math]::Round(100 * $o.Disc / $o.Sub, 0)
-      Raise "disc:$($o.No)" 'ordersDiscount' ("🖥️ Apex | 💸 خصم كبير على أوردر`nالفرع: $b`nرقم الأوردر: $($o.Disp) ($(KindAr $o.Kind))`nالحساب قبل الخصم: $([math]::Round($o.Sub,0)) ج`nالخصم: $([math]::Round($o.Disc,0)) ج ($pct%)`nالمطلوب من العميل: $([math]::Round($o.Amt,0)) ج`nاللي ضرب الأوردر: $who") $script:firstCycle $b $o.Sn ('d' + [math]::Round($o.Disc,0))
+      Raise "disc:$($o.No)" 'ordersDiscount' ("🖥️ Apex | 💸 خصم كبير على أوردر`nالفرع: $b`nرقم الأوردر: $($o.Disp) ($(KindAr $o.Kind))`nالحساب قبل الخصم: $([math]::Round($o.Sub,0)) ج`nالخصم: $([math]::Round($o.Disc,0)) ج ($pct%)`nالمطلوب من العميل: $([math]::Round($o.Amt,0)) ج`nاللي ضرب الأوردر: $who$(Extra $o)$($bstat[$o.Branch])") $script:firstCycle $b $o.Sn ('d' + [math]::Round($o.Disc,0))
     }
     $bad = $null
     if ($o.Online -match '(?i)talabat\s*visa' -and $o.Pay -ne 'Ledge') { $bad = "الأوردر نوعه TALABAT VISA بس طريقة الدفع على Apex مكتوبة $($o.Pay) (المفروض Ledge)" }
     if ($o.Online -match '(?i)talabat\s*cash' -and $o.Pay -ne 'Cash') { $bad = "الأوردر نوعه TALABAT CASH بس طريقة الدفع على Apex مكتوبة $($o.Pay) (المفروض Cash)" }
     if ($bad) {
       [void]$issues.Add([ordered]@{ type = 'دفع'; no = $o.No; sn = $o.Sn; branch = $b; kind = $o.Kind; user = $who; at = IsoT $o.Entry; detail = $bad })
-      Raise "pay:$($o.No)" 'ordersEntry' ("🖥️ Apex | ⚠️ طريقة الدفع مش مظبوطة في أوردر`nالفرع: $b`nرقم الأوردر: $($o.Disp)`nالمشكلة: $bad`nاللي ضرب الأوردر: $who") $script:firstCycle $b $o.Sn
+      Raise "pay:$($o.No)" 'ordersEntry' ("🖥️ Apex | ⚠️ طريقة الدفع مش مظبوطة في أوردر`nالفرع: $b`nرقم الأوردر: $($o.Disp)`nالمشكلة: $bad`nاللي ضرب الأوردر: $who$(Extra $o)$($bstat[$o.Branch])") $script:firstCycle $b $o.Sn
     }
   }
   $groups = @($list | Where-Object { $_.Entry -and $_.Sub -gt 0 } | Group-Object { "$($_.Branch)|$([math]::Round($_.Amt,2))|$($_.Kind)" } | Where-Object { $_.Count -gt 1 })
@@ -664,13 +664,13 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
       $a = $sorted[$i-1]; $c = $sorted[$i]; $gap = Mins $a.Entry $c.Entry
       if ($gap -le $DupWindowMin) {
         [void]$issues.Add([ordered]@{ type = 'تكرار'; no = $c.No; sn = $c.Sn; branch = BName $c.Branch; kind = $c.Kind; user = UName $c.User; at = IsoT $c.Entry; detail = "نفس مبلغ أوردر $($a.Disp) ($([math]::Round($c.Amt,0)) ج) بعد $gap دقيقة" })
-        Raise "dup:$($c.No)" 'ordersEntry' ("🖥️ Apex | 🔁 أوردر ممكن يكون متضرب مرتين`nالفرع: $(BName $c.Branch)`nالأوردرين: $($a.Disp) و $($c.Disp) ($(KindAr $c.Kind)) بنفس المبلغ $([math]::Round($c.Amt,0)) ج`nالفرق بينهم: $gap دقيقة`nاللي ضربهم: $(UName $a.User) / $(UName $c.User)") $script:firstCycle (BName $c.Branch) $c.Sn
+        Raise "dup:$($c.No)" 'ordersEntry' ("🖥️ Apex | 🔁 أوردر ممكن يكون متضرب مرتين`nالفرع: $(BName $c.Branch)`nالأوردرين: $($a.Disp) و $($c.Disp) ($(KindAr $c.Kind)) بنفس المبلغ $([math]::Round($c.Amt,0)) ج`nالفرق بينهم: $gap دقيقة`nاللي ضربهم: $(UName $a.User) / $(UName $c.User)$(Extra $c)$($bstat[$c.Branch])") $script:firstCycle (BName $c.Branch) $c.Sn
       }
     }
   }
   foreach($c in $cancels){
     $after = ''; if ($c.Out -and $c.DelT) { $after = " بعد $(Mins $c.Out $c.DelT) دقيقة من تحميله" }
-    Raise "del:$($c.No)" 'ordersCancel' ("🖥️ Apex | ❌ أوردر اتلغى بعد ما اتحمّل على الطيار — $(BName $c.Branch)`nأوردر $($c.Disp) ($($c.Kind)) · $([math]::Round($c.Amt,0)) ج · الطيار: $(UName $c.Pilot)`nلغاه: $(UName $c.Del)$after`nالسبب: $($c.Why)$(if ($c.Loc) { "`n📍 المنطقة: $($c.Loc)" })$($bstat[$c.Branch])") $true (BName $c.Branch) $c.Sn   # Apex cancellations: listed on the page, not sent to Telegram (only Talabat cancellations are sent)
+    Raise "del:$($c.No)" 'ordersCancel' ("🖥️ Apex | ❌ أوردر اتلغى بعد ما اتحمّل على الطيار — $(BName $c.Branch)`nأوردر $($c.Disp) ($($c.Kind)) · $([math]::Round($c.Amt,0)) ج · الطيار: $(UName $c.Pilot)`nلغاه: $(UName $c.Del)$after`nالسبب: $($c.Why)$(Extra $c)$($bstat[$c.Branch])") $true (BName $c.Branch) $c.Sn   # Apex cancellations: listed on the page, not sent to Telegram (only Talabat cancellations are sent)
   }
   # Comments are not sent on their own: they ride with the order's alerts (see Extra).
   $script:firstCycle = $false
