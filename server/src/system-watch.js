@@ -53,6 +53,16 @@ function setup(app) {
         delete state[p.id];
       }
     }
+    // A shift open 12+ hours (Karim 01-11: علاء 18 ساعة) is a forgotten logout: its hours, breaks and gaps get counted
+    // into the next day. One message per session, to the call center group.
+    const LONG_MS = 12 * 3600000;
+    const long = await db.prepare(`SELECT s.id, s.issued_at, e.name FROM employee_sessions s LEFT JOIN employees e ON e.id = s.employee_id
+      WHERE s.revoked_at IS NULL AND s.expires_at > ? AND s.issued_at < ?`).all(now, now - LONG_MS);
+    for (const x of long?.results || long || []) {
+      const key = 'system:longSession:' + x.id;
+      if (await db.prepare('SELECT 1 FROM telegram_log WHERE key = ?').get(key)) continue;
+      send(key, '⏱️ ' + (x.name || 'موظف') + ' فاتح الشيفت من ' + clock(x.issued_at) + ' (' + Math.round((now - x.issued_at) / 3600000) + ' ساعة) — غالبًا نسي يقفل. اقفل الشيفت من «نهاية الشيفت» في الإدارة.', null);
+    }
     if (writes.length) {
       writes.push(db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').bind('system_watch', JSON.stringify(state)));
       await db.batch(writes);

@@ -61,3 +61,15 @@ test('KPI: call center and branches for a period, with the period before and the
     assert.equal(w.orders, 220); assert.equal(w.avgOut, 22.1, 'weighted by orders out');
   } finally { await t.close(); }
 });
+
+test('system watch: a shift open 12+ hours gives one Telegram message', async () => {
+  const t = await start({ at: cairoToUtc(2026, 11, 1, 10, 0, 0) });
+  try {
+    const admin = await t.admin(); await t.employee(admin); const s = await t.session(); await t.event(s.token, 'heartbeat', { state: 'ready' });
+    const log = () => t.app.db.raw.prepare("SELECT text FROM telegram_log WHERE key LIKE 'system:longSession:%'").all();
+    for (let i = 0; i < 13 * 6; i++) { t.advance(10 * 60000); await t.event(s.token, 'heartbeat', { state: 'ready' }).catch(() => {}); await t.call('GET', '/health'); }
+    const l = log();
+    assert.equal(l.length, 1, 'one message');
+    assert.match(l[0].text, /فاتح الشيفت/);
+  } finally { await t.close(); }
+});
