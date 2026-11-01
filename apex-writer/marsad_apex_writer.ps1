@@ -221,7 +221,7 @@ function Write-Order($c, $job, [string]$mode){
     $decl += "INSERT INTO @Lines VALUES ($i, @it$i, @q$i, @p$i, @n$i);`r`n"
     [void]$cmd.Parameters.AddWithValue("@it$i", [string]$l.itemNo)
     [void]$cmd.Parameters.AddWithValue("@q$i", [decimal]$l.qty)
-    [void]$cmd.Parameters.AddWithValue("@p$i", [decimal]$l.price)
+    [void]$cmd.Parameters.AddWithValue("@p$i", [decimal]$l.price); $cmd.Parameters["@p$i"].SqlDbType = [System.Data.SqlDbType]::Money
     [void]$cmd.Parameters.AddWithValue("@n$i", [string]$l.note)
   }
   $cmd.CommandText = $decl + $Batch
@@ -231,6 +231,9 @@ function Write-Order($c, $job, [string]$mode){
           '@AreaService' = $(if ($job.areaService -ne $null -and "$($job.areaService)" -ne '') { [decimal]$job.areaService } else { [decimal]-1 }); '@RestDiscount' = [decimal]$job.restaurantDiscount; '@Target' = $(if ($job.targetTotal) { [decimal]$job.targetTotal } else { [decimal]0 }); '@AddPrinted' = $(if ($AddPrintedOrders) { 1 } else { 0 }); '@PrintedFlag' = $PrintedFlag; '@UserNo' = $WriterUserNo
           '@TimeText' = (Get-Date).ToString('hh:mm:ss tt', [Globalization.CultureInfo]::GetCultureInfo('ar-EG')) }
   foreach($k in $p.Keys){ [void]$cmd.Parameters.AddWithValue($k, $p[$k]) }
+  # Amounts as money (Karim 01-11, «Arithmetic overflow»): a parameter takes its size from its value, so a restaurant
+  # discount of 0 became numeric(1,0) and adding the price difference to it overflowed. Money holds any amount.
+  foreach($k in @('@RestDiscount', '@Target', '@AreaService')){ $cmd.Parameters[$k].SqlDbType = [System.Data.SqlDbType]::Money }
   $t = New-Object System.Data.DataTable; $t.Load($cmd.ExecuteReader()); return $t.Rows[0]
 }
 
