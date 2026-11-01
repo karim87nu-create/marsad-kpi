@@ -10,8 +10,8 @@
 import { businessDay, iso, validDate } from './time.js';
 import { parseJson } from './order-match.js';
 import { knownNos } from './items.js';
-import { APEX_NAMES } from './menu-seed.js';
-const APEX_ITEM_LIST = Object.entries(APEX_NAMES).map(([no, name]) => ({ no, name }));
+import { APEX_NAMES, APEX_PRICES } from './menu-seed.js';
+const APEX_ITEM_LIST = Object.entries(APEX_NAMES).map(([no, name]) => ({ no, name, price: APEX_PRICES[no] ?? null }));
 import { sha256, randomToken } from './security.js';
 
 const TOKEN_MS = 12 * 3600000;

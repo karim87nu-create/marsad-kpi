@@ -163,6 +163,34 @@ function flatLines(o) {
   }
   return out;
 }
+// Talabat (or the site) against what Apex will come out at, before sending (Karim 01-11). Apex prices are the online
+// prices read from Apex (before tax); tax 14% on items + delivery service, before the discount — as Apex computes it.
+// The writer computes it again on Apex itself and stops on a big difference.
+function compareHtml(o, fl, p) {
+  const amt = t => { const m = String(t || '').split(' | ').slice(1).join(' ').replace(/,/g, '').match(/-?\d+(?:\.\d+)?/); return m ? Number(m[0]) : null; };
+  const line = k => { const b = (o.bill || []).find(x => new RegExp(k, 'i').test(x.k || '')); return b ? amt(b.text) : null; };
+  const r2 = v => Math.round(v * 100) / 100, f = v => v == null ? '—' : money(r2(v));
+  const rest = (o.discounts || []).filter(d => d.who === 'restaurant').reduce((a, d) => a + (Number(d.amount) || 0), 0);
+  const plat = (o.discounts || []).filter(d => d.who === 'platform').reduce((a, d) => a + (Number(d.amount) || 0), 0);
+  const tb = [['الأصناف', o.subtotal ?? line('^(?:المجموع الفرعي|subtotal)$')], ['التوصيل', line('توصيل|delivery')], ['رسوم الخدمة', line('رسوم الخدمة|service')],
+    ['خصم المطعم', rest ? -rest : 0], ['خصم طلبات', plat ? -plat : 0], ['العميل يدفع', line('^(?:مجموع|total)$') ?? o.total], ['المطلوب على Apex', o.target]];
+  let sub = 0, missing = 0;
+  fl.forEach((i, n) => { const pr = apexPrices.get(p.items[n]); if (pr == null || !p.items[n]) missing++; else sub += pr * (Number(i.qty) || 1); });
+  if (o.source === 'talabat') sub += apexPrices.get('0114006') || 7.02;   // the «خدمة» line Apex's Talabat orders start with
+  const loc = (data.locations || []).find(l => String(l.no) === String(p.loc)), service = loc?.service ?? null;
+  const tax = service == null ? null : r2((sub + service) * 0.14), before = service == null ? null : r2(sub + service + tax);
+  const gap = before == null || o.target == null ? null : r2(before - rest - o.target);
+  const limit = o.target ? Math.max(15, 0.05 * o.target) : 15;
+  const ap = [['الأصناف (قبل الضريبة)', sub], ['خدمة التوصيل', service], ['الضريبة 14%', tax], ['قبل الخصم', before], ['خصم المطعم', rest ? -rest : 0],
+    ['فرق يتخصم', gap > 0.009 && gap <= limit ? -gap : 0], ['إجمالي Apex', gap == null ? null : gap > 0.009 && gap <= limit ? o.target : before - rest]];
+  const verdict = missing ? '<span class="warn">فيه ' + missing + ' صنف لسه مااتختارش على Apex</span>' : service == null ? '<span class="warn">اختار المنطقة علشان التوصيل والضريبة يتحسبوا</span>'
+    : gap > limit ? '<span class="warn">⚠️ Apex أزيد من طلبات بـ ' + money(gap) + ' — غالبًا صنف أو وزن غلط</span>' : gap < -1 ? '<span class="warn">⚠️ Apex أقل من طلبات بـ ' + money(-gap) + ' — راجع الأصناف</span>'
+    : '<span style="color:var(--ok,#2c9)">✓ الإجمالي هيطلع زي طلبات' + (gap > 0.009 ? ' (بعد خصم فرق ' + money(gap) + ')' : '') + '</span>';
+  const rows = Math.max(tb.length, ap.length);
+  let h = '<table style="width:100%;font-size:13px;margin-top:8px;border-collapse:collapse"><tr><th style="text-align:start">' + (o.source === 'talabat' ? 'طلبات' : 'الموقع') + '</th><th></th><th style="text-align:start">Apex (تقريبي)</th><th></th></tr>';
+  for (let i = 0; i < rows; i++) h += '<tr><td>' + (tb[i]?.[0] || '') + '</td><td>' + (tb[i] ? f(tb[i][1]) : '') + '</td><td>' + (ap[i]?.[0] || '') + '</td><td>' + (ap[i] ? f(ap[i][1]) : '') + '</td></tr>';
+  return h + '</table><div class="pay" style="margin-top:4px">' + verdict + '</div>';
+}
 function autoHtml(o) {
   const mode = data.autoTransfer;
   if (!mode || mode === 'off' || o.apex || /^auto_(?:pending|sending|done|preview)$/.test(o.job?.state || '')) return '';
@@ -188,7 +216,7 @@ function autoHtml(o) {
   const label = mode === 'shadow' ? 'معاينة آلية (من غير كتابة)' : mode === 'test' ? 'تحويل آلي (قاعدة الاختبار)' : 'تحويل آلي لـApex';
   // Closed: only the title (the lists of areas and items are built when it is opened — the page stays light).
   if (!p.open) return '<details class="box" data-pick-box><summary>' + label + '</summary></details>';
-  return '<details class="box"' + (p.open ? ' open' : '') + ' data-pick-box><summary>' + label + '</summary><div class="pay" style="margin-top:6px"><span>الفرع على Apex:</span> ' + br + '</div><div class="pay" style="margin-top:6px"><span>المنطقة على Apex:</span> ' + loc + (p.locGuess ? ' <span class="warn">اقتراح من العنوان — اتأكد</span>' : '') + '</div>' + lines +
+  return '<details class="box"' + (p.open ? ' open' : '') + ' data-pick-box><summary>' + label + '</summary><div class="pay" style="margin-top:6px"><span>الفرع على Apex:</span> ' + br + '</div><div class="pay" style="margin-top:6px"><span>المنطقة على Apex:</span> ' + loc + (p.locGuess ? ' <span class="warn">اقتراح من العنوان — اتأكد</span>' : '') + '</div>' + lines + compareHtml(o, fl, p) +
     '<div class="actions" style="margin-top:8px"><button data-act="auto">' + label + '</button></div></details>';
 }
 function card(o) {
@@ -217,12 +245,13 @@ function card(o) {
       '</div>') +
   '</div>';
 }
-let apexNames = new Map(), lastDraw = '';
+let apexNames = new Map(), apexPrices = new Map(), lastDraw = '';
 function render(force) {
   if (!data) return;
   // The Apex item names for the search box: one list for the whole page, built once.
   if (data.apexItems?.length && apexNames.size !== data.apexItems.length) {
     apexNames = new Map(data.apexItems.map(a => [a.no, a.name]));
+    apexPrices = new Map(data.apexItems.map(a => [a.no, a.price]));
     let dl = document.getElementById('apexItems'); if (!dl) { dl = document.createElement('datalist'); dl.id = 'apexItems'; document.body.append(dl); }
     dl.innerHTML = data.apexItems.map(a => '<option value="' + esc(a.name) + '">').join('');
   }
