@@ -372,8 +372,8 @@ window.MarsadSite = function MarsadSite(ctx) {
     for (const p of stock.products) { if ((q && !(p.name + ' ' + p.category).toLowerCase().includes(q)) || (only && !sel.has(p.id))) continue; if (!cats.has(p.category)) cats.set(p.category, []); cats.get(p.category).push(p); }
     $('stockList').replaceChildren(...[...cats].map(([c, ps]) => h('div', {}, h('strong', { textContent: c }),
       ...ps.map(p => h('label', { style: 'display:block' }, h('input', { type: 'checkbox', checked: sel.has(p.id), onchange: e => { e.target.checked ? sel.add(p.id) : sel.delete(p.id); } }), ' ' + p.name)))));
-    const a = stock.applied[store];
-    $('stockNote').textContent = (sel.size ? sel.size + ' صنف موقوف في الفرع ده. ' : '') + (a ? 'آخر تطبيق على طلبات: ' + t12(new Date(a.at).toISOString()) + (a.ok ? ' ✓' : ' ✗ ' + a.note) : (stock.ready ? '' : 'الإيقاف بيتحفظ دلوقتي، والشاشة هتطبقه أول ما تتجهز.'));
+    const pend = Object.keys(stock.queue?.[store] || {}).length;
+    $('stockNote').textContent = (sel.size ? sel.size + ' صنف متعلّم موقوف في الفرع ده. ' : '') + (pend ? pend + ' تغيير مستني يتطبق على طلبات. ' : '');
   }
   async function renderStock() {
     $('stockPanel').hidden = false;
@@ -381,7 +381,13 @@ window.MarsadSite = function MarsadSite(ctx) {
     const cur = $('stockStore').value;
     $('stockStore').replaceChildren(...stock.stores.map(s => h('option', { value: s, textContent: s, selected: s === cur })));
     drawStock();
+    $('stockApplyTb').checked = !!stock.apply?.talabat; $('stockApplyApex').checked = !!stock.apply?.apex;
+    const name = id => stock.products.find(p => p.id === id)?.name || id;
+    $('stockActual').replaceChildren(...Object.values(stock.actual || {}).map(a => h('div', { textContent: 'على طلبات الآن — ' + (a.name || '') + ' (' + t12(new Date(a.at).toISOString()) + '): ' + (a.unavailable.length ? a.unavailable.length + ' صنف واقف: ' + a.unavailable.map(name).join('، ') : 'كله متاح') })));
+    $('stockLog').replaceChildren(...(stock.log || []).map(l => h('div', { textContent: t12(new Date(l.at).toISOString()) + ' — ' + (l.where === 'apex' ? 'Apex فرع ' + l.branch + ' صنف ' + l.item : 'طلبات ' + (l.store || '') + ' — ' + (l.dish || '')) + ' — ' + (l.act === 'stop' ? 'إيقاف' : 'رجوع') + ' ' + (l.ok ? '✓' : '✗ ' + (l.note || '')) })));
   }
+  const saveApply = async () => { try { await api('/api/talabat/stock-config', { method: 'POST', body: { action: 'apply', talabat: $('stockApplyTb').checked, apex: $('stockApplyApex').checked } }); $('stockNote').textContent = 'اتحفظ.'; } catch (e) { $('stockNote').textContent = e.message; } };
+  $('stockApplyTb').onchange = saveApply; $('stockApplyApex').onchange = saveApply;
   $('stockStore').onchange = drawStock; $('stockFind').oninput = drawStock; $('stockOnly').onchange = drawStock;
   $('stockSave').onclick = async () => {
     const store = $('stockStore').value; if (!store) return;

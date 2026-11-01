@@ -318,7 +318,14 @@ function Self-Test {
       foreach($q in @("SELECT 'C' k, t.name tb, c.name col, ty.name tp FROM sys.columns c JOIN sys.tables t ON t.object_id = c.object_id JOIN sys.types ty ON ty.user_type_id = c.user_type_id WHERE t.name IN ('ItemsBranches','ItemsOnlineTypes') OR (t.name = 'Items' AND (c.name LIKE '%Stop%' OR c.name LIKE '%Active%' OR c.name LIKE '%Avail%' OR c.name LIKE '%Hide%'))",
                       "SELECT 'S' k, SUM(CASE WHEN ISNULL(StopItem,0)<>0 THEN 1 ELSE 0 END) stopItem, SUM(CASE WHEN ISNULL(StopOnline,0)<>0 THEN 1 ELSE 0 END) stopOnline, COUNT(*) n FROM Items WITH (NOLOCK)",
                       "SELECT TOP 20 'B' k, * FROM ItemsBranches WITH (NOLOCK) WHERE ItemNo IN ('0108040','0107013','0201003','0101006')",
-                      "SELECT 'T' k, t.name tb FROM sys.tables t WHERE t.name LIKE '%Stop%' OR t.name LIKE '%Avail%' OR t.name LIKE 'ItemsBranch%'")){
+                      "SELECT 'T' k, t.name tb FROM sys.tables t WHERE t.name LIKE '%Stop%' OR t.name LIKE '%Avail%' OR t.name LIKE 'ItemsBranch%'",
+                      "SELECT 'SC' k, t.name tb, c.name col, ty.name tp, c.is_identity idn FROM sys.columns c JOIN sys.tables t ON t.object_id = c.object_id JOIN sys.types ty ON ty.user_type_id = c.user_type_id WHERE t.name IN ('StoppedItems','StoppedItems_Trans','StoppedItemsDetails','StopReasons','StoppedBranches') ORDER BY t.name, c.column_id",
+                      "SELECT 'R1' k, COUNT(*) n FROM StoppedItems WITH (NOLOCK)",
+                      "SELECT TOP 8 'R2' k, * FROM StoppedItems WITH (NOLOCK)",
+                      "SELECT TOP 8 'R3' k, * FROM StoppedItems_Trans WITH (NOLOCK) ORDER BY 2 DESC",
+                      "SELECT TOP 8 'R4' k, * FROM StoppedItemsDetails WITH (NOLOCK)",
+                      "SELECT TOP 10 'R5' k, * FROM StopReasons WITH (NOLOCK)",
+                      "SELECT 'TR' k, OBJECT_NAME(parent_id) t, name FROM sys.triggers WHERE OBJECT_NAME(parent_id) LIKE 'Stopped%'")){
         try { $cmd = $c.CreateCommand(); $cmd.CommandTimeout = 30; $cmd.CommandText = $q; $rd = $cmd.ExecuteReader(); while ($rd.Read()) { $h = [ordered]@{}; for ($i = 0; $i -lt $rd.FieldCount; $i++) { $h[$rd.GetName($i)] = "$($rd.GetValue($i))".Trim() }; $rows += $h }; $rd.Close() } catch { $rows += @{ q = $q.Substring(0, 40); error = $_.Exception.Message } }
       }
       $out.saved = $rows; $out.ok = $true
@@ -365,11 +372,42 @@ function Self-Test {
   L ('self-test ' + $out.mode + ': ' + $(if ($out.ok) { 'ok' } else { $out.error }))
 }
 
+# Stopping/resuming items per branch (Karim 01-11), the way Apex's own screen does: a row in StoppedItems while stopped,
+# the stop logged in StoppedItems_Trans. Only the changes admin queued; checked once a minute; production only when allowed here.
+$script:stockNext = Get-Date
+function Apply-Stock {
+  if ((Get-Date) -lt $script:stockNext) { return }
+  $script:stockNext = (Get-Date).AddSeconds(60)
+  $s = Api '/api/apex-writer/stock-next' @{}
+  if (-not $s.apply -or -not $s.queue) { return }
+  $todo = @()
+  foreach($br in $s.queue.PSObject.Properties){ foreach($it in $br.Value.PSObject.Properties){ $todo += [pscustomobject]@{ branch = [int]$br.Name; itemNo = [string]$it.Name; act = [string]$it.Value } } }
+  if (-not $todo.Count) { return }
+  if (-not $AllowLive) { throw 'production writes are locked on this PC ($AllowLive)' }
+  $c = Open-Db 'live'; $done = @()
+  try {
+    foreach($t in $todo){
+      try {
+        $cmd = $c.CreateCommand(); $cmd.CommandTimeout = 15
+        if ($t.act -eq 'stop') { $cmd.CommandText = "SET XACT_ABORT ON; BEGIN TRAN; IF NOT EXISTS (SELECT 1 FROM dbo.StoppedItems WHERE BranchNo = @b AND RTRIM(ItemNo) = @i) BEGIN INSERT INTO dbo.StoppedItems (BranchNo, ItemNo, StopStatus, ReasonNo) VALUES (@b, @i, 1, 0); INSERT INTO dbo.StoppedItems_Trans (BranchNo, ItemNo, ReasonNo, StopDate, StopTime, UserNo) VALUES (@b, @i, 0, CAST(CAST(GETDATE() AS date) AS datetime), GETDATE(), @u); END; COMMIT;" }
+        elseif ($t.act -eq 'resume') { $cmd.CommandText = "DELETE FROM dbo.StoppedItems WHERE BranchNo = @b AND RTRIM(ItemNo) = @i;" }
+        else { continue }
+        [void]$cmd.Parameters.AddWithValue('@b', $t.branch); [void]$cmd.Parameters.AddWithValue('@i', $t.itemNo); [void]$cmd.Parameters.AddWithValue('@u', $WriterUserNo)
+        [void]$cmd.ExecuteNonQuery()
+        $done += @{ branch = $t.branch; itemNo = $t.itemNo; act = $t.act; ok = $true }
+      } catch { $done += @{ branch = $t.branch; itemNo = $t.itemNo; act = $t.act; ok = $false; note = $_.Exception.Message } }
+    }
+  } finally { try { $c.Close() } catch {} }
+  [void](Api '/api/apex-writer/stock' @{ done = $done })
+  L ("stock: " + ($done | ConvertTo-Json -Compress))
+}
+
 L "writer started (pos $WriterPos)"
 $failures = 0
 for (;;) {
   try { if ((Get-Item $self).LastWriteTimeUtc -ne $selfStamp) { L 'script updated - restarting'; $mutex.ReleaseMutex(); $mutex.Dispose(); Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $self + '"'); exit 0 } } catch {}
   try { Self-Test } catch { L "self-test: $($_.Exception.Message)" }
+  try { Apply-Stock } catch { L "stock: $($_.Exception.Message)" }
   $c = $null
   try {
     $n = Api '/api/apex-writer/next' @{}

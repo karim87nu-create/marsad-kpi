@@ -69,6 +69,66 @@
   const say = text => { banner.textContent = 'شاشة مراقبة طلبات — مرصد الدهان · ' + text; if (!banner.isConnected) document.documentElement.append(banner); };
   say('بتبدأ…');
 
+  // ---------- Menu Availability tab (main screen): which dishes are stopped in each branch; applies admin's queued stops ----------
+  // Reads each dish's status from the page's own data (0 = available). Changes only what admin queued, only when admin
+  // turned it on, one dish at a time: open that dish's availability menu, choose «Unavailable» / «Available», check it took.
+  if (state.role === 'menu') {
+    if (!/^\/menu-management-tb\/menu-availability/.test(location.pathname)) { location.href = '/menu-management-tb/menu-availability'; return; }
+    say('بيقرا الأصناف الواقفة');
+    const W = x => (x && x.wrappedJSObject) || x;
+    const dishes = () => {
+      const out = new Map();
+      for (const b of document.querySelectorAll('[data-testid^="open_options_"]')) {
+        const w = W(b); let key = null; try { key = Object.keys(w).find(k => k.startsWith('__reactFiber$')); } catch {}
+        let f = key ? w[key] : null;
+        for (let i = 0; f && i < 25; i++, f = f.return) { try { const it = f.memoizedProps && f.memoizedProps.item; if (it && it.id) { out.set(String(it.id), Number(it.status)); break; } } catch {} }
+      }
+      return out;
+    };
+    const outlet = () => new URL(location.href).searchParams.get('vendor') || '';
+    const visible = e => !!(e && (e.offsetWidth || e.offsetHeight || e.getClientRects().length));
+    async function setAvailability(id, stop) {
+      const btn = T('open_options_' + id); if (!btn) return { ok: false, note: 'الصنف مش ظاهر في الصفحة' };
+      btn.scrollIntoView({ block: 'center' }); await sleep(300); btn.click(); await sleep(900);
+      const want = stop ? /^(?:un\s?a?vailable|unvailable|غير متاح|غير متوفر)$/i : /^(?:available|متاح|متوفر)$/i;
+      const opt = [...document.querySelectorAll('[role="menuitem"],[role="option"],li')].filter(visible).find(x => want.test((x.innerText || '').trim()));
+      if (!opt) { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return { ok: false, note: 'اختيار ' + (stop ? 'الإيقاف' : 'الرجوع') + ' مش ظاهر' }; }
+      opt.click(); await sleep(1500);
+      // A confirmation, if Talabat asks for one about this change (never the notifications window).
+      const dlg = [...document.querySelectorAll('[role="dialog"]')].find(d => d.querySelector('[data-testid="dialog_confirm_button"]') && !/notification|إشعار/i.test(d.innerText || ''));
+      if (dlg) { dlg.querySelector('[data-testid="dialog_confirm_button"]').click(); await sleep(1500); }
+      const st = dishes().get(id);
+      return st == null ? { ok: false, note: 'ماقدرتش أتأكد' } : (stop ? st !== 0 : st === 0) ? { ok: true } : { ok: false, note: 'الحالة ماتغيرتش' };
+    }
+    let rounds = 0;
+    for (;;) {
+      try {
+        let now = dishes();
+        for (let i = 0; i < 20 && now.size < 20; i++) { await sleep(1000); now = dishes(); }
+        const cfg = await bg({ type: 'TALABAT_STOCK' }).catch(() => null);
+        const done = [];
+        if (cfg?.ok && cfg.apply && now.size >= 20) {
+          for (const [id, act] of Object.entries(cfg.queue?.[outlet()] || {}).slice(0, 10)) {
+            const st = now.get(id);
+            if (st == null) { done.push({ id, act, ok: false, note: 'الصنف مش في منيو الفرع ده' }); continue; }
+            if (act === 'stop' ? st !== 0 : st === 0) { done.push({ id, act, ok: true, note: 'كان كده بالفعل' }); continue; }
+            done.push({ id, act, ...(await setAvailability(id, act === 'stop')) });
+          }
+          now = dishes();
+        }
+        if (now.size >= 20) await bg({ type: 'TALABAT_STOCK_REPORT', body: { outlet: outlet(), outletName: (T('outlet-switcher')?.innerText || '').trim().slice(0, 120), unavailable: [...now].filter(([, st]) => st !== 0).map(([id]) => id), done } }).catch(() => null);
+        say('الأصناف: ' + [...now.values()].filter(st => st !== 0).length + ' واقف · ' + new Date().toLocaleTimeString('ar-EG-u-nu-latn', { hour: '2-digit', minute: '2-digit' }));
+        // Every 3 rounds (about a minute and a half) the next branch.
+        if (++rounds >= 3 && cfg?.outlets?.length) {
+          const list = cfg.outlets, i = list.indexOf(outlet()), next = list[(i + 1) % list.length];
+          if (next && next !== outlet()) { location.href = '/menu-management-tb/menu-availability?vendor=' + encodeURIComponent(next); return; }
+          rounds = 0;
+        }
+      } catch {}
+      await sleep(30000);
+    }
+  }
+
   // ---------- Live Orders tab: the short #code of each live order (what is written on Apex next to the customer) ----------
   if (state.role === 'live') {
     if (!location.pathname.startsWith('/live-orders')) { location.href = '/live-orders'; return; }
@@ -182,6 +242,16 @@
     // «في الطريق» for one order whose Apex order left with the pilot: open it (a click on its number), press the button
     // with exactly these words, confirm only a dialog that asks about it, close. Anything unexpected: stop and report.
     async function pressOnTheWay(id) {
+      // The card's own «في الطريق» button (data-testid seen on the real page 01-11): no need to open the order.
+      for (const b of document.querySelectorAll('[data-testid="order-list-item-order-on-its-way-button"]')) {
+        let card = b; for (let i = 0; i < 10 && card && !(card.innerText || '').includes(id); i++) card = card.parentElement;
+        if (!card || !(card.innerText || '').includes(id) || (card.innerText.match(/(?<!\d)\d{9,12}(?!\d)/g) || []).filter((x, k, a) => a.indexOf(x) === k).length > 1) continue;
+        if (b.disabled) return { ok: false, note: 'زرار «في الطريق» مقفول' };
+        b.click(); await sleep(1500);
+        const dlg = [...document.querySelectorAll('[role="dialog"]')].find(d => d.querySelector('[data-testid="dialog_confirm_button"]') && !/notification|إشعار/i.test(d.innerText || ''));
+        if (dlg) { sendUi('onTheWay', dlg); dlg.querySelector('[data-testid="dialog_confirm_button"]').click(); await sleep(1500); return { ok: true, note: 'اتداس «في الطريق» من الكارت واتأكد' }; }
+        return { ok: true, note: 'اتداس «في الطريق» من الكارت' };
+      }
       const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT); let target = null;
       for (let n; (n = w.nextNode());) if (n.nodeValue.includes(id) && !n.parentElement.closest('button,[role="button"] button,a,[data-testid="details-order-id"]')) { target = n.parentElement; break; }
       if (!target || ACTION.test((target.innerText || '').trim())) return { ok: false, note: 'الأوردر مش ظاهر على اللايف' };

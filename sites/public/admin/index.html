@@ -396,6 +396,9 @@
         <div id="stockList" style="max-height:420px;overflow:auto;margin-top:8px"></div>
         <div class="row"><button type="button" id="stockSave">حفظ للفرع ده</button></div>
         <p id="stockNote" class="muted" role="status"></p>
+        <div class="row"><label><input type="checkbox" id="stockApplyTb"> يتطبق على طلبات (شاشة طلبات بتوقف/ترجّع الأصناف)</label> <label><input type="checkbox" id="stockApplyApex"> يتطبق على Apex (الكاتب بيوقف الصنف في الفرع)</label></div>
+        <div id="stockActual" class="muted"></div>
+        <details><summary class="muted">آخر اللي اتطبق</summary><div id="stockLog" class="muted"></div></details>
       </article>
       <article class="panel" id="ordersKeyPanel"><h2>مرصد الأوردرات (جهاز الكاشير)</h2>
         <p class="muted">السكريبت اللي على جهاز الكاشير بيقرا Apex ويبعت هنا بالمفتاح ده. طلّع المفتاح، وشغّل setup.bat على جهاز الكاشير والصقه لما يطلبه. المفتاح بيظهر مرة واحدة بس؛ لو طلّعت مفتاح جديد القديم بيبطل.</p>

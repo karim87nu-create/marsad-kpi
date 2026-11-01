@@ -155,18 +155,35 @@ test('transfer page: a discount under the dish is split by who funds it (real or
   } finally { await t.close(); }
 });
 
-test('Talabat: dishes stopped per branch from admin, read by the Talabat screen', async () => {
+test('Talabat/Apex: admin\'s stop changes are queued per outlet and per Apex branch, applied only when turned on, and removed once done', async () => {
   const t = await start({ at: cairoToUtc(2026, 10, 31, 21, 0, 0) });
   try {
     const admin = await t.admin();
     const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const scr = { 'x-talabat-token': token };
     let c = (await admin('GET', '/api/talabat/stock-config')).body;
-    assert.ok(c.products.some(p => p.name === 'Fillet'), 'the Talabat menu is listed');
-    const fillet = c.products.find(p => p.name === 'Fillet').id;
-    assert.equal((await admin('POST', '/api/talabat/stock-config', { store: 'الدهان، مدينتي', stopped: [fillet, 'not-a-dish'] })).body.stopped.length, 1, 'unknown dishes are dropped');
+    const nefa = c.products.find(p => p.name === 'Nefa').id;
+    await admin('POST', '/api/talabat/stock-config', { store: 'الدهان سيتي ستار مول، مكرم عبيد', stopped: [nefa, 'not-a-dish'] });
     assert.equal((await t.call('GET', '/api/talabat/stock')).status, 401);
-    const s = (await t.call('GET', '/api/talabat/stock', { headers: { 'x-talabat-token': token } })).body;
-    assert.deepEqual(s.stopped, { 'الدهان، مدينتي': [fillet] });
+    let s = (await t.call('GET', '/api/talabat/stock', { headers: scr })).body;
+    assert.equal(s.apply, false, 'nothing is applied until admin turns it on');
+    assert.deepEqual(s.queue, { 'HF_EG;608556': { [nefa]: 'stop' } }, 'Makram Ebeid outlet');
+    const { token: wt } = (await admin('POST', '/api/apex-writer', { action: 'token' })).body;
+    const w = { 'x-apex-writer': wt };
+    assert.deepEqual((await t.call('POST', '/api/apex-writer/stock-next', { headers: w, body: {} })).body, { apply: false, queue: {} });
+    await admin('POST', '/api/talabat/stock-config', { action: 'apply', talabat: true, apex: true });
+    const aq = (await t.call('POST', '/api/apex-writer/stock-next', { headers: w, body: {} })).body.queue;
+    assert.ok(Object.keys(aq['2'] || {}).length >= 1 && Object.values(aq['2']).every(v => v === 'stop'), 'Apex branch 2: the Nefa items');
+    await t.call('POST', '/api/talabat/stock/report', { headers: scr, body: { outlet: 'HF_EG;608556', outletName: 'El Dahan, Makram Ebeid', unavailable: [nefa], done: [{ id: nefa, act: 'stop', ok: true }] } });
+    s = (await t.call('GET', '/api/talabat/stock', { headers: scr })).body;
+    assert.deepEqual(s.queue, {}, 'done → off the queue');
+    await t.call('POST', '/api/apex-writer/stock', { headers: w, body: { done: Object.keys(aq['2']).map(no => ({ branch: 2, itemNo: no, act: 'stop', ok: true })) } });
+    assert.deepEqual((await t.call('POST', '/api/apex-writer/stock-next', { headers: w, body: {} })).body.queue, { 2: {} });
+    c = (await admin('GET', '/api/talabat/stock-config')).body;
+    assert.deepEqual(c.actual['HF_EG;608556'].unavailable, [nefa]);
+    // Resuming queues the opposite change.
+    await admin('POST', '/api/talabat/stock-config', { store: 'الدهان سيتي ستار مول، مكرم عبيد', stopped: [] });
+    assert.deepEqual((await t.call('GET', '/api/talabat/stock', { headers: scr })).body.queue, { 'HF_EG;608556': { [nefa]: 'resume' } });
   } finally { await t.close(); }
 });
 
