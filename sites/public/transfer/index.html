@@ -223,10 +223,13 @@ function render(force) {
   // was not found (Karim 01-11: 19 old orders sat in «لسه»). A claimed one stays with its employee.
   const now = Date.parse(data.serverNow) || Date.now();
   const recent = o => !o.at || now - Date.parse(o.at) < 2 * 3600000 || (o.job && !/^(?:released)$/.test(o.job.state || ''));
-  const waiting = o => !o.apex && !o.out && !/^(?:entered|auto_done)$/.test(o.job?.state || '') && recent(o);
+  // Talabat: only what is on a live screen now (Karim 01-11). A claimed order stays with its employee.
+  const onScreen = o => o.source !== 'talabat' || o.onLive || (o.job && !/^(?:released)$/.test(o.job.state || ''));
+  const waiting = o => !o.apex && !o.out && !/^(?:entered|auto_done)$/.test(o.job?.state || '') && recent(o) && onScreen(o);
   const list = data.orders.filter(o => (!source || o.source === source) && (filter === 'all' || waiting(o)));
   const todo = data.orders.filter(waiting).length;
   $('count').textContent = 'لسه: ' + todo + ' · الكل: ' + data.orders.length;
+  if (data.liveScreen === false) $('count').textContent += ' · ⚠️ مفيش شاشة لايف طلبات شغالة دلوقتي';
   const html = list.length ? list.map(card).join('') : '<div class="empty">مفيش أوردرات هنا دلوقتي</div>';
   if (html !== lastDraw) { $('list').innerHTML = html; lastDraw = html; }   // nothing changed: the page is not rebuilt
 }

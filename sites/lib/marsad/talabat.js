@@ -81,6 +81,15 @@ function setup(app) {
       const keep = Object.entries(all).sort((a, b) => b[1].at - a[1].at).slice(0, 20);
       await put('talabat_screens', JSON.stringify(Object.fromEntries(keep)));
     }
+    // What is on a live screen right now (Karim 01-11: the transfer page lists only those): every screen sends its live
+    // orders at least once a minute; an order not sent by any screen for 3 minutes has left the live screen.
+    if (Array.isArray(ctx.body?.codes)) {
+      const seenNow = parseJson(await setting('talabat_live_now'), {});
+      for (const c of ctx.body.codes.slice(0, 200)) { const id = String(c?.id || '').replace(/\D/g, '').slice(0, 20); if (id.length >= 6) seenNow[id] = now; }
+      seenNow._screen = now;
+      for (const [k, v] of Object.entries(seenNow)) if (now - v > 30 * 60000) delete seenNow[k];
+      await put('talabat_live_now', JSON.stringify(seenNow));
+    }
     // From Live Orders: the short code (#2703) next to the full number; it is what is written on Apex next to the customer.
     for (const c of (Array.isArray(ctx.body?.codes) ? ctx.body.codes : []).slice(0, 200)) {
       const id = String(c.id || '').replace(/\D/g, '').slice(0, 20), code = String(c.code || '').replace(/\D/g, '').slice(0, 10);

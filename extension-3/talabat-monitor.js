@@ -215,7 +215,10 @@
         // «Please allow notifications»: close it (English or Arabic), only inside that window.
         for (const d of document.querySelectorAll('[role="dialog"]')) if (/notification|إشعار/i.test(d.innerText || '')) [...d.querySelectorAll('button')].find(b => /^(?:got it|حسنًا|حسنا|فهمت|تمام)$/i.test(b.textContent.trim()))?.click();
         const live = stateOrders();
-        const codes = live ? live.filter(o => o.externalId && o.shortCode && !/CANCEL|REJECT/i.test(o.state || '')).map(o => ({ id: String(o.externalId), code: String(o.shortCode), ...(o.vendorName ? { store: o.vendorName } : {}), ...(o.payment?.paymentType ? { pay: String(o.payment.paymentType).slice(0, 40) } : {}) })) : readCodes();
+        // What is on the screen now: the cards shown (the page's memory also keeps orders that already left), with the
+        // branch and payment from the page's data.
+        const byId = new Map((live || []).map(o => [String(o.externalId), o]));
+        const codes = readCodes().map(c => { const o = byId.get(c.id); return o ? { ...c, code: String(o.shortCode || c.code), ...(o.vendorName ? { store: o.vendorName } : {}), ...(o.payment?.paymentType ? { pay: String(o.payment.paymentType).slice(0, 40) } : {}) } : c; });
         const key = JSON.stringify(codes);
         // From the page's data: each live order's full details, sent again only when something in it changed.
         if (live) {

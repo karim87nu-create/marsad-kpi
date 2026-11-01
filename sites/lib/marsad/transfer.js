@@ -224,11 +224,14 @@ function setup(app) {
       return stale ? null : { state: j.state, by: j.employee_name, mine: me.staff && j.employee_id === me.id, payment: j.payment, note: j.note, at: iso(j.at), result: parseJson(j.result, null) };
     };
     // Orders already on Apex or out with the rider: their bill lines are not needed (lighter page).
-    const list = base.list.map(o => ({ ...o, ...(o.apex || o.out ? { bill: undefined } : {}), job: jobOf(o.source, o.source === 'site' ? String(o.ref) : o.ref) }));
+    // On a Talabat live screen now (sent by a screen in the last 3 minutes).
+    const liveNow = parseJson((await db.prepare("SELECT value FROM settings WHERE key = 'talabat_live_now'").get())?.value, {});
+    const onLive = id => ctx.now - (liveNow[id] || 0) < 3 * 60000;
+    const list = base.list.map(o => ({ ...o, ...(o.apex || o.out ? { bill: undefined } : {}), ...(o.source === 'talabat' ? { onLive: onLive(o.ref) } : {}), job: jobOf(o.source, o.source === 'site' ? String(o.ref) : o.ref) }));
     // Until an admin chooses, the automatic transfer only previews (shadow): it never writes to Apex.
     const mode = (await db.prepare("SELECT value FROM settings WHERE key = 'apex_bridge_mode'").get())?.value || 'shadow';
     const locations = (Array.isArray(snap.locations) ? snap.locations : []).filter(l => Number.isInteger(l?.no)).map(l => ({ no: l.no, name: String(l.name || ''), branch: l.branch ?? null, service: l.service ?? null }));
-    return { day, me: { name: me.name, staff: me.staff }, serverNow: iso(ctx.now), autoTransfer: mode, branches: APEX_BRANCHES, locations, apexItems: mode && mode !== 'off' ? APEX_ITEM_LIST : [], orders: list };
+    return { day, me: { name: me.name, staff: me.staff }, serverNow: iso(ctx.now), liveScreen: ctx.now - (liveNow._screen || 0) < 3 * 60000, autoTransfer: mode, branches: APEX_BRANCHES, locations, apexItems: mode && mode !== 'off' ? APEX_ITEM_LIST : [], orders: list };
   });
 
   // ---- claim / entered / release ----
