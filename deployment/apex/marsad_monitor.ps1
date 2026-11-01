@@ -199,12 +199,16 @@ function LoadRefs {
   $script:Reasons = $rs
   # Delivery areas (the order's location number → its name), from whichever Apex table holds them.
   $ls = @{}
+  # The areas in use now are in LocationServices (Location only has the old ones; Karim 01-11: Talabat orders in
+  # Madinaty and Tagamoa showed no area). Its names first; the older table only adds numbers it lacks.
+  try { foreach($x in (Q "SELECT LocationNo, RTRIM(LocationName) AS nm FROM LocationServices WITH (NOLOCK)").Rows){ $k = [int](N $x.LocationNo); if ($k -gt 0 -and -not $ls.ContainsKey($k) -and (S $x.nm)) { $ls[$k] = S $x.nm } }; L "locations: LocationServices = $($ls.Count)" } catch { L "locations (LocationServices): $($_.Exception.Message)" }
+  $base = $ls.Count
   try {
     foreach($t in (Q "SELECT c.TABLE_NAME, MAX(CASE WHEN c.DATA_TYPE IN ('varchar','nvarchar','char','nchar') AND c.COLUMN_NAME LIKE '%Name%' THEN c.COLUMN_NAME END) AS txt FROM INFORMATION_SCHEMA.COLUMNS c WHERE c.TABLE_NAME IN (SELECT TABLE_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE COLUMN_NAME = 'LocationNo') AND c.TABLE_NAME NOT LIKE '%Order%' AND c.TABLE_NAME NOT LIKE '%Cust%' GROUP BY c.TABLE_NAME HAVING COUNT(*) <= 8 ORDER BY CASE WHEN c.TABLE_NAME LIKE 'Location%' THEN 0 ELSE 1 END").Rows){
       if (-not (S $t.txt)) { continue }
       foreach($x in (Q "SELECT TOP 2000 LocationNo, [$(S $t.txt)] AS nm FROM [$(S $t.TABLE_NAME)]").Rows){ $k = [int](N $x.LocationNo); if ($k -gt 0 -and -not $ls.ContainsKey($k) -and (S $x.nm)) { $ls[$k] = S $x.nm } }
       L "locations: $(S $t.TABLE_NAME).$(S $t.txt) = $($ls.Count)"
-      if ($ls.Count) { break }
+      if ($ls.Count -gt $base) { break }
     }
   } catch { L "locations: $($_.Exception.Message)" }
   $script:Locations = $ls

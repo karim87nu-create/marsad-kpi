@@ -331,6 +331,24 @@ function Self-Test {
       $out.saved = $rows; $out.ok = $true
       throw 'INSPECT_DONE'
     }
+    if ($job.mode -eq 'inspect-loc') {
+      # Read-only, production: where the delivery area of an order is (Karim 01-11: area and comment missing in alerts of Talabat orders).
+      $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[0]);Database=Resturant;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec)))
+      try { $c.Open() } catch { $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[1]);Database=Resturant;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec))); $c.Open() }
+      $out.mode = 'inspect-loc'; $rows = @()
+      foreach($q in @("SELECT 'LT' k, t.name tb, (SELECT SUM(p.rows) FROM sys.partitions p WHERE p.object_id = t.object_id AND p.index_id IN (0,1)) n FROM sys.tables t WHERE EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name = 'LocationNo')",
+                      "SELECT 'LC' k, t.name tb, c.name col, ty.name tp FROM sys.columns c JOIN sys.tables t ON t.object_id = c.object_id JOIN sys.types ty ON ty.user_type_id = c.user_type_id WHERE t.name IN ('LocationBranches','LocationServices','Location')",
+                      "SELECT TOP 12 'L2' k, * FROM LocationBranches WITH (NOLOCK) WHERE LocationNo IN (218, 331, 354, 370, 371, 372)",
+                      "SELECT TOP 12 'L3' k, * FROM LocationServices WITH (NOLOCK) WHERE LocationNo IN (218, 331, 354, 370, 371, 372)",
+                      "SELECT TOP 6 'L4' k, * FROM Location WITH (NOLOCK) ORDER BY LocationNo DESC",
+                      "SELECT 'LB' k, BranchNo, COUNT(*) n, MIN(LocationNo) mn, MAX(LocationNo) mx FROM Location WITH (NOLOCK) GROUP BY BranchNo",
+                      "SELECT 'OC' k, c.name col FROM sys.columns c WHERE c.object_id = OBJECT_ID('Orders_M_Daily') AND (c.name LIKE '%Loc%' OR c.name LIKE '%Area%' OR c.name LIKE '%Zone%' OR c.name LIKE '%Region%' OR c.name LIKE '%Addr%' OR c.name LIKE '%Rem%' OR c.name LIKE '%Note%' OR c.name LIKE '%Comment%')",
+                      "SELECT TOP 40 'O' k, m.OrderNo, m.ShiftSerial, m.BranchNo, m.OnlineType, m.TimeIn, m.o_LocationNo, (SELECT TOP 1 RTRIM(l.LocationName) FROM Location l WITH (NOLOCK) WHERE l.LocationNo = m.o_LocationNo) AS anyBranchLoc, (SELECT TOP 1 RTRIM(l.LocationName) FROM Location l WITH (NOLOCK) WHERE l.LocationNo = m.o_LocationNo AND l.BranchNo = m.BranchNo) AS sameBranchLoc, LEN(RTRIM(ISNULL(m.Remarks,''))) AS remLen, LEFT(RTRIM(ISNULL(m.Remarks,'')), 60) AS rem FROM Orders_M_Daily m WITH (NOLOCK) ORDER BY m.OrderNo DESC")){
+        try { $cmd = $c.CreateCommand(); $cmd.CommandTimeout = 30; $cmd.CommandText = $q; $rd = $cmd.ExecuteReader(); while ($rd.Read()) { $h = [ordered]@{}; for ($i = 0; $i -lt $rd.FieldCount; $i++) { $h[$rd.GetName($i)] = "$($rd.GetValue($i))".Trim() }; $rows += $h }; $rd.Close() } catch { $rows += @{ q = $q.Substring(0, 40); error = $_.Exception.Message } }
+      }
+      $out.saved = $rows; $out.ok = $true
+      throw 'INSPECT_DONE'
+    }
     if ($job.mode -eq 'inspect-print') {
       # Read-only, test copy: the print flags Apex's own client left on the orders it created there (no branch printer runs on the test copy).
       $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[0]);Database=Resturant_Test;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec)))
