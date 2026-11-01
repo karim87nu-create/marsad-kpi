@@ -114,13 +114,6 @@ window.MarsadKpi = function MarsadKpi(ctx) {
     $('kpiTargets').textContent = Object.values(data.targets).map(t => t.label + ' ' + (t.min != null && t.max != null ? t.min + '–' + t.max : t.min != null ? '≥ ' + t.min : '≤ ' + t.max) + t.unit).join(' · ');
   }
 
-  // Period presets: today, yesterday, last 7 days, this month.
-  const back = n => new Date(Date.parse(cairoToday() + 'T12:00:00Z') - n * 864e5).toISOString().slice(0, 10);
-  for (const b of document.querySelectorAll('[data-kpi-range]')) b.onclick = () => {
-    const k = b.dataset.kpiRange, t = cairoToday();
-    if (k === 'today') setRange(t, t); else if (k === 'yesterday') setRange(back(1), back(1));
-    else if (k === 'week') setRange(back(6), t); else if (k === 'month') setRange(t.slice(0, 8) + '01', t);
-  };
   $('kpiExport').onclick = () => data && exportSheets('مؤشرات-الأداء', [['الموظفين', empCols, data.employees], ['الفروع', brCols, data.branches]]);
   $('kpiPrint').onclick = () => window.print();
   return { render };

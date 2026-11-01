@@ -36,10 +36,10 @@ test('admin page: مرصد الدهان sections, live branches board, reports, 
     const until = async (f, what) => { for (let i = 0; i < 300; i++) { if (f()) return; await new Promise(r => setTimeout(r, 10)); } throw Error('UI did not finish: ' + what + ' ' + doc.getElementById('error').textContent + ' / ' + doc.getElementById('title').textContent + ' / ' + doc.getElementById('boardRoot').textContent.slice(0, 300)); };
     await until(() => !doc.getElementById('app').hidden && doc.getElementById('title').textContent === 'الآن' && doc.getElementById('sync').textContent.includes('آخر تحديث'), 'login');
     assert.equal(doc.title.includes('مرصد الدهان'), true);
-    assert.equal(doc.querySelector('[data-sec="branches"]').hidden, true, 'branches views hidden in the call center section');
+    assert.equal(doc.querySelector('[data-sec="orders"]').hidden, true, 'orders tabs hidden while الآن is open');
 
     // Switching section opens the live board.
-    doc.querySelector('[data-section="branches"]').click();
+    doc.querySelector('[data-section="orders"]').click();
     await until(() => doc.querySelectorAll('#boardRoot .ob-t').length === 3, 'board tickets');
     assert.equal(doc.querySelector('[data-sec="calls"]').hidden, true);
     await until(() => doc.querySelector('#boardRoot .ob-t.red'), 'red ticket');
@@ -60,11 +60,9 @@ test('admin page: مرصد الدهان sections, live branches board, reports, 
     await until(() => doc.getElementById('salesByKind').textContent.includes('مدينتي'), 'sales pivot');
     assert.match(doc.getElementById('salesCards').textContent, /1,500/);
     assert.match(doc.getElementById('salesByPay').textContent, /Visa/);
-    doc.querySelector('[data-view="branchFile"]').click();
+    doc.querySelector('[data-view="branches"]').click();
     await until(() => /المبيعات حسب المنصة/.test(doc.getElementById('branchFileBody').textContent), 'branch file');
     // Call center: order entry.
-    doc.querySelector('[data-section="calls"]').click();
-    await until(() => doc.getElementById('title').textContent === 'الآن', 'back to calls');
     doc.querySelector('[data-view="entry"]').click();
     await until(() => doc.getElementById('entryStaff').textContent.includes('أحمد'), 'entry staff');
     assert.match(doc.getElementById('entryIssues').textContent, /TALABAT VISA/);
@@ -81,7 +79,7 @@ test('admin page: مرصد الدهان sections, live branches board, reports, 
     await until(() => /^ord_[a-f0-9]{48}$/.test(doc.getElementById('ordersKeyValue').value), 'new key');
     assert.equal((await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': push }, body: payload })).status, 401, 'old key stops');
     assert.equal((await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': doc.getElementById('ordersKeyValue').value }, body: payload })).status, 200);
-    doc.querySelector('[data-view="manage"]').click();
+    doc.querySelector('[data-view="telegram"]').click();
     await until(() => /جروب إدارات الفروع/.test(doc.getElementById('tgStatus').textContent), 'telegram groups');
     assert.ok(doc.getElementById('tgChooseBranches'));
     assert.ok(doc.getElementById('tgChooseOnline'));
@@ -89,15 +87,15 @@ test('admin page: مرصد الدهان sections, live branches board, reports, 
     const tt = (await t.call('POST', '/api/talabat/token', { headers: { 'x-admin-password': token } })).body.token;
     await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': tt }, body: { orders: [{ id: '3977407954', store: 'الدهان, مدينتي - ساوث بارك', status: 'CANCELLED', placedAt: ago(40), total: 323,
       detail: { receivedAt: ago(40), acceptSeconds: 9, acceptedAt: ago(39), pickedUpAt: ago(35), cancelledAt: ago(5), cancelOwner: 'Customer', cancelReason: 'Unable to find or reach customer', items: [{ qty: 1, name: 'Stuffed Pigeon', price: 323 }], subtotal: 323 } }] } });
-    doc.querySelector('[data-view="talabat"]').click();
+    doc.querySelector('[data-view="transfer"]').click();
     await until(() => doc.getElementById('talOrders').textContent.includes('3977407954') && doc.getElementById('talCancels').textContent.includes('Unable to find'), 'talabat view');
     assert.match(doc.getElementById('talCancels').textContent, /العميل/);
-    for (const [v, id, text] of [['siteTransfer', 'siteTTable', 'الموقع مش متربط']]) {
+    for (const [v, id, text] of [['transfer', 'siteTTable', 'الموقع مش متربط']]) {
       doc.querySelector('[data-view="' + v + '"]').click();
       await until(() => doc.getElementById(id).textContent.includes(text), v);
     }
-    doc.querySelector('[data-section="branches"]').click(); await until(() => !doc.querySelector('[data-sec="branches"]').hidden, 'branches');
-    doc.querySelector('[data-view="siteBranches"]').click();
+    doc.querySelector('[data-section="reports"]').click(); await until(() => !doc.querySelector('[data-sec="reports"]').hidden, 'reports');
+    doc.querySelector('[data-view="branches"]').click();
     await until(() => doc.getElementById('siteBTable').textContent.includes('الموقع مش متربط'), 'siteBranches');
     assert.equal(doc.getElementById('error').hidden, true, doc.getElementById('error').textContent);
   } finally { await new Promise(r => setTimeout(r, 150)); dom?.window.close(); await t.close(); }

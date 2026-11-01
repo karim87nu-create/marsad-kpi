@@ -124,7 +124,7 @@
   function showError(e) { $('error').hidden = !e; $('error').textContent = e ? e.message || String(e) : ''; }
   // الفروع وضرب الأوردرات (orders.js).
   let INS = null;
-  const rerender = () => { if (DAY_VIEWS.includes(state.view) || ['talabat', 'branchFile', 'sales'].includes(state.view)) show(state.view); };
+  const rerender = () => { if (DAY_VIEWS.includes(state.view)) show(state.view); };
   const OR = window.MarsadOrders({ api, h, $, table, kpi, pill, C, exportRows, serverNow, cairoToday, state, hm: v => hm(v), showError, review: () => INS });
   const SITE = window.MarsadSite({ api, h, $, table, kpi, pill, serverNow, state, showError, exportRows, canWrite: () => canWrite(), extensionCall: (...a) => extensionCall(...a), review: () => INS });
   const setRange = (from, to) => { $('day').value = from; $('dayTo').value = to; $('applyRange').click(); };
@@ -208,11 +208,11 @@
     if (requestsBusy) return;
     requestsBusy = true;
     try {
-    try { state.requests = await api('/api/break-requests'); } catch (e) { if (state.view === 'requests') showError(e); return; }
+    try { state.requests = await api('/api/break-requests'); } catch (e) { if (state.view === 'breaks') showError(e); return; }
     const rows = state.requests.requests, pending = rows.filter(r => r.status === 'pending');
     document.title = (pending.length ? '(' + pending.length + ') ' : '') + 'مرصد الدهان — الإدارة';
-    $('reqBadge').hidden = !pending.length; $('reqBadge').textContent = pending.length;
-    $('breakRequests').replaceChildren(...(pending.length && state.view !== 'requests' ? [h('div', { className: 'requests' }, h('h2', { textContent: 'طلبات بريك مستنية موافقة — ' + pending.length }),
+    $('reqBadge').hidden = $('reqBellN').hidden = !pending.length; $('reqBadge').textContent = $('reqBellN').textContent = pending.length; $('reqBell').classList.toggle('alert', !!pending.length);
+    $('breakRequests').replaceChildren(...(pending.length && state.view !== 'breaks' ? [h('div', { className: 'requests' }, h('h2', { textContent: 'طلبات بريك مستنية موافقة — ' + pending.length }),
       ...pending.map(r => h('div', { className: 'row' }, h('span', { textContent: r.employee + ' · تحويلة ' + (r.extension || '—') + ' · ' + r.requestedMinutes + ' دقيقة · من ' + clock(r.createdAt) }), requestActions(r))))] : []));
     const cnt = st => rows.filter(r => st.includes(r.status)).length;
     $('requestCards').replaceChildren(kpi('مستنية موافقة', pending.length, pending.length ? 'warn' : 'good'), kpi('اتوافق عليها', cnt(['approved', 'starting', 'completed']), 'good'),
@@ -234,7 +234,8 @@
     $('teamCards').replaceChildren(kpi('موظفين اشتغلوا', e.length, 'info'), kpi('إجمالي ساعات العمل', dur(sum('workSeconds'))), kpi('وقت المكالمات', dur(sum('callSeconds')), 'on_call'), kpi('وقت المتاح', dur(sum('readySeconds')), 'ready'),
       kpi('إجمالي البريك', dur(sum('breakSeconds')), 'break', overBreak ? overBreak + ' موظف عدّى 30 دقيقة في يوم واحد على الأقل' : ''), kpi('برّه التحويلة — للتوضيح بس', dur(e.reduce((n, x) => n + outTotal(x), 0)), 'unknown', outDetail({ gapSeconds: sum('gapSeconds'), outArabicssSeconds: sum('outArabicssSeconds'), outExtensionSeconds: sum('outExtensionSeconds'), outBrowserSeconds: sum('outBrowserSeconds') }) || 'مش داخل في أي حساب'),
       kpi('مكالمات من غير موظف مسجل', (hd.unattributed || []).length, (hd.unattributed || []).length ? 'bad' : 'good'));
-    C.slots($('dayChart'), d.slots.filter(x => x.operating));
+    compareDay(r).catch(() => {});
+    if ($('dayChart')) C.slots($('dayChart'), d.slots.filter(x => x.operating));
     const qs = (hd.queues || []).filter(q => q.calls), maxQ = Math.max(1, ...qs.map(q => q.calls));
     $('queueBars').replaceChildren(h('div', { className: 'ranks' }, ...qs.sort((a, b) => b.calls - a.calls).map(q => h('div', { className: 'r' }, h('span', { textContent: q.label + ' · ' + q.calls + ' مكالمة' }), h('small', { className: 'muted', textContent: 'رد خلال 10ث ' + pct(q.sla) + ' · فائتة ' + q.abandoned }), C.meter(q.calls, maxQ)))));
     table('queueTable', queueColumns, hd.queues || []);
@@ -242,6 +243,22 @@
     const top = (k, n = 5) => [...e].filter(x => x[k] > 0).sort((a, b) => b[k] - a[k]).slice(0, n);
     $('dayRanks').replaceChildren(...rank('أكتر مكالمات', top('calls'), x => x.calls, x => x.calls, 'var(--call)'), ...rank('أطول بريك', top('breakSeconds'), x => x.breakSeconds, x => dur(x.breakSeconds), 'var(--break)'),
       ...rank('أكتر وقت برّه التحويلة (للتوضيح)', [...e].filter(x => outTotal(x) > 0).sort((a, b) => outTotal(b) - outTotal(a)).slice(0, 5), outTotal, x => dur(outTotal(x)), 'var(--unknown)'));
+  }
+
+  // The same length of time just before (yesterday for a day): an arrow on each headline number, green when better.
+  const prevRange = () => { const n = Math.round((Date.parse(state.to) - Date.parse(state.day)) / 864e5) + 1, sh = k => new Date(Date.parse(state.day + 'T12:00:00Z') - k * 864e5).toISOString().slice(0, 10); return [sh(n), sh(1)]; };
+  function deltaEl(cur, before, lowerBetter, fmt = v => Math.round(v * 10) / 10) {
+    if (cur == null || before == null) return null;
+    const d = cur - before; if (Math.abs(d) < 0.05) return h('small', { className: 'delta same', textContent: '= زي اللي قبلها' });
+    return h('small', { className: 'delta ' + ((lowerBetter ? d < 0 : d > 0) ? 'up' : 'down'), textContent: (d > 0 ? '▲ ' : '▼ ') + fmt(Math.abs(d)) + ' عن اللي قبلها' });
+  }
+  async function compareDay(r) {
+    if (!r) return;
+    const [f, t] = prevRange(), view = state.view, key = state.day + state.to;
+    const p = (await cached('day:' + f + ':' + t, 600000, () => api('/api/day?from=' + f + '&to=' + t))).history?.report;
+    if (!p || state.view !== view || state.day + state.to !== key) return;
+    const map = { 'مكالمات محتسبة': ['calls'], 'تم الرد': ['answered'], 'فائتة محتسبة': ['abandoned', true], 'الرد خلال 10 ث': ['sla', false, v => v.toFixed(1) + '%'], 'متوسط انتظار الرد': ['asa', true, v => v.toFixed(1) + ' ث'], 'نسبة الفائتة': ['abandonmentRate', true, v => v.toFixed(1) + '%'] };
+    for (const card of $('dayCards').children) { const m = map[card.querySelector('span')?.textContent]; if (!m) continue; card.querySelector('.delta')?.remove(); const d = deltaEl(r[m[0]], p[m[0]], m[1], m[2]); if (d) card.append(d); }
   }
 
   // ---------- على مدار اليوم ----------
@@ -805,40 +822,57 @@
   });
 
   // ---------- navigation ----------
-  const VIEWS = { now: ['الآن', null], day: ['ملخص اليوم', renderDay], hours: ['على مدار اليوم', renderHours], team: ['أداء الموظفين', renderTeam], profile: ['ملف الموظف', renderProfile], requests: ['طلبات البريك', refreshRequests], attendance: ['الحضور والبريك', renderAttendance],
-    shifts: ['نهاية الشيفت والرجوع للشغل', renderShifts], calls: ['المكالمات', renderCalls], missed: ['المكالمات الفائتة', renderMissed], followup: ['المتابعة والتقارير', renderFollowup], system: ['حالة النظام', renderSystem], manage: ['الإدارة', renderManage], guide: ['طريقة حساب الأرقام', async () => {}],
-    entry: ['ضرب الأوردرات', () => OR.renderEntry()], branchesNow: ['الفروع الآن', null], branches: ['أداء الفروع', () => OR.renderBranches()], cancels: ['الإلغاءات', () => Promise.all([OR.renderCancels(), SITE.renderBranchTalabatCancels(), INS.renderCancelOwners()])],
-    siteBranches: ['تقرير أداء الموقع للفروع', () => SITE.renderBranches()], siteTransfer: ['تحويل أوردرات الموقع للفروع', () => SITE.renderTransfer()], talabat: ['أوردرات طلبات', () => SITE.renderTalabat()],
-    branchFile: ['ملف الفرع', () => INS.renderBranch()], sales: ['المبيعات', () => INS.renderSales()],
-    kpi: ['مؤشرات الأداء: الموظفين والفروع', () => KPI.render()], auto: ['التشغيل الآلي', renderAuto] };
-  const DAY_VIEWS = ['day', 'hours', 'team', 'profile', 'attendance', 'shifts', 'calls', 'missed', 'followup', 'entry', 'branches', 'cancels', 'siteBranches', 'siteTransfer', 'talabat', 'branchFile', 'sales', 'kpi'];
-  // Two sections, each with its own views; the system views are shared and keep the section you came from.
-  const SECTION_OF = { kpi: 'kpi', auto: 'auto', talabat: 'branches', siteTransfer: 'branches', branchesNow: 'branches', branches: 'branches', cancels: 'branches', siteBranches: 'branches', branchFile: 'branches', sales: 'branches' };
-  const SHARED = ['followup', 'system', 'manage', 'guide'];
-  const lastIn = { calls: 'now', branches: 'branchesNow', kpi: 'kpi', auto: 'auto' };
+  // Seven sections across the top; each has its own pages as tabs under it. One period (from–to) for every page that has one.
+  const VIEWS = { now: ['الآن', null],
+    day: ['الكول سنتر: اليوم', () => Promise.all([renderDay(), renderHours()])], team: ['أداء الموظفين', renderTeam], profile: ['ملف الموظف', renderProfile],
+    breaks: ['البريك والحضور ونهاية الشيفت', () => Promise.all([refreshRequests(), renderAttendance(), renderShifts()])], calls: ['المكالمات', renderCalls], missed: ['المكالمات الفائتة', renderMissed],
+    branchesNow: ['الفروع الآن', null], transfer: ['تحويل الأوردرات: طلبات والموقع', () => Promise.all([SITE.renderTalabat(), SITE.renderTransfer()])], entry: ['ضرب الأوردرات', () => OR.renderEntry()],
+    sales: ['المبيعات', () => INS.renderSales()], branches: ['تقرير الفروع', () => Promise.all([OR.renderBranches(), INS.renderBranch(), SITE.renderBranches()])],
+    cancels: ['الإلغاءات', () => Promise.all([OR.renderCancels(), SITE.renderBranchTalabatCancels(), INS.renderCancelOwners()])],
+    kpi: ['مؤشرات الأداء: الموظفين والفروع', () => KPI.render()], followup: ['المتابعة والاستثناءات', renderFollowup],
+    people: ['الموظفين والمستخدمين', renderManage], messages: ['رسايل للموظفين', renderManage], telegram: ['تنبيهات تليجرام', renderManage],
+    auto: ['التشغيل الآلي', renderAuto], system: ['حالة النظام', renderSystem], guide: ['طريقة حساب الأرقام', async () => {}] };
+  // Old page names (links, other parts of the page) open the page they are part of now.
+  const ALIAS = { hours: 'day', requests: 'breaks', attendance: 'breaks', shifts: 'breaks', talabat: 'transfer', siteTransfer: 'transfer', siteBranches: 'branches', branchFile: 'branches', manage: 'people' };
+  const DAY_VIEWS = ['day', 'team', 'profile', 'breaks', 'calls', 'missed', 'followup', 'entry', 'transfer', 'sales', 'branches', 'cancels', 'kpi'];
+  const SECTION_OF = {};
+  for (const t of document.querySelectorAll('#nav .tabset')) for (const b of t.querySelectorAll('[data-view]')) SECTION_OF[b.dataset.view] = t.dataset.sec;
+  SECTION_OF.now = 'now';
+  const lastIn = { now: 'now', calls: 'day', orders: 'branchesNow', reports: 'sales', kpi: 'kpi', followup: 'followup', settings: 'people' };
   function setSection(sec) {
     state.section = sec;
-    for (const b of document.querySelectorAll('#sections [data-section]')) { const on = b.dataset.section === sec; b.classList.toggle('active', on); b.setAttribute('aria-selected', String(on)); }
-    for (const n of document.querySelectorAll('#nav .navsec')) n.hidden = n.dataset.sec !== sec;
+    for (const b of document.querySelectorAll('#sections [data-section]')) { const on = b.dataset.section === sec; b.classList.toggle('active', on); b.setAttribute('aria-current', on ? 'true' : 'false'); }
+    for (const n of document.querySelectorAll('#nav .tabset')) n.hidden = n.dataset.sec !== sec;
+    $('subbar').classList.toggle('empty', sec === 'now');
   }
-  $('sections').onclick = e => { const sec = e.target.closest('[data-section]')?.dataset.section; if (sec && sec !== state.section) show(lastIn[sec]); };
+  $('sections').onclick = e => { const sec = e.target.closest('[data-section]')?.dataset.section; if (sec) show(lastIn[sec]); };
+  const periodText = () => state.day === state.to ? 'يوم ' + state.day : 'من ' + state.day + ' إلى ' + state.to;
   async function show(view, force = false) {
+    view = ALIAS[view] || view;
+    if (!VIEWS[view]) view = 'now';
     state.view = view;
-    if (!SHARED.includes(view)) { const sec = SECTION_OF[view] || 'calls'; lastIn[sec] = view; if (sec !== state.section) setSection(sec); }
-    for (const b of document.querySelectorAll('#nav [data-view]')) b.classList.toggle('active', b.dataset.view === view);
+    const sec = SECTION_OF[view] || 'calls'; lastIn[sec] = view; if (sec !== state.section) setSection(sec);
+    for (const b of document.querySelectorAll('#nav [data-view]')) { const on = b.dataset.view === view; b.classList.toggle('active', on); b.setAttribute('aria-current', on ? 'page' : 'false'); }
     for (const s of document.querySelectorAll('.view')) s.hidden = s.id !== 'view-' + view;
     $('title').textContent = VIEWS[view][0];
-    $('dayPicker').hidden = !DAY_VIEWS.includes(view);
+    const dated = DAY_VIEWS.includes(view);
+    $('dayPicker').hidden = !dated; $('period').textContent = dated ? periodText() : '';
+    for (const c of document.querySelectorAll('[data-range]')) c.classList.toggle('on', rangeOf(c.dataset.range).join() === [state.day, state.to].join());
+    $('top').hidden = view === 'now' || view === 'branchesNow';
+    try { history.replaceState(null, '', '#' + view); } catch {}
     showError(null);
     refreshRequests();
     if (view === 'now') return tick();
     if (view === 'branchesNow') { OR.drawBoard(); return OR.refreshBoard().then(() => syncStatus(true)).catch(e => { syncStatus(false); showError(e); }); }
     try { syncStatus(true, 'جارٍ التحميل…'); if (force) cache.delete(rangeKey()); await VIEWS[view][1](); syncStatus(true); } catch (e) { syncStatus(false); showError(e); }
   }
-  document.querySelector('#nav nav').onclick = e => { const v = e.target.closest('[data-view]')?.dataset.view; if (v) { show(v); setMenu(false); } };
-  // Narrow screens: the sections fold behind one button.
-  const setMenu = open => { $('nav').classList.toggle('open', open); $('menuToggle').setAttribute('aria-expanded', String(open)); };
-  $('menuToggle').onclick = () => setMenu(!$('nav').classList.contains('open'));
+  $('nav').onclick = e => { const v = e.target.closest('[data-view]')?.dataset.view; if (v) show(v); };
+  $('reqBell').onclick = () => show('breaks');
+  window.addEventListener('hashchange', () => { const v = decodeURIComponent(location.hash.slice(1)); if (token && v && v !== state.view) show(v); });
+  // Period presets: today, yesterday, the last 7 days, this month.
+  const back = n => new Date(Date.parse(cairoToday() + 'T12:00:00Z') - n * 864e5).toISOString().slice(0, 10);
+  const rangeOf = k => { const t = cairoToday(); return k === 'today' ? [t, t] : k === 'yesterday' ? [back(1), back(1)] : k === 'week' ? [back(6), t] : k === 'month' ? [t.slice(0, 8) + '01', t] : []; };
+  for (const c of document.querySelectorAll('[data-range]')) c.onclick = () => { const [f, t] = rangeOf(c.dataset.range); setRange(f, t); };
   const setDay = d => { const today = cairoToday(); state.day = !d || d > today ? today : d; state.to = state.day; $('dayTo').value = state.to; $('day').value = state.day; $('dayNext').disabled = state.day >= today; show(state.view); };
   const shiftDay = n => new Date(Date.parse(state.day + 'T12:00:00Z') + n * 864e5).toISOString().slice(0, 10);
   $('applyRange').onclick = () => { const from = $('day').value, to = $('dayTo').value; if (!from || !to || to < from || to > cairoToday()) return showError(Error('اختار فترة صحيحة من وإلى')); if ((Date.parse(to) - Date.parse(from)) / 864e5 >= 93) return showError(Error('اختار فترة لا تتجاوز 93 يوم')); state.day = from; state.to = to; $('dayNext').disabled = to >= cairoToday(); show(state.view); };
@@ -881,8 +915,7 @@
     $('dayTo').value = state.to; $('dayTo').max = cairoToday(); $('day').value = state.day; $('day').max = cairoToday(); $('dayNext').disabled = true;
     await loadEmployees();
     refreshRequests();
-    setSection('calls');
-    show('now');
+    show(decodeURIComponent(location.hash.slice(1)) || 'now');
   }
   function logout(message = '') {
     if (token) fetch(API + '/api/admin-access', { method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-password': token }, body: JSON.stringify({ action: 'logout' }), keepalive: true }).catch(() => {});

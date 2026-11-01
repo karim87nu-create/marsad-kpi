@@ -11,11 +11,11 @@ test('one monitoring-gap group; ending a stale shift from admin removes that emp
  const until=async f=>{for(let i=0;i<300;i++){if(f())return;await new Promise(r=>setTimeout(r,10));}throw Error('UI did not finish: '+w.document.getElementById('error').textContent+' sync='+w.document.getElementById('sync').textContent+' staff='+w.document.getElementById('staffNow').textContent)};
  const gaps=()=>[...w.document.querySelectorAll('#staffNow h3')].filter(x=>x.textContent.startsWith('انقطاع رصد'));
  await until(()=>gaps().length===1);assert.match(gaps()[0].textContent,/2/);assert.equal(w.document.querySelectorAll('#staffNow .tile').length,2);
- w.document.querySelector('[data-view="shifts"]').click();await until(()=>[...w.document.querySelectorAll('#shiftTable tr')].some(r=>r.textContent.includes('First')&&r.querySelector('button')));
+ w.document.querySelector('[data-view="breaks"]').click();await until(()=>[...w.document.querySelectorAll('#shiftTable tr')].some(r=>r.textContent.includes('First')&&r.querySelector('button')));
  const row=[...w.document.querySelectorAll('#shiftTable tbody tr')].find(r=>r.textContent.includes('First'));[...row.querySelectorAll('button')].find(b=>b.textContent==='الشيفت خلص').click();
  await until(()=>t.app.db.raw.prepare('SELECT revoked_at FROM employee_sessions WHERE employee_id=?').get(e1.id).revoked_at!=null);
  await until(()=>w.document.getElementById('shiftTable').textContent.includes('الشيفت خلص فعلًا'));
- w.document.querySelector('[data-view="now"]').click();await until(()=>w.document.getElementById('staffNow').textContent.includes('خلص الشيفت'));
+ w.document.querySelector('[data-section="now"]').click();await until(()=>w.document.getElementById('staffNow').textContent.includes('خلص الشيفت'));
  assert.equal(gaps().length,1);assert.match(gaps()[0].textContent,/1/);assert.equal(w.document.querySelectorAll('#staffNow .tile').length,1);
  }finally{await new Promise(r=>setTimeout(r,150));dom?.window.close();await t.close();}
 });

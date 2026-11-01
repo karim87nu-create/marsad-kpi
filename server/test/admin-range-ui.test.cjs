@@ -15,7 +15,7 @@ test('admin from/to selection loads the selected period in summary and followup'
   const until=async f=>{for(let i=0;i<200;i++){if(f())return;await new Promise(r=>setTimeout(r,10));}throw Error('UI did not finish: '+w.document.getElementById('error').textContent)};
   await until(()=>!w.document.getElementById('app').hidden && requests.some(x=>x.endsWith('/api/live'))); await new Promise(r=>setTimeout(r,150));
   assert.equal(w.document.getElementById('breakRequests').closest('.view'),null,'pending banner is visible across sections');
-  w.document.querySelector('[data-view="requests"]').click();
+  w.document.querySelector('[data-view="breaks"]').click();
   await until(()=>[...w.document.querySelectorAll('#breakRequestHistory button')].some(b=>b.textContent==='قبول البريك'));
   [...w.document.querySelectorAll('#breakRequestHistory button')].find(b=>b.textContent==='قبول البريك').click();
   await until(()=>t.app.db.raw.prepare('SELECT status FROM break_requests WHERE id=?').get(requestId).status==='approved');
@@ -31,12 +31,12 @@ test('admin from/to selection loads the selected period in summary and followup'
   // مؤشرات الأداء: its own section, the period presets, the scorecards and both tables.
   w.document.querySelector('[data-section="kpi"]').click();
   await until(()=>requests.some(x=>x.includes('/api/kpi?from=')) && w.document.querySelector('#kpiEmployees table') && w.document.querySelector('#kpiBranches table'));
-  assert.equal(w.document.querySelector('#nav .navsec[data-sec="kpi"]').hidden,false);
+  assert.equal(w.document.querySelector('#nav .tabset[data-sec="kpi"]').hidden,false);
   assert.match(w.document.getElementById('kpiTeamCards').textContent,/الرد خلال 10 ثواني/);
-  w.document.querySelector('[data-kpi-range="week"]').click();
+  w.document.querySelector('[data-range="week"]').click();
   await until(()=>/آخر|الفترة/.test(w.document.getElementById('kpiPeriod').textContent) && w.document.getElementById('day').value!==w.document.getElementById('dayTo').value);
   // التشغيل الآلي: the Talabat screens, the Apex writer and the stops moved out of «الإدارة».
-  w.document.querySelector('[data-section="auto"]').click();
+  w.document.querySelector('[data-view="auto"]').click();
   await until(()=>!w.document.getElementById('view-auto').hidden && w.document.querySelector('#autoWatch table'));
   assert.ok(w.document.getElementById('view-auto').contains(w.document.getElementById('apexWriterPanel')));
   assert.ok(w.document.getElementById('view-auto').contains(w.document.getElementById('stockPanel')));
