@@ -378,14 +378,18 @@ $('list').addEventListener('click', async e => {
     if (o.items.some(i => (i.addons || []).some(a => a.qty == null))) { toast('عدد إضافة مش واضح — سجله بإيدك'); return; }
     const rest = (o.discounts || []).filter(d => d.who === 'restaurant').reduce((a, d) => a + (Number(d.amount) || 0), 0);
     const plat = (o.discounts || []).filter(d => d.who === 'platform');
+    const platSum = plat.reduce((a, d) => a + (Number(d.amount) || 0), 0);
     b.disabled = true;
     try {
       await api('POST', '/api/transfer/job', { source: o.source, ref: o.ref, action: 'auto', payment: pay, branchNo: Number(p.branch), locationNo: Number(p.loc), code: o.code,
         items: flatLines(o).map((i, n) => ({ itemNo: p.items[n], qty: i.qty, note: '' })),
         // Free choices and the customer's note go in the order comment on Apex (تعليقات الطلب), as the staff do.
         note: [...flatLines(o).filter(i => i.kind === 'item' && i.note).map(i => i.name + ': ' + i.note), ...(o.note ? ['ملاحظة العميل: ' + o.note] : [])].join(' | ').slice(0, 300),
-        label: fullLabel(o, pay), customer: o.customer || {}, sign: plat.map(d => 'خصم طلبات ' + money(d.amount)).join(' + '),
-        restaurantDiscount: rest, expectedTotal: (o.subtotal ?? o.total ?? 0) - rest, targetTotal: o.target ?? null });
+        // Paid (Karim 01-11): the whole discount comes off on Apex, so the Ledge equals what the customer paid; the special
+        // mark says what is on the restaurant and what is Talabat's. Cash: the restaurant's comes off, Talabat's in the mark.
+        label: fullLabel(o, pay), customer: o.customer || {},
+        sign: [...(pay === 'paid' && rest > 0 ? ['خصم المطعم ' + money(rest)] : []), ...plat.map(d => 'خصم طلبات ' + money(d.amount))].join(' + '),
+        restaurantDiscount: pay === 'paid' ? rest + platSum : rest, expectedTotal: (o.subtotal ?? o.total ?? 0) - rest - (pay === 'paid' ? platSum : 0), targetTotal: o.target == null ? null : pay === 'paid' ? Math.round((o.target - platSum) * 100) / 100 : o.target });   // paid: what the customer paid (Talabat's discount off too)
       delete picks[key(o)]; await load();
     } catch (err) { toast(err.message); b.disabled = false; }
     return;

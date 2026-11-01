@@ -135,7 +135,13 @@ IF @Target > 0 BEGIN
     SET @Gap = @Total - @Target;
     SET @RestDiscount = @RestDiscount + @Gap; SET @Total = @Target;
   END
-  ELSE IF @Total < @Target - 0.009 SET @Short = @Target - @Total;
+  ELSE IF @Total < @Target - 0.009 BEGIN
+    -- Karim 01-11: what is recorded must equal what the customer paid (the Ledge amount). Apex lower: the discount taken
+    -- off is given back first, up to all of it; only what is left is a real price difference (shown in admin).
+    DECLARE @Back money = CASE WHEN @RestDiscount < @Target - @Total THEN @RestDiscount ELSE @Target - @Total END;
+    SET @RestDiscount = @RestDiscount - @Back; SET @Total = @Total + @Back;
+    IF @Total < @Target - 0.009 SET @Short = @Target - @Total;
+  END
 END
 IF @Exec = 0 BEGIN
   SELECT 'preview' AS r, @Short AS Short, @Before AS Before, @Gap AS Gap, @RestDiscount AS RestDiscountAll, @LocationNo AS LocationNo, @Date AS OrderDate, @Shift AS ShiftNo, @Tpl AS Template, @Sub AS SubTotal, @Tax AS Tax, @TaxRatio AS TaxRatio, @Service AS Service, @Total AS Total,
@@ -314,6 +320,16 @@ function Self-Test {
   $c = $null
   try {
     $job = Get-Content $f -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($job.mode -eq 'fix-customer-live') {
+      # Karim 01-11 (approved): put back a customer's floor/flat that the repair emptied (only these two fields, one customer).
+      if (-not $AllowLive) { throw 'live mode is locked on this PC ($AllowLive)' }
+      $out.mode = 'fix-customer-live'; $c = Open-Db 'live'
+      $cmd = $c.CreateCommand(); $cmd.CommandText = "UPDATE dbo.Customers SET FloorNo = @f, FlatNo = @t WHERE CustNo = @n AND ISNULL(RTRIM(FloorNo), '') = '' AND ISNULL(RTRIM(FlatNo), '') = ''; SELECT 'F' k, @@ROWCOUNT n, (SELECT RTRIM(FloorNo) + '/' + RTRIM(FlatNo) FROM dbo.Customers WHERE CustNo = @n) now"
+      [void]$cmd.Parameters.AddWithValue('@n', [decimal]$job.custNo); [void]$cmd.Parameters.AddWithValue('@f', [string]$job.floor); [void]$cmd.Parameters.AddWithValue('@t', [string]$job.flat)
+      $rd = $cmd.ExecuteReader(); $rows = @(); while ($rd.Read()) { $h = [ordered]@{}; for ($i = 0; $i -lt $rd.FieldCount; $i++) { $h[$rd.GetName($i)] = "$($rd.GetValue($i))".Trim() }; $rows += $h }; $rd.Close()
+      $out.saved = $rows; $out.ok = $true
+      throw 'INSPECT_DONE'
+    }
     if ($job.mode -eq 'repair-live') {
       # Karim 01-11 (approved): the writer's own orders of today saved before the fix get Apex's printed copy, and their
       # customers the fields Apex's screens read (the order's own address, area, floor, flat). Nothing else is touched.
