@@ -45,11 +45,36 @@ function setup(app) {
   // Area, comments and the branch's current status for an Apex order, as sent by the monitor — the same lines the
   // monitor writes under its own branch messages, for the server's messages (website and Talabat orders).
   const fuzzy = x => String(x || '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/^\s*(فرع|الدهان)[\s,،]*/g, '').trim();
-  app.apexDetails = async day => {
+  // A Talabat order entered on Apex has no area or comment there (Karim 01-11: «مش ظاهر المنطقه والكومنت»): they come
+  // from the Talabat order it was matched to — the area of its address and the customer's note. Never the street or phone.
+  const talabatSide = async day => {
+    const out = new Map();
+    if (!app.talabat?.matchDay) return out;
+    const m = await app.talabat.matchDay(day).catch(() => null); if (!m) return out;
+    const ids = m.rows.filter(o => m.matches.get(o.id)).map(o => o.id); if (!ids.length) return out;
+    const prof = new Map();
+    for (let i = 0; i < ids.length; i += 80) { const part = ids.slice(i, i + 80);
+      for (const r of await db.prepare("SELECT ref, data FROM match_profiles WHERE source = 'talabat' AND ref IN (" + part.map(() => '?').join(',') + ')').all(...part)) prof.set(r.ref, r.data); }
+    for (const id of ids) {
+      let p = {}; try { p = JSON.parse(prof.get(id) || '{}') || {}; } catch {}
+      const parts = String(p.address || '').split(' — ')[0].split('،').map(x => x.trim()).filter(Boolean);
+      const area = String(p.area || '').trim() || (parts.length >= 3 ? parts[parts.length - 2] : '');
+      const noteLine = (p.bill || []).find(x => x.k === 'ملاحظة العميل' || /^ملاحظة العميل\s*\|/.test(x.text || ''));
+      const note = noteLine ? String(noteLine.text).replace(/^ملاحظة العميل\s*\|\s*/, '').trim() : '';
+      if (area || note) out.set(String(m.matches.get(id).no), { area: area.slice(0, 80), note: note.slice(0, 300) });
+    }
+    return out;
+  };
+  app.apexDetails = async (day, options = {}) => {
     let d = null; try { const r = await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(day); d = r ? JSON.parse(r.data) : null; } catch {}
     const det = d?.details || {}, st = d?.branchStatus || {};
+    const tal = options.talabat ? await talabatSide(day).catch(() => new Map()) : new Map();
     const extra = no => {
-      const x = no == null ? null : det[String(no)]; if (!x) return '';
+      const t = no == null ? null : tal.get(String(no));
+      const x = { ...(no == null ? {} : det[String(no)] || {}) };
+      if (t && !x.loc && t.area) x.loc = t.area + ' (من طلبات)';
+      if (t && !x.note && t.note) x.note = t.note + ' (ملاحظة العميل على طلبات)';
+      if (!x.loc && !x.note && !x.items?.length && !x.msgs?.length) return '';
       return (x.loc ? '\n📍 المنطقة: ' + x.loc : '') + (x.note ? '\n💬 ملاحظة الأوردر: ' + x.note : '') +
         (x.items?.length ? '\n🍽️ تعليقات على الأصناف:\n' + x.items.join('\n') : '') + (x.msgs?.length ? '\n📨 كومنتات اتبعتت بعد الضرب:\n' + x.msgs.join('\n') : '');
     };
@@ -104,7 +129,9 @@ function setup(app) {
     const findNo = no => no && ['open', 'lateOut', 'cancels', 'online', 'issues'].map(k => rows(k).find(o => String(o.no) === no)).find(Boolean);
     const branchOfNo = no => no && ['open', 'lateOut', 'cancels', 'online', 'issues'].map(k => rows(k).find(o => String(o.no) === no)).find(Boolean)?.branch || null;
     const orderNo = a => String(a.orderNo ?? a.orderId ?? (/^(?:v?late|del|disc|pay|dup|entry|entrylate|lateentry|duplicate|cancel|note):([0-9]+)(?::|$)/i.exec(String(a.key))?.[1] || ''));
-    const apexDetails = app.apexDetails ? await app.apexDetails(b.day) : null;
+    // The Talabat side is looked up only when a delay message is about a Talabat order.
+    const needTalabat = rows('open').some(o => o.kind === 'طلبات') && (Array.isArray(b.alerts) ? b.alerts : []).some(a => a && DELAY_KINDS.has(a.kind));
+    const apexDetails = app.apexDetails ? await app.apexDetails(b.day, { talabat: needTalabat }) : null;
     const withOrderContext = (text, no, kind) => {
       if (!DELAY_KINDS.has(kind) || !no || !apexDetails?.extra) return text;
       const lines = apexDetails.extra(no).split(/\r?\n/);

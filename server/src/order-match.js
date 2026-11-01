@@ -14,7 +14,7 @@ const clean = (x, n) => typeof x === 'string' ? x.trim().slice(0, n) : '';
 export function customerOf(x = {}) {
   if (!x || typeof x !== 'object') x = {};
   return { name: clean(x.name, 160), phone: phoneKey(x.phone), mobile: phoneKey(x.mobile),
-    address: clean(x.address, 360), accountNo: clean(String(x.accountNo || ''), 40) };
+    address: clean(x.address, 360), area: clean(x.area, 80), accountNo: clean(String(x.accountNo || ''), 40) };
 }
 export const parseJson = (x, fallback = null) => { try { return JSON.parse(x) ?? fallback; } catch { return fallback; } };
 const similar = (a, b) => {

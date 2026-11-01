@@ -179,7 +179,7 @@
         modifiers: (i.modifiers || []).map(m => (Number(m.amount) || 1) + '× ' + String(m.name || '').trim()), modifierRead: true, modifierComplete: true,
         options: (i.modifiers || []).map(m => ({ qty: Number(m.amount) || null, name: String(m.name || '').trim(), price: money2(m.total), productId: m.productId ? String(m.productId) : undefined })) }));
       return { id: String(o.externalId), store: o.vendorName || undefined,
-        detail: { receivedAt: o.timestamp || undefined, acceptedAt: o.acceptedAt || undefined, subtotal: money2(pay.itemsTotalPrice), customer: { name: [c.firstName, c.lastName].filter(Boolean).join(' '), phone, address }, items, bill } };
+        detail: { receivedAt: o.timestamp || undefined, acceptedAt: o.acceptedAt || undefined, subtotal: money2(pay.itemsTotalPrice), customer: { name: [c.firstName, c.lastName].filter(Boolean).join(' '), phone, address, area: a.area ? String(a.area).trim().slice(0, 80) : undefined }, items, bill } };
     };
     const statePushed = new Map();
     // Each live card: the long order number and the short #code (both may be split into several pieces on the page).

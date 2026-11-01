@@ -617,7 +617,7 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
     $avg = $(if ($outN.Count) { [math]::Round((($outN | Measure-Object WaitMin -Average).Average), 0) } else { $null })
     $bstat[[int]$g.Name] = $bline = "`n`n📊 حالة الفرع دلوقتي: $($op.Count) أوردر لسه ماخرجوش" +
       "`n🔴 $vl عدّى 45 د · 🟠 $lt عدّى 30 د · 🟢 $ok لسه في وقت التحضير · 🕒 $sc بمواعيد لسه في وقتها" +
-      "`nالنهارده: خرج $($out.Count) أوردر$(if ($outL) { " (منهم $outL متأخر)" })$(if ($avg -ne $null) { " · متوسط الخروج $avg د" })"
+      "`nالنهارده: خرج $($out.Count) أوردر$(if ($out.Count) { " · نسبة التأخير $([math]::Round($outL * 100 / $out.Count, 0))% ($outL متأخر)" })"
     $bline = $bstat[[int]$g.Name]; $script:branchStatus[(BName $g.Name)] = $bline.TrimStart("`n")
   }
   function Extra($o){ $x = ''; if ($o.Loc) { $x += "`n📍 المنطقة: $($o.Loc)" }; if (NoteWorth $o.Note) { $x += "`n💬 ملاحظة الأوردر: $($o.Note)" }; if (@($o.ItemNotes).Count) { $x += "`n🍽️ تعليقات على الأصناف:`n" + (@($o.ItemNotes) -join "`n") }; if (@($o.Msgs).Count) { $x += "`n📨 كومنتات اتبعتت بعد الضرب:`n" + (@($o.Msgs) -join "`n") }; return $x }

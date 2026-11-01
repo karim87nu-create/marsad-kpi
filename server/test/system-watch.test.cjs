@@ -85,3 +85,16 @@ test('Talabat actions: one row per branch however Talabat spelled it', async () 
     assert.equal(mk.onTheWay, true); assert.equal(mk.minutes, 40);
   } finally { await t.close(); }
 });
+
+test('Apex alerts for a Talabat order take the area and the customer note from Talabat, never the street or phone', async () => {
+  const t = await start();
+  try {
+    t.app.db.raw.prepare("INSERT INTO match_profiles (source, ref, data) VALUES ('talabat', 'T1', ?)").run(JSON.stringify({ phone: '01000000000', address: 'شارع 9، الحي الثالث، مدينتي — مبنى: 4 — الدور: الاول', bill: [{ k: 'ملاحظة العميل', text: 'ملاحظة العميل | من غير بصل' }] }));
+    t.app.talabat.matchDay = async () => ({ rows: [{ id: 'T1' }], matches: new Map([['T1', { no: '555' }]]) });
+    const x = (await t.app.apexDetails('2026-11-01', { talabat: true })).extra('555');
+    assert.match(x, /📍 المنطقة: الحي الثالث/);
+    assert.match(x, /💬 ملاحظة الأوردر: من غير بصل/);
+    assert.doesNotMatch(x, /شارع 9|0100|الدور/);
+    assert.equal((await t.app.apexDetails('2026-11-01')).extra('555'), '', 'only when asked');
+  } finally { await t.close(); }
+});
