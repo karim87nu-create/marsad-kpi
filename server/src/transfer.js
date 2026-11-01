@@ -336,12 +336,32 @@ function setup(app) {
     const r = await db.prepare("UPDATE transfer_jobs SET state = 'auto_sending', at = ? WHERE source = ? AND ref = ? AND state = 'auto_pending'").run(ctx.now, j.source, j.ref);
     return { mode, job: r.changes ? job : null };
   });
+  // Admin: the orders the writer saved with a price difference, and the ones it could not save, for a period.
+  // Apex's delivery charge taken off when Talabat delivered for free is how staff enter them too: shown, not counted.
+  app.route('GET', '/api/transfer/price-diffs', async ctx => {
+    await app.requireAdmin(ctx);
+    const to = /^\d{4}-\d{2}-\d{2}$/.test(String(ctx.query.to || '')) ? ctx.query.to : businessDay(ctx.now);
+    const from = /^\d{4}-\d{2}-\d{2}$/.test(String(ctx.query.from || '')) ? ctx.query.from : to;
+    const rows = await db.prepare("SELECT source, ref, day, state, employee_name, payment, at, payload, result FROM transfer_jobs WHERE day BETWEEN ? AND ? AND state IN ('auto_done', 'auto_failed', 'auto_preview') ORDER BY at DESC LIMIT 500").all(from, to);
+    const list = rows.map(r => {
+      const p = parseJson(r.payload, {}), x = parseJson(r.result, {}) || {};
+      const delivery = x.service != null ? Math.round(x.service * 1.14 * 100) / 100 : 0;
+      const unexplained = Math.round(((x.gap || 0) - Math.min(x.gap || 0, delivery)) * 100) / 100;
+      return { source: r.source, ref: r.ref, code: p.code || null, day: r.day, state: r.state, by: r.employee_name, at: iso(r.at), branchNo: p.branchNo, payment: r.payment,
+        target: x.target ?? p.targetTotal ?? null, before: x.before, total: x.total, gap: x.gap || 0, short: x.short || 0, delivery, unexplained, error: x.error || null,
+        apexNo: x.shiftSerial ?? null, items: (p.items || []).map(i => ({ no: i.itemNo, qty: i.qty, name: APEX_NAMES[i.itemNo] || null })) };
+    }).filter(x => x.state !== 'auto_done' || x.unexplained > 1 || x.short > 1 || x.error);
+    return { from, to, list };
+  });
+
   app.route('POST', '/api/apex-writer/result', async ctx => {
     await writer(ctx);
     const b = ctx.body, source = b.source === 'talabat' || b.source === 'site' ? b.source : null, ref = String(b.ref || '');
     if (!source || !/^\d{1,20}$/.test(ref)) fail(400, 'أوردر غير صحيح');
     const result = { ok: !!b.ok, preview: !!b.preview, db: ['shadow', 'test', 'live'].includes(b.db) ? b.db : null, orderNo: b.orderNo ?? null, shiftSerial: b.shiftSerial ?? null, branchOrderNo: b.branchOrderNo ?? null,
-      total: Number(b.total) || null, error: b.error ? String(b.error).slice(0, 300) : null, detail: b.detail ? String(b.detail).slice(0, 1500) : null, at: ctx.now };
+      total: Number(b.total) || null, error: b.error ? String(b.error).slice(0, 300) : null, detail: b.detail ? String(b.detail).slice(0, 1500) : null, at: ctx.now,
+      // The price difference (Karim 01-11: the order is saved, admin sees the difference to fix the price or the item).
+      gap: Number(b.gap) || 0, short: Number(b.short) || 0, before: Number(b.before) || null, service: Number.isFinite(Number(b.service)) ? Number(b.service) : null, target: Number(b.target) || null };
     // A shadow preview writes nothing: the employee still enters the order by hand; the preview is kept for comparison.
     const state = result.preview ? 'auto_preview' : result.ok ? 'auto_done' : 'auto_failed';
     const r = await db.prepare("UPDATE transfer_jobs SET state = ?, result = ?, at = ? WHERE source = ? AND ref = ? AND state = 'auto_sending'")

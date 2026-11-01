@@ -120,20 +120,18 @@ SELECT @Sub = SUM(Qty * Price) FROM @Lines;
 SET @Tax = ROUND((@Sub + @Service) * ISNULL(@TaxRatio, 0) / 100.0, 2);   -- Apex taxes SubTotal + Service, before the discount (checked on real orders)
 SET @Total = @Sub - @RestDiscount + @Tax + @Service;   -- Apex: CashPayment = SubTotal - Discount + Tax + Service
 -- Karim 31-10: the order's total on Apex must equal ours on Talabat/the site (@Target). When Apex comes out higher, the
--- difference is added to the restaurant discount; a large difference (wrong item?) or Apex lower stops the order.
-DECLARE @Gap money = 0;
+-- difference is added to the restaurant discount. Karim 01-11: a price difference never stops the order — it is saved and
+-- the difference is shown in admin («فروق الأسعار») to fix the price or the item: @Gap (taken off) or @Short (Apex lower).
+DECLARE @Gap money = 0, @Short money = 0, @Before money = @Total;
 IF @Target > 0 BEGIN
   IF @Total > @Target + 0.009 BEGIN
     SET @Gap = @Total - @Target;
-    -- Staff take Apex's delivery charge off in the discount when Talabat delivered for free (01-11: every manual Talabat
-    -- order today has the area's service and a discount that brings it to Talabat's total), so that part is allowed too.
-    IF @Gap > ROUND(@Service * (1 + ISNULL(@TaxRatio, 0) / 100.0), 2) + CASE WHEN @Target * 0.05 > 15 THEN @Target * 0.05 ELSE 15 END AND @Exec = 1 THROW 51016, 'Apex total is far above the order total (check the items)', 1;
     SET @RestDiscount = @RestDiscount + @Gap; SET @Total = @Target;
   END
-  ELSE IF @Total < @Target - 1 AND @Exec = 1 THROW 51017, 'Apex total is below the order total (check the items)', 1;
+  ELSE IF @Total < @Target - 0.009 SET @Short = @Target - @Total;
 END
 IF @Exec = 0 BEGIN
-  SELECT 'preview' AS r, @Gap AS Gap, @RestDiscount AS RestDiscountAll, @LocationNo AS LocationNo, @Date AS OrderDate, @Shift AS ShiftNo, @Tpl AS Template, @Sub AS SubTotal, @Tax AS Tax, @TaxRatio AS TaxRatio, @Service AS Service, @Total AS Total,
+  SELECT 'preview' AS r, @Short AS Short, @Before AS Before, @Gap AS Gap, @RestDiscount AS RestDiscountAll, @LocationNo AS LocationNo, @Date AS OrderDate, @Shift AS ShiftNo, @Tpl AS Template, @Sub AS SubTotal, @Tax AS Tax, @TaxRatio AS TaxRatio, @Service AS Service, @Total AS Total,
     (SELECT ISNULL(MAX(PosSerial), 0) + 1 FROM dbo.Counter WITH (NOLOCK) WHERE num = @Pos) AS PosSerial,
     (SELECT ISNULL(MAX(BranchOrderNo), 0) + 2 FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE BranchNo = @Branch) AS BranchOrderNo,
     (SELECT ISNULL(MAX(TypeSerial), 0) + 1 FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE RTRIM(PayWay) IN ('Cash', 'Ledge', 'Visa')) AS TypeSerial,
@@ -204,7 +202,7 @@ BEGIN TRY
                  JOIN dbo.Orders_Checks c ON c.OrderNo = m.OrderNo AND c.CheckNo = m.CheckNo WHERE m.OrderNo = @OrderNo)
     THROW 51014, 'saved order failed its consistency check', 1;
   COMMIT TRANSACTION;
-  SELECT 'written' AS r, @OrderNo AS OrderNo, @ShiftSerial AS ShiftSerial, @BranchOrderNo AS BranchOrderNo, @CheckNo AS CheckNo, @Total AS Total, @Cust AS CustNo,
+  SELECT 'written' AS r, @Gap AS Gap, @Short AS Short, @Before AS Before, @Service AS Service, @OrderNo AS OrderNo, @ShiftSerial AS ShiftSerial, @BranchOrderNo AS BranchOrderNo, @CheckNo AS CheckNo, @Total AS Total, @Cust AS CustNo,
     (SELECT COUNT(*) FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE BranchNo = @Branch AND BranchOrderNo = @BranchOrderNo) AS SameBranchNo;
 END TRY
 BEGIN CATCH
@@ -476,10 +474,11 @@ for (;;) {
         $res.preview = $true; $res.total = [double]$r.Total; $res.branchOrderNo = $r.BranchOrderNo
         $res.detail = "gap=$($r.Gap) discount=$($r.RestDiscountAll) sub=$($r.SubTotal) tax=$($r.Tax) ratio=$($r.TaxRatio) service=$($r.Service) template=$($r.Template) posSerial=$($r.PosSerial) typeSerial=$($r.TypeSerial) cust=$($r.CustNo) | " + (($job.items | ForEach-Object { "$($_.itemNo)x$($_.qty): $($_.candidates -join ',')" }) -join ' ; ')
         $want = $(if ($job.targetTotal) { $job.targetTotal } else { $job.expectedTotal })
-        if ([double]$r.Gap -gt [double]$r.Service * (1 + [double]$r.TaxRatio / 100) + [math]::Max(15, 0.05 * [double]$want)) { $res.ok = $false; $res.error = "فرق كبير: Apex أزيد من الأوردر بـ $([math]::Round([double]$r.Gap,2)) — راجع الأصناف" }
-        elseif ($want -and [math]::Abs([double]$r.Total - [double]$want) -gt [math]::Max(1, 0.01 * [double]$want)) { $res.ok = $false; $res.error = "القيمة $([math]::Round([double]$r.Total,2)) مش زي الأوردر $want" }
+        $res.gap = [math]::Round([double]$r.Gap, 2); $res.short = [math]::Round([double]$r.Short, 2); $res.before = [math]::Round([double]$r.Before, 2); $res.service = [double]$r.Service
       } else {
         $res.orderNo = $r.OrderNo; $res.shiftSerial = $r.ShiftSerial; $res.branchOrderNo = $r.BranchOrderNo; $res.total = [double]$r.Total
+        # The price difference, for admin's «فروق الأسعار» (the order is saved either way).
+        $res.gap = [math]::Round([double]$r.Gap, 2); $res.short = [math]::Round([double]$r.Short, 2); $res.before = [math]::Round([double]$r.Before, 2); $res.service = [double]$r.Service; $res.target = $job.targetTotal
         if ($r.r -eq 'written' -and [int]$r.SameBranchNo -gt 1) { $res.error = 'رقم الفرع اتكرر مع أوردر تاني؛ راجعه' }
       }
       [void](Api '/api/apex-writer/result' $res)

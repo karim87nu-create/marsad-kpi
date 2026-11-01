@@ -4,7 +4,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>مرصد الدهان — الإدارة</title>
 <link rel="preload" href="fonts/plex-arabic-arabic-400.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="style.css?v=20">
+<link rel="stylesheet" href="style.css?v=21">
 </head>
 <body>
 <!-- Icons: drawn in one stroke style (after Lucide, ISC license). -->
@@ -135,6 +135,8 @@
     </section>
 
     <section id="view-transfer" class="view page" hidden>
+      <div class="blockh"><h2>التحويل الآلي: فروق الأسعار والأوردرات اللي ماتسجلتش</h2></div>
+      <article class="panel"><h2>محتاج مراجعة <button class="ghost small" data-export="priceDiffs">تصدير Excel</button></h2><p class="muted">الأوردر بيتسجل على Apex حتى لو فيه فرق سعر. هنا كل أوردر سعره على Apex طلع مختلف عن طلبات أو الموقع (غير توصيل طلبات اللي بيتخصم عادي)، أو ماتسجلش، عشان تعدل السعر أو الصنف.</p><div id="priceDiffCards" class="cards"></div><div id="priceDiffs"></div></article>
       <div class="blockh"><h2>أوردرات طلبات</h2></div>
       <p id="talNote" class="note"></p>
       <div class="filters"><select id="talPick" aria-label="الفرع"><option value="">كل الفروع</option></select><button class="ghost small" data-export="talabat">تصدير Excel</button></div>
@@ -403,6 +405,6 @@
 <script src="site.js?v=11"></script>
 <script src="insights.js?v=2"></script>
 <script src="kpi.js?v=2"></script>
-<script src="app.js?v=40"></script>
+<script src="app.js?v=41"></script>
 </body>
 </html>

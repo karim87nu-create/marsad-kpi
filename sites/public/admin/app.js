@@ -644,6 +644,33 @@
     renderLearned().catch(() => {});
     for (const f of ['addEmployee', 'addAdmin', 'messageForm']) $(f).hidden = f === 'messageForm' ? !canWrite() : !isAdmin();
   }
+  // ---------- فروق الأسعار في التحويل الآلي (Karim 01-11): the order is saved, the difference is fixed later ----------
+  const JOB_STATE = { auto_done: 'اتسجل', auto_failed: 'ماتسجلش', auto_preview: 'تجربة بس' };
+  const BRANCH_NO = { 1: 'التجمع', 2: 'مدينة نصر', 3: 'مدينتي' };
+  let priceDiffRows = [];
+  const priceDiffColumns = [
+    { title: 'الوقت', get: x => x.at, show: x => clock(x.at), type: 'datetime' },
+    { title: 'الأوردر', get: x => (x.source === 'talabat' ? 'طلبات ' : 'الموقع ') + (x.code ? '#' + x.code : x.ref) },
+    { title: 'الفرع', get: x => BRANCH_NO[x.branchNo] || x.branchNo },
+    { title: 'الحالة', get: x => JOB_STATE[x.state] || x.state, show: x => pill(JOB_STATE[x.state] || x.state, x.state === 'auto_done' ? 'ok' : 'bad') },
+    { title: 'رقمه على Apex', get: x => x.apexNo || '—' },
+    { title: 'المفروض', get: x => x.target, type: 'number' },
+    { title: 'Apex قبل التعديل', get: x => x.before, type: 'number' },
+    { title: 'الفرق', get: x => x.short ? -x.short : x.unexplained, show: x => x.short > 1 ? pill('Apex أقل بـ ' + x.short, 'bad') : x.unexplained > 1 ? pill('Apex أزيد بـ ' + x.unexplained + ' (اتخصم)', 'warn') : '—', type: 'number' },
+    { title: 'السبب', get: x => x.error ? x.error : x.short > 1 ? 'صنف أو إضافة ناقصة، أو سعر Apex أقل من طلبات' : x.unexplained > 1 ? 'سعر صنف على Apex أعلى من طلبات، أو صنف/حجم غلط' : '', cls: () => 'wrap' },
+    { title: 'الأصناف', get: x => x.items.map(i => i.qty + '× ' + (i.name || i.no)).join('، '), cls: () => 'wrap' },
+    { title: 'سجله', get: x => x.by || '—' }];
+  async function renderPriceDiffs() {
+    if (!isAdmin()) return;
+    const d = await api('/api/transfer/price-diffs?' + periodQuery());
+    priceDiffRows = d.list;
+    const n = k => d.list.filter(k).length;
+    $('priceDiffCards').replaceChildren(kpi('Apex أقل من الأوردر', n(x => x.state === 'auto_done' && x.short > 1), n(x => x.state === 'auto_done' && x.short > 1) ? 'bad' : 'good'),
+      kpi('Apex أزيد (اتخصم الفرق)', n(x => x.state === 'auto_done' && x.unexplained > 1), n(x => x.state === 'auto_done' && x.unexplained > 1) ? 'warn' : 'good'),
+      kpi('ماتسجلتش', n(x => x.state === 'auto_failed'), n(x => x.state === 'auto_failed') ? 'bad' : 'good'));
+    table('priceDiffs', priceDiffColumns, d.list, { empty: 'مفيش فروق أسعار ولا أوردرات واقفة في الفترة دي' });
+  }
+
   // ---------- التشغيل الآلي: Talabat screens, Apex writer, item stops and the links, out of «الإدارة» ----------
   async function renderAuto() {
     renderWatch('autoWatch').catch(e => $('autoWatch').replaceChildren(h('p', { className: 'muted', textContent: e.message })));
@@ -804,6 +831,7 @@
     const kind = e.target.closest('[data-export]')?.dataset.export;
     if (!kind) return;
     try {
+      if (kind === 'priceDiffs') return exportRows('فروق-الأسعار', priceDiffColumns, priceDiffRows);
       if (OR.exportKind(kind) || SITE.exportKind(kind) || INS.exportKind(kind)) return;
       if (kind === 'queues') exportRows('انواع-الطلبات', queueColumns, (await dayHistory()).queues || []);
       if (kind === 'team') exportRows('اداء-الموظفين', teamColumns, teamRows(await dayData()));
@@ -826,7 +854,7 @@
   const VIEWS = { now: ['الآن', null],
     day: ['الكول سنتر: اليوم', () => Promise.all([renderDay(), renderHours()])], team: ['أداء الموظفين', renderTeam], profile: ['ملف الموظف', renderProfile],
     breaks: ['البريك والحضور ونهاية الشيفت', () => Promise.all([refreshRequests(), renderAttendance(), renderShifts()])], calls: ['المكالمات', renderCalls], missed: ['المكالمات الفائتة', renderMissed],
-    branchesNow: ['الفروع الآن', null], transfer: ['تحويل الأوردرات: طلبات والموقع', () => Promise.all([SITE.renderTalabat(), SITE.renderTransfer()])], entry: ['ضرب الأوردرات', () => OR.renderEntry()],
+    branchesNow: ['الفروع الآن', null], transfer: ['تحويل الأوردرات: طلبات والموقع', () => Promise.all([renderPriceDiffs(), SITE.renderTalabat(), SITE.renderTransfer()])], entry: ['ضرب الأوردرات', () => OR.renderEntry()],
     sales: ['المبيعات', () => INS.renderSales()], branches: ['تقرير الفروع', () => Promise.all([OR.renderBranches(), INS.renderBranch(), SITE.renderBranches()])],
     cancels: ['الإلغاءات', () => Promise.all([OR.renderCancels(), SITE.renderBranchTalabatCancels(), INS.renderCancelOwners()])],
     kpi: ['مؤشرات الأداء: الموظفين والفروع', () => KPI.render()], followup: ['المتابعة والاستثناءات', renderFollowup],

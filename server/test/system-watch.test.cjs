@@ -98,3 +98,21 @@ test('Apex alerts for a Talabat order take the area and the customer note from T
     assert.equal((await t.app.apexDetails('2026-11-01')).extra('555'), '', 'only when asked');
   } finally { await t.close(); }
 });
+
+test('price differences: saved orders with a difference (not Talabat delivery) and failed ones are listed for admin', async () => {
+  const t = await start();
+  try {
+    const admin = await t.admin();
+    const day = (await admin('GET', '/api/kpi')).body.to;
+    const ins = (ref, state, result) => t.app.db.raw.prepare("INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at, payload, result) VALUES ('talabat',?,?,?,NULL,'Ahmed','paid','',?,?,?)")
+      .run(ref, day, state, Date.now(), JSON.stringify({ branchNo: 2, code: '1' + ref.slice(-3), targetTotal: 743, items: [{ itemNo: '0108022', qty: 1 }] }), JSON.stringify(result));
+    ins('1001', 'auto_done', { ok: true, gap: 39.33, short: 0, before: 782.33, service: 34.5, target: 743, shiftSerial: 10 });   // only Talabat's free delivery: normal
+    ins('1002', 'auto_done', { ok: true, gap: 0, short: 155.4, before: 1345.6, service: 54.15, target: 1501, shiftSerial: 11 });
+    ins('1003', 'auto_done', { ok: true, gap: 60, short: 0, before: 803, service: 0, target: 743, shiftSerial: 12 });
+    ins('1004', 'auto_failed', { ok: false, error: 'an item is stopped on Apex' });
+    const l = (await admin('GET', '/api/transfer/price-diffs?from=' + day + '&to=' + day)).body.list;
+    assert.deepEqual(l.map(x => x.ref).sort(), ['1002', '1003', '1004']);
+    assert.equal(l.find(x => x.ref === '1003').unexplained, 60);
+    assert.equal(l.find(x => x.ref === '1002').short, 155.4);
+  } finally { await t.close(); }
+});
