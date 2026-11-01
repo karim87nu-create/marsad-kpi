@@ -25,6 +25,7 @@ import * as talabatActions from './talabat-actions.js';
 import * as systemWatch from './system-watch.js';
 import * as backup from './backup.js';
 import * as kpi from './kpi.js';
+import * as branchClosures from './branch-closures.js';
 
-const MODULES = [admin, employees, sessions, dashboard, breaks, messages, shifts, history, engine, telegram, importRows, ops, range, orders, names, learn, reviews, site, talabat, cancels, whatsapp, transfer, talabatActions, systemWatch, backup, kpi];
+const MODULES = [admin, employees, sessions, dashboard, breaks, messages, shifts, history, engine, telegram, importRows, ops, range, orders, names, learn, reviews, site, talabat, cancels, whatsapp, transfer, talabatActions, systemWatch, backup, kpi, branchClosures];
 export { MODULES };

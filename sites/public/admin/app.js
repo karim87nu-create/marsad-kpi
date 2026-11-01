@@ -644,6 +644,21 @@
     renderLearned().catch(() => {});
     for (const f of ['addEmployee', 'addAdmin', 'messageForm']) $(f).hidden = f === 'messageForm' ? !canWrite() : !isAdmin();
   }
+  // ---------- إغلاق الفروع على طلبات (Karim 01-11) ----------
+  let closureRows = [];
+  const closureColumns = [{ title: 'الفرع', get: x => x.branch }, { title: 'من', get: x => x.from, show: x => clock(x.from), type: 'datetime' },
+    { title: 'لحد', get: x => x.to, show: x => x.open ? pill('لسه مقفول', 'bad') : clock(x.to), type: 'datetime' }, { title: 'المدة (دقيقة)', get: x => x.minutes, type: 'number' },
+    { title: 'الحالة', get: x => x.stateAr }, { title: 'السبب', get: x => x.reason || 'طلبات ماكتبتش سبب', cls: () => 'wrap' }, { title: 'كان مكتوب لحد', get: x => x.until || '—' }];
+  async function renderClosures() {
+    if (!isAdmin()) return;
+    const d = await api('/api/talabat/closures?' + periodQuery());
+    closureRows = d.list;
+    const by = new Map(); for (const x of d.list) { const o = by.get(x.branch) || { n: 0, m: 0 }; o.n++; o.m += x.minutes; by.set(x.branch, o); }
+    $('closureCards').replaceChildren(...d.now.map(n => kpi('طلبات — ' + n.branch, n.stateAr, n.state === 'OPEN' ? 'good' : 'bad', n.state === 'OPEN' ? '' : 'من ' + clock(n.since))),
+      ...[...by].map(([b, o]) => kpi('اتقفل في الفترة — ' + b, o.n + ' مرة', o.n ? 'warn' : 'good', 'إجمالي ' + o.m + ' دقيقة')));
+    table('closureTable', closureColumns, d.list, { empty: 'مفيش فرع اتقفل على طلبات في الفترة دي' });
+  }
+
   // ---------- فروق الأسعار في التحويل الآلي (Karim 01-11): the order is saved, the difference is fixed later ----------
   const JOB_STATE = { auto_done: 'اتسجل', auto_failed: 'ماتسجلش', auto_preview: 'تجربة بس' };
   const BRANCH_NO = { 1: 'التجمع', 2: 'مدينة نصر', 3: 'مدينتي' };
@@ -784,7 +799,8 @@
         : [h('p', { className: 'muted', textContent: 'أسماء الفروع هتظهر هنا أول ما مرصد الأوردرات يبعت من جهاز الكاشير.' })]));
     $('tgSettings').elements.enabled.checked = t.enabled;
     const box = (title, list) => list.length ? [h('h3', { textContent: title }), ...list.map(r => h('label', {}, h('input', { type: 'checkbox', name: 'rule', value: r.key, checked: r.on }), ' ' + r.label.replace(/^الأوردرات: /, '')))] : [];
-    $('tgRules').replaceChildren(...box('الكول سنتر', t.rules.filter(r => !r.key.startsWith('orders'))), ...box('الفروع', t.rules.filter(r => ['ordersLate', 'ordersCancel'].includes(r.key))), ...box('الأونلاين وضرب الأوردر', t.rules.filter(r => r.key.startsWith('orders') && !['ordersLate', 'ordersCancel'].includes(r.key))));
+    const BR = ['ordersLate', 'ordersCancel', 'talabatCancel', 'sitePrep', 'talabatClosed'], orderish = k => /^(orders|talabat|site|system)/.test(k);
+    $('tgRules').replaceChildren(...box('الكول سنتر', t.rules.filter(r => !orderish(r.key))), ...box('الفروع', t.rules.filter(r => BR.includes(r.key))), ...box('الأونلاين وضرب الأوردر والسيستم', t.rules.filter(r => orderish(r.key) && !BR.includes(r.key))));
     const log = (await api('/api/telegram?log=1&date=' + cairoToday())).log;
     table('tgLog', [{ title: 'الوقت', get: x => x.createdAt, show: x => clock(x.createdAt), type: 'datetime' }, { title: 'الجروب', get: x => x.group || 'الكول سنتر' }, { title: 'النوع', get: x => x.label }, { title: 'الرسالة', get: x => x.text.split('\n')[0] },
       { title: 'اتبعت', get: x => x.sentAt ? 'أيوه' : 'لأ' + (x.error ? ' — ' + x.error : '') }], log, { empty: 'مفيش تنبيهات النهارده', limit: 100 });
@@ -832,6 +848,7 @@
     if (!kind) return;
     try {
       if (kind === 'priceDiffs') return exportRows('فروق-الأسعار', priceDiffColumns, priceDiffRows);
+      if (kind === 'closures') return exportRows('إغلاق-الفروع', closureColumns, closureRows);
       if (OR.exportKind(kind) || SITE.exportKind(kind) || INS.exportKind(kind)) return;
       if (kind === 'queues') exportRows('انواع-الطلبات', queueColumns, (await dayHistory()).queues || []);
       if (kind === 'team') exportRows('اداء-الموظفين', teamColumns, teamRows(await dayData()));
@@ -855,7 +872,7 @@
     day: ['الكول سنتر: اليوم', () => Promise.all([renderDay(), renderHours()])], team: ['أداء الموظفين', renderTeam], profile: ['ملف الموظف', renderProfile],
     breaks: ['البريك والحضور ونهاية الشيفت', () => Promise.all([refreshRequests(), renderAttendance(), renderShifts()])], calls: ['المكالمات', renderCalls], missed: ['المكالمات الفائتة', renderMissed],
     branchesNow: ['الفروع الآن', null], transfer: ['تحويل الأوردرات: طلبات والموقع', () => Promise.all([renderPriceDiffs(), SITE.renderTalabat(), SITE.renderTransfer()])], entry: ['ضرب الأوردرات', () => OR.renderEntry()],
-    sales: ['المبيعات', () => INS.renderSales()], branches: ['تقرير الفروع', () => Promise.all([OR.renderBranches(), INS.renderBranch(), SITE.renderBranches()])],
+    sales: ['المبيعات', () => INS.renderSales()], branches: ['تقرير الفروع', () => Promise.all([renderClosures(), OR.renderBranches(), INS.renderBranch(), SITE.renderBranches()])],
     cancels: ['الإلغاءات', () => Promise.all([OR.renderCancels(), SITE.renderBranchTalabatCancels(), INS.renderCancelOwners()])],
     kpi: ['مؤشرات الأداء: الموظفين والفروع', () => KPI.render()], followup: ['المتابعة والاستثناءات', renderFollowup],
     people: ['الموظفين والمستخدمين', renderManage], messages: ['رسايل للموظفين', renderManage], telegram: ['تنبيهات تليجرام', renderManage],

@@ -152,6 +152,17 @@
       }
       return null;
     };
+    // Each outlet's state on Talabat (open / closed / busy…) as the page itself holds it, with whatever it says about why and
+    // until when (Karim 01-11: alerts when a branch closes, for how long and why). Read only.
+    const availability = () => {
+      const st = findStore(); if (!st) return null;
+      try {
+        const a = JSON.parse(W(window).JSON.stringify(W(st).getState()['availability-state'] || {}));
+        const names = a.vendorsDict || {};
+        return (a.items || []).map(x => ({ outlet: String(x.platformVendorId || ''), name: names[(x.globalEntityId || '') + '|' + x.platformVendorId]?.name || null, state: String(x.state || ''),
+          raw: Object.fromEntries(Object.entries(x).filter(([k]) => !/token|auth|phone|email/i.test(k)).map(([k, v]) => [k, typeof v === 'object' ? JSON.stringify(v).slice(0, 300) : String(v).slice(0, 200)])) })).filter(x => x.outlet).slice(0, 10);
+      } catch { return null; }
+    };
     const stateOrders = () => {
       const st = findStore(); if (!st) return null;
       try { const page = W(window); const txt = page.JSON.stringify(W(st).getState()['orders-state'].orders || []); return JSON.parse(txt); } catch { return null; }
@@ -289,7 +300,8 @@
         // branch and payment from the page's data.
         const byId = new Map((live || []).map(o => [String(o.externalId), o]));
         const codes = readCodes().map(c => { const o = byId.get(c.id); return o ? { ...c, code: String(o.shortCode || c.code), ...(o.vendorName ? { store: o.vendorName } : {}), ...(o.payment?.paymentType ? { pay: String(o.payment.paymentType).slice(0, 40) } : {}) } : c; });
-        const key = JSON.stringify(codes);
+        const avail = availability();
+        const key = JSON.stringify([codes, avail?.map(x => [x.outlet, x.state, JSON.stringify(x.raw)])]);   // a branch closing or opening is sent at once
         // From the page's data: each live order's full details, sent again only when something in it changed.
         if (live) {
           const fresh = [];
@@ -306,7 +318,7 @@
         }
         // Every minute even with no orders: the screen tells admin it is alive (version, last detail read and why it failed).
         if (key !== lastKey || Date.now() - lastAt > 60000) {
-          const r = await bg({ type: 'TALABAT_PUSH', orders: [], codes, diag: { live: codes.length, ...lastDiag } }).catch(() => null);
+          const r = await bg({ type: 'TALABAT_PUSH', orders: [], codes, diag: { live: codes.length, ...lastDiag }, ...(avail ? { availability: avail } : {}) }).catch(() => null);
           if (r?.ok) { lastKey = key; lastAt = Date.now(); }
         }
         // Orders from admin (every 30 s): the branches' delivery times, and the orders to mark «في الطريق».

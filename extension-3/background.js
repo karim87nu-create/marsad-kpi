@@ -223,7 +223,8 @@ async function talabatMessage(m, sender) {
   if (m.type === 'TALABAT_PUSH') {
     if (!t) return { ok: false, error: 'not_linked' };
     const r = await api('/api/talabat/push', { method: 'POST', headers: { 'content-type': 'application/json', ...auth(t) }, body: JSON.stringify({ orders: Array.isArray(m.orders) ? m.orders.slice(0, 800) : [], codes: Array.isArray(m.codes) ? m.codes.slice(0, 200) : [],
-      ...(m.diag ? { screen: { id: await screenId(), version: VERSION, kind: t.device ? 'device' : t.extra ? 'extra' : 'main', ...m.diag } } : {}) }), timeout: 30000 });
+      ...(m.diag ? { screen: { id: await screenId(), version: VERSION, kind: t.device ? 'device' : t.extra ? 'extra' : 'main', ...m.diag } } : {}),
+      ...(Array.isArray(m.availability) ? { availability: m.availability.slice(0, 10) } : {}) }), timeout: 30000 });
     const d = r.json();
     // WhatsApp messages on: keep one WhatsApp Web tab open on this PC (it sends them).
     if (r.ok && d.phones && !t.extra && !(talabatTabs.wa != null && await browser.tabs.get(talabatTabs.wa).then(() => true, () => false))) {

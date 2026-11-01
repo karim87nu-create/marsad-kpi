@@ -116,3 +116,27 @@ test('price differences: saved orders with a difference (not Talabat delivery) a
     assert.equal(l.find(x => x.ref === '1002').short, 155.4);
   } finally { await t.close(); }
 });
+
+test('a branch closing on Talabat: a message with the reason and until when, a reply with how long when it opens, a report', async () => {
+  const t = await start({ at: cairoToUtc(2026, 11, 1, 19, 0, 0) });
+  try {
+    const admin = await t.admin();
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const push = availability => t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { codes: [], availability } });
+    const av = (state, raw = {}) => [{ outlet: '802223', name: 'El Dahan, Madinaty - South Park', state, raw: { platformVendorId: '802223', state, ...raw } }];
+    await push(av('OPEN'));
+    t.advance(60000); await push(av('CLOSED', { closedReason: 'TOO_BUSY_KITCHEN', closedUntil: '2026-11-01T17:30:00Z' }));
+    const log = () => t.app.db.raw.prepare("SELECT key, text, target, branch, reply_to FROM telegram_log WHERE kind = 'talabatClosed' ORDER BY id").all();
+    let l = log();
+    assert.equal(l.length, 2, 'branch group and call center');
+    assert.match(l[0].text, /فرع مدينتى اتقفل على طلبات/); assert.match(l[0].text, /TOO_BUSY_KITCHEN/); assert.match(l[0].text, /لحد: 07:30/);
+    assert.equal(l[0].branch, 'مدينتى');
+    t.advance(35 * 60000); await push(av('CLOSED', { closedReason: 'TOO_BUSY_KITCHEN' }));
+    assert.equal(log().length, 2, 'no repeat while closed');
+    t.advance(5 * 60000); await push(av('OPEN'));
+    l = log();
+    assert.equal(l.length, 4); assert.match(l[2].text, /رجع فتح/); assert.match(l[2].text, /40 دقيقة/); assert.equal(l[2].reply_to, l[0].key);
+    const r = (await admin('GET', '/api/talabat/closures')).body;
+    assert.equal(r.list.length, 1); assert.equal(r.list[0].minutes, 40); assert.equal(r.list[0].reason, 'TOO_BUSY_KITCHEN');
+  } finally { await t.close(); }
+});

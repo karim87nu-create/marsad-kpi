@@ -82,6 +82,8 @@ function setup(app) {
       const keep = Object.entries(all).sort((a, b) => b[1].at - a[1].at).slice(0, 20);
       await put('talabat_screens', JSON.stringify(Object.fromEntries(keep)));
     }
+    // Each outlet's state on Talabat (open/closed/busy, reason, until): closure alerts and the closures report.
+    if (Array.isArray(ctx.body?.availability) && app.talabatAvailability) await app.talabatAvailability(ctx.body.availability, now);
     // What is on a live screen right now (Karim 01-11: the transfer page lists only those): every screen sends its live
     // orders at least once a minute; an order not sent by any screen for 3 minutes has left the live screen.
     if (Array.isArray(ctx.body?.codes)) {
