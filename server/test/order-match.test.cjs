@@ -31,12 +31,10 @@ test('ties in either direction are ambiguous and independent of row order', () =
   }
   assert.equal(resolveOrders([row()], [apex(1), apex(2)], opts).matches.size, 0);
 });
-test('an exact tag cannot overrule customer, item, branch, value, or time contradictions', () => {
+test("an exact order id cannot overrule a different phone, items, branch, value, or time", () => {
   const cases = [
     { branch: 'مدينتي' }, { amount: 900 },
     { customer: { ...customer, phone: '01112345678' } },
-    { customer: { ...customer, name: 'محمود حسن' } },
-    { customer: { ...customer, address: 'شارع مختلف عمارة 9' } },
     { items: [{ ...aitems[0], qty: 1 }] }, { t: anchor + 4 * 3600000 },
   ];
   for (const extra of cases) {
@@ -55,9 +53,10 @@ test('phone plus matching name or address confirms; missing identity stays tenta
   for (const field of ['name', 'address']) {
     assert.equal(resolveOrders([row()], [apex(1, {customer:{...customer,[field]:''}})], opts).matches.size,1);
   }
-  for (const fields of [{phone:''},{name:'',address:''}]) {
-    assert.equal(resolveOrders([row()], [apex(1,{customer:{...customer,...fields}})],opts).matches.size,0);
-  }
+  // No phone and no #code: not sure. The same phone with the basket and amount agreeing is (Apex's name and address
+  // fields hold staff text, so they never decide alone — Karim 01-11).
+  assert.equal(resolveOrders([row()], [apex(1,{customer:{...customer,phone:''}})],opts).matches.size,0);
+  assert.equal(resolveOrders([row()], [apex(1,{customer:{...customer,name:'',address:''}})],opts).matches.size,1);
   const forced=resolveOrders([row()], [apex(1,{amount:999})], {...opts,manual:new Map([['10000001',1]])});
   assert.equal(forced.matches.get('10000001').no,1);assert.equal(forced.how.get('10000001'),'manual');
   const suppressed=resolveOrders([row()], [apex()], {...opts,manual:new Map([['10000001',null]])});
@@ -123,4 +122,17 @@ test('website uses the same phone, Arabic basket and quantity evidence without h
  const o=row('29306',{source:'site',items:[{name:'أرز سادة',qty:2,price:113}]});
  const d=resolveOrders([o],[apex(1,{kind:'الموقع',tag:'99999'}),apex(2,{kind:'الموقع',customer:{...customer,phone:'01112345678'}})],opts);
  assert.equal(d.matches.get('29306').no,1);assert.equal(d.how.get('29306'),'evidence');
+});
+
+test('the #code staff write in Apex’s name field confirms; Apex keeps 20 characters, so a cut code only supports (Karim 01-11)', () => {
+  const staffName = { name: 'محمد\\التجمع\\بجوار.#93', phone: '', address: 'Free text' };
+  // Same code: the order, even though Apex's name/address hold staff text and there is no phone.
+  let d = resolveOrders([row('10000001', { code: '9315', customer: { name: 'Mirna Essam', phone: '01006817315', address: 'gardenia city' } })], [apex(1, { tag: '#9315', customer: staffName })], opts);
+  assert.equal(d.matches.get('10000001')?.no, 1); assert.equal(d.how.get('10000001'), 'code');
+  // Cut code («#931») with the same phone, basket and amount: confirmed by the evidence.
+  d = resolveOrders([row('10000001', { code: '9315' })], [apex(1, { tag: '931', customer: { ...customer, name: 'نص مقطوع' } })], opts);
+  assert.equal(d.matches.get('10000001')?.no, 1);
+  // A code for another order in another branch never links.
+  d = resolveOrders([row('10000001', { code: '9315' })], [apex(1, { tag: '9315', branch: 'مدينتي' })], opts);
+  assert.equal(d.matches.size, 0);
 });

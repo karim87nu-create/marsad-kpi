@@ -113,11 +113,14 @@ $('branchBar').addEventListener('click', e => { const b = e.target.closest('[dat
 document.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { source = b.dataset.s; document.querySelectorAll('[data-s]').forEach(x => x.className = x === b ? 'on' : 'ghost'); render(true); });
 
 // What the employee writes next to the customer name on Apex.
+// Apex keeps only the first 20 characters of the customer's name (checked 01-11: every Talabat order today was cut at 20,
+// so «…#9981» became «…#9»). The #code goes first, then the payment, then the name, so the code is never lost.
 function labelOf(o, pay) {
-  const tag = o.code ? ' #' + o.code : '';
-  if (o.source === 'talabat') return (pay === 'paid' ? 'اطلب/مدفوع' : pay === 'cash' ? 'اطلب/كاش' : 'اطلب/؟؟') + tag;
-  return (pay === 'paid' ? 'مدفوع' : pay === 'cash' ? 'كاش' : '؟؟') + ' موقع' + tag;
+  const tag = o.code ? '#' + o.code + ' ' : '';
+  if (o.source === 'talabat') return tag + (pay === 'paid' ? 'اطلب/مدفوع' : pay === 'cash' ? 'اطلب/كاش' : 'اطلب/؟؟');
+  return tag + (pay === 'paid' ? 'مدفوع' : pay === 'cash' ? 'كاش' : '؟؟') + ' موقع';
 }
+const fullLabel = (o, pay) => labelOf(o, pay) + (o.customer?.name ? ' ' + o.customer.name : '');
 const key = o => o.source + ':' + o.ref;
 // What went wrong, in the words staff use (the writer reports Apex's technical message).
 function plain(e) {
@@ -251,7 +254,7 @@ function card(o) {
     '<div class="top"><span class="src ' + o.source + '">' + (o.source === 'talabat' ? 'طلبات' : 'الموقع') + '</span><span class="code">' + (o.code ? '#' + esc(o.code) : esc(o.ref)) + '</span>' +
       '<span style="color:var(--muted)">' + time(o.at) + ' · ' + esc(o.branch || 'الفرع مش معروف') + (o.deliveryType ? ' · ' + esc(o.deliveryType) : '') + (o.scheduled ? ' · <span class="warn">بميعاد</span>' : '') + '</span>' +
       '<span class="state ' + st.cls + '">' + esc(st.text) + '</span></div>' +
-    '<div class="label"><span style="color:var(--muted)">جنب اسم العميل:</span><input readonly value="' + esc((o.customer?.name ? o.customer.name + ' ' : '') + labelOf(o, pay)) + '"><button class="ghost copy" data-copy>نسخ</button></div>' +
+    '<div class="label"><span style="color:var(--muted)">في خانة اسم العميل (الكود الأول عشان Apex بيشيل 20 حرف بس):</span><input readonly value="' + esc(fullLabel(o, pay)) + '"><button class="ghost copy" data-copy>نسخ</button></div>' +
     '<div class="pay"><span>الدفع:</span> ' + payText(o) + ' <button class="' + (pay === 'cash' ? 'on' : 'ghost') + ' copy" data-pay="cash">كاش</button><button class="' + (pay === 'paid' ? 'on' : 'ghost') + ' copy" data-pay="paid">مدفوع</button></div>' +
     '<div class="grid">' +
       '<div class="box"><h3>العميل</h3>' + esc(o.customer?.name || '—') + '<br>' + (o.customer?.phone ? esc(o.customer.phone) + ' <button class="ghost copy" data-copytext="' + esc(o.customer.phone) + '">نسخ</button>' : '<span class="warn">الرقم مش ظاهر</span>') + '</div>' +
@@ -341,7 +344,7 @@ $('list').addEventListener('click', async e => {
         items: flatLines(o).map((i, n) => ({ itemNo: p.items[n], qty: i.qty, note: '' })),
         // Free choices and the customer's note go in the order comment on Apex (تعليقات الطلب), as the staff do.
         note: [...flatLines(o).filter(i => i.kind === 'item' && i.note).map(i => i.name + ': ' + i.note), ...(o.note ? ['ملاحظة العميل: ' + o.note] : [])].join(' | ').slice(0, 300),
-        label: (o.customer?.name ? o.customer.name + ' ' : '') + labelOf(o, pay), customer: o.customer || {}, sign: plat.map(d => 'خصم طلبات ' + money(d.amount)).join(' + '),
+        label: fullLabel(o, pay), customer: o.customer || {}, sign: plat.map(d => 'خصم طلبات ' + money(d.amount)).join(' + '),
         restaurantDiscount: rest, expectedTotal: (o.subtotal ?? o.total ?? 0) - rest, targetTotal: o.target ?? null });
       delete picks[key(o)]; await load();
     } catch (err) { toast(err.message); b.disabled = false; }

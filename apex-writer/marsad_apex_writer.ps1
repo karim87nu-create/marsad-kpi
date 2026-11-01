@@ -394,6 +394,18 @@ function Self-Test {
       $out.saved = $rows; $out.ok = $true
       throw 'INSPECT_DONE'
     }
+    if ($job.mode -eq 'inspect-find') {
+      # Read-only: today's online orders whose name fields hold given Talabat codes (how they were written, for matching).
+      $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[0]);Database=Resturant;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec)))
+      try { $c.Open() } catch { $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[1]);Database=Resturant;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec))); $c.Open() }
+      $out.mode = 'inspect-find'; $rows = @()
+      foreach($q in @("SELECT TOP 40 'O' k, m.OrderNo, m.ShiftSerial, m.BranchNo, RTRIM(m.OnlineType) ot, m.TimeIn, m.PosNo, m.UserNo, RTRIM(ISNULL(m.o_CustName,'')) cn, RTRIM(ISNULL(m.o_PersonName,'')) pn, RTRIM(ISNULL(m.PersonName,'')) pn2, (m.SubTotal + m.Service + m.Tax - m.Discount) tot FROM Orders_M_Daily m WITH (NOLOCK) WHERE m.OnlineType LIKE 'TALABAT%' AND (m.o_CustName LIKE '%9314%' OR m.o_CustName LIKE '%9315%' OR m.o_CustName LIKE '%9316%' OR m.o_CustName LIKE '%3495%' OR m.PersonName LIKE '%9314%' OR m.PersonName LIKE '%3495%' OR m.o_PersonName LIKE '%9314%' OR m.o_PersonName LIKE '%3495%' OR m.o_PersonName LIKE '%9315%' OR m.o_PersonName LIKE '%9316%')",
+                      "SELECT TOP 30 'R' k, m.OrderNo, m.ShiftSerial, m.BranchNo, RTRIM(m.OnlineType) ot, m.TimeIn, RTRIM(ISNULL(m.o_CustName,'')) cn, RTRIM(ISNULL(m.o_PersonName,'')) pn, (m.SubTotal + m.Service + m.Tax - m.Discount) tot FROM Orders_M_Daily m WITH (NOLOCK) WHERE m.OnlineType LIKE 'TALABAT%' ORDER BY m.OrderNo DESC")){
+        try { $cmd = $c.CreateCommand(); $cmd.CommandTimeout = 30; $cmd.CommandText = $q; $rd = $cmd.ExecuteReader(); while ($rd.Read()) { $h = [ordered]@{}; for ($i = 0; $i -lt $rd.FieldCount; $i++) { $h[$rd.GetName($i)] = "$($rd.GetValue($i))".Trim() }; $rows += $h }; $rd.Close() } catch { $rows += @{ q = $q.Substring(0, 40); error = $_.Exception.Message } }
+      }
+      $out.saved = $rows; $out.ok = $true
+      throw 'INSPECT_DONE'
+    }
     if ($job.mode -eq 'inspect-idx') {
       # Read-only: the indexes of the archive (Orders_M), to know if «yesterday's» order can be found cheaply.
       $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[0]);Database=Resturant;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec)))

@@ -57,7 +57,12 @@ export function resolveOrders(rows, apex, { manual = new Map(), branchOk = () =>
     const c = customerOf(o.customer), cp = new Set([c.phone, c.mobile].filter(Boolean));
     for (const a of apex) {
       if (used.has(String(a.no))) continue;
-      const reference = referenceEvidence(o, a), exact = reference.exact;
+      const reference = referenceEvidence(o, a);
+      // The Talabat #code staff write in the customer's name on Apex (Karim's rule). Apex keeps only 20 characters of that
+      // field, so the code at its end is often cut («#9981» → «#998»): an equal tag is the order; a cut one only supports it.
+      const code = o.source === 'talabat' && o.code ? String(o.code).replace(/\D/g, '') : '', tag = a.tag ? String(a.tag).replace(/\D/g, '') : '';
+      const tagExact = !!code && tag === code, tagPart = !!code && !tagExact && tag.length >= 3 && code.startsWith(tag);
+      const exact = reference.exact || tagExact;
       const time = Number(a.t ?? Date.parse(a.at)), gap = time - o.anchor, branch = branchOk(o.branch, a.branch);
       const withinTime = Number.isFinite(time) && gap >= -120000 && gap <= windowFor(o);
       if (!Number.isFinite(time) || (!exact && !reference.conflict && !withinTime)) continue;
@@ -70,17 +75,20 @@ export function resolveOrders(rows, apex, { manual = new Map(), branchOk = () =>
       for (const t of T) { const ids = A.filter(x => textKey(x.name) === textKey(t.name)).map(x => [String(x.no), 2]); if (ids.length) direct.set(itemKey(t.name), new Map([...(direct.get(itemKey(t.name)) || []), ...ids])); }
       const item = T.length && A.length ? compareItems(T, A, { learned: direct, ratio }) : null;
       const money = Number(o.amount) > 0 && Number(a.amount) > 0 ? Math.abs(o.amount - a.amount) / Math.max(o.amount, a.amount) : null;
-      const identity = phone === true && (name >= .6 || address >= .6);
-      const nameConflict = c.name && ac.name && name != null && name < .35;
-      const addressConflict = c.address && ac.address && address != null && address < .5;
-      const conflict = reference.conflict || phone === false || nameConflict || addressConflict || branch === false || (item && !item.ok) || (money != null && money > .3) || !withinTime;
+      // Apex's name and address fields hold the staff's own text (name\\area\\landmark.#code, cut at 20): they support a match
+      // but never contradict it when the phone or the #code agrees (Karim 01-11: entered orders were never confirmed).
+      const identity = phone === true || tagExact;
+      const nameConflict = !identity && c.name && ac.name && name != null && name < .2;
+      const addressConflict = false;
+      const conflict = reference.conflict || (phone === false && !tagExact) || nameConflict || addressConflict || branch === false || (item && !item.ok && !tagExact) || (money != null && money > .3 && !tagExact) || !withinTime;
       // Explicit source order IDs never bypass contradictory customer or basket evidence.
-      const fullEvidence = withinTime && branch === true && money != null && money < .08 && item?.ok === true && identity;
+      // Sure: the #code itself in the right branch and time, or the same phone with the basket and the amount agreeing.
+      const fullEvidence = withinTime && branch !== false && (tagExact || (identity && money != null && money < .15 && item?.ok !== false && (item?.ok === true || tagPart)));
       const strong = !conflict && fullEvidence;
-      const score = (exact ? 100 : 0) + (phone === true ? 42 : phone === false ? -70 : 0) +
+      const score = (exact ? 100 : 0) + (tagPart ? 30 : 0) + (phone === true ? 42 : phone === false ? -70 : 0) +
         (name ?? 0) * 16 + (address ?? 0) * 18 + (item ? item.ok ? 32 : -24 : 0) +
         (branch === true ? 8 : branch === false ? -25 : 0) + (money == null ? 0 : Math.max(-20, 12 - money * 70)) + Math.max(0, 8 - Math.abs(gap) / 60000 / 5);
-      pairs.push({ o: o.id, a, score, strong, exact, conflict, reasons: { code: exact ? 'exact' : null, referenceType: reference.type, referenceConflict: reference.conflict, phone, name, address,
+      pairs.push({ o: o.id, a, score, strong, exact, conflict, reasons: { code: exact ? 'exact' : tagPart ? 'cut' : null, referenceType: reference.type, referenceConflict: reference.conflict, phone, name, address,
         nameConflict: !!nameConflict, addressConflict: !!addressConflict, items: item ? item.ok : null, quantities: item ? item.countTalabat === item.countApex : null,
         branch, money, minutes: gap / 60000, withinTime, fullEvidence } });
     }

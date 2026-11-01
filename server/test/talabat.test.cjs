@@ -67,7 +67,7 @@ test('talabat: a #code cannot bypass complete evidence; sure links teach the bra
     await push({ orders: [0, 1, 2].map(i => ({ id: '39770000' + i + '0', store: 'الدهان، التجمع الخامس', status: 'MYSTERY', placedAt: at(i * 10), customer: { name: 'Customer ' + i, phone: '0101234567' + i, address: 'Tagamoa 5' }, detail: { receivedAt: at(i * 10), acceptedAt: at(i * 10 + 0.5), items: [{ name: 'Rice', qty: 1, price: 113 }], subtotal: 113, milestones: { DISPLAYED_AT_VENDOR: at(i * 10), RIDER_NEAR: at(i * 10 + 3) } } })) });
     t.advance(31000); await push({ orders: [] });
     const d = (await admin('GET', '/api/talabat/day?day=2026-10-22')).body;
-    for (const o of d.orders) assert.equal(o.apex?.how, 'evidence', o.id);
+    for (const o of d.orders) assert.equal(o.apex?.how, 'code', o.id);   // Karim 01-11: the #code staff write is the link
     const l = (await admin('GET', '/api/learned')).body;
     assert.ok(l.facts.some(f => f.kind === 'match-v2:branch:talabat' && f.a === 'الدهان، التجمع الخامس - البنفسج 9,10,11,12' && f.b === 'التجمع' && f.evidence === 3), 'learned the branch name');
     assert.ok(l.facts.some(f => f.kind === 'unknown' && f.b === 'حالة: MYSTERY'));
@@ -143,7 +143,7 @@ test('talabat: bare and partial codes need full evidence; past days get codes la
     const r = await t.call('POST', '/api/orders/tags', { headers: { 'x-orders-token': ot }, body: { day: '2026-10-22', tags: { 3526864: '843', 3526865: '8698' } } });
     assert.equal(r.body.updated, 2);
     const d = (await admin('GET', '/api/talabat/day?day=2026-10-22')).body, o = Object.fromEntries(d.orders.map(x => [x.id, x]));
-    assert.equal(o['4676900301'].apex.no, 3526865); assert.equal(o['4676900301'].apex.how, 'evidence');
+    assert.equal(o['4676900301'].apex.no, 3526865); assert.equal(o['4676900301'].apex.how, 'code');
     assert.equal(o['4676900302'].apex, null, 'zero-stripped code alone is tentative');
     assert.ok(['tentative','ambiguous'].includes(o['4676900302'].matching.state));
     assert.deepEqual([...new Set(d.orders.map(x => x.store))], ['مدينة نصر'], 'Arabic and English store names are one branch');
