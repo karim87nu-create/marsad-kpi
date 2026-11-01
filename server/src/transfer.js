@@ -276,13 +276,18 @@ function setup(app) {
       const items = Array.isArray(b.items) ? b.items : [];
       if (!items.length || items.length > 40) fail(400, 'اختار أصناف Apex');
       const clean = items.map(x => ({ itemNo: String(x?.itemNo || '').trim(), qty: Number(x?.qty), note: x?.note ? String(x.note).slice(0, 60) : '' }));
-      if (clean.some(x => !/^\d{4,10}$/.test(x.itemNo) || !(x.qty > 0 && x.qty <= 50))) fail(400, 'فيه صنف من غير رقم Apex أو كمية غلط');
+      if (clean.some(x => !/^\d{1,10}$/.test(x.itemNo) || !(x.qty > 0 && x.qty <= 50))) fail(400, 'فيه صنف لسه مااتختارش أو عدده مش مظبوط');   // Apex offers have short numbers (111, 218, 315)
       const locationNo = Number(b.locationNo);
       if (!Number.isInteger(locationNo) || locationNo < 1) fail(400, 'اختار منطقة العميل على Apex');
+      // The area's own delivery charge on Apex (as the read-only monitor sent it), for an area nobody ordered to today.
+      const daySnap = parseJson((await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(row.day))?.data, {});
+      const areas = (Array.isArray(daySnap.locations) ? daySnap.locations : []).filter(l => l?.no === locationNo);
+      const area = areas.find(l => l.branch === branchNo) || areas.find(l => l.branch == null) || areas[0];
+      const areaService = Number.isFinite(Number(area?.service)) && area?.service !== null ? Number(area.service) : null;
       const restaurantDiscount = Math.max(0, Number(b.restaurantDiscount) || 0), expectedTotal = Number(b.expectedTotal) || null, targetTotal = Number(b.targetTotal) > 0 ? Math.round(Number(b.targetTotal) * 100) / 100 : null;
       const payload = { v: 1, source, ref, code: String(b.code || '').replace(/[^\d]/g, '').slice(0, 10) || null, db: mode, branchNo, locationNo, payment,
         label: String(b.label || '').slice(0, 80), customer: { name: String(b.customer?.name || '').slice(0, 80), phone: String(b.customer?.phone || '').replace(/[^\d+]/g, '').slice(0, 15), address: String(b.customer?.address || '').slice(0, 200) },
-        sign: String(b.sign || '').slice(0, 120), note: note || '', items: clean, restaurantDiscount, expectedTotal, targetTotal, by: me.name, at: ctx.now };
+        sign: String(b.sign || '').slice(0, 120), note: note || '', items: clean, restaurantDiscount, expectedTotal, targetTotal, areaService, by: me.name, at: ctx.now };
       await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at, payload, result) VALUES (?,?,?,'auto_pending',?,?,?,?,?,?,NULL)
         ON CONFLICT(source, ref) DO UPDATE SET state = 'auto_pending', employee_id = excluded.employee_id, employee_name = excluded.employee_name, payment = excluded.payment, note = excluded.note, at = excluded.at, payload = excluded.payload, result = NULL`)
         .run(source, ref, row.day, me.id, me.name, payment, note, ctx.now, JSON.stringify(payload));

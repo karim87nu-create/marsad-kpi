@@ -108,6 +108,9 @@ IF @TaxRatio IS NULL SELECT @TaxRatio = TaxRatio FROM dbo.Orders_M WITH (NOLOCK)
 -- Delivery service: what Apex charged most for this branch and area today (the archive is only searched on the test copy: it is big).
 SELECT TOP 1 @Service = Service FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE BranchNo = @Branch AND o_LocationNo = @LocationNo AND ISNULL(Service, 0) > 0 GROUP BY Service ORDER BY COUNT(*) DESC;
 IF @Service IS NULL AND @IsTest = 1 SELECT TOP 1 @Service = Service FROM (SELECT TOP 300 Service FROM dbo.Orders_M WITH (NOLOCK) WHERE BranchNo = @Branch AND o_LocationNo = @LocationNo AND ISNULL(Service, 0) > 0 ORDER BY OrderDate DESC) x GROUP BY Service ORDER BY COUNT(*) DESC;
+-- No order to this area from this branch today: Apex's own charge for the area, as the read-only monitor read it from
+-- LocationServices and the transfer page sent it (0 is a real charge, e.g. pickup). Karim 01-11: Madinaty orders failed.
+IF @Service IS NULL AND @AreaService >= 0 SET @Service = @AreaService;
 IF @Service IS NULL AND @Exec = 1 THROW 51008, 'no delivery charge known for this area on Apex', 1;
 SET @Service = ISNULL(@Service, 0);
 -- Lines and prices (prices given by the caller from the proven price source; checked against Items here).
@@ -225,7 +228,7 @@ function Write-Order($c, $job, [string]$mode){
   $p = @{ '@Exec' = $(if ($mode -eq 'shadow') { 0 } else { 1 }); '@IsTest' = $(if ($mode -eq 'test') { 1 } else { 0 }); '@PayWay' = $(if ($job.payment -eq 'paid') { 'Ledge' } else { 'Cash' }); '@Floor' = $(if ([string]$job.customer.address -match '(?:الدور|الطابق)\s*[:：]\s*([^،,—\-]+)') { $Matches[1].Trim() } else { '' }); '@Flat' = $(if ([string]$job.customer.address -match 'الشقة\s*[:：]\s*([^،,—\-]+)') { $Matches[1].Trim() } else { '' }); '@Pos' = $WriterPos; '@LocationNo' = [int]$job.locationNo; '@ServiceItem' = [string]$TalabatServiceItem; '@RefPos' = $(if ($mode -eq 'test') { $RefPosTest } else { $RefPos }); '@Branch' = [int]$job.branchNo
           '@Marker' = ('M' + $(if ($job.source -eq 'site') { 'S' } else { 'T' }) + ':' + $job.ref); '@Kind' = [string]$job.source; '@Phone' = [string]$job.customer.phone
           '@Label' = [string]$job.label; '@Address' = [string]$job.customer.address; '@Sign' = [string]$job.sign; '@Remarks' = [string]$job.note
-          '@RestDiscount' = [decimal]$job.restaurantDiscount; '@Target' = $(if ($job.targetTotal) { [decimal]$job.targetTotal } else { [decimal]0 }); '@AddPrinted' = $(if ($AddPrintedOrders) { 1 } else { 0 }); '@PrintedFlag' = $PrintedFlag; '@UserNo' = $WriterUserNo
+          '@AreaService' = $(if ($job.areaService -ne $null -and "$($job.areaService)" -ne '') { [decimal]$job.areaService } else { [decimal]-1 }); '@RestDiscount' = [decimal]$job.restaurantDiscount; '@Target' = $(if ($job.targetTotal) { [decimal]$job.targetTotal } else { [decimal]0 }); '@AddPrinted' = $(if ($AddPrintedOrders) { 1 } else { 0 }); '@PrintedFlag' = $PrintedFlag; '@UserNo' = $WriterUserNo
           '@TimeText' = (Get-Date).ToString('hh:mm:ss tt', [Globalization.CultureInfo]::GetCultureInfo('ar-EG')) }
   foreach($k in $p.Keys){ [void]$cmd.Parameters.AddWithValue($k, $p[$k]) }
   $t = New-Object System.Data.DataTable; $t.Load($cmd.ExecuteReader()); return $t.Rows[0]
@@ -349,6 +352,20 @@ function Self-Test {
       $out.saved = $rows; $out.ok = $true
       throw 'INSPECT_DONE'
     }
+    if ($job.mode -eq 'inspect-cols') {
+      # Read-only, production: the numeric column sizes the writer fills (an «Arithmetic overflow» on 01-11), and the writer's own orders today.
+      $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[0]);Database=Resturant;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec)))
+      try { $c.Open() } catch { $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[1]);Database=Resturant;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec))); $c.Open() }
+      $out.mode = 'inspect-cols'; $rows = @()
+      foreach($q in @("SELECT 'NC' k, t.name tb, c.name col, ty.name tp, c.precision pr, c.scale sc FROM sys.columns c JOIN sys.tables t ON t.object_id = c.object_id JOIN sys.types ty ON ty.user_type_id = c.user_type_id WHERE t.name IN ('Orders_M_Daily','Orders_D_Daily','Customers','Orders_Serials','Orders_Checks','CLedges','OrderLog','Counter','PrintedOrders') AND ty.name IN ('numeric','decimal','int','smallint','tinyint','money','smallmoney') AND (ty.name NOT IN ('numeric','decimal') OR c.precision < 18 OR c.scale > 0)",
+                      "SELECT 'MX' k, MAX(ShiftSerial) ss, MAX(BranchShiftSerial) bss, MAX(TypeSerial) ts, MAX(BranchOrderNo) bon, MAX(PosSerial) ps, MAX(CheckNo) cn, MAX(OrderNo) mo, MAX(CustNo) cu FROM Orders_M_Daily WITH (NOLOCK)",
+                      "SELECT 'CX' k, MAX(CustNo) cu FROM Customers WITH (NOLOCK)",
+                      "SELECT 'W' k, m.OrderNo, m.ShiftSerial, m.BranchShiftSerial, m.TypeSerial, m.BranchNo, m.BranchOrderNo, m.PosNo, m.PosSerial, m.CheckNo, m.CustNo, m.SubTotal, m.Service, m.Tax, m.Discount, RTRIM(m.PayWay) pw, m.TimeIn FROM Orders_M_Daily m WITH (NOLOCK) WHERE m.OrderNo IN (SELECT OrderNo FROM OrderLog WITH (NOLOCK) WHERE Status = 'MARSAD')")){
+        try { $cmd = $c.CreateCommand(); $cmd.CommandTimeout = 30; $cmd.CommandText = $q; $rd = $cmd.ExecuteReader(); while ($rd.Read()) { $h = [ordered]@{}; for ($i = 0; $i -lt $rd.FieldCount; $i++) { $h[$rd.GetName($i)] = "$($rd.GetValue($i))".Trim() }; $rows += $h }; $rd.Close() } catch { $rows += @{ q = $q.Substring(0, 40); error = $_.Exception.Message } }
+      }
+      $out.saved = $rows; $out.ok = $true
+      throw 'INSPECT_DONE'
+    }
     if ($job.mode -eq 'inspect-print') {
       # Read-only, test copy: the print flags Apex's own client left on the orders it created there (no branch printer runs on the test copy).
       $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[0]);Database=Resturant_Test;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec)))
@@ -459,6 +476,8 @@ for (;;) {
   } catch {
     $failures++
     L "error: $($_.Exception.Message)"
+    # What the failed job carried (numbers only, no customer details), so the cause can be found from this log.
+    if ($job) { try { L ("  job " + $job.source + ':' + $job.ref + ' branch=' + $job.branchNo + ' loc=' + $job.locationNo + ' areaService=' + $job.areaService + ' pay=' + $job.payment + ' disc=' + $job.restaurantDiscount + ' target=' + $job.targetTotal + ' phoneLen=' + ([string]$job.customer.phone).Length + ' items=' + (($job.items | ForEach-Object { "$($_.itemNo)x$($_.qty)@$($_.price)" }) -join ',')) } catch {} }
     if ($job -and $_.Exception.Message -notmatch 'Unable to connect|timed out|remote name') { try { [void](Api '/api/apex-writer/result' @{ source = $job.source; ref = $job.ref; ok = $false; error = $_.Exception.Message }) } catch {} }
   } finally { if ($c) { try { $c.Close() } catch {} }; $job = $null }
   Start-Sleep -Seconds ([math]::Min(120, $PollSeconds * [math]::Max(1, $failures)))

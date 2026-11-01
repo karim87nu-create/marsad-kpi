@@ -842,7 +842,14 @@ while ($true) {
       try {
         if (-not $script:locsAt -or ((Get-Date) - $script:locsAt).TotalMinutes -ge 30) {
           $svc = @{}; foreach($r in (Q "SELECT BranchNo AS b, o_LocationNo AS l, Service AS s, COUNT(*) AS n FROM Orders_M_Daily WITH (NOLOCK) WHERE o_LocationNo IS NOT NULL AND ISNULL(Service,0) > 0 GROUP BY BranchNo, o_LocationNo, Service").Rows){ $k = "$(S $r.b)|$(S $r.l)"; if (-not $svc[$k] -or $svc[$k].n -lt $r.n) { $svc[$k] = @{ s = [double]$r.s; n = [int]$r.n } } }
-          $script:locs = @((Q "SELECT LocationNo, LocationName, BranchNo FROM Location WITH (NOLOCK)").Rows | ForEach-Object { $k = "$(S $_.BranchNo)|$(S $_.LocationNo)"; [ordered]@{ no = [int]$_.LocationNo; name = (S $_.LocationName).TrimEnd('.'); branch = $(if ($_.BranchNo -is [DBNull]) { $null } else { [int]$_.BranchNo }); service = $(if ($svc[$k]) { $svc[$k].s } else { $null }) } })
+          # The areas in use (LocationServices, with the branches that serve each in LocationBranches), then the old
+          # Location table for numbers not there (Karim 01-11: Madinaty had no area to choose on the transfer page).
+          $lq = "SELECT s.LocationNo, s.LocationName, COALESCE(lb.BranchNo, s.BranchNo) AS BranchNo, s.Service AS DefService FROM LocationServices s WITH (NOLOCK) LEFT JOIN LocationBranches lb WITH (NOLOCK) ON lb.LocationNo = s.LocationNo " +
+                "UNION ALL SELECT l.LocationNo, l.LocationName, l.BranchNo, l.Service FROM Location l WITH (NOLOCK) WHERE NOT EXISTS (SELECT 1 FROM LocationServices s WITH (NOLOCK) WHERE s.LocationNo = l.LocationNo)"
+          $seen = @{}
+          $script:locs = @((Q $lq).Rows | ForEach-Object { $k = "$(S $_.BranchNo)|$(S $_.LocationNo)"; if ($seen[$k]) { return }; $seen[$k] = 1
+            $def = $(if ($_.DefService -is [DBNull]) { $null } else { [double]$_.DefService })
+            [ordered]@{ no = [int]$_.LocationNo; name = (S $_.LocationName).TrimEnd('.'); branch = $(if ($_.BranchNo -is [DBNull]) { $null } else { [int]$_.BranchNo }); service = $(if ($svc[$k]) { $svc[$k].s } else { $def }) } })
           $script:locsAt = Get-Date
         }
         if ($script:locs) { $payload.locations = $script:locs }

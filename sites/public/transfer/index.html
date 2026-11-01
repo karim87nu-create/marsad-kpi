@@ -105,8 +105,8 @@ $('go').onclick = async () => {
 };
 $('pin').onkeydown = e => { if (e.key === 'Enter') $('go').click(); };
 $('out').onclick = logout;
-document.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { filter = b.dataset.f; document.querySelectorAll('[data-f]').forEach(x => x.className = x === b ? 'on' : 'ghost'); render(); });
-document.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { source = b.dataset.s; document.querySelectorAll('[data-s]').forEach(x => x.className = x === b ? 'on' : 'ghost'); render(); });
+document.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { filter = b.dataset.f; document.querySelectorAll('[data-f]').forEach(x => x.className = x === b ? 'on' : 'ghost'); render(true); });
+document.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { source = b.dataset.s; document.querySelectorAll('[data-s]').forEach(x => x.className = x === b ? 'on' : 'ghost'); render(true); });
 
 // What the employee writes next to the customer name on Apex.
 function labelOf(o, pay) {
@@ -115,14 +115,26 @@ function labelOf(o, pay) {
   return (pay === 'paid' ? 'مدفوع' : pay === 'cash' ? 'كاش' : '؟؟') + ' موقع' + tag;
 }
 const key = o => o.source + ':' + o.ref;
+// What went wrong, in the words staff use (the writer reports Apex's technical message).
+function plain(e) {
+  const t = String(e || '').replace(/^Exception calling "\w+" with "\d+" argument\(s\): /, '').replace(/^"|"$/g, '');
+  const M = [[/no delivery charge known/i, 'المنطقة دي ملهاش سعر توصيل على Apex — اختار المنطقة الصح'], [/far above/i, 'إجمالي Apex طالع أكتر من الأوردر — غالبًا صنف أو حجم غلط، راجع الأصناف'],
+    [/below the order total/i, 'إجمالي Apex طالع أقل من الأوردر — فيه صنف ناقص أو حجم غلط، راجع الأصناف'], [/not in Apex Items|not in Apex$/i, 'فيه صنف مش موجود على Apex — اختار صنف تاني'],
+    [/stopped on Apex/i, 'فيه صنف موقوف على Apex'], [/no price on Apex/i, 'فيه صنف ملوش سعر أونلاين على Apex'], [/business day is not open|no open day/i, 'يوم Apex لسه ما اتفتحش'],
+    [/later day is open|stale/i, 'Apex فاتح يوم تاني — كلم المشرف'], [/timed out|Unable to connect|remote name|connection/i, 'Apex مش بيرد دلوقتي — جرب تاني بعد دقيقة'],
+    [/Arithmetic overflow/i, 'Apex رفض الأوردر بسبب رقم مش مظبوط فيه — سجله بإيدك وبلغ المشرف'], [/no Apex order of this kind today/i, 'مفيش أوردر من النوع ده على Apex النهارده لسه — سجل أول واحد بإيدك'],
+    [/فرق كبير|مش زي الأوردر/, null]];
+  for (const [re, msg] of M) if (re.test(t)) return msg || t;
+  return /[\u0600-\u06ff]/.test(t) ? t : 'حصلت مشكلة على Apex — سجله بإيدك وبلغ المشرف';
+}
 function stateOf(o) {
   if (o.apex) return { cls: 'in', text: 'في Apex ✓ ' + (o.apex.sn ? 'رقم ' + o.apex.sn : '#' + o.apex.no) + (o.apex.user ? ' — ' + o.apex.user : '') };
   const r = o.job?.result;
-  if (o.job?.state === 'auto_pending') return { cls: 'wait', text: 'مستني كاتب Apex…' };
+  if (o.job?.state === 'auto_pending') return { cls: 'wait', text: 'بيتبعت لـ Apex…' };
   if (o.job?.state === 'auto_sending') return { cls: 'wait', text: 'بيتكتب على Apex…' };
-  if (o.job?.state === 'auto_done') return { cls: 'in', text: 'اتكتب آليًا' + (r?.db === 'test' ? ' (قاعدة الاختبار)' : '') + ' #' + (r?.shiftSerial ?? r?.orderNo ?? '') + (r?.error ? ' — ' + r.error : '') };
-  if (o.job?.state === 'auto_failed') return { cls: 'other', text: 'التحويل الآلي ماتمش: ' + (r?.error || '') + ' — سجله بإيدك' };
-  if (o.job?.state === 'auto_preview') return { cls: r?.ok ? 'wait' : 'other', text: 'معاينة بس (إجمالي Apex ' + money(r?.total) + ')' + (r?.error ? ' — ' + r.error : '') + ' — سجله بإيدك' };
+  if (o.job?.state === 'auto_done') return { cls: 'in', text: 'اتسجل على Apex ✓' + (r?.db === 'test' ? ' (تجربة)' : '') + ' رقم ' + (r?.shiftSerial ?? r?.orderNo ?? '') + (r?.error ? ' — ' + plain(r.error) : '') };
+  if (o.job?.state === 'auto_failed') return { cls: 'other', text: 'ماتسجلش: ' + plain(r?.error) + ' — صلّحها وابعته تاني، أو سجله بإيدك' };
+  if (o.job?.state === 'auto_preview') return { cls: r?.ok ? 'wait' : 'other', text: 'تجربة بس، ماتسجلش (كان هيطلع ' + money(r?.total) + ')' + (r?.error ? ' — ' + plain(r.error) : '') + ' — سجله بإيدك' };
   if (o.job?.state === 'entered') return { cls: 'wait', text: (o.job.mine ? 'إنت سجلته' : o.job.by + ' سجله') + ' — مستني يظهر في Apex' };
   if (o.job?.state === 'claimed') return o.job.mine ? { cls: 'mine', text: 'معاك دلوقتي' } : { cls: 'other', text: 'مع ' + o.job.by };
   if (o.out) return { cls: 'in', text: 'خرج مع الطيار (اتسجل قبل كده)' };
@@ -138,20 +150,20 @@ function payText(o) {
 function discountsHtml(o) {
   if (!o.discounts?.length) return '<span style="color:var(--muted)">مفيش خصم ظاهر</span>';
   return o.discounts.map(d => {
-    const where = d.who === 'platform' ? '<span class="ok">خصم طلبات ← يتكتب في العلامة المميزة، مايتخصمش</span>'
-      : d.who === 'restaurant' ? '<span class="ok">خصم المطعم ← يتخصم</span>' : '<span class="warn">مين ممول الخصم مش واضح — راجع قبل ما تسجل</span>';
+    const where = d.who === 'platform' ? '<span class="ok">على حساب طلبات — مايتخصمش، بيتكتب في العلامة المميزة</span>'
+      : d.who === 'restaurant' ? '<span class="ok">على حساب المطعم — يتخصم من الأوردر</span>' : '<span class="warn">مش واضح الخصم على حساب مين — اسأل المشرف قبل ما تسجل</span>';
     return '<div>' + esc(d.text) + (d.amount != null ? ' — ' + money(d.amount) : '') + '<br>' + where + '</div>';
   }).join('');
 }
 function itemsHtml(o) {
-  if (!o.items?.length) return '<div class="warn">' + (o.detailRead ? 'مفيش أصناف' : 'تفاصيل الأوردر لسه ماتقرتش — افتحه على ' + (o.source === 'talabat' ? 'طلبات' : 'الموقع')) + '</div>';
+  if (!o.items?.length) return '<div class="warn">' + (o.detailRead ? 'مفيش أصناف' : 'تفاصيل الأوردر لسه ماوصلتش — بص عليه في ' + (o.source === 'talabat' ? 'طلبات' : 'الموقع')) + '</div>';
   return '<ul class="items">' + o.items.map(i => '<li><b>' + esc(i.qty) + '×</b> ' + esc(i.name) + (i.price != null ? ' <span style="color:var(--muted)">(' + money(i.price) + ')</span>' : '') +
-    (i.sizeOption ? '<div class="mods">الحجم: ' + esc(i.sizeOption) + ' (بيحدد صنف Apex)</div>' : '') +
-    ((i.freeOptions || [])?.length ? '<div class="mods">اختيارات مجانية (تتكتب في تعليقات الطلب): ' + i.freeOptions.map(esc).join('، ') + '</div>' : '') +
-    (i.addons?.length ? '<div class="warn">إضافات بفلوس (كل واحدة صنف على Apex): ' + i.addons.map(a => esc(a.qty) + '× ' + esc(a.name) + ' (' + money(a.price) + ')' + (a.apex?.length ? ' → ' + a.apex.map(x => esc(x.no) + (x.name ? ' ' + esc(x.name) : '')).join(' أو ') : '')).join('، ') + '</div>' : '') +
-    (o.source === 'talabat' && !i.modifiersComplete ? '<div class="warn">الإضافات ماتقرتش كاملة — راجعها على طلبات</div>' : '') +
+    (i.sizeOption ? '<div class="mods">الحجم: ' + esc(i.sizeOption) + '</div>' : '') +
+    ((i.freeOptions || [])?.length ? '<div class="mods">اختيارات ببلاش (تتكتب في تعليق الأوردر): ' + i.freeOptions.map(esc).join('، ') + '</div>' : '') +
+    (i.addons?.length ? '<div class="warn">إضافات بفلوس (كل واحدة بتتسجل صنف لوحدها): ' + i.addons.map(a => esc(a.qty) + '× ' + esc(a.name) + ' (' + money(a.price) + ')' + (a.apex?.length ? ' → ' + a.apex.map(x => esc(x.no) + (x.name ? ' ' + esc(x.name) : '')).join(' أو ') : '')).join('، ') + '</div>' : '') +
+    (o.source === 'talabat' && !i.modifiersComplete ? '<div class="warn">الإضافات مش ظاهرة كاملة — بص عليها في طلبات</div>' : '') +
     (o.source === 'talabat' ? (i.apex?.length ? '<div class="apex">على Apex: ' + i.apex.map(a => esc(a.no) + (a.name ? ' ' + esc(a.name) : '')).join(' أو ') + (i.apex.length > 1 ? ' <span class="warn">(اختار الحجم الصح)</span>' : '') + '</div>'
-      : '<div class="apex none">مش مربوط بصنف Apex لسه — اختاره من المنيو</div>') : '') + '</li>').join('') + '</ul>';
+      : '<div class="apex none">لسه مش معروف على Apex — اختاره بالاسم</div>') : '') + '</li>').join('') + '</ul>';
 }
 // Automatic transfer: branch and Apex item for each line, confirmed by the employee (nothing is guessed).
 // The Apex lines of an order: each dish, then each of its add-ons that cost money (its own Apex line, not a free note).
@@ -169,7 +181,7 @@ function flatLines(o) {
 function compareHtml(o, fl, p) {
   const amt = t => { const m = String(t || '').split(' | ').slice(1).join(' ').replace(/,/g, '').match(/-?\d+(?:\.\d+)?/); return m ? Number(m[0]) : null; };
   const line = k => { const b = (o.bill || []).find(x => new RegExp(k, 'i').test(x.k || '')); return b ? amt(b.text) : null; };
-  const r2 = v => Math.round(v * 100) / 100, f = v => v == null ? '—' : typeof v === 'string' ? v : money(r2(v));
+  const r2 = v => Math.round(v * 100) / 100, f = v => v == null ? '<span style="color:var(--muted)">لسه</span>' : typeof v === 'string' ? v : money(r2(v));
   const rest = (o.discounts || []).filter(d => d.who === 'restaurant').reduce((a, d) => a + (Number(d.amount) || 0), 0);
   const plat = (o.discounts || []).filter(d => d.who === 'platform').reduce((a, d) => a + (Number(d.amount) || 0), 0);
   const tb = [['الأصناف', o.subtotal ?? line('^(?:المجموع الفرعي|subtotal)$')], ['التوصيل', line('توصيل|delivery')], ['رسوم الخدمة', line('رسوم الخدمة|service')],
@@ -184,12 +196,15 @@ function compareHtml(o, fl, p) {
   const gap = before == null || o.target == null ? null : r2(before - rest - o.target);
   const limit = o.target ? Math.max(15, 0.05 * o.target) : 15;
   const ap = [['الأصناف', T(items)], ['التوصيل', service == null ? null : T(service)], ['رسوم الخدمة', T(fee)], ['خصم المطعم', rest ? -rest : 0],
-    ['خصم طلبات', plat ? 'في العلامة المميزة' : 0], ['فرق يتخصم', gap > 0.009 && gap <= limit ? -gap : 0], ['إجمالي Apex', gap == null ? null : gap > 0.009 && gap <= limit ? o.target : before - rest]];
-  const verdict = missing ? '<span class="warn">فيه ' + missing + ' صنف لسه مااتختارش على Apex</span>' : service == null ? '<span class="warn">اختار المنطقة علشان التوصيل والضريبة يتحسبوا</span>'
+    ['خصم طلبات', plat ? 'في العلامة المميزة' : 0], ['فرق سعر يتخصم', gap > 0.009 && gap <= limit ? -gap : 0], ['إجمالي Apex', gap == null ? null : gap > 0.009 && gap <= limit ? o.target : before - rest]];
+  const verdict = missing ? '<span class="warn">فاضل ' + missing + ' صنف لسه ماختارتوش</span>' : service == null ? '<span class="warn">اختار المنطقة عشان التوصيل يتحسب</span>'
     : gap > limit ? '<span class="warn">⚠️ Apex أزيد من طلبات بـ ' + money(gap) + ' — غالبًا صنف أو وزن غلط</span>' : gap < -1 ? '<span class="warn">⚠️ Apex أقل من طلبات بـ ' + money(-gap) + ' — راجع الأصناف</span>'
     : '<span style="color:var(--ok,#2c9)">✓ الإجمالي هيطلع زي طلبات' + (gap > 0.009 ? ' (بعد خصم فرق ' + money(gap) + ')' : '') + '</span>';
+  // Only the lines that have something (a zero discount is not a line); «لسه» when it is not known yet.
+  const has = r => r[1] !== 0 && r[1] !== '0';
+  tb.splice(0, tb.length, ...tb.filter(has)); ap.splice(0, ap.length, ...ap.filter(has));
   const rows = Math.max(tb.length, ap.length);
-  let h = '<table style="width:100%;font-size:13px;margin-top:8px;border-collapse:collapse"><tr><th style="text-align:start">' + (o.source === 'talabat' ? 'طلبات' : 'الموقع') + '</th><th></th><th style="text-align:start">Apex (تقريبي، بالضريبة)</th><th></th></tr>';
+  let h = '<table style="width:100%;font-size:13px;margin-top:8px;border-collapse:collapse"><tr><th style="text-align:start">' + (o.source === 'talabat' ? 'طلبات' : 'الموقع') + '</th><th></th><th style="text-align:start">على Apex (بالضريبة)</th><th></th></tr>';
   for (let i = 0; i < rows; i++) h += '<tr><td>' + (tb[i]?.[0] || '') + '</td><td>' + (tb[i] ? f(tb[i][1]) : '') + '</td><td>' + (ap[i]?.[0] || '') + '</td><td>' + (ap[i] ? f(ap[i][1]) : '') + '</td></tr>';
   return h + '</table><div class="pay" style="margin-top:4px">' + verdict + '</div>';
 }
@@ -197,7 +212,7 @@ function autoHtml(o) {
   const mode = data.autoTransfer;
   if (!mode || mode === 'off' || o.apex || /^auto_(?:pending|sending|done|preview)$/.test(o.job?.state || '')) return '';
   const fl = flatLines(o), k = key(o), p = picks[k] || (picks[k] = { branch: o.apexBranch || '', items: fl.map(i => i.apex?.length === 1 ? i.apex[0].no : '') });
-  const br = '<select data-pick="branch"><option value="">فرع Apex…</option>' + (data.branches || []).map(b => '<option value="' + b.no + '"' + (String(p.branch) === String(b.no) ? ' selected' : '') + '>' + esc(b.name) + '</option>').join('') + '</select>';
+  const br = '<select data-pick="branch"><option value="">اختار الفرع…</option>' + (data.branches || []).map(b => '<option value="' + b.no + '"' + (String(p.branch) === String(b.no) ? ' selected' : '') + '>' + esc(b.name) + '</option>').join('') + '</select>';
   // Delivery area on Apex (decides the delivery service charge), only the chosen branch's areas.
   const areas = (data.locations || []).filter(l => !p.branch || l.branch == null || String(l.branch) === String(p.branch)).sort((a, b) => a.name.localeCompare(b.name, 'ar'));
   // Suggested area: the Apex area whose name appears in the customer's address (the longest one), when none is chosen yet.
@@ -208,17 +223,17 @@ function autoHtml(o) {
     const hit = areas.filter(l => nz(l.name).length >= 3 && addr.includes(' ' + nz(l.name) + ' ')).sort((a, b) => nz(b.name).length - nz(a.name).length)[0];
     if (hit) { p.loc = hit.no; p.locGuess = true; }
   }
-  const loc = '<select data-pick="loc"><option value="">منطقة العميل على Apex…</option>' + areas.map(l => '<option value="' + l.no + '"' + (String(p.loc) === String(l.no) ? ' selected' : '') + '>' + esc(l.name) + (l.service != null ? ' (خدمة ' + money(l.service) + ')' : '') + '</option>').join('') + '</select>';
+  const loc = '<select data-pick="loc"><option value="">' + (areas.length ? 'اختار المنطقة…' : 'مفيش مناطق للفرع ده لسه') + '</option>' + areas.map(l => '<option value="' + l.no + '"' + (String(p.loc) === String(l.no) ? ' selected' : '') + '>' + esc(l.name) + (l.service != null ? ' (توصيل ' + money(l.service) + ')' : '') + '</option>').join('') + '</select>';
   // The employee picks by name (nobody knows the Apex numbers): the suggestion is shown by name, other sizes in a list, and a search by name for anything else.
   const nameOf = no => apexNames.get(no) || '';
   const lines = fl.map((i, n) => '<div class="pay" style="margin-top:6px;flex-wrap:wrap"><span' + (i.kind === 'addon' ? ' class="warn"' : '') + '>' + esc(i.qty) + '× ' + esc(i.label) + '</span> ← ' +
     (p.items[n] ? '<b>' + esc(nameOf(p.items[n]) || ((i.apex || []).find(a => a.no === p.items[n])?.name) || 'صنف ' + p.items[n]) + '</b>' : '<span class="warn">اختار الصنف على Apex</span>') + ' ' +
     (i.apex?.length > 1 ? '<select data-pick="item" data-n="' + n + '"><option value="">' + (p.items[n] ? 'غيّر الحجم/الصنف…' : 'اختار…') + '</option>' + i.apex.map(a => '<option value="' + esc(a.no) + '"' + (p.items[n] === a.no ? ' selected' : '') + '>' + esc(a.name || nameOf(a.no) || a.no) + '</option>').join('') + '</select>' : '') +
     '<input data-pick="item" data-find="1" data-n="' + n + '" list="apexItems" placeholder="' + (p.items[n] ? 'صنف تاني؟ اكتب اسمه' : 'اكتب اسم الصنف على Apex') + '" style="width:190px"></div>').join('');
-  const label = mode === 'shadow' ? 'معاينة آلية (من غير كتابة)' : mode === 'test' ? 'تحويل آلي (قاعدة الاختبار)' : 'تحويل آلي لـApex';
+  const label = mode === 'shadow' ? 'جرّب التسجيل (مش هيتسجل فعلاً)' : mode === 'test' ? 'سجّله على نسخة التجربة' : 'سجّله على Apex من هنا';
   // Closed: only the title (the lists of areas and items are built when it is opened — the page stays light).
   if (!p.open) return '<details class="box" data-pick-box><summary>' + label + '</summary></details>';
-  return '<details class="box"' + (p.open ? ' open' : '') + ' data-pick-box><summary>' + label + '</summary><div class="pay" style="margin-top:6px"><span>الفرع على Apex:</span> ' + br + '</div><div class="pay" style="margin-top:6px"><span>المنطقة على Apex:</span> ' + loc + (p.locGuess ? ' <span class="warn">اقتراح من العنوان — اتأكد</span>' : '') + '</div>' + lines + compareHtml(o, fl, p) +
+  return '<details class="box"' + (p.open ? ' open' : '') + ' data-pick-box><summary>' + label + '</summary><div class="pay" style="margin-top:6px"><span>الفرع:</span> ' + br + '</div><div class="pay" style="margin-top:6px"><span>المنطقة:</span> ' + loc + (p.locGuess ? ' <span class="warn">اخترناها من العنوان — اتأكد منها</span>' : '') + '</div>' + lines + compareHtml(o, fl, p) +
     '<div class="actions" style="margin-top:8px"><button data-act="auto">' + label + '</button></div></details>';
 }
 function card(o) {
@@ -271,7 +286,16 @@ function render(force) {
   $('count').textContent = 'لسه: ' + todo + ' · الكل: ' + data.orders.length;
   if (data.liveScreen === false) $('count').textContent += ' · ⚠️ مفيش شاشة لايف طلبات شغالة دلوقتي';
   const html = list.length ? list.map(card).join('') : '<div class="empty">مفيش أوردرات هنا دلوقتي</div>';
-  if (html !== lastDraw) { $('list').innerHTML = html; lastDraw = html; }   // nothing changed: the page is not rebuilt
+  if (html === lastDraw) return;   // nothing changed: the page is not rebuilt
+  // Someone is choosing or typing in an order: the list waits until they leave the field (Karim 01-11: a new order
+  // used to rebuild the page under them and they lost the order they were on).
+  const act = document.activeElement;
+  if (!force && act && $('list').contains(act) && /^(INPUT|SELECT|TEXTAREA)$/.test(act.tagName)) { render.pending = true; return; }
+  // The order at the top of the screen stays where it is when new orders come in above it.
+  const cards = [...$('list').querySelectorAll('.card')], anchor = cards.find(c => c.getBoundingClientRect().bottom > 80);
+  const was = anchor ? { k: anchor.dataset.k, top: anchor.getBoundingClientRect().top } : null;
+  $('list').innerHTML = html; lastDraw = html; render.pending = false;
+  if (was) { const now = [...$('list').querySelectorAll('.card')].find(c => c.dataset.k === was.k); if (now) window.scrollBy(0, now.getBoundingClientRect().top - was.top); }
 }
 $('list').addEventListener('click', async e => {
   const b = e.target.closest('button'); if (!b) return;
@@ -281,15 +305,16 @@ $('list').addEventListener('click', async e => {
     try { await navigator.clipboard.writeText(text); b.textContent = 'اتنسخ ✓'; setTimeout(() => b.textContent = 'نسخ', 1500); } catch { c.querySelector('.label input').select(); }
     return;
   }
-  if (b.dataset.pay) { choice[key(o)] = b.dataset.pay; render(); return; }
+  if (b.dataset.pay) { choice[key(o)] = b.dataset.pay; render(true); return; }
   if (b.dataset.act === 'auto') {
     const p = picks[key(o)] || {}, pay = choice[key(o)] || o.job?.payment || (o.payment === 'cash' || o.payment === 'paid' ? o.payment : null);
     if (!pay) { toast('حدد الأول: كاش ولا مدفوع'); return; }
-    if (!p.branch) { toast('اختار فرع Apex'); return; }
-    if (!p.loc) { toast('اختار منطقة العميل على Apex'); return; }
-    if (flatLines(o).some((i, n) => !/^\d{4,10}$/.test(String(p.items?.[n] || '')))) { toast('كل صنف وكل إضافة بفلوس لازم يبقى لها رقم على Apex'); return; }
-    if (o.discounts?.some(d => !d.who)) { toast('فيه خصم مش واضح مين ممول له — سجله بإيدك'); return; }
-    if (o.source === 'talabat' && o.items.some(i => !i.modifiersComplete)) { toast('الإضافات ماتقرتش كاملة — سجله بإيدك'); return; }
+    if (!p.branch) { toast('اختار الفرع'); return; }
+    if (!p.loc) { toast('اختار منطقة العميل'); return; }
+    const missingAt = flatLines(o).findIndex((i, n) => !/^\d{1,10}$/.test(String(p.items?.[n] || '')));
+    if (missingAt >= 0) { toast('اختار الصنف على Apex لـ: ' + flatLines(o)[missingAt].name); return; }
+    if (o.discounts?.some(d => !d.who)) { toast('الخصم مش واضح على حساب مين — سجله بإيدك'); return; }
+    if (o.source === 'talabat' && o.items.some(i => !i.modifiersComplete)) { toast('الإضافات مش ظاهرة كاملة — سجله بإيدك'); return; }
     if (o.items.some(i => (i.addons || []).some(a => a.qty == null))) { toast('عدد إضافة مش واضح — سجله بإيدك'); return; }
     const rest = (o.discounts || []).filter(d => d.who === 'restaurant').reduce((a, d) => a + (Number(d.amount) || 0), 0);
     const plat = (o.discounts || []).filter(d => d.who === 'platform');
@@ -317,17 +342,18 @@ $('list').addEventListener('click', async e => {
 $('list').addEventListener('change', e => {
   const el = e.target.closest('[data-pick]'); if (!el) return;
   const c = el.closest('.card'), p = picks[c.dataset.k]; if (!p) return;
-  if (el.dataset.pick === 'branch') { p.branch = el.value; p.loc = ''; p.locTried = false; p.locGuess = false; render(); return; }
-  if (el.dataset.pick === 'loc') { p.loc = el.value; p.locGuess = false; }
+  if (el.dataset.pick === 'branch') { p.branch = el.value; p.loc = ''; p.locTried = false; p.locGuess = false; render(true); return; }
+  if (el.dataset.pick === 'loc') { p.loc = el.value; p.locGuess = false; render(true); return; }
   if (el.dataset.pick === 'item') {
     const v = el.value.trim(); if (!v) return;
     // A name typed in the search box → its Apex number (an exact name, else the one name that contains what was typed).
     let no = v;
     if (el.dataset.find) { const all = data.apexItems || [], hit = all.find(a => a.name === v) || (all.filter(a => a.name.includes(v)).length === 1 ? all.find(a => a.name.includes(v)) : null) || all.find(a => a.no === v); if (!hit) { toast('الصنف ده مش في Apex — اختاره من القايمة'); return; } no = hit.no; }
-    p.items[Number(el.dataset.n)] = no; p.open = true; render();
+    p.items[Number(el.dataset.n)] = no; p.open = true; render(true);
   }
 });
-$('list').addEventListener('toggle', e => { const d = e.target.closest?.('[data-pick-box]'); if (d) { const p = picks[d.closest('.card').dataset.k]; if (p && p.open !== d.open) { p.open = d.open; if (d.open) render(); } } }, true);
+$('list').addEventListener('focusout', () => setTimeout(() => { if (render.pending && !$('list').contains(document.activeElement)) render(); }, 0));
+$('list').addEventListener('toggle', e => { const d = e.target.closest?.('[data-pick-box]'); if (d) { const p = picks[d.closest('.card').dataset.k]; if (p && p.open !== d.open) { p.open = d.open; if (d.open) render(true); } } }, true);
 async function load() {
   try { data = await api('GET', '/api/transfer/queue'); $('me').textContent = data.me.name; const a = $('auto'); a.textContent = { off: 'التحويل الآلي متوقف — سجّل على Apex بإيدك', shadow: 'التحويل الآلي: معاينة بس — سجّل بإيدك', test: 'التحويل الآلي: تجربة على قاعدة الاختبار — سجّل بإيدك', live: 'التحويل الآلي شغال' }[data.autoTransfer] || ''; a.className = 'pill' + (data.autoTransfer === 'live' ? '' : ' off'); if (!$('list').contains(document.activeElement) || !/^(INPUT|SELECT)$/.test(document.activeElement.tagName)) render(); }
   catch (e) { if (token) toast(e.message); }
