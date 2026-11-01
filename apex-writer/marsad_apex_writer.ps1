@@ -178,10 +178,22 @@ BEGIN TRY
       INSERT INTO dbo.Customers_Log (CustNo, SNo, Name, CType, Phone, Address, FlatNo, FloorNo, Sign, CLedge, LocationNo, Note, UBranchNo, StreetNo, TransDate, ModifyUser)
       VALUES (@Cust, 1, LEFT(@Label, 50), N'أفراد', @Phone, LEFT(@Address, 200), LEFT(@Flat, 20), LEFT(@Floor, 20), LEFT(@Sign, 50), '0', @LocationNo, '.', @Branch, 0, @Now, 'MARSAD');
   END
-  ELSE
-    -- A customer found by phone keeps everything; only what Apex's screen needs and is still empty is filled in.
-    UPDATE dbo.Customers SET Phone = CASE WHEN ISNULL(RTRIM(Phone), '') = '' THEN @Phone ELSE Phone END, CType = ISNULL(CType, N'أفراد'),
-      LocationNo = ISNULL(LocationNo, @LocationNo), UBranchNo = ISNULL(UBranchNo, @Branch), Note = ISNULL(Note, '.') WHERE CustNo = @Cust;
+  ELSE BEGIN
+    -- A customer found by phone: this order's name, address, area, floor and flat replace the saved ones, as staff do on
+    -- Apex's customer screen before saving (Karim 01-11: the branch receipt printed last time's address and floor/flat;
+    -- Apex prints the customer card, not the order). One Customers_Log row, like every change there.
+    UPDATE dbo.Customers SET Phone = CASE WHEN ISNULL(RTRIM(Phone), '') = '' THEN @Phone ELSE Phone END, CType = ISNULL(CType, N'أفراد'), Note = ISNULL(Note, '.'),
+      Name = CASE WHEN @Label <> '' THEN LEFT(@Label, 50) ELSE Name END,
+      Address = CASE WHEN @Address <> '' THEN LEFT(@Address, 200) ELSE Address END,
+      LocationNo = ISNULL(@LocationNo, LocationNo), UBranchNo = @Branch,
+      FloorNo = CASE WHEN @Address <> '' THEN LEFT(@Floor, 20) ELSE FloorNo END, FlatNo = CASE WHEN @Address <> '' THEN LEFT(@Flat, 20) ELSE FlatNo END,
+      Sign = CASE WHEN @Sign <> '' THEN LEFT(@Sign, 50) ELSE Sign END
+    WHERE CustNo = @Cust;
+    IF HAS_PERMS_BY_NAME('dbo.Customers_Log', 'OBJECT', 'INSERT') = 1
+      INSERT INTO dbo.Customers_Log (CustNo, SNo, Name, CType, Phone, Address, FlatNo, FloorNo, Sign, CLedge, LocationNo, Note, UBranchNo, StreetNo, TransDate, ModifyUser)
+      SELECT CustNo, (SELECT ISNULL(MAX(SNo), 0) + 1 FROM dbo.Customers_Log WHERE CustNo = @Cust), Name, CType, Phone, Address, FlatNo, FloorNo, Sign, CLedge, LocationNo, Note, UBranchNo, StreetNo, @Now, 'MARSAD'
+      FROM dbo.Customers WHERE CustNo = @Cust;
+  END;
   -- The restaurant discount sits on one dish line (the top-priced one, as on Apex's own orders); the header carries the same total.
   DECLARE @DiscLine int; SELECT TOP 1 @DiscLine = SerialNo FROM @Lines WHERE ItemNo <> @ServiceItem ORDER BY Qty * Price DESC, SerialNo;
   DECLARE @S TABLE (n numeric(18,0)); DECLARE @C TABLE (n numeric(18,0));
@@ -265,7 +277,7 @@ function Write-Order($c, $job, [string]$mode){
   $cmd.CommandText = $decl + $Batch
   $p = @{ '@Exec' = $(if ($mode -eq 'shadow') { 0 } else { 1 }); '@IsTest' = $(if ($mode -eq 'test') { 1 } else { 0 }); '@PayWay' = $(if ($job.payment -eq 'paid') { 'Ledge' } else { 'Cash' }); '@Floor' = $(if ([string]$job.customer.address -match '(?:الدور|الطابق)\s*[:：]\s*([^،,—\-]+)') { $Matches[1].Trim() } else { '' }); '@Flat' = $(if ([string]$job.customer.address -match 'الشقة\s*[:：]\s*([^،,—\-]+)') { $Matches[1].Trim() } else { '' }); '@Pos' = $WriterPos; '@LocationNo' = [int]$job.locationNo; '@ServiceItem' = [string]$TalabatServiceItem; '@RefPos' = $(if ($mode -eq 'test') { $RefPosTest } else { $RefPos }); '@Branch' = [int]$job.branchNo
           '@Marker' = ('M' + $(if ($job.source -eq 'site') { 'S' } else { 'T' }) + ':' + $job.ref); '@Kind' = [string]$job.source; '@Phone' = [string]$job.customer.phone
-          '@Label' = [string]$job.label; '@Address' = [string]$job.customer.address; '@Sign' = [string]$job.sign; '@Remarks' = [string]$job.note
+          '@Label' = [string]$job.label; '@Address' = (([string]$job.customer.address) -replace '\s*—\s*(?:الدور|الطابق|الشقة)\s*[:：]\s*[^—]*', '').Trim(); '@Sign' = [string]$job.sign; '@Remarks' = [string]$job.note
           '@NoTpl' = $(if ($mode -eq 'test' -and $job.noTemplate) { 1 } else { 0 }); '@AreaService' = $(if ($job.areaService -ne $null -and "$($job.areaService)" -ne '') { [decimal]$job.areaService } else { [decimal]-1 }); '@RestDiscount' = [decimal]$job.restaurantDiscount; '@Target' = $(if ($job.targetTotal) { [decimal]$job.targetTotal } else { [decimal]0 }); '@AddPrinted' = $(if ($AddPrintedOrders) { 1 } else { 0 }); '@PrintedFlag' = $PrintedFlag; '@UserNo' = $WriterUserNo
           '@TimeText' = (Get-Date).ToString('hh:mm:ss tt', [Globalization.CultureInfo]::GetCultureInfo('ar-EG')) }
   foreach($k in $p.Keys){ [void]$cmd.Parameters.AddWithValue($k, $p[$k]) }
@@ -302,6 +314,53 @@ function Self-Test {
   $c = $null
   try {
     $job = Get-Content $f -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($job.mode -eq 'repair-live') {
+      # Karim 01-11 (approved): the writer's own orders of today saved before the fix get Apex's printed copy, and their
+      # customers the fields Apex's screens read (the order's own address, area, floor, flat). Nothing else is touched.
+      if (-not $AllowLive) { throw 'live mode is locked on this PC ($AllowLive)' }
+      $out.mode = 'repair-live'; $c = Open-Db 'live'
+      $cmd = $c.CreateCommand(); $cmd.CommandTimeout = 60
+      $cmd.CommandText = @'
+SET XACT_ABORT ON;
+DECLARE @Pos int = @PosIn, @U int = @UIn;
+DECLARE @Todo TABLE (OrderNo numeric(18,0) PRIMARY KEY, CustNo numeric(18,0));
+INSERT INTO @Todo SELECT m.OrderNo, m.CustNo FROM dbo.Orders_M_Daily m WITH (NOLOCK)
+  WHERE m.PosNo = @Pos AND m.UserNo = @U AND NOT EXISTS (SELECT 1 FROM dbo.Orders_M_Prints p WITH (NOLOCK) WHERE p.OrderNo = m.OrderNo);
+BEGIN TRANSACTION;
+INSERT INTO dbo.Orders_M_Prints (OrderNo, PrintsNo, ShiftSerial, TypeSerial, TableNo, HallNo, GuestNo, CustNo, BankNo, EmpNo, TakeAwayLoc, Remarks, OrderDate, TimeIn, OrderTime, ReturnTime,
+  UserNo, PosNo, WaiterNo, ShiftNo, TransType, PayWay, DiscountType, MinCharge, SubTotal, Tips, Service, Tax, Discount, ComboDifference, Addition, MinChargeDifference, CashPayment,
+  VisaPayment, HourNo, Closed, State, Payed, SerialNo, CustPayment, Changed, SNo, RecieveNo, DelegationNo, PersonName, DepositNo, BranchNo, PosSerial, BranchOrderNo, BranchShiftSerial,
+  OrderPrinted, CallCenterNo, ReceiveTime, Exclusive, TaxInvoiceNo, ManagerNo, CheckDiscount, TaxDiscount, Trans_Serial, PremiumPayment, DepositValue, CheckNo, OrderNo_Int)
+SELECT m.OrderNo, 1, ShiftSerial, TypeSerial, TableNo, HallNo, GuestNo, m.CustNo, BankNo, EmpNo, TakeAwayLoc, Remarks, OrderDate, TimeIn, OrderTime, NULL,
+  UserNo, PosNo, 0, ShiftNo, TransType, PayWay, DiscountType, MinCharge, SubTotal, Tips, Service, Tax, Discount, ComboDifference, Addition, MinChargeDifference, CashPayment,
+  VisaPayment, HourNo, Closed, State, Payed, SerialNo, CustPayment, Changed, SNo, RecieveNo, DelegationNo, '', DepositNo, BranchNo, PosSerial, BranchOrderNo, BranchShiftSerial,
+  OrderPrinted, CallCenterNo, ReceiveTime, Exclusive, TaxInvoiceNo, ManagerNo, CheckDiscount, TaxDiscount, Trans_Serial, PremiumPayment, DepositValue, CheckNo, OrderNo_Int
+FROM dbo.Orders_M_Daily m JOIN @Todo t ON t.OrderNo = m.OrderNo;
+INSERT INTO dbo.Orders_D_Prints (OrderNo, PrintsNo, ItemNo, SerialNo, Qty, Price, Description, Combo, ItemDetailNo, Rank, ItemsCombo, ItemDiscount, ItemTime, OpenDesc, TimeVal, ItemTax, ItemService, Printed, SentBy, Weight, ItemsNo)
+SELECT d.OrderNo, 1, ItemNo, SerialNo, Qty, Price, Description, Combo, ItemDetailNo, Rank, ItemsCombo, ItemDiscount, ItemTime, OpenDesc, TimeVal, ItemTax, ItemService, Printed, SentBy, Weight, ItemsNo
+FROM dbo.Orders_D_Daily d JOIN @Todo t ON t.OrderNo = d.OrderNo;
+-- Each customer once, from the newest of these orders: the order's address (without the floor/flat parts), area, floor, flat, branch.
+DECLARE @Cu TABLE (CustNo numeric(18,0) PRIMARY KEY, OrderNo numeric(18,0));
+INSERT INTO @Cu SELECT CustNo, MAX(OrderNo) FROM @Todo WHERE CustNo IS NOT NULL GROUP BY CustNo;
+UPDATE c SET Phone = CASE WHEN ISNULL(RTRIM(c.Phone), '') = '' THEN RTRIM(ISNULL(NULLIF(RTRIM(c.Mobile), ''), m.o_Phone)) ELSE c.Phone END,
+  CType = ISNULL(c.CType, N'أفراد'), Note = ISNULL(c.Note, '.'), CLedge = ISNULL(c.CLedge, '0'), StreetNo = ISNULL(c.StreetNo, 0), ZoneNo = ISNULL(c.ZoneNo, 0),
+  Name = LEFT(RTRIM(m.o_CustName), 50),
+  Address = LEFT(RTRIM(CASE WHEN CHARINDEX(N' — الدور', m.o_Address) > 0 THEN LEFT(m.o_Address, CHARINDEX(N' — الدور', m.o_Address) - 1)
+                            WHEN CHARINDEX(N' — الشقة', m.o_Address) > 0 THEN LEFT(m.o_Address, CHARINDEX(N' — الشقة', m.o_Address) - 1) ELSE m.o_Address END), 200),
+  LocationNo = ISNULL(m.o_LocationNo, c.LocationNo), UBranchNo = m.BranchNo, FloorNo = LEFT(RTRIM(m.o_FloorNo), 20), FlatNo = LEFT(RTRIM(m.o_FlatNo), 20)
+FROM dbo.Customers c JOIN @Cu u ON u.CustNo = c.CustNo JOIN dbo.Orders_M_Daily m ON m.OrderNo = u.OrderNo;
+INSERT INTO dbo.Customers_Log (CustNo, SNo, Name, CType, Phone, Address, FlatNo, FloorNo, Sign, CLedge, LocationNo, Note, UBranchNo, StreetNo, TransDate, ModifyUser)
+SELECT c.CustNo, (SELECT ISNULL(MAX(SNo), 0) + 1 FROM dbo.Customers_Log l WHERE l.CustNo = c.CustNo), c.Name, c.CType, c.Phone, c.Address, c.FlatNo, c.FloorNo, c.Sign, c.CLedge, c.LocationNo, c.Note, c.UBranchNo, c.StreetNo, GETDATE(), 'MARSAD'
+FROM dbo.Customers c JOIN @Cu u ON u.CustNo = c.CustNo;
+COMMIT;
+SELECT 'R' k, t.OrderNo, t.CustNo, (SELECT COUNT(*) FROM dbo.Orders_M_Prints p WHERE p.OrderNo = t.OrderNo) mp, (SELECT COUNT(*) FROM dbo.Orders_D_Prints p WHERE p.OrderNo = t.OrderNo) dp,
+  RTRIM(c.Phone) ph, RTRIM(c.CType) ct, c.LocationNo, c.UBranchNo, RTRIM(c.FloorNo) fl, RTRIM(c.FlatNo) ft, RTRIM(c.Address) adr FROM @Todo t LEFT JOIN dbo.Customers c ON c.CustNo = t.CustNo;
+'@
+      [void]$cmd.Parameters.AddWithValue('@PosIn', [int]$WriterPos); [void]$cmd.Parameters.AddWithValue('@UIn', [int]$WriterUserNo)
+      $rd = $cmd.ExecuteReader(); $rows = @(); while ($rd.Read()) { $h = [ordered]@{}; for ($i = 0; $i -lt $rd.FieldCount; $i++) { $h[$rd.GetName($i)] = "$($rd.GetValue($i))".Trim() }; $rows += $h }; $rd.Close()
+      $out.saved = $rows; $out.ok = $true
+      throw 'INSPECT_DONE'
+    }
     if ($job.mode -eq 'inspect-menu') {
       # Read-only, production: the Apex items sold online (number, name, online price, group), for the menu mapping.
       $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[0]);Database=Resturant;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec)))
