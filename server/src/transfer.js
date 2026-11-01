@@ -92,7 +92,10 @@ function setup(app) {
   const { db, fail } = app;
   const queueCache = new Map(), QUEUE_CACHE_MS = 8000;
   // Anything that changes the orders (a push from a screen or the monitor, a link, a claim, the writer's answer) rebuilds it.
-  app.afterRequest((now, method, path) => { if (method !== 'GET' && /^\/api\/(?:talabat|site|orders|apex-writer|transfer)\//.test(path || '')) queueCache.clear(); });
+  // The Talabat screens and the cashier PC push every few seconds: clearing on each push meant every employee's refresh
+  // rebuilt the whole day (Karim 01-11: «الصفحة تقيلة»). The orders are now at most 8 s old; only the page's own actions
+  // (claim, entered, auto) and the writer's answers are shown at once (claims are read fresh on every request anyway).
+  app.afterRequest((now, method, path) => { if (method !== 'GET' && /^\/api\/(?:apex-writer|transfer)\//.test(path || '')) queueCache.clear(); });
   // ---- sign-in with the employee's own PIN (the same one used for work), separate from the admin password ----
   app.route('POST', '/api/transfer/login', async ctx => {
     const pin = ctx.body.pin, key = 'transfer|' + ctx.ip;
@@ -228,11 +231,18 @@ function setup(app) {
     // On a Talabat live screen now (sent by a screen in the last 3 minutes).
     const liveNow = parseJson((await db.prepare("SELECT value FROM settings WHERE key = 'talabat_live_now'").get())?.value, {});
     const onLive = id => ctx.now - (liveNow[id] || 0) < 3 * 60000;
-    const list = base.list.map(o => ({ ...o, ...(o.apex || o.out ? { bill: undefined } : {}), ...(o.source === 'talabat' ? { onLive: onLive(o.ref) } : {}), job: jobOf(o.source, o.source === 'site' ? String(o.ref) : o.ref) }));
+    // Orders already on Apex or out with the rider: a short line only (no items, bill or customer) — most of the day's orders.
+    const slim = o => ({ source: o.source, ref: o.ref, code: o.code, at: o.at, status: o.status, out: o.out, branch: o.branch, apexBranch: o.apexBranch, total: o.total, apex: o.apex, done: true });
+    const list = base.list.map(o => ({ ...(o.apex || o.out ? slim(o) : o), ...(o.source === 'talabat' ? { onLive: onLive(o.ref) } : {}), job: jobOf(o.source, o.source === 'site' ? String(o.ref) : o.ref) }));
     // Until an admin chooses, the automatic transfer only previews (shadow): it never writes to Apex.
     const mode = (await db.prepare("SELECT value FROM settings WHERE key = 'apex_bridge_mode'").get())?.value || 'shadow';
     const locations = (Array.isArray(snap.locations) ? snap.locations : []).filter(l => Number.isInteger(l?.no)).map(l => ({ no: l.no, name: String(l.name || ''), branch: l.branch ?? null, service: l.service ?? null }));
-    return { day, me: { name: me.name, staff: me.staff }, serverNow: iso(ctx.now), liveScreen: ctx.now - (liveNow._screen || 0) < 3 * 60000, autoTransfer: mode, branches: APEX_BRANCHES, locations, apexItems: mode && mode !== 'off' ? APEX_ITEM_LIST : [], orders: list };
+    // The Apex items list and the areas change rarely: sent only when the page does not have this version yet.
+    const items = mode && mode !== 'off' ? APEX_ITEM_LIST : [];
+    const staticKey = items.length + ':' + locations.length + ':' + locations.reduce((a, l) => a + l.no * (l.branch || 1) + (Number(l.service) || 0), 0).toFixed(2);
+    const fresh = String(ctx.query.have || '') !== staticKey;
+    return { day, me: { name: me.name, staff: me.staff }, serverNow: iso(ctx.now), liveScreen: ctx.now - (liveNow._screen || 0) < 3 * 60000, autoTransfer: mode, branches: APEX_BRANCHES, staticKey,
+      ...(fresh ? { locations, apexItems: items } : {}), orders: list };
   });
 
   // ---- claim / entered / release ----

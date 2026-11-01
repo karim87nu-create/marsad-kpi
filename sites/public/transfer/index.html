@@ -74,6 +74,8 @@ main{max-width:1100px;margin:0 auto;padding:16px}
       <button data-s="" class="on">الكل</button>
       <button data-s="talabat" class="ghost">طلبات</button>
       <button data-s="site" class="ghost">الموقع</button>
+      <span style="width:12px"></span>
+      <span id="branchBar" class="bar" style="margin:0"></span>
       <span class="count" id="count"></span>
     </div>
     <div id="list"></div>
@@ -83,7 +85,8 @@ main{max-width:1100px;margin:0 auto;padding:16px}
 <script>
 'use strict';
 const API = '';
-let token = null, data = null, filter = 'todo', source = '', choice = {}, picks = {};
+let token = null, data = null, filter = 'todo', source = '', choice = {}, picks = {}, branchPick = '';
+try { branchPick = localStorage.getItem('marsadTransferBranch') || ''; } catch {}
 try { token = sessionStorage.getItem('marsadTransfer'); } catch {}
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -106,6 +109,7 @@ $('go').onclick = async () => {
 $('pin').onkeydown = e => { if (e.key === 'Enter') $('go').click(); };
 $('out').onclick = logout;
 document.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { filter = b.dataset.f; document.querySelectorAll('[data-f]').forEach(x => x.className = x === b ? 'on' : 'ghost'); render(true); });
+$('branchBar').addEventListener('click', e => { const b = e.target.closest('[data-b]'); if (!b) return; branchPick = b.dataset.b; try { localStorage.setItem('marsadTransferBranch', branchPick); } catch {} render(true); });
 document.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { source = b.dataset.s; document.querySelectorAll('[data-s]').forEach(x => x.className = x === b ? 'on' : 'ghost'); render(true); });
 
 // What the employee writes next to the customer name on Apex.
@@ -238,6 +242,8 @@ function autoHtml(o) {
     '<div class="actions" style="margin-top:8px"><button data-act="auto">' + label + '</button></div></details>';
 }
 function card(o) {
+  // Already on Apex or out with the rider: one short line (the server sends no details for them).
+  if (o.done) { const st = stateOf(o); return '<div class="card done" data-k="' + esc(key(o)) + '"><div class="top"><span class="src ' + o.source + '">' + (o.source === 'talabat' ? 'طلبات' : 'الموقع') + '</span><span class="code">' + (o.code ? '#' + esc(o.code) : esc(o.ref)) + '</span><span style="color:var(--muted)">' + time(o.at) + ' · ' + esc(o.branch || '') + (o.total != null ? ' · ' + money(o.total) : '') + '</span><span class="state ' + st.cls + '">' + esc(st.text) + '</span></div></div>'; }
   const st = stateOf(o), pay = choice[key(o)] || o.job?.payment || (o.payment === 'cash' || o.payment === 'paid' ? o.payment : null);
   const mineOrFree = !o.job || o.job.mine || o.job.state === 'released';
   const done = !!o.apex;
@@ -282,7 +288,17 @@ function render(force) {
   const onScreen = o => o.source !== 'talabat' || o.onLive || (o.job && !/^(?:released)$/.test(o.job.state || ''));
   const waiting = o => !o.apex && !o.out && !/^(?:entered|auto_done)$/.test(o.job?.state || '') && recent(o) && onScreen(o);
   // Newest first (Karim 01-11): the order that just came is at the top, older ones go down.
-  const list = data.orders.filter(o => (!source || o.source === source) && (filter === 'all' || waiting(o))).sort((x, y) => String(y.at || '').localeCompare(String(x.at || '')));
+  // Oldest first (Karim 01-11, evening): a new order joins at the bottom, the ones waiting longest stay on top.
+  // One branch at a time if chosen (Karim 01-11): the count on each branch is what is still waiting there.
+  const bOf = o => String(o.apexBranch || '');
+  const inBranch = o => !branchPick || (branchPick === '?' ? !o.apexBranch : bOf(o) === branchPick);
+  const pending = data.orders.filter(o => (!source || o.source === source) && waiting(o));
+  const counts = { '': pending.length, '?': pending.filter(o => !o.apexBranch).length };
+  for (const b of data.branches || []) counts[String(b.no)] = pending.filter(o => bOf(o) === String(b.no)).length;
+  const bb = [['', 'كل الفروع'], ...(data.branches || []).map(b => [String(b.no), b.name]), ...(counts['?'] ? [['?', 'فرع مش معروف']] : [])]
+    .map(([v, t]) => '<button data-b="' + v + '" class="' + (branchPick === v ? 'on' : 'ghost') + '">' + esc(t) + ' (' + (counts[v] || 0) + ')</button>').join('');
+  if ($('branchBar').innerHTML !== bb) $('branchBar').innerHTML = bb;
+  const list = data.orders.filter(o => (!source || o.source === source) && inBranch(o) && (filter === 'all' || waiting(o))).sort((x, y) => String(x.at || '').localeCompare(String(y.at || '')));
   const todo = data.orders.filter(waiting).length;
   $('count').textContent = 'لسه: ' + todo + ' · الكل: ' + data.orders.length;
   if (data.liveScreen === false) $('count').textContent += ' · ⚠️ مفيش شاشة لايف طلبات شغالة دلوقتي';
@@ -356,7 +372,11 @@ $('list').addEventListener('change', e => {
 $('list').addEventListener('focusout', () => setTimeout(() => { if (render.pending && !$('list').contains(document.activeElement)) render(); }, 0));
 $('list').addEventListener('toggle', e => { const d = e.target.closest?.('[data-pick-box]'); if (d) { const p = picks[d.closest('.card').dataset.k]; if (p && p.open !== d.open) { p.open = d.open; if (d.open) render(true); } } }, true);
 async function load() {
-  try { data = await api('GET', '/api/transfer/queue'); $('me').textContent = data.me.name; const a = $('auto'); a.textContent = { off: 'التحويل الآلي متوقف — سجّل على Apex بإيدك', shadow: 'التحويل الآلي: معاينة بس — سجّل بإيدك', test: 'التحويل الآلي: تجربة على قاعدة الاختبار — سجّل بإيدك', live: 'التحويل الآلي شغال' }[data.autoTransfer] || ''; a.className = 'pill' + (data.autoTransfer === 'live' ? '' : ' off'); if (!$('list').contains(document.activeElement) || !/^(INPUT|SELECT)$/.test(document.activeElement.tagName)) render(); }
+  try {
+    // The Apex items and areas come once (and again only when they change): the page stays light.
+    const prev = data, d = await api('GET', '/api/transfer/queue' + (prev?.staticKey ? '?have=' + encodeURIComponent(prev.staticKey) : ''));
+    if (!d.apexItems && prev) { d.apexItems = prev.apexItems; d.locations = prev.locations; }
+    data = d; $('me').textContent = data.me.name; const a = $('auto'); a.textContent = { off: 'التحويل الآلي متوقف — سجّل على Apex بإيدك', shadow: 'التحويل الآلي: معاينة بس — سجّل بإيدك', test: 'التحويل الآلي: تجربة على قاعدة الاختبار — سجّل بإيدك', live: 'التحويل الآلي شغال' }[data.autoTransfer] || ''; a.className = 'pill' + (data.autoTransfer === 'live' ? '' : ' off'); if (!$('list').contains(document.activeElement) || !/^(INPUT|SELECT)$/.test(document.activeElement.tagName)) render(); }
   catch (e) { if (token) toast(e.message); }
 }
 function boot() { $('login').hidden = true; $('app').hidden = false; load(); }
