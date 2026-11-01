@@ -92,13 +92,14 @@ IF (SELECT COUNT(*) FROM dbo.Counter WITH (NOLOCK) WHERE num = @Pos) <> 1 THROW 
 -- Template: the newest order of the same kind entered by Apex itself today (same OnlineType text, cash), same branch first.
 SELECT TOP 1 @Tpl = OrderNo FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderDate = @Date AND RTRIM(PayWay) = @PayWay AND PosNo <> @Pos
   AND ((@Kind = 'talabat' AND (OnlineType LIKE '%TALABAT%' OR OnlineType LIKE N'%طلبات%')) OR (@Kind = 'site' AND (OnlineType LIKE N'%موقع%' OR OnlineType LIKE '%WEB%' OR OnlineType LIKE '%SITE%')))
-  ORDER BY CASE WHEN BranchNo = @Branch THEN 0 ELSE 1 END, CheckNo DESC;
+  -- The kind that matches the payment first (one «TALABAT VISA» order was saved as cash today; never copy that one for cash).
+  ORDER BY CASE WHEN (@PayWay = 'Ledge' AND (OnlineType LIKE '%VISA%' OR OnlineType LIKE N'%مدفوع%')) OR (@PayWay = 'Cash' AND (OnlineType LIKE '%CASH%' OR OnlineType LIKE N'%كاش%')) THEN 0 ELSE 1 END, CASE WHEN BranchNo = @Branch THEN 0 ELSE 1 END, CheckNo DESC;
 -- The test copy may have its day closed (orders moved to Orders_M): take the template from there.
 DECLARE @TplArchive bit = 0;
 IF @Tpl IS NULL AND @IsTest = 1 BEGIN
   SELECT TOP 1 @Tpl = OrderNo FROM dbo.Orders_M WITH (NOLOCK) WHERE RTRIM(PayWay) = @PayWay AND PosNo <> @Pos
     AND ((@Kind = 'talabat' AND (OnlineType LIKE '%TALABAT%' OR OnlineType LIKE N'%طلبات%')) OR (@Kind = 'site' AND (OnlineType LIKE N'%موقع%' OR OnlineType LIKE '%WEB%' OR OnlineType LIKE '%SITE%')))
-    ORDER BY CASE WHEN BranchNo = @Branch THEN 0 ELSE 1 END, OrderDate DESC, CheckNo DESC;
+    ORDER BY CASE WHEN (@PayWay = 'Ledge' AND (OnlineType LIKE '%VISA%' OR OnlineType LIKE N'%مدفوع%')) OR (@PayWay = 'Cash' AND (OnlineType LIKE '%CASH%' OR OnlineType LIKE N'%كاش%')) THEN 0 ELSE 1 END, CASE WHEN BranchNo = @Branch THEN 0 ELSE 1 END, OrderDate DESC, CheckNo DESC;
   SET @TplArchive = 1;
 END;
 IF @Tpl IS NULL THROW 51005, 'no Apex order of this kind today to take the settings from', 1;
@@ -135,9 +136,13 @@ IF @Exec = 0 BEGIN
     (SELECT ISNULL(MAX(PosSerial), 0) + 1 FROM dbo.Counter WITH (NOLOCK) WHERE num = @Pos) AS PosSerial,
     (SELECT ISNULL(MAX(BranchOrderNo), 0) + 2 FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE BranchNo = @Branch) AS BranchOrderNo,
     (SELECT ISNULL(MAX(TypeSerial), 0) + 1 FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE RTRIM(PayWay) IN ('Cash', 'Ledge', 'Visa')) AS TypeSerial,
-    (SELECT TOP 1 CustNo FROM dbo.Customers WITH (NOLOCK) WHERE @Phone <> '' AND (RTRIM(Mobile) = @Phone OR RTRIM(Phone) = @Phone) ORDER BY CustNo DESC) AS CustNo;
+    (SELECT TOP 1 CustNo FROM dbo.Customers WITH (NOLOCK) WHERE @Phone <> '' AND (Mobile = @Phone OR Phone = @Phone) ORDER BY CustNo DESC) AS CustNo;
   RETURN;
 END;
+-- The customer by phone, looked up before any lock (424,000 customers: a slow search must never hold the tables).
+-- Trailing spaces do not count in SQL Server's = on char columns, so no RTRIM (which would stop it using an index).
+DECLARE @CustFound numeric(18,0);
+IF @Phone <> '' SELECT TOP 1 @CustFound = CustNo FROM dbo.Customers WITH (NOLOCK) WHERE Mobile = @Phone OR Phone = @Phone ORDER BY CustNo DESC;
 BEGIN TRY
   BEGIN TRANSACTION;
   DECLARE @Lock int; EXEC @Lock = sys.sp_getapplock @Resource = N'Marsad-Apex-Writer', @LockMode = N'Exclusive', @LockOwner = N'Transaction', @LockTimeout = 5000;
@@ -156,7 +161,7 @@ BEGIN TRY
   SELECT @TypeSerial = ISNULL(MAX(TypeSerial), 0) + 1 FROM dbo.Orders_M_Daily WHERE RTRIM(PayWay) IN ('Cash', 'Ledge', 'Visa');
   SELECT @BranchShift = ISNULL(MAX(ShiftSerial), 0) + 1 FROM dbo.Orders_Serials WITH (NOLOCK) WHERE OrderDate = @Date AND ShiftNo = @Shift;
   -- Customer: the newest one with this phone, else a new one (CustNo = MAX + 1, under the table lock).
-  IF @Phone <> '' SELECT TOP 1 @Cust = CustNo FROM dbo.Customers WHERE RTRIM(Mobile) = @Phone OR RTRIM(Phone) = @Phone ORDER BY CustNo DESC;
+  IF @CustFound IS NOT NULL AND EXISTS (SELECT 1 FROM dbo.Customers WHERE CustNo = @CustFound) SET @Cust = @CustFound;
   IF @Cust IS NULL BEGIN
     SELECT @Cust = ISNULL(MAX(CustNo), 0) + 1 FROM dbo.Customers;
     INSERT INTO dbo.Customers (CustNo, Name, Mobile, Address, BranchNo, New, FirstOrder, LastOrder, LastOrderNo, ShiftOrderNo, LastOrderCash, Total, OrdersNo)
@@ -234,6 +239,7 @@ function Write-Order($c, $job, [string]$mode){
   # Amounts as money (Karim 01-11, «Arithmetic overflow»): a parameter takes its size from its value, so a restaurant
   # discount of 0 became numeric(1,0) and adding the price difference to it overflowed. Money holds any amount.
   foreach($k in @('@RestDiscount', '@Target', '@AreaService')){ $cmd.Parameters[$k].SqlDbType = [System.Data.SqlDbType]::Money }
+  $cmd.Parameters['@Phone'].SqlDbType = [System.Data.SqlDbType]::VarChar   # digits only; varchar so the customer search can use Apex's index
   $t = New-Object System.Data.DataTable; $t.Load($cmd.ExecuteReader()); return $t.Rows[0]
 }
 
@@ -375,6 +381,18 @@ function Self-Test {
       try { $c.Open() } catch { $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[1]);Database=Resturant;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec))); $c.Open() }
       $out.mode = 'inspect-tal'; $rows = @()
       foreach($q in @("SELECT TOP 60 'T' k, m.OrderNo, m.ShiftSerial, m.BranchNo, RTRIM(m.OnlineType) ot, RTRIM(m.PayWay) pw, m.SubTotal, m.Service, m.Tax, m.Discount, (m.SubTotal + m.Service + m.Tax - m.Discount) AS tot, m.o_LocationNo, LEFT(RTRIM(ISNULL(m.o_Sign,'')),60) sign, m.UserNo, m.TimeIn, (SELECT COUNT(*) FROM Orders_D_Daily d WITH (NOLOCK) WHERE d.OrderNo = m.OrderNo) lines, (SELECT SUM(d.ItemDiscount) FROM Orders_D_Daily d WITH (NOLOCK) WHERE d.OrderNo = m.OrderNo) idisc FROM Orders_M_Daily m WITH (NOLOCK) WHERE m.OnlineType LIKE 'TALABAT%' ORDER BY m.OrderNo DESC")){
+        try { $cmd = $c.CreateCommand(); $cmd.CommandTimeout = 30; $cmd.CommandText = $q; $rd = $cmd.ExecuteReader(); while ($rd.Read()) { $h = [ordered]@{}; for ($i = 0; $i -lt $rd.FieldCount; $i++) { $h[$rd.GetName($i)] = "$($rd.GetValue($i))".Trim() }; $rows += $h }; $rd.Close() } catch { $rows += @{ q = $q.Substring(0, 40); error = $_.Exception.Message } }
+      }
+      $out.saved = $rows; $out.ok = $true
+      throw 'INSPECT_DONE'
+    }
+    if ($job.mode -eq 'inspect-lines') {
+      # Read-only, production: every online order line today with the price staff's Apex used and the item's price lists — to check the writer prices the same.
+      $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[0]);Database=Resturant;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec)))
+      try { $c.Open() } catch { $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[1]);Database=Resturant;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec))); $c.Open() }
+      $out.mode = 'inspect-lines'; $rows = @()
+      foreach($q in @("SELECT 'L' k, m.OrderNo, m.BranchNo, RTRIM(m.OnlineType) ot, m.UserNo, d.ItemNo, d.Qty, d.Price, d.ItemDiscount, i.OnlinePrice op, i.DeliveryPrice dp, ib.Price bp, ib.OnPrice bo, (SELECT MIN(Price) FROM ItemsOnlineTypes x WITH (NOLOCK) WHERE x.ItemNo = d.ItemNo AND x.BranchNo = m.BranchNo) ot2, ISNULL(i.StopItem,0) st FROM Orders_M_Daily m WITH (NOLOCK) JOIN Orders_D_Daily d WITH (NOLOCK) ON d.OrderNo = m.OrderNo LEFT JOIN Items i WITH (NOLOCK) ON i.ItemNo = d.ItemNo LEFT JOIN ItemsBranches ib WITH (NOLOCK) ON ib.ItemNo = d.ItemNo AND ib.BranchNo = m.BranchNo WHERE m.OnlineType IS NOT NULL AND RTRIM(m.OnlineType) <> ''",
+                      "SELECT 'M' k, m.OrderNo, m.BranchNo, RTRIM(m.OnlineType) ot, RTRIM(m.PayWay) pw, m.SubTotal, m.Service, m.Tax, m.Discount, m.TaxRatio, m.o_LocationNo, m.UserNo FROM Orders_M_Daily m WITH (NOLOCK) WHERE m.OnlineType IS NOT NULL AND RTRIM(m.OnlineType) <> ''")){
         try { $cmd = $c.CreateCommand(); $cmd.CommandTimeout = 30; $cmd.CommandText = $q; $rd = $cmd.ExecuteReader(); while ($rd.Read()) { $h = [ordered]@{}; for ($i = 0; $i -lt $rd.FieldCount; $i++) { $h[$rd.GetName($i)] = "$($rd.GetValue($i))".Trim() }; $rows += $h }; $rd.Close() } catch { $rows += @{ q = $q.Substring(0, 40); error = $_.Exception.Message } }
       }
       $out.saved = $rows; $out.ok = $true
