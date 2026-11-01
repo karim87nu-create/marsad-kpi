@@ -8,6 +8,7 @@ import { parseJson } from './order-match.js';
 import { sha256 } from './security.js';
 import { TALABAT_PRODUCTS } from './menu-seed.js';
 import { knownNos } from './items.js';
+import { canonicalStore } from './store-names.js';
 
 const OUT = new Set(['PICKED_UP', 'PICKED UP', 'IN_DELIVERY', 'IN DELIVERY', 'DELIVERED', 'COMPLETED', 'CANCELLED', 'REJECTED']);
 const clean = c => {
@@ -79,12 +80,12 @@ function setup(app) {
   const OUTLETS = [{ id: 'HF_EG;760858', apex: 1 }, { id: 'HF_EG;608556', apex: 2 }, { id: 'HF_EG;802223', apex: 3 }];
   const json = async (k, d) => { const v = parseJson(await setting(k), d); return v && typeof v === 'object' ? v : d; };
   const stockOf = () => json('talabat_stock', {});
-  const apexBranch = store => { const t = String(store || ''); const h = [/التجمع/.test(t) && 1, /(مدينة نصر|سيتي ستار|مكرم)/.test(t) && 2, /مدينتي/.test(t) && 3].filter(Boolean); return h.length === 1 ? h[0] : null; };
+  const apexBranch = store => { const t = String(canonicalStore(store) || ''); const h = [/التجمع/.test(t) && 1, /(مدينة نصر|سيتي ستار|مكرم)/.test(t) && 2, /مدينتي/.test(t) && 3].filter(Boolean); return h.length === 1 ? h[0] : null; };
   const apexNosOf = id => { const p = PRODUCT.get(id); return p ? knownNos(p.name) : []; };
   app.route('GET', '/api/talabat/stock-config', async ctx => {
     await app.requireAdmin(ctx);
     const since = businessDay(ctx.now - 7 * 86400000);
-    const stores = (await db.prepare('SELECT DISTINCT store FROM talabat_orders WHERE day >= ? AND store IS NOT NULL').all(since)).map(r => r.store).filter(Boolean).sort();
+    const stores = [...new Set((await db.prepare('SELECT DISTINCT store FROM talabat_orders WHERE day >= ? AND store IS NOT NULL').all(since)).map(r => canonicalStore(r.store)).filter(Boolean))].sort();
     const stock = await stockOf();
     return { stores: [...new Set([...stores, ...Object.keys(stock)])], products: [...PRODUCT.values()], stopped: stock,
       actual: await json('talabat_stock_actual', {}), queue: await json('talabat_stock_queue', {}), apexQueue: await json('apex_stock_queue', {}),

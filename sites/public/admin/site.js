@@ -349,11 +349,11 @@ window.MarsadSite = function MarsadSite(ctx) {
   async function renderTalabatActions() {
     $('talActPanel').hidden = false;
     const c = await api('/api/talabat/actions-config');
-    $('talActRows').replaceChildren(...c.branches.map(b => h('div', { className: 'row', dataset: { store: b.store } },
+    $('talActRows').replaceChildren(...c.branches.map(b => (row => { row.dataset.store = b.store; return row; })(h('div', { className: 'row' },
       h('strong', { textContent: b.store }),
       h('label', {}, 'وقت التوصيل (دقيقة) ', h('input', { type: 'number', min: 5, max: 180, step: 5, value: b.minutes ?? '', className: 'talMin', style: 'width:80px' })),
       h('label', {}, h('input', { type: 'checkbox', checked: b.accept, className: 'talAccept' }), ' قبول آلي'),
-      h('label', {}, h('input', { type: 'checkbox', checked: b.onTheWay, className: 'talOut' }), ' «في الطريق» لما يخرج مع الطيار'))));
+      h('label', {}, h('input', { type: 'checkbox', checked: b.onTheWay, className: 'talOut' }), ' «في الطريق» لما يخرج مع الطيار')))));
     $('talActNote').textContent = c.acceptReady ? '' : 'القبول الآلي لسه بيتجهز: الشاشة بتسجل شكل شباك الأوردر الجديد الأول، ولحد ما يخلص مش هتقبل أوردرات. وقت التوصيل بيتحفظ دلوقتي.';
     $('talActLog').replaceChildren(...c.log.map(l => h('div', { textContent: t12(new Date(l.at).toISOString()) + ' — ' + (l.action === 'onTheWay' ? 'في الطريق' : l.action === 'accept' ? 'قبول' : l.action) + ' — ' + l.id + ' — ' + (l.ok ? '✓ ' : '✗ ') + l.note })));
   }

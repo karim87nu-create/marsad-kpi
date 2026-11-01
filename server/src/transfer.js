@@ -11,6 +11,7 @@ import { businessDay, iso, validDate } from './time.js';
 import { parseJson } from './order-match.js';
 import { knownNos } from './items.js';
 import { APEX_NAMES, APEX_PRICES } from './menu-seed.js';
+import { canonicalStore } from './store-names.js';
 const APEX_ITEM_LIST = Object.entries(APEX_NAMES).map(([no, name]) => ({ no, name, price: APEX_PRICES[no] ?? null }));
 import { sha256, randomToken } from './security.js';
 
@@ -82,7 +83,7 @@ const APEX_BRANCHES = [{ no: 1, name: 'التجمع' }, { no: 2, name: 'مدين
 
 // The Apex branch a Talabat store / website branch name points to (null when unclear: the employee picks).
 function apexBranchOf(name) {
-  const t = String(name || '').replace(/[أإآ]/g, 'ا').replace(/ى/g, 'ي');
+  const t = String(canonicalStore(name) || '').replace(/[أإآ]/g, 'ا').replace(/ى/g, 'ي');
   const hits = [/التجمع/.test(t) && 1, /(مدينة نصر|سيتي ستار|مكرم)/.test(t) && 2, /مدينتي/.test(t) && 3].filter(Boolean);
   return hits.length === 1 ? hits[0] : null;
 }

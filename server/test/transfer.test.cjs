@@ -238,7 +238,7 @@ test('transfer page: a live order read from the page data (real shape, 01-11-202
         { k: 'مجموع', text: 'مجموع | 552.25' }, { k: 'التحصيل من العميل', text: 'التحصيل من العميل | 0' }, { k: 'payment', text: 'ONLINE' }, { k: 'payment', text: 'تم الدفع بواسطة CREDIT_CARD' },
         { k: 'ملاحظة العميل', text: 'ملاحظة العميل | من غير بصل' }] } }] } });
     const o = (await t.call('GET', '/api/transfer/queue?day=2026-10-31', { headers: { 'x-transfer-session': tok } })).body.orders[0];
-    assert.equal(o.code, '3356'); assert.equal(o.payment, 'paid'); assert.equal(o.branch, 'الدهان، مدينتي - ساوث بارك');
+    assert.equal(o.code, '3356'); assert.equal(o.payment, 'paid'); assert.equal(o.branch, 'الدهان, مدينتي - ساوث بارك', 'the name Order History uses');
     assert.equal(o.customer.phone, '01202427365'); assert.match(o.customer.address, /الدور: الاول/);
     assert.deepEqual(o.discounts.map(d => [d.who, d.amount]).sort(), [['platform', 20], ['restaurant', 40.75]]);
     assert.equal(o.target, 572.25, 'what the customer pays + Talabat\'s share');

@@ -11,7 +11,8 @@ import { TALABAT_PRODUCTS } from './menu-seed.js';
 // Live orders carry Talabat's product number: the dish's menu name (English, as Order History and the item map use it).
 const PRODUCT_NAME = new Map(TALABAT_PRODUCTS.map(p => [p[0], p[1]]));
 // One spelling of a branch: the live screen writes «الدهان, مدينتي», Order History «الدهان، مدينتي».
-const storeSpelling = s => s ? String(s).replace(/\s*,\s*/g, '، ').trim().slice(0, 160) : null;
+import { canonicalStore } from './store-names.js';
+const storeSpelling = canonicalStore;
 
 const NOT_ENTERED_MIN = 10, STALE_MS = 5 * 60000, WINDOW_MIN = 45;
 const cancelReady = o => o.status === 'CANCELLED' && !!o.cancelled_at && !!o.store && !!o.cancel_owner?.trim() && !!o.cancel_reason?.trim();

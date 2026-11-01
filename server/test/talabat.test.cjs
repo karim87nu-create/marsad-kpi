@@ -69,7 +69,7 @@ test('talabat: a #code cannot bypass complete evidence; sure links teach the bra
     const d = (await admin('GET', '/api/talabat/day?day=2026-10-22')).body;
     for (const o of d.orders) assert.equal(o.apex?.how, 'evidence', o.id);
     const l = (await admin('GET', '/api/learned')).body;
-    assert.ok(l.facts.some(f => f.kind === 'match-v2:branch:talabat' && f.a === 'الدهان، التجمع الخامس' && f.b === 'التجمع' && f.evidence === 3), 'learned the branch name');
+    assert.ok(l.facts.some(f => f.kind === 'match-v2:branch:talabat' && f.a === 'الدهان، التجمع الخامس - البنفسج 9,10,11,12' && f.b === 'التجمع' && f.evidence === 3), 'learned the branch name');
     assert.ok(l.facts.some(f => f.kind === 'unknown' && f.b === 'حالة: MYSTERY'));
     assert.ok(l.facts.some(f => f.kind === 'unknown' && f.b === 'خطوة: RIDER_NEAR'));
     // Now a Talabat order with no #code: «Tagamoa Branch» is accepted as the same branch (names share no word).
