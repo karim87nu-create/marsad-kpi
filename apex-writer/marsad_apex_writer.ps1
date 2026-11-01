@@ -170,9 +170,18 @@ BEGIN TRY
   IF @CustFound IS NOT NULL AND EXISTS (SELECT 1 FROM dbo.Customers WHERE CustNo = @CustFound) SET @Cust = @CustFound;
   IF @Cust IS NULL BEGIN
     SELECT @Cust = ISNULL(MAX(CustNo), 0) + 1 FROM dbo.Customers;
-    INSERT INTO dbo.Customers (CustNo, Name, Mobile, Address, BranchNo, New, FirstOrder, LastOrder, LastOrderNo, ShiftOrderNo, LastOrderCash, Total, OrdersNo)
-    VALUES (@Cust, LEFT(@Label, 50), @Phone, LEFT(@Address, 200), @Branch, 1, @Date, @Date, 0, 0, 0, 0, 0);
-  END;
+    -- The same fields Apex's own customer screen fills (Karim 01-11: our customers opened empty in Apex — it reads Phone,
+    -- the area (LocationNo), CType and UBranchNo, not Mobile/BranchNo); and one Customers_Log row like every save there.
+    INSERT INTO dbo.Customers (CustNo, Name, CType, Phone, Address, FlatNo, FloorNo, Sign, CLedge, LocationNo, Note, UBranchNo, StreetNo, ZoneNo, FirstOrder, LastOrder, LastOrderNo, ShiftOrderNo, LastOrderCash)
+    VALUES (@Cust, LEFT(@Label, 50), N'أفراد', @Phone, LEFT(@Address, 200), LEFT(@Flat, 20), LEFT(@Floor, 20), LEFT(@Sign, 50), '0', @LocationNo, '.', @Branch, 0, 0, @Date, @Date, 0, 0, 0);
+    IF HAS_PERMS_BY_NAME('dbo.Customers_Log', 'OBJECT', 'INSERT') = 1
+      INSERT INTO dbo.Customers_Log (CustNo, SNo, Name, CType, Phone, Address, FlatNo, FloorNo, Sign, CLedge, LocationNo, Note, UBranchNo, StreetNo, TransDate, ModifyUser)
+      VALUES (@Cust, 1, LEFT(@Label, 50), N'أفراد', @Phone, LEFT(@Address, 200), LEFT(@Flat, 20), LEFT(@Floor, 20), LEFT(@Sign, 50), '0', @LocationNo, '.', @Branch, 0, @Now, 'MARSAD');
+  END
+  ELSE
+    -- A customer found by phone keeps everything; only what Apex's screen needs and is still empty is filled in.
+    UPDATE dbo.Customers SET Phone = CASE WHEN ISNULL(RTRIM(Phone), '') = '' THEN @Phone ELSE Phone END, CType = ISNULL(CType, N'أفراد'),
+      LocationNo = ISNULL(LocationNo, @LocationNo), UBranchNo = ISNULL(UBranchNo, @Branch), Note = ISNULL(Note, '.') WHERE CustNo = @Cust;
   -- The restaurant discount sits on one dish line (the top-priced one, as on Apex's own orders); the header carries the same total.
   DECLARE @DiscLine int; SELECT TOP 1 @DiscLine = SerialNo FROM @Lines WHERE ItemNo <> @ServiceItem ORDER BY Qty * Price DESC, SerialNo;
   DECLARE @S TABLE (n numeric(18,0)); DECLARE @C TABLE (n numeric(18,0));
@@ -184,12 +193,12 @@ BEGIN TRY
     ComboDifference, WaiterNo, ShiftNo, TransType, SubTotal, Service, Addition, Tax, Tips, TimeIn, Discount, MinCharge, MinChargeDifference, PayWay, CashPayment, VisaPayment,
     Remarks, PosNo, DiscountType, HallNo, PrintsNo, HourNo, Closed, SerialNo, CustPayment, Changed, SNO, RecieveNo, PersonName, DepositNo, DepositValue, BranchNo, BranchOrderNo,
     ServiceRatio, TaxRatio, Hosp_Flag, PosSerial, CheckNo, ReceiveTime, Otlob, Otlob_OrderNo, OnlineType, RedeemCode, Gift, AddPoints, DeliveryTrack, o_Phone, o_CustName,
-    o_Address, o_Sign, o_PersonName, MobileNo, MyFatoorah, Modified, o_LocationNo, o_FloorNo, o_FlatNo)
+    o_Address, o_Sign, o_PersonName, MobileNo, MyFatoorah, Modified, o_LocationNo, o_FloorNo, o_FlatNo, o_StreetNo, operation_id)
   SELECT @OrderNo, @ShiftSerial, @BranchShift, @TypeSerial, t.TakeAwayLoc, @Cust, t.TableNo, t.GuestNo, 0, 0, @Date, @Time, @UserNo,
     0, 0, @Shift, t.TransType, @Sub, @Service, 0, @Tax, 0, @Time, @RestDiscount, 0, 0, @PayWay, CASE WHEN @PayWay = 'Ledge' THEN 0 ELSE @Total END, 0,
-    LEFT(@Remarks, 100), @Pos, CASE WHEN @RestDiscount > 0 THEN t.DiscountType ELSE NULL END, t.HallNo, 1, DATEPART(hour, @Now), '0', NULL, CASE WHEN @PayWay = 'Ledge' THEN 0 ELSE @Total END, '0', 0, 0, LEFT(@Label, 50), 0, 0, @Branch, @BranchOrderNo,
+    LEFT(@Remarks, 100), @Pos, CASE WHEN @RestDiscount > 0 THEN t.DiscountType ELSE NULL END, t.HallNo, 1, DATEPART(hour, @Now), '0', NULL, CASE WHEN @PayWay = 'Ledge' THEN 0 ELSE @Total END, '0', 0, 0, '', 0, 0, @Branch, @BranchOrderNo,
     0, @TaxRatio, 0, @PosSerial, @CheckNo, @Time, t.Otlob, '', @OnlineType, '', '', 0, t.DeliveryTrack, @Phone, LEFT(@Label, 100),
-    LEFT(@Address, 250), LEFT(@Sign, 100), LEFT(@Label, 50), @Phone, 0, 0, @LocationNo, LEFT(@Floor, 20), LEFT(@Flat, 20)
+    LEFT(@Address, 250), LEFT(@Sign, 100), '', @Phone, 0, 1, @LocationNo, LEFT(@Floor, 20), LEFT(@Flat, 20), 0, NEWID()
   FROM (SELECT TOP 1 * FROM (
           SELECT 0 AS o, TakeAwayLoc, TableNo, GuestNo, TransType, DiscountType, HallNo, Otlob, DeliveryTrack FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderNo = @Tpl
           UNION ALL SELECT 0, TakeAwayLoc, TableNo, GuestNo, TransType, DiscountType, HallNo, Otlob, DeliveryTrack FROM dbo.Orders_M WITH (NOLOCK) WHERE OrderNo = @Tpl AND @TplArchive = 1
@@ -202,20 +211,36 @@ BEGIN TRY
   UPDATE dbo.Customers SET LastOrderNo = @OrderNo, ShiftOrderNo = @ShiftSerial, LastOrderCash = @Total, FirstOrder = ISNULL(FirstOrder, @Date), LastOrder = @Date,
     Total = ISNULL(Total, 0) + @Total, OrdersNo = ISNULL(OrdersNo, 0) + 1 WHERE CustNo = @Cust;
   INSERT INTO dbo.OrderLog (TOrderNo, OrderNo, OrderDate, ItemTime, TableNo, ItemNo, ItemName, Qty, Description, Status, BranchNo, WaiterName, UserName, ShiftNo, PosNo)
-  VALUES (0, @OrderNo, @Date, @Time, '', '', '', 0, @Marker, 'MARSAD', @Branch, '', 'MARSAD', @Shift, @Pos);
+  VALUES (0, @OrderNo, @Date, @Time, '', '', '', 0, @Marker, 'New Order', @Branch, 'MARSAD', 'MARSAD', @Shift, @Pos);
   INSERT INTO dbo.OrderLog (TOrderNo, OrderNo, OrderDate, ItemTime, TableNo, ItemNo, ItemName, Qty, Description, Status, BranchNo, WaiterName, UserName, ShiftNo, PosNo)
-  SELECT 0, @OrderNo, @Date, @Time, '', l.ItemNo, RTRIM(i.ItemName), l.Qty, '', 'Add', @Branch, '', 'MARSAD', @Shift, @Pos FROM @Lines l JOIN dbo.Items i WITH (NOLOCK) ON i.ItemNo = l.ItemNo;
+  VALUES (0, @OrderNo, @Date, @Time, '', '', '', 0, '', 'Check Out', @Branch, 'MARSAD', 'MARSAD', @Shift, @Pos);
   IF @PayWay = 'Ledge'
     INSERT INTO dbo.CLedges (CustNo, OrderNo, ShiftNo, PayDate, PayTime, TotalCash, Payments, Reminder, PayType, PosNo, UserNo, BranchNo, HourNo)
     VALUES (@Cust, @OrderNo, @Shift, @Date, @Time, @Total, 0, @Total, 'Ledge', @Pos, @UserNo, @Branch, DATEPART(hour, @Now));
   -- The marker is what stops a second write of the same order: it must be stored exactly, or nothing is saved.
   IF NOT EXISTS (SELECT 1 FROM dbo.OrderLog WHERE OrderNo = @OrderNo AND Description = @Marker) THROW 51015, 'marker not stored exactly', 1;
   IF @AddPrinted = 1 INSERT INTO dbo.PrintedOrders (OrderNo, OrderDate, Printed, Modified) VALUES (@OrderNo, @Date, 0, 0);
+  DECLARE @Prints bit = 0;
+  IF HAS_PERMS_BY_NAME('dbo.Orders_M_Prints', 'OBJECT', 'INSERT') = 1 AND HAS_PERMS_BY_NAME('dbo.Orders_D_Prints', 'OBJECT', 'INSERT') = 1 BEGIN
+    INSERT INTO dbo.Orders_M_Prints (OrderNo, PrintsNo, ShiftSerial, TypeSerial, TableNo, HallNo, GuestNo, CustNo, BankNo, EmpNo, TakeAwayLoc, Remarks, OrderDate, TimeIn, OrderTime, ReturnTime,
+      UserNo, PosNo, WaiterNo, ShiftNo, TransType, PayWay, DiscountType, MinCharge, SubTotal, Tips, Service, Tax, Discount, ComboDifference, Addition, MinChargeDifference, CashPayment,
+      VisaPayment, HourNo, Closed, State, Payed, SerialNo, CustPayment, Changed, SNo, RecieveNo, DelegationNo, PersonName, DepositNo, BranchNo, PosSerial, BranchOrderNo, BranchShiftSerial,
+      OrderPrinted, CallCenterNo, ReceiveTime, Exclusive, TaxInvoiceNo, ManagerNo, CheckDiscount, TaxDiscount, Trans_Serial, PremiumPayment, DepositValue, CheckNo, OrderNo_Int)
+    SELECT OrderNo, 1, ShiftSerial, TypeSerial, TableNo, HallNo, GuestNo, CustNo, BankNo, EmpNo, TakeAwayLoc, Remarks, OrderDate, TimeIn, OrderTime, ReturnTime,
+      UserNo, PosNo, WaiterNo, ShiftNo, TransType, PayWay, DiscountType, MinCharge, SubTotal, Tips, Service, Tax, Discount, ComboDifference, Addition, MinChargeDifference, CashPayment,
+      VisaPayment, HourNo, Closed, State, Payed, SerialNo, CustPayment, Changed, SNo, RecieveNo, DelegationNo, PersonName, DepositNo, BranchNo, PosSerial, BranchOrderNo, BranchShiftSerial,
+      OrderPrinted, CallCenterNo, ReceiveTime, Exclusive, TaxInvoiceNo, ManagerNo, CheckDiscount, TaxDiscount, Trans_Serial, PremiumPayment, DepositValue, CheckNo, OrderNo_Int
+    FROM dbo.Orders_M_Daily WHERE OrderNo = @OrderNo;
+    INSERT INTO dbo.Orders_D_Prints (OrderNo, PrintsNo, ItemNo, SerialNo, Qty, Price, Description, Combo, ItemDetailNo, Rank, ItemsCombo, ItemDiscount, ItemTime, OpenDesc, TimeVal, ItemTax, ItemService, Printed, SentBy, Weight, ItemsNo)
+    SELECT OrderNo, 1, ItemNo, SerialNo, Qty, Price, Description, Combo, ItemDetailNo, Rank, ItemsCombo, ItemDiscount, ItemTime, OpenDesc, TimeVal, ItemTax, ItemService, Printed, SentBy, Weight, ItemsNo
+    FROM dbo.Orders_D_Daily WHERE OrderNo = @OrderNo;
+    SET @Prints = 1;
+  END;
   IF NOT EXISTS (SELECT 1 FROM dbo.Orders_M_Daily m JOIN dbo.Orders_Serials s ON s.OrderNo = m.OrderNo AND s.ShiftSerial = m.ShiftSerial
                  JOIN dbo.Orders_Checks c ON c.OrderNo = m.OrderNo AND c.CheckNo = m.CheckNo WHERE m.OrderNo = @OrderNo)
     THROW 51014, 'saved order failed its consistency check', 1;
   COMMIT TRANSACTION;
-  SELECT 'written' AS r, @Gap AS Gap, @Short AS Short, @Before AS Before, @Service AS Service, @OrderNo AS OrderNo, @ShiftSerial AS ShiftSerial, @BranchOrderNo AS BranchOrderNo, @CheckNo AS CheckNo, @Total AS Total, @Cust AS CustNo,
+  SELECT 'written' AS r, @Prints AS Prints, @Gap AS Gap, @Short AS Short, @Before AS Before, @Service AS Service, @OrderNo AS OrderNo, @ShiftSerial AS ShiftSerial, @BranchOrderNo AS BranchOrderNo, @CheckNo AS CheckNo, @Total AS Total, @Cust AS CustNo,
     (SELECT COUNT(*) FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE BranchNo = @Branch AND BranchOrderNo = @BranchOrderNo) AS SameBranchNo;
 END TRY
 BEGIN CATCH
@@ -429,6 +454,47 @@ function Self-Test {
       $out.saved = $rows; $out.ok = $true
       throw 'INSPECT_DONE'
     }
+    if ($job.mode -eq 'inspect-diff') {
+      # Read-only, production (Karim 01-11: our orders open empty in Apex — customer, tracking, receipt): our orders next to
+      # staff's own Talabat orders of today, every column, and which tables hold rows for each order / customer.
+      $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[0]);Database=Resturant;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec)))
+      try { $c.Open() } catch { $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[1]);Database=Resturant;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec))); $c.Open() }
+      $out.mode = 'inspect-diff'; $rows = @()
+      $rd2 = { param($q, $t) try { $cmd = $c.CreateCommand(); $cmd.CommandTimeout = $t; $cmd.CommandText = $q; $rd = $cmd.ExecuteReader(); $res = @(); while ($rd.Read()) { $h = [ordered]@{}; for ($i = 0; $i -lt $rd.FieldCount; $i++) { $h[$rd.GetName($i)] = "$($rd.GetValue($i))".Trim() }; $res += $h }; $rd.Close(); return ,$res } catch { return ,@(@{ error = $_.Exception.Message; q = $q.Substring(0, [Math]::Min(120, $q.Length)) }) } }
+      # Extra read-only questions (the reader login can only read): SELECT statements only.
+      if ($job.queries) { foreach ($q in @($job.queries)) { if ("$q" -match '^\s*SELECT\s' -and "$q" -notmatch '(?i)\b(insert|update|delete|merge|drop|alter|exec|execute|truncate|create|grant|into)\b') { foreach ($r in (& $rd2 "$q" 15)) { $rows += $r } } else { $rows += @{ error = 'not a plain SELECT'; q = "$q" } } }; $out.saved = $rows; $out.ok = $true; throw 'INSPECT_DONE' }
+      $ours = @($job.ours | ForEach-Object { [int]$_ })
+      $wu = [int]$WriterUserNo
+      $manual = @((& $rd2 "SELECT TOP 3 OrderNo FROM Orders_M_Daily WITH (NOLOCK) WHERE RTRIM(ISNULL(OnlineType,'')) <> '' AND UserNo <> $wu AND OrderNo NOT IN ($($ours -join ',')) AND o_CustName LIKE '%#%' ORDER BY OrderNo DESC" 15) | ForEach-Object { [int]$_.OrderNo })
+      $all = @($ours + $manual) | Where-Object { $_ -gt 0 }
+      $list = $all -join ','
+      $out.ours = $ours; $out.manual = $manual
+      foreach ($r in (& $rd2 "SELECT 'M' k, * FROM Orders_M_Daily WITH (NOLOCK) WHERE OrderNo IN ($list)" 15)) { $rows += $r }
+      foreach ($r in (& $rd2 "SELECT 'D' k, * FROM Orders_D_Daily WITH (NOLOCK) WHERE OrderNo IN ($list)" 15)) { $rows += $r }
+      foreach ($r in (& $rd2 "SELECT 'C' k, c.* FROM Customers c WITH (NOLOCK) WHERE c.CustNo IN (SELECT CustNo FROM Orders_M_Daily WITH (NOLOCK) WHERE OrderNo IN ($list))" 15)) { $rows += $r }
+      # Every table with an order / customer column: rows for each of these orders (small or indexed tables only).
+      $cols = & $rd2 @"
+SELECT t.name tb, c.name col, SUM(p.rows) n,
+  MAX(CASE WHEN ic.key_ordinal = 1 THEN 1 ELSE 0 END) ix
+FROM sys.tables t JOIN sys.columns c ON c.object_id = t.object_id
+JOIN sys.partitions p ON p.object_id = t.object_id AND p.index_id IN (0,1)
+LEFT JOIN sys.index_columns ic ON ic.object_id = t.object_id AND ic.column_id = c.column_id
+WHERE c.name IN ('OrderNo','TOrderNo','Order_No','OrderID','CustNo','CustomerNo')
+GROUP BY t.name, c.name
+"@ 20
+      $cust = @((& $rd2 "SELECT OrderNo, CustNo FROM Orders_M_Daily WITH (NOLOCK) WHERE OrderNo IN ($list)" 15))
+      $custList = (@($cust | ForEach-Object { [int]$_.CustNo }) | Where-Object { $_ -gt 0 }) -join ','
+      foreach ($t in $cols) {
+        if ($t.error) { $rows += $t; continue }
+        $isCust = $t.col -in @('CustNo','CustomerNo')
+        $vals = if ($isCust) { $custList } else { $list }
+        if (-not $vals) { continue }
+        if ([long]$t.n -gt 300000 -and $t.ix -ne '1') { $rows += [ordered]@{ k = 'T'; tb = $t.tb; col = $t.col; n = $t.n; skipped = 'big' }; continue }
+        foreach ($r in (& $rd2 "SELECT 'T' k, '$($t.tb)' tb, '$($t.col)' col, CONVERT(varchar(20), [$($t.col)]) v, COUNT(*) cnt FROM [$($t.tb)] WITH (NOLOCK) WHERE [$($t.col)] IN ($vals) GROUP BY [$($t.col)]" 8)) { $rows += $r }
+      }
+      $out.saved = $rows; $out.ok = $true
+      throw 'INSPECT_DONE'
+    }
     if ($job.mode -eq 'inspect-print') {
       # Read-only, test copy: the print flags Apex's own client left on the orders it created there (no branch printer runs on the test copy).
       $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[0]);Database=Resturant_Test;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec)))
@@ -457,6 +523,7 @@ function Self-Test {
     $out.answer = @{}; foreach($col in $r.Table.Columns){ $out.answer[$col.ColumnName] = "$($r[$col.ColumnName])" }
     if ($r.OrderNo -and ($mode -eq 'test' -or $mode -eq 'live')) {
       $cmd = $c.CreateCommand(); $cmd.CommandText = "SELECT 'M' k, OrderNo, ShiftSerial, BranchShiftSerial, TypeSerial, BranchNo, BranchOrderNo, PosNo, PosSerial, CheckNo, CustNo, OrderDate, TimeIn, RTRIM(PayWay) PayWay, OnlineType, Otlob, SubTotal, Service, Tax, Discount, CashPayment, UserNo FROM Orders_M_Daily WHERE OrderNo = @o; SELECT 'D' k, ItemNo, SerialNo, Qty, Price, Printed, PrintedSlip, Weight, ItemsNo, ItemDetailNo FROM Orders_D_Daily WHERE OrderNo = @o ORDER BY SerialNo; SELECT 'C' k, num, OrderNo, PosSerial, ShiftOrderNo, OrderDate, ShiftNo FROM Counter WHERE num = @p; SELECT 'L' k, COUNT(*) n FROM OrderLog WHERE OrderNo = @o; SELECT 'P' k, COUNT(*) n FROM PrintedOrders WHERE OrderNo = @o"
+      $cmd.CommandText += "; SELECT 'C' k, CustNo, RTRIM(Name) Name, RTRIM(CType) CType, RTRIM(Phone) Phone, RTRIM(Mobile) Mobile, LocationNo, UBranchNo, RTRIM(Note) Note, RTRIM(FlatNo) FlatNo, RTRIM(FloorNo) FloorNo FROM dbo.Customers WITH (NOLOCK) WHERE CustNo = (SELECT CustNo FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderNo = @o); SELECT 'L' k, Status, WaiterName, Description FROM dbo.OrderLog WITH (NOLOCK) WHERE OrderNo = @o; SELECT 'H' k, Modified, CONVERT(varchar(40), operation_id) op, RTRIM(ISNULL(PersonName,'')) pn, RTRIM(ISNULL(o_PersonName,'')) opn FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderNo = @o"
       [void]$cmd.Parameters.AddWithValue('@o', $r.OrderNo); [void]$cmd.Parameters.AddWithValue('@p', $WriterPos)
       $rd = $cmd.ExecuteReader(); $rows = @()
       do { while ($rd.Read()) { $h = [ordered]@{}; for ($i = 0; $i -lt $rd.FieldCount; $i++) { $h[$rd.GetName($i)] = "$($rd.GetValue($i))" }; $rows += $h } } while ($rd.NextResult())
@@ -529,6 +596,7 @@ for (;;) {
         $res.gap = [math]::Round([double]$r.Gap, 2); $res.short = [math]::Round([double]$r.Short, 2); $res.before = [math]::Round([double]$r.Before, 2); $res.service = [double]$r.Service
       } else {
         $res.orderNo = $r.OrderNo; $res.shiftSerial = $r.ShiftSerial; $res.branchOrderNo = $r.BranchOrderNo; $res.total = [double]$r.Total
+        $res.prints = ($r.Prints -eq $true -or "$($r.Prints)" -eq '1' -or "$($r.Prints)" -eq 'True')   # Apex's printed copy saved (needs the Prints grant)
         # The price difference, for admin's «فروق الأسعار» (the order is saved either way).
         $res.gap = [math]::Round([double]$r.Gap, 2); $res.short = [math]::Round([double]$r.Short, 2); $res.before = [math]::Round([double]$r.Before, 2); $res.service = [double]$r.Service; $res.target = $job.targetTotal
         if ($r.r -eq 'written' -and [int]$r.SameBranchNo -gt 1) { $res.error = 'رقم الفرع اتكرر مع أوردر تاني؛ راجعه' }
