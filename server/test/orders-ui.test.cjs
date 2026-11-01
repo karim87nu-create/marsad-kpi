@@ -74,13 +74,14 @@ test('admin page: مرصد الدهان sections, live branches board, reports, 
     await until(() => /مش غلط: تحويل بين الفروع/.test(doc.getElementById('entryIssues').textContent), 'review saved');
     await until(() => /اتراجعت/.test(doc.getElementById('entryCards').textContent), 'not counted');
 
-    // Manage: the monitor key and the branch group.
-    doc.querySelector('[data-view="manage"]').click();
+    // التشغيل الآلي: the monitor key; الإدارة: the branch group.
+    doc.querySelector('[data-view="auto"]').click();
     await until(() => /آخر إرسال/.test(doc.getElementById('ordersKeyStatus').textContent), 'key status');
     doc.getElementById('ordersKeyMake').click();
     await until(() => /^ord_[a-f0-9]{48}$/.test(doc.getElementById('ordersKeyValue').value), 'new key');
     assert.equal((await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': push }, body: payload })).status, 401, 'old key stops');
     assert.equal((await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': doc.getElementById('ordersKeyValue').value }, body: payload })).status, 200);
+    doc.querySelector('[data-view="manage"]').click();
     await until(() => /جروب إدارات الفروع/.test(doc.getElementById('tgStatus').textContent), 'telegram groups');
     assert.ok(doc.getElementById('tgChooseBranches'));
     assert.ok(doc.getElementById('tgChooseOnline'));

@@ -41,3 +41,23 @@ test('backup: every table page by page with the monitor key, never keys or hashe
     assert.equal((await b({ table: 'nope' })).status, 400);
   } finally { await t.close(); }
 });
+
+test('KPI: call center and branches for a period, with the period before and the targets', async () => {
+  const t = await start({ at: cairoToUtc(2026, 10, 23, 20, 0, 0) });
+  try {
+    const admin = await t.admin();
+    const { token } = (await admin('POST', '/api/orders/token')).body;
+    const push = (day, branches, sales) => t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': token }, body: { day, generatedAt: new Date(t.clock.now).toISOString(), branches, sales } });
+    await push('2026-10-22', [{ name: 'التجمع', orders: 100, sales: 50000, avgOut: 25, outLate: 10, outCount: 90, cancels: 1, cancelSales: 400, kinds: { 'طلبات': 60, Hotline: 30 } }], [{ branch: 'التجمع', discounts: 4000 }]);
+    t.advance(1000);
+    await push('2026-10-23', [{ name: 'التجمع', orders: 120, sales: 60000, avgOut: 20, outLate: 6, outCount: 120, cancels: 0, cancelSales: 0, kinds: { 'طلبات': 70 } }], [{ branch: 'التجمع', discounts: 3000 }]);
+    const k = (await admin('GET', '/api/kpi?from=2026-10-23&to=2026-10-23')).body;
+    assert.deepEqual(k.prev, { from: '2026-10-22', to: '2026-10-22' });
+    const b = k.branches[0], p = k.before.branches[0];
+    assert.equal(b.orders, 120); assert.equal(b.avgOut, 20); assert.equal(b.latePct, 5); assert.equal(b.discountPct, 5);
+    assert.equal(p.orders, 100); assert.equal(p.latePct, 11.1);
+    assert.ok(k.targets.latePct && k.team);
+    const w = (await admin('GET', '/api/kpi?from=2026-10-22&to=2026-10-23')).body.branches[0];
+    assert.equal(w.orders, 220); assert.equal(w.avgOut, 22.1, 'weighted by orders out');
+  } finally { await t.close(); }
+});

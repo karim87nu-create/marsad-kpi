@@ -127,6 +127,8 @@
   const rerender = () => { if (DAY_VIEWS.includes(state.view) || ['talabat', 'branchFile', 'sales'].includes(state.view)) show(state.view); };
   const OR = window.MarsadOrders({ api, h, $, table, kpi, pill, C, exportRows, serverNow, cairoToday, state, hm: v => hm(v), showError, review: () => INS });
   const SITE = window.MarsadSite({ api, h, $, table, kpi, pill, serverNow, state, showError, exportRows, canWrite: () => canWrite(), extensionCall: (...a) => extensionCall(...a), review: () => INS });
+  const setRange = (from, to) => { $('day').value = from; $('dayTo').value = to; $('applyRange').click(); };
+  const KPI = window.MarsadKpi({ api, h, $, table, kpi, pill, state, exportSheets: (...a) => exportSheets(...a), setRange, cairoToday });
   INS = window.MarsadInsights({ api, h, $, table, kpi, pill, C, state, exportRows, canWrite: () => canWrite(), isAdmin: () => isAdmin(), showError, rerender: () => rerender(), OR, SITE });
 
   // ---------- الآن ----------
@@ -574,6 +576,12 @@
     table('deviceTable', [{ title: 'الموظف', get: x => x.name }, { title: 'التحويلة', get: x => x.extension || '—' }, { title: 'نسخة الإضافة', get: x => x.version || '—' },
       { title: 'آخر إشارة', get: x => x.lastSeen, show: x => { const a = ago(x.lastSeen); return pill(since(a), x.open && a < 120 ? 'ok' : x.open ? 'warn' : ''); }, type: 'datetime' },
       { title: 'الجلسة', get: x => x.open ? 'مفتوحة' : 'مقفولة' }, { title: 'بدأت', get: x => x.startedAt, show: x => stamp(x.startedAt), type: 'datetime' }], d.devices, { empty: 'مفيش أجهزة اشتغلت على السيستم الجديد آخر 24 ساعة' });
+    // Extensions behind the newest version anyone runs: they miss fixes until Firefox updates them.
+    const ver = v => String(v || '').split('.').map(n => Number(n) || 0), cmp = (a, b) => { const x = ver(a), y = ver(b); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; };
+    const newest = d.devices.map(x => x.version).filter(Boolean).sort(cmp).pop();
+    const old = d.devices.filter(x => x.version && cmp(x.version, newest) < 0);
+    $('systemCards').append(kpi('إضافات قديمة', old.length ? old.length + ' جهاز' : 'كله محدث', old.length ? 'warn' : 'good', old.length ? [...new Set(old.map(x => x.name + ' ' + x.version))].join(' · ') + ' — الأحدث ' + newest : 'الأحدث ' + (newest || '—')));
+    renderWatch('sysWatch').catch(() => {});
     auditRows = d.audit;
     table('auditTable', auditColumns, d.audit, { limit: 300 });
   }
@@ -615,15 +623,27 @@
     $('telegramPanel').hidden = !isAdmin();
     if (isAdmin()) api('/api/import-old').then(r => { $('importPanel').hidden = !r.available && !r.backfill; $('importLast').textContent = r.lastImportAt ? 'آخر نقل: ' + new Date(r.lastImportAt).toLocaleString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo' }) : ''; }).catch(() => {});
     if (isAdmin()) renderTelegram().catch(e => say('tgNote', e.message));
-    OR.renderKey(isAdmin()).catch(e => say('ordersKeyNote', e.message));
     renderDesks().catch(e => say('desksNote', e.message));
     renderLearned().catch(() => {});
+    for (const f of ['addEmployee', 'addAdmin', 'messageForm']) $(f).hidden = f === 'messageForm' ? !canWrite() : !isAdmin();
+  }
+  // ---------- التشغيل الآلي: Talabat screens, Apex writer, item stops and the links, out of «الإدارة» ----------
+  async function renderAuto() {
+    renderWatch('autoWatch').catch(e => $('autoWatch').replaceChildren(h('p', { className: 'muted', textContent: e.message })));
+    OR.renderKey(isAdmin()).catch(e => say('ordersKeyNote', e.message));
     SITE.renderKey(isAdmin()).catch(e => say('siteKeyNote', e.message));
     SITE.renderTalabatKey(isAdmin()).catch(e => say('talKeyNote', e.message));
     SITE.renderWhatsApp(isAdmin()).catch(e => say('waNote', e.message));
     SITE.renderApexWriter(isAdmin()).catch(e => say('apexWriterNote', e.message));
-    for (const f of ['addEmployee', 'addAdmin', 'messageForm']) $(f).hidden = f === 'messageForm' ? !canWrite() : !isAdmin();
     $('linkCollector').hidden = !canWrite();
+  }
+  // Every automatic part: working, or stopped since when and what to do (the same check that sends the Telegram alert).
+  async function renderWatch(box) {
+    if (!isAdmin()) return $(box).replaceChildren(h('p', { className: 'muted', textContent: 'للمدير بس' }));
+    const w = await api('/api/system/watch');
+    const ago = m => m == null ? 'أبدًا' : m < 2 ? 'دلوقتي' : m < 90 ? 'من ' + m + ' دقيقة' : m < 2880 ? 'من ' + Math.round(m / 60) + ' ساعة' : 'من ' + Math.round(m / 1440) + ' يوم';
+    table(box, [{ title: 'الجزء', get: p => p.name }, { title: 'الحالة', get: p => p.ok ? 1 : 0, show: p => pill(p.ok ? 'شغال' : p.last ? 'واقف' : 'ماشتغلش لسه', p.ok ? 'ok' : 'bad') },
+      { title: 'آخر شغل', get: p => p.minutes, show: p => ago(p.minutes), type: 'number' }, { title: 'لو واقف', get: p => p.ok ? '' : (p.error ? p.error + ' — ' : '') + p.fix }], w.parts);
   }
   const btn = (text, fn, cls = 'ghost small') => { const b = h('button', { type: 'button', className: cls === 'danger' ? 'danger small' : cls, textContent: text }); b.onclick = e => { e.stopPropagation(); fn(); }; return b; };
   async function act(note, fn, done) { try { await fn(); say(note, done); renderManage(); } catch (e) { say(note, ERR[e.message] || e.message); } }
@@ -789,12 +809,13 @@
     shifts: ['نهاية الشيفت والرجوع للشغل', renderShifts], calls: ['المكالمات', renderCalls], missed: ['المكالمات الفائتة', renderMissed], followup: ['المتابعة والتقارير', renderFollowup], system: ['حالة النظام', renderSystem], manage: ['الإدارة', renderManage], guide: ['طريقة حساب الأرقام', async () => {}],
     entry: ['ضرب الأوردرات', () => OR.renderEntry()], branchesNow: ['الفروع الآن', null], branches: ['أداء الفروع', () => OR.renderBranches()], cancels: ['الإلغاءات', () => Promise.all([OR.renderCancels(), SITE.renderBranchTalabatCancels(), INS.renderCancelOwners()])],
     siteBranches: ['تقرير أداء الموقع للفروع', () => SITE.renderBranches()], siteTransfer: ['تحويل أوردرات الموقع للفروع', () => SITE.renderTransfer()], talabat: ['أوردرات طلبات', () => SITE.renderTalabat()],
-    branchFile: ['ملف الفرع', () => INS.renderBranch()], sales: ['المبيعات', () => INS.renderSales()] };
-  const DAY_VIEWS = ['day', 'hours', 'team', 'profile', 'attendance', 'shifts', 'calls', 'missed', 'followup', 'entry', 'branches', 'cancels', 'siteBranches', 'siteTransfer', 'talabat', 'branchFile', 'sales'];
+    branchFile: ['ملف الفرع', () => INS.renderBranch()], sales: ['المبيعات', () => INS.renderSales()],
+    kpi: ['مؤشرات الأداء: الموظفين والفروع', () => KPI.render()], auto: ['التشغيل الآلي', renderAuto] };
+  const DAY_VIEWS = ['day', 'hours', 'team', 'profile', 'attendance', 'shifts', 'calls', 'missed', 'followup', 'entry', 'branches', 'cancels', 'siteBranches', 'siteTransfer', 'talabat', 'branchFile', 'sales', 'kpi'];
   // Two sections, each with its own views; the system views are shared and keep the section you came from.
-  const SECTION_OF = { branchesNow: 'branches', branches: 'branches', cancels: 'branches', siteBranches: 'branches', branchFile: 'branches', sales: 'branches' };
+  const SECTION_OF = { kpi: 'kpi', auto: 'auto', talabat: 'branches', siteTransfer: 'branches', branchesNow: 'branches', branches: 'branches', cancels: 'branches', siteBranches: 'branches', branchFile: 'branches', sales: 'branches' };
   const SHARED = ['followup', 'system', 'manage', 'guide'];
-  const lastIn = { calls: 'now', branches: 'branchesNow' };
+  const lastIn = { calls: 'now', branches: 'branchesNow', kpi: 'kpi', auto: 'auto' };
   function setSection(sec) {
     state.section = sec;
     for (const b of document.querySelectorAll('#sections [data-section]')) { const on = b.dataset.section === sec; b.classList.toggle('active', on); b.setAttribute('aria-selected', String(on)); }

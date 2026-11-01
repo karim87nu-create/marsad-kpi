@@ -370,3 +370,10 @@ td.total{font-weight:700;background:var(--panel2)}
 .chipcheck{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border:1px solid var(--line2);border-radius:var(--r-pill);font-size:13px}
 .chipcheck input{min-height:0;width:16px;height:16px;margin:0}
 #branchFileBody>h3{margin:var(--sp-4) 0 0;color:var(--accent);font-size:16px}
+
+/* مؤشرات الأداء */
+small.up{color:var(--good);font-weight:600}small.down{color:var(--bad);font-weight:600}
+.kpi b small.up,.kpi b small.down{font-size:14px;margin-inline-start:6px}
+.kpi-ranges{flex-wrap:wrap;gap:6px;margin-bottom:8px}.kpi-ranges .grow{flex:1}
+ul.flags{margin:0;padding-inline-start:20px;line-height:1.9}
+@media print{#nav,#top .tools,.kpi-ranges button{display:none!important}main{margin:0!important}}

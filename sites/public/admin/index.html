@@ -25,7 +25,9 @@
     <div class="brand"><span class="mark">م</span><div><strong>مرصد الدهان</strong><small id="who"></small></div><button type="button" id="menuToggle" class="ghost icon" aria-expanded="false" aria-controls="navList" aria-label="القايمة"><svg class="ic" aria-hidden="true"><use href="#i-menu"/></svg></button></div>
     <div id="sections" class="sections" role="tablist" aria-label="قسم المرصد">
       <button type="button" role="tab" data-section="calls" aria-selected="true" class="active"><svg class="ic" aria-hidden="true"><use href="#i-calls"/></svg>الكول سنتر</button>
-      <button type="button" role="tab" data-section="branches" aria-selected="false"><svg class="ic" aria-hidden="true"><use href="#i-store"/></svg>الفروع</button>
+      <button type="button" role="tab" data-section="branches" aria-selected="false"><svg class="ic" aria-hidden="true"><use href="#i-store"/></svg>الفروع والأوردرات</button>
+      <button type="button" role="tab" data-section="kpi" aria-selected="false"><svg class="ic" aria-hidden="true"><use href="#i-report"/></svg>مؤشرات الأداء</button>
+      <button type="button" role="tab" data-section="auto" aria-selected="false"><svg class="ic" aria-hidden="true"><use href="#i-system"/></svg>التشغيل الآلي</button>
     </div>
     <nav id="navList" aria-label="أقسام المرصد">
       <div class="navsec" data-sec="calls">
@@ -41,14 +43,15 @@
       <button data-view="shifts"><svg class="ic" aria-hidden="true"><use href="#i-shifts"/></svg>نهاية الشيفت</button>
       <button data-view="calls"><svg class="ic" aria-hidden="true"><use href="#i-calls"/></svg>المكالمات</button>
       <button data-view="missed"><svg class="ic" aria-hidden="true"><use href="#i-missed"/></svg>المكالمات الفائتة</button>
-      <div class="navgroup">ضرب الأوردرات</div>
+      <div class="navgroup">الأوردرات</div>
       <button data-view="entry"><svg class="ic" aria-hidden="true"><use href="#i-keypad"/></svg>ضرب الأوردرات</button>
-      <button data-view="talabat"><svg class="ic" aria-hidden="true"><use href="#i-store"/></svg>أوردرات طلبات</button>
-      <button data-view="siteTransfer"><svg class="ic" aria-hidden="true"><use href="#i-globe"/></svg>تحويل أوردرات الموقع</button>
       </div>
       <div class="navsec" data-sec="branches" hidden>
       <div class="navgroup">مباشر</div>
       <button data-view="branchesNow"><svg class="ic" aria-hidden="true"><use href="#i-store"/></svg>الفروع الآن<span class="badge" id="lateBadge" hidden></span></button>
+      <div class="navgroup">الأوردرات</div>
+      <button data-view="talabat"><svg class="ic" aria-hidden="true"><use href="#i-store"/></svg>أوردرات طلبات</button>
+      <button data-view="siteTransfer"><svg class="ic" aria-hidden="true"><use href="#i-globe"/></svg>تحويل أوردرات الموقع</button>
       <div class="navgroup">التقارير</div>
       <button data-view="branchFile"><svg class="ic" aria-hidden="true"><use href="#i-store"/></svg>ملف الفرع</button>
       <button data-view="sales"><svg class="ic" aria-hidden="true"><use href="#i-hours"/></svg>المبيعات</button>
@@ -56,7 +59,15 @@
       <button data-view="cancels"><svg class="ic" aria-hidden="true"><use href="#i-cancel"/></svg>الإلغاءات</button>
       <button data-view="siteBranches"><svg class="ic" aria-hidden="true"><use href="#i-globe"/></svg>أداء الموقع للفروع</button>
       </div>
-      <div class="navgroup">المتابعة والنظام</div>
+      <div class="navsec" data-sec="kpi" hidden>
+      <div class="navgroup">مؤشرات الأداء</div>
+      <button data-view="kpi"><svg class="ic" aria-hidden="true"><use href="#i-report"/></svg>الموظفين والفروع</button>
+      </div>
+      <div class="navsec" data-sec="auto" hidden>
+      <div class="navgroup">التشغيل الآلي</div>
+      <button data-view="auto"><svg class="ic" aria-hidden="true"><use href="#i-system"/></svg>طلبات و Apex والربط</button>
+      </div>
+      <div class="navgroup">للكل</div>
       <button data-view="followup"><svg class="ic" aria-hidden="true"><use href="#i-followup"/></svg>المتابعة والتقارير</button>
       <button data-view="system"><svg class="ic" aria-hidden="true"><use href="#i-system"/></svg>حالة النظام</button>
       <button data-view="manage"><svg class="ic" aria-hidden="true"><use href="#i-manage"/></svg>الإدارة</button>
@@ -190,6 +201,7 @@
 
     <section id="view-system" class="view" hidden>
       <div id="systemCards" class="cards"></div>
+      <article class="panel"><h2>مراقبة الأجزاء الآلية (بتبعت تليجرام لو جزء وقف)</h2><div id="sysWatch"></div></article>
       <article class="panel"><h2>الأجهزة اللي اشتغلت آخر 24 ساعة</h2><div id="deviceTable"></div></article>
       <article class="panel"><h2>سجل التغييرات <button class="ghost small" data-export="audit">تصدير Excel</button></h2><div id="auditTable"></div></article>
     </section>
@@ -289,6 +301,85 @@
       </article>
     </section>
 
+    <section id="view-kpi" class="view" hidden>
+      <div class="inline kpi-ranges"><button type="button" class="ghost small" data-kpi-range="today">النهارده</button><button type="button" class="ghost small" data-kpi-range="yesterday">امبارح</button><button type="button" class="ghost small" data-kpi-range="week">آخر 7 أيام</button><button type="button" class="ghost small" data-kpi-range="month">الشهر ده</button>
+        <span class="muted" id="kpiPeriod"></span><span class="grow"></span><button type="button" class="ghost small" id="kpiExport">تصدير Excel</button><button type="button" class="ghost small" id="kpiPrint">طباعة</button></div>
+      <article class="panel"><h2>الكول سنتر والفروع</h2><div id="kpiTeamCards" class="cards"></div><p id="kpiTeamNote" class="note"></p></article>
+      <article class="panel"><h2>محتاج متابعة</h2><ul id="kpiFlags" class="flags"></ul></article>
+      <article class="panel"><h2>الموظفين</h2><p class="muted">التقييم = نسبة الأهداف اللي اتحققت (الانشغال، البريك، المكالمات مقارنة بمتوسط الفريق). السهم = الفرق عن الفترة اللي قبلها.</p><div id="kpiEmployees"></div></article>
+      <article class="panel"><h2>الفروع</h2><p class="muted">التقييم = نسبة الأهداف اللي اتحققت (وقت الخروج، المتأخر، الإلغاءات، الخصومات). الأرقام من Apex (جهاز الكاشير).</p><div id="kpiBranches"></div></article>
+      <p class="muted" id="kpiTargets"></p>
+    </section>
+
+    <section id="view-auto" class="view" hidden>
+      <article class="panel"><h2>حالة الأجزاء الآلية</h2><div id="autoWatch"></div></article>
+      <article class="panel" id="apexWriterPanel" hidden><h2>التحويل الآلي لـApex</h2>
+        <p class="muted">كاتب Apex على جهاز الكاشير بياخد الأوردرات اللي الموظف أكدها من صفحة التحويل ويسجلها على Apex. ابدأ بـ«معاينة» (مش بيكتب حاجة، بيحسب الأرقام والقيم بس)، بعدين «تجربة» على قاعدة الاختبار، وآخر حاجة «تشغيل».</p>
+        <p id="apexWriterStatus"></p>
+        <div class="row"><button type="button" data-apx-mode="off" class="secondary">إيقاف</button><button type="button" data-apx-mode="shadow" class="secondary">معاينة</button><button type="button" data-apx-mode="test" class="secondary">تجربة (قاعدة الاختبار)</button><button type="button" data-apx-mode="live">تشغيل على Apex</button></div>
+        <p><button type="button" id="apexWriterKey" class="secondary">مفتاح جديد للكاتب</button> <code id="apexWriterToken"></code></p>
+        <p id="apexWriterNote" class="muted" role="status"></p>
+      </article>
+      <article class="panel" id="talActPanel" hidden><h2>شاشة طلبات: وقت التوصيل والقبول و«في الطريق» لكل فرع</h2>
+        <p class="muted">وقت التوصيل بيتحفظ هنا ويوصل لشاشة طلبات خلال 30 ثانية. «في الطريق» بيتداس لوحده على طلبات أول ما الأوردر يخرج مع الطيار على Apex، وده بس للفروع اللي متعلّم عليها.</p>
+        <div id="talActRows"></div>
+        <div class="row"><button type="button" id="talActSave">حفظ</button></div>
+        <p id="talActNote" class="muted" role="status"></p>
+        <details><summary class="muted">آخر اللي عملته الشاشة</summary><div id="talActLog" class="muted"></div></details>
+      </article>
+      <article class="panel" id="stockPanel" hidden><h2>إيقاف أصناف على طلبات لكل فرع</h2>
+        <p class="muted">اختار الفرع وعلّم على الأصناف الموقوفة، واحفظ. شاشة طلبات على جهاز الكاشير هي اللي بتوقفها وبترجّعها.</p>
+        <div class="row"><select id="stockStore"></select> <input id="stockFind" placeholder="دوّر على صنف" style="width:200px"> <label><input type="checkbox" id="stockOnly"> الموقوف بس</label></div>
+        <div id="stockList" style="max-height:420px;overflow:auto;margin-top:8px"></div>
+        <div class="row"><button type="button" id="stockSave">حفظ للفرع ده</button></div>
+        <p id="stockNote" class="muted" role="status"></p>
+        <div class="row"><label><input type="checkbox" id="stockApplyTb"> يتطبق على طلبات (شاشة طلبات بتوقف/ترجّع الأصناف)</label> <label><input type="checkbox" id="stockApplyApex"> يتطبق على Apex (الكاتب بيوقف الصنف في الفرع)</label></div>
+        <div id="stockActual" class="muted"></div>
+        <details><summary class="muted">آخر اللي اتطبق</summary><div id="stockLog" class="muted"></div></details>
+      </article>
+      <article class="panel" id="talKeyPanel"><h2>شاشة مراقبة طلبات</h2>
+        <p class="muted">جهاز واحد فاضل شغال، عليه فايرفوكس بإضافة المرصد ومتسجل فيه حساب الكول سنتر على طلبات (اللي شايف كل الفروع). افتح الصفحة دي على الجهاز ده ودوس ربط. الشاشة بتقرا Order History وتفاصيل كل أوردر لوحدها، ومش بتدوس على قبول أو رفض أو أي حاجة تغيّر الأوردر.</p>
+        <p id="talKeyStatus"></p>
+        <div id="talScreens"></div>
+        <button type="button" id="talLink">ربط الجهاز ده كشاشة مراقبة طلبات</button>
+        <p class="muted">بروفايل فايرفوكس تاني فاتح «لايف» فرع معين؟ افتح الصفحة دي من البروفايل ده ودوس الزرار ده. البروفايل ده بيشتغل على اللايف بتاعه بس، ومش بيوقف الشاشة الأساسية.</p>
+        <button type="button" id="talLinkExtra" class="secondary">ربط البروفايل ده كلايف فرع (زيادة)</button>
+        <p id="talKeyNote" class="muted" role="status"></p>
+      </article>
+      <article class="panel" id="ordersKeyPanel"><h2>مرصد الأوردرات (جهاز الكاشير)</h2>
+        <p class="muted">السكريبت اللي على جهاز الكاشير بيقرا Apex ويبعت هنا بالمفتاح ده. طلّع المفتاح، وشغّل setup.bat على جهاز الكاشير والصقه لما يطلبه. المفتاح بيظهر مرة واحدة بس؛ لو طلّعت مفتاح جديد القديم بيبطل.</p>
+        <p id="ordersKeyStatus"></p>
+        <div class="inline"><button type="button" id="ordersKeyMake">طلّع مفتاح مرصد الأوردرات</button></div>
+        <div id="ordersKeyBox" class="inline keybox" hidden><input id="ordersKeyValue" readonly aria-label="مفتاح مرصد الأوردرات" dir="ltr"><button type="button" id="ordersKeyCopy" class="ghost">نسخ</button></div>
+        <p id="ordersKeyNote" class="muted" role="status"></p>
+      </article>
+      <article class="panel" id="siteKeyPanel"><h2>الموقع (eldahan.com.eg)</h2>
+        <p class="muted">المرصد بيقرا أوردرات الموقع وملاحظاتها كل دقيقة بمفتاح WooCommerce «قراءة بس» (Read). المفتاح مايقدرش يغيّر أي حاجة في الموقع، وبيتحفظ متشفّر. المرصد مش بيحفظ أي بيانات عملاء، بس الأوقات والفرع واسم الطيار.</p>
+        <p id="siteKeyStatus"></p>
+        <form id="siteKeyForm" class="inline"><input name="key" placeholder="Consumer key (ck_…)" autocomplete="off" dir="ltr" required aria-label="Consumer key"><input name="secret" type="password" placeholder="Consumer secret (cs_…)" autocomplete="off" dir="ltr" required aria-label="Consumer secret"><button type="submit">ربط الموقع</button></form>
+        <div class="inline" style="margin-top:8px"><button type="button" id="siteSync" class="ghost">اقرا دلوقتي</button><button type="button" id="siteUnlink" class="ghost">فك الربط</button></div>
+        <p id="siteKeyNote" class="muted" role="status"></p>
+      </article>
+      <article class="panel" id="waPanel"><h2>واتساب لعملاء طلبات</h2>
+        <p class="muted">رسالة ترحيب أول ما أوردر طلبات يوصل، ورسالة استطلاع بعد المدة اللي تحددها، من رقم المطعم. الإرسال بيتم من «واتساب ويب» على جهاز شاشة طلبات: رقم المطعم بيتربط كجهاز (الموبايل يفضل شغال عادي)، والإضافة بتبعت رسالة رسالة بنفسها. رقم العميل بيتقرا بس والإرسال شغال، وبيتمسح بعد الاستطلاع أو الإلغاء أو بعد 12 ساعة، ومش بيظهر هنا.</p>
+        <p id="waStatus"></p>
+        <form id="waWebForm" class="stack">
+          <label>رسالة الترحيب<textarea name="welcomeText" rows="3" placeholder="أهلاً بيك في مطاعم الدهان 1890 🌟 استلمنا طلبك {code} وبنجهزه دلوقتي."></textarea></label>
+          <label>رسالة الاستطلاع<textarea name="surveyText" rows="3" placeholder="نتمنى يكون الأكل عجبك 🙏 قيّم تجربتك من 1 لـ 5 بالرد على الرسالة دي."></textarea></label>
+          <p class="muted">{code} = كود أوردر طلبات القصير، {branch} = الفرع. سيب رسالة الاستطلاع فاضية لو مش عايزها.</p>
+          <label>الاستطلاع بعد <input name="delay" type="number" min="10" max="600" value="75" style="max-width:5em" aria-label="الاستطلاع بعد كام دقيقة"> دقيقة من قبول الأوردر</label>
+          <button type="submit">حفظ الرسايل</button></form>
+        <div class="inline" style="margin-top:8px"><button type="button" id="waOn">شغّل الإرسال</button><button type="button" id="waOff" class="ghost">وقّف الإرسال</button></div>
+        <p id="waNote" class="muted" role="status"></p>
+        <div id="waErrors"></div>
+      </article>
+      <article class="panel"><h2>موصل سجل أرابيكس</h2>
+        <p class="muted">الموصل بيسحب سجل المكالمات والانتظار المباشر من جهاز واحد عليه الإضافة ومتسجل فيه دخول تقارير أرابيكس. افتح الصفحة دي على الجهاز ده واضغط ربط.</p>
+        <button id="linkCollector">ربط الجهاز ده كموصل</button>
+        <p id="collectorNote" class="muted" role="status"></p>
+      </article>
+    </section>
+
     <section id="view-manage" class="view" hidden>
       <div id="manageCards" class="cards"></div>
       <article class="panel"><h2>الموظفون</h2>
@@ -347,71 +438,6 @@
         <p id="tgNote" class="muted" role="status"></p>
         <p class="muted">كل تنبيه يتبعه إشعار عند انتهاء الحالة أو تغيّرها، بدون تكرار. انقطاع البيانات لا يُعتبر انتهاءً للمشكلة.</p><h3>تنبيهات النهارده</h3><div id="tgLog"></div>
       </article>
-      <article class="panel" id="siteKeyPanel"><h2>الموقع (eldahan.com.eg)</h2>
-        <p class="muted">المرصد بيقرا أوردرات الموقع وملاحظاتها كل دقيقة بمفتاح WooCommerce «قراءة بس» (Read). المفتاح مايقدرش يغيّر أي حاجة في الموقع، وبيتحفظ متشفّر. المرصد مش بيحفظ أي بيانات عملاء، بس الأوقات والفرع واسم الطيار.</p>
-        <p id="siteKeyStatus"></p>
-        <form id="siteKeyForm" class="inline"><input name="key" placeholder="Consumer key (ck_…)" autocomplete="off" dir="ltr" required aria-label="Consumer key"><input name="secret" type="password" placeholder="Consumer secret (cs_…)" autocomplete="off" dir="ltr" required aria-label="Consumer secret"><button type="submit">ربط الموقع</button></form>
-        <div class="inline" style="margin-top:8px"><button type="button" id="siteSync" class="ghost">اقرا دلوقتي</button><button type="button" id="siteUnlink" class="ghost">فك الربط</button></div>
-        <p id="siteKeyNote" class="muted" role="status"></p>
-      </article>
-      <article class="panel" id="waPanel"><h2>واتساب لعملاء طلبات</h2>
-        <p class="muted">رسالة ترحيب أول ما أوردر طلبات يوصل، ورسالة استطلاع بعد المدة اللي تحددها، من رقم المطعم. الإرسال بيتم من «واتساب ويب» على جهاز شاشة طلبات: رقم المطعم بيتربط كجهاز (الموبايل يفضل شغال عادي)، والإضافة بتبعت رسالة رسالة بنفسها. رقم العميل بيتقرا بس والإرسال شغال، وبيتمسح بعد الاستطلاع أو الإلغاء أو بعد 12 ساعة، ومش بيظهر هنا.</p>
-        <p id="waStatus"></p>
-        <form id="waWebForm" class="stack">
-          <label>رسالة الترحيب<textarea name="welcomeText" rows="3" placeholder="أهلاً بيك في مطاعم الدهان 1890 🌟 استلمنا طلبك {code} وبنجهزه دلوقتي."></textarea></label>
-          <label>رسالة الاستطلاع<textarea name="surveyText" rows="3" placeholder="نتمنى يكون الأكل عجبك 🙏 قيّم تجربتك من 1 لـ 5 بالرد على الرسالة دي."></textarea></label>
-          <p class="muted">{code} = كود أوردر طلبات القصير، {branch} = الفرع. سيب رسالة الاستطلاع فاضية لو مش عايزها.</p>
-          <label>الاستطلاع بعد <input name="delay" type="number" min="10" max="600" value="75" style="max-width:5em" aria-label="الاستطلاع بعد كام دقيقة"> دقيقة من قبول الأوردر</label>
-          <button type="submit">حفظ الرسايل</button></form>
-        <div class="inline" style="margin-top:8px"><button type="button" id="waOn">شغّل الإرسال</button><button type="button" id="waOff" class="ghost">وقّف الإرسال</button></div>
-        <p id="waNote" class="muted" role="status"></p>
-        <div id="waErrors"></div>
-      </article>
-      <article class="panel" id="talKeyPanel"><h2>شاشة مراقبة طلبات</h2>
-        <p class="muted">جهاز واحد فاضل شغال، عليه فايرفوكس بإضافة المرصد ومتسجل فيه حساب الكول سنتر على طلبات (اللي شايف كل الفروع). افتح الصفحة دي على الجهاز ده ودوس ربط. الشاشة بتقرا Order History وتفاصيل كل أوردر لوحدها، ومش بتدوس على قبول أو رفض أو أي حاجة تغيّر الأوردر.</p>
-        <p id="talKeyStatus"></p>
-        <div id="talScreens"></div>
-        <button type="button" id="talLink">ربط الجهاز ده كشاشة مراقبة طلبات</button>
-        <p class="muted">بروفايل فايرفوكس تاني فاتح «لايف» فرع معين؟ افتح الصفحة دي من البروفايل ده ودوس الزرار ده. البروفايل ده بيشتغل على اللايف بتاعه بس، ومش بيوقف الشاشة الأساسية.</p>
-        <button type="button" id="talLinkExtra" class="secondary">ربط البروفايل ده كلايف فرع (زيادة)</button>
-        <p id="talKeyNote" class="muted" role="status"></p>
-      </article>
-      <article class="panel" id="apexWriterPanel" hidden><h2>التحويل الآلي لـApex</h2>
-        <p class="muted">كاتب Apex على جهاز الكاشير بياخد الأوردرات اللي الموظف أكدها من صفحة التحويل ويسجلها على Apex. ابدأ بـ«معاينة» (مش بيكتب حاجة، بيحسب الأرقام والقيم بس)، بعدين «تجربة» على قاعدة الاختبار، وآخر حاجة «تشغيل».</p>
-        <p id="apexWriterStatus"></p>
-        <div class="row"><button type="button" data-apx-mode="off" class="secondary">إيقاف</button><button type="button" data-apx-mode="shadow" class="secondary">معاينة</button><button type="button" data-apx-mode="test" class="secondary">تجربة (قاعدة الاختبار)</button><button type="button" data-apx-mode="live">تشغيل على Apex</button></div>
-        <p><button type="button" id="apexWriterKey" class="secondary">مفتاح جديد للكاتب</button> <code id="apexWriterToken"></code></p>
-        <p id="apexWriterNote" class="muted" role="status"></p>
-      </article>
-      <article class="panel" id="talActPanel" hidden><h2>شاشة طلبات: وقت التوصيل والقبول و«في الطريق» لكل فرع</h2>
-        <p class="muted">وقت التوصيل بيتحفظ هنا ويوصل لشاشة طلبات خلال 30 ثانية. «في الطريق» بيتداس لوحده على طلبات أول ما الأوردر يخرج مع الطيار على Apex، وده بس للفروع اللي متعلّم عليها.</p>
-        <div id="talActRows"></div>
-        <div class="row"><button type="button" id="talActSave">حفظ</button></div>
-        <p id="talActNote" class="muted" role="status"></p>
-        <details><summary class="muted">آخر اللي عملته الشاشة</summary><div id="talActLog" class="muted"></div></details>
-      </article>
-      <article class="panel" id="stockPanel" hidden><h2>إيقاف أصناف على طلبات لكل فرع</h2>
-        <p class="muted">اختار الفرع وعلّم على الأصناف الموقوفة، واحفظ. شاشة طلبات على جهاز الكاشير هي اللي بتوقفها وبترجّعها.</p>
-        <div class="row"><select id="stockStore"></select> <input id="stockFind" placeholder="دوّر على صنف" style="width:200px"> <label><input type="checkbox" id="stockOnly"> الموقوف بس</label></div>
-        <div id="stockList" style="max-height:420px;overflow:auto;margin-top:8px"></div>
-        <div class="row"><button type="button" id="stockSave">حفظ للفرع ده</button></div>
-        <p id="stockNote" class="muted" role="status"></p>
-        <div class="row"><label><input type="checkbox" id="stockApplyTb"> يتطبق على طلبات (شاشة طلبات بتوقف/ترجّع الأصناف)</label> <label><input type="checkbox" id="stockApplyApex"> يتطبق على Apex (الكاتب بيوقف الصنف في الفرع)</label></div>
-        <div id="stockActual" class="muted"></div>
-        <details><summary class="muted">آخر اللي اتطبق</summary><div id="stockLog" class="muted"></div></details>
-      </article>
-      <article class="panel" id="ordersKeyPanel"><h2>مرصد الأوردرات (جهاز الكاشير)</h2>
-        <p class="muted">السكريبت اللي على جهاز الكاشير بيقرا Apex ويبعت هنا بالمفتاح ده. طلّع المفتاح، وشغّل setup.bat على جهاز الكاشير والصقه لما يطلبه. المفتاح بيظهر مرة واحدة بس؛ لو طلّعت مفتاح جديد القديم بيبطل.</p>
-        <p id="ordersKeyStatus"></p>
-        <div class="inline"><button type="button" id="ordersKeyMake">طلّع مفتاح مرصد الأوردرات</button></div>
-        <div id="ordersKeyBox" class="inline keybox" hidden><input id="ordersKeyValue" readonly aria-label="مفتاح مرصد الأوردرات" dir="ltr"><button type="button" id="ordersKeyCopy" class="ghost">نسخ</button></div>
-        <p id="ordersKeyNote" class="muted" role="status"></p>
-      </article>
-      <article class="panel"><h2>موصل سجل أرابيكس</h2>
-        <p class="muted">الموصل بيسحب سجل المكالمات والانتظار المباشر من جهاز واحد عليه الإضافة ومتسجل فيه دخول تقارير أرابيكس. افتح الصفحة دي على الجهاز ده واضغط ربط.</p>
-        <button id="linkCollector">ربط الجهاز ده كموصل</button>
-        <p id="collectorNote" class="muted" role="status"></p>
-      </article>
     </section>
   </main>
 </div>
@@ -422,6 +448,7 @@
 <script src="orders.js?v=4"></script>
 <script src="site.js?v=11"></script>
 <script src="insights.js?v=2"></script>
-<script src="app.js?v=33"></script>
+<script src="kpi.js?v=1"></script>
+<script src="app.js?v=34"></script>
 </body>
 </html>
