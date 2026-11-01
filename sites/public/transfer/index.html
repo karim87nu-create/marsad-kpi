@@ -386,10 +386,10 @@ $('list').addEventListener('click', async e => {
         items: flatLines(o).map((i, n) => ({ itemNo: p.items[n], qty: i.qty, note: '' })),
         // Free choices and the customer's note go in the order comment on Apex (تعليقات الطلب), as the staff do.
         note: [...flatLines(o).filter(i => i.kind === 'item' && i.note).map(i => i.name + ': ' + i.note), ...(o.note ? ['ملاحظة العميل: ' + o.note] : [])].join(' | ').slice(0, 300),
-        // Paid (Karim 01-11): the whole discount comes off on Apex, so the Ledge equals what the customer paid; the special
-        // mark says what is on the restaurant and what is Talabat's. Cash: the restaurant's comes off, Talabat's in the mark.
+        // Paid (Karim 01-11): the whole discount comes off on Apex, so the Ledge equals what the customer paid.
+        // Cash: the restaurant's comes off. Either way the special mark shows Talabat's discount only.
         label: fullLabel(o, pay), customer: o.customer || {},
-        sign: [...(pay === 'paid' && rest > 0 ? ['خصم المطعم ' + money(rest)] : []), ...plat.map(d => 'خصم طلبات ' + money(d.amount))].join(' + '),
+        sign: plat.map(d => 'خصم طلبات ' + money(d.amount)).join(' + '),   // Karim 01-11: the special mark shows Talabat's discount only
         restaurantDiscount: pay === 'paid' ? rest + platSum : rest, expectedTotal: (o.subtotal ?? o.total ?? 0) - rest - (pay === 'paid' ? platSum : 0), targetTotal: o.target == null ? null : pay === 'paid' ? Math.round((o.target - platSum) * 100) / 100 : o.target });   // paid: what the customer paid (Talabat's discount off too)
       delete picks[key(o)]; await load();
     } catch (err) { toast(err.message); b.disabled = false; }
