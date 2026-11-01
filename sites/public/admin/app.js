@@ -23,7 +23,7 @@
   const OUT = { arabicss: 'خرج من أرابيكس', extension: 'خرج من التحويلة', browser: 'قفل المتصفح أو الصفحة', gap: 'انقطاع رصد' };
   const outTotal = x => (x.gapSeconds || 0) + (x.outArabicssSeconds || 0) + (x.outExtensionSeconds || 0) + (x.outBrowserSeconds || 0);
   const outDetail = x => [['outArabicssSeconds', 'arabicss'], ['outExtensionSeconds', 'extension'], ['outBrowserSeconds', 'browser'], ['gapSeconds', 'gap']].filter(([k]) => x[k] > 0).map(([k, o]) => OUT[o] + ' ' + dur(x[k])).join(' · ');
-  const STATE = { ready_night: 'متاح (بعد 3 الفجر)', on_call_night: 'في مكالمة (بعد 3 الفجر)', break_night: 'بريك (بعد 3 الفجر)', unknown_night: 'انقطاع رصد (بعد 3 الفجر)', ready: 'متاح', on_call: 'في مكالمة', break: 'بريك', unknown: 'انقطاع رصد', logged_in: 'سجّل ولسه مدخلش الكونسول', offline: 'برّه التحويلة', logged_out: 'خرج', out_arabicss: 'خرج من أرابيكس', out_extension: 'خرج من التحويلة', out_browser: 'قفل المتصفح', out_gap: 'انقطاع رصد', disconnected: 'انقطع الاتصال', not_started: 'مبدأش', no_session: 'لم يسجل', shift_ended: 'خلص الشيفت', post_call: 'أنهى مكالمة', break_unconfirmed: 'بريك بلا طرفين مؤكدين' };
+  const STATE = { ready_night: 'متاح (بعد 2 الفجر)', on_call_night: 'في مكالمة (بعد 2 الفجر)', break_night: 'بريك (بعد 2 الفجر)', unknown_night: 'انقطاع رصد (بعد 2 الفجر)', ready: 'متاح', on_call: 'في مكالمة', break: 'بريك', unknown: 'انقطاع رصد', logged_in: 'سجّل ولسه مدخلش الكونسول', offline: 'برّه التحويلة', logged_out: 'خرج', out_arabicss: 'خرج من أرابيكس', out_extension: 'خرج من التحويلة', out_browser: 'قفل المتصفح', out_gap: 'انقطاع رصد', disconnected: 'انقطع الاتصال', not_started: 'مبدأش', no_session: 'لم يسجل', shift_ended: 'خلص الشيفت', post_call: 'أنهى مكالمة', break_unconfirmed: 'بريك بلا طرفين مؤكدين' };
   const QUEUE = q => ({ 0: 'خارج ساعات العمل', 1: 'طلب أوردر', 2: 'متابعة أوردر', 3: 'شكاوى' })[String(q || '').slice(-1)] || 'غير معروف';
   const MISSED = { counted: 'محتسبة', short_exempt: 'قصيرة ≤7ث — للتوضيح', after_hours: 'خارج ساعات العمل', unknown_wait: 'انتظار غير معروف', unknown_queue: 'نوع طلب غير معروف' };
   const ROLE = { admin: 'مدير', supervisor: 'مشرف', viewer: 'مشاهدة فقط' };
@@ -84,7 +84,7 @@
   const hourLabel = hr => (hr % 12 || 12) + (hr < 12 ? 'ص' : 'م');
   const cairoHour = v => Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Africa/Cairo', hour: '2-digit', hourCycle: 'h23' }).format(new Date(v)));
   const textHour = t => { const m = String(t || '').match(/(\d{1,2}):\d{2}(?::\d{2})?\s*([AP]M)?/i); if (!m) return null; let hr = +m[1] % 12; if (!m[2]) hr = +m[1]; else if (/p/i.test(m[2])) hr += 12; return hr % 24; };
-  // Per-hour buckets for a bar chart; hours after 3 الفجر only when something happened in them.
+  // Per-hour buckets for a bar chart; hours after 2 الفجر only when something happened in them.
   function hourly(list, hourOf, valuesOf, tipOf) {
     const by = new Map(DAY_HOURS.map(hr => [hr, []]));
     for (const x of list) { const hr = hourOf(x); if (hr != null && by.has(hr)) by.get(hr).push(x); }
@@ -223,7 +223,7 @@
   // ---------- ملخص اليوم ----------
   async function renderDay() {
     const d = await dayData(), hd = d.history, r = hd.report;
-    $('dayNote').textContent = (r ? 'فترة التشغيل ' + periodLabel() + ' من 9 ص لحد 9 ص اليوم اللي بعده (التشغيل لحد 3 الفجر) · آخر سحب للسجل ' + stamp(r.importedAt) + (r.verifiedTotal ? '' : ' · السجل غير مكتمل التحقق') + (r.missingCalendarDates?.length ? ' · ناقص سجل يوم ' + r.missingCalendarDates.join('، ') : '') : 'مفيش سجل أرابيكس محفوظ لليوم ده؛ أرقام المكالمات والانتظار هتظهر لما الموصل يسحب السجل.');
+    $('dayNote').textContent = (r ? 'فترة التشغيل ' + periodLabel() + ' من 9 ص لحد 9 ص اليوم اللي بعده (التشغيل لحد 2 الفجر) · آخر سحب للسجل ' + stamp(r.importedAt) + (r.verifiedTotal ? '' : ' · السجل غير مكتمل التحقق') + (r.missingCalendarDates?.length ? ' · ناقص سجل يوم ' + r.missingCalendarDates.join('، ') : '') : 'مفيش سجل أرابيكس محفوظ لليوم ده؛ أرقام المكالمات والانتظار هتظهر لما الموصل يسحب السجل.');
     $('dayCards').replaceChildren(...(r ? [kpi('مكالمات محتسبة', r.calls, 'info', r.shortAbandoned + ' فائتة قصيرة ≤7ث مش محسوبة'), kpi('تم الرد', r.answered, 'good'), kpi('فائتة محتسبة', r.abandoned, r.abandoned ? toneLow(r.abandonmentRate, 5, 10) : 'good'),
       kpi('الرد خلال 10 ث', pct(r.sla), toneHigh(r.sla, 80, 60)), kpi('متوسط انتظار الرد', secs(r.asa), toneLow(r.asa, 10, 20)), kpi('نسبة الفائتة', pct(r.abandonmentRate), toneLow(r.abandonmentRate, 5, 10)),
       kpi('متوسط مدة المكالمة', dur(r.meanCallSeconds)), kpi('خارج ساعات العمل', r.afterHours)] : []));
@@ -335,12 +335,12 @@
   }
   $('profileEmployee').onchange = () => { state.profile = Number($('profileEmployee').value); renderProfile().catch(showError); };
   const stateColumns = [{ title: 'الحالة', get: s => { const night = /_night$/.test(s.state), base = { ...s, state: s.state.replace(/_night$/, '') };
-    return (night ? stateLabel(base) + ' (بعد 3 الفجر)' : stateLabel(base)) + (['offline', 'unknown'].includes(base.state) ? ' — للتوضيح، مش محسوب' : ''); } }, { title: 'من', get: s => s.startedAt, show: s => clock(s.startedAt), type: 'datetime' }, { title: 'إلى', get: s => s.endedAt, show: s => clock(s.endedAt), type: 'datetime' }, { title: 'المدة', get: s => s.durationSeconds, show: s => dur(s.durationSeconds), type: 'duration' }];
+    return (night ? stateLabel(base) + ' (بعد 2 الفجر)' : stateLabel(base)) + (['offline', 'unknown'].includes(base.state) ? ' — للتوضيح، مش محسوب' : ''); } }, { title: 'من', get: s => s.startedAt, show: s => clock(s.startedAt), type: 'datetime' }, { title: 'إلى', get: s => s.endedAt, show: s => clock(s.endedAt), type: 'datetime' }, { title: 'المدة', get: s => s.durationSeconds, show: s => dur(s.durationSeconds), type: 'duration' }];
   const sessionColumns = [{ title: 'الموظف', get: s => name(s.employeeId) }, { title: 'التحويلة', get: s => s.extension }, { title: 'البداية', get: s => s.workStartedAt ?? s.startedAt, show: s => stamp(s.workStartedAt ?? s.startedAt), type: 'datetime' },
     { title: 'النهاية', get: s => s.endedAt || s.observedThrough, show: s => s.running ? 'شغالة' : stamp(s.endedAt || s.observedThrough), type: 'datetime' },
     { title: 'المدة في اليوم', get: s => s.daySeconds, show: s => dur(s.daySeconds), type: 'duration' }, { title: 'انتهت إزاي', get: s => s.running ? 'شغالة' : s.closureKnown ? REASON[s.reason] || s.reason : 'من غير خروج مسجل — محسوبة لحد آخر حالة' }];
   const breakColumns = [{ title: 'الموظف', get: b => name(b.employeeId) }, { title: 'من', get: b => b.startedAt, show: b => clock(b.startedAt), type: 'datetime' }, { title: 'إلى', get: b => b.endedAt, show: b => b.running ? 'لسه في بريك' : clock(b.endedAt), type: 'datetime' },
-    { title: 'المدة', get: b => b.durationSeconds, show: b => b.durationSeconds > 1200 ? pill(dur(b.durationSeconds), 'warn') : dur(b.durationSeconds), type: 'duration' }, { title: 'ملاحظة', get: b => b.outsideHours ? 'بعد 3 الفجر' : '' }];
+    { title: 'المدة', get: b => b.durationSeconds, show: b => b.durationSeconds > 1200 ? pill(dur(b.durationSeconds), 'warn') : dur(b.durationSeconds), type: 'duration' }, { title: 'ملاحظة', get: b => b.outsideHours ? 'بعد 2 الفجر' : '' }];
 
   // ---------- الحضور والبريك ----------
   const att = {};

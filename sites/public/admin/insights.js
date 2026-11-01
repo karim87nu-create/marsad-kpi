@@ -131,7 +131,7 @@ window.MarsadInsights = function MarsadInsights(ctx) {
     const parts = [], mineC = await ownedBy('branch', b);
     parts.push(h('h3', { textContent: 'Apex' }), h('div', { className: 'cards' }, kpi('الأوردرات', ab.orders ?? 0, 'info'), kpi('المبيعات', money(bs.length ? sum(bs, 'sales') : ab.sales)),
       kpi('متوسط الخروج', ab.avgOut == null ? '—' : ab.avgOut.toFixed(1) + ' د', ab.avgOut >= 30 ? 'bad' : ab.avgOut >= 20 ? 'warn' : 'good'),
-      kpi('خرجوا بعد 30 دقيقة', lateCounted.length, lateCounted.length ? 'warn' : 'good', late.length > lateCounted.length ? (late.length - lateCounted.length) + ' اتراجعوا «مش غلط»' : ''),
+      kpi('خرجوا بعد 30 دقيقة', lateCounted.length, lateCounted.length ? 'warn' : 'good', late.length > lateCounted.length ? 'من ' + late.length + ' — ' + (late.length - lateCounted.length) + ' اتشالوا في المراجعة (اتعلّم عليهم «مش غلط»)' : ''),
       kpi('إلغاء بعد التحميل', canc.length, canc.length ? 'bad' : 'good', canc.length ? money(sum(canc, 'amount')) : ''), kpi('أخطاء إدخال', issCounted.length, issCounted.length ? 'bad' : 'good'),
       kpi('إلغاءات على الفرع', mineC.length, mineC.length ? 'bad' : 'good', 'من كل المصادر')));
     if (bs.length) {

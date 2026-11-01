@@ -4,11 +4,11 @@ const assert = require('node:assert/strict');
 const { start } = require('./helpers.cjs');
 const { cairoToUtc, businessDay, dayWindow, isOperating } = require('../src/time.js');
 
-test('time rules: data day 09:00→09:00, operating 09:00→03:00, DST-safe', () => {
+test('time rules: data day 09:00→09:00, operating 09:00→02:00, DST-safe', () => {
   assert.equal(businessDay(cairoToUtc(2026, 10, 23, 2, 30)), '2026-10-22');
   assert.equal(businessDay(cairoToUtc(2026, 10, 23, 9, 0)), '2026-10-23');
-  assert.equal(isOperating(cairoToUtc(2026, 10, 23, 2, 59)), true);
-  assert.equal(isOperating(cairoToUtc(2026, 10, 23, 3, 0)), false);
+  assert.equal(isOperating(cairoToUtc(2026, 10, 23, 1, 59)), true);
+  assert.equal(isOperating(cairoToUtc(2026, 10, 23, 2, 0)), false);
   const w = dayWindow('2026-10-22');
   assert.equal(w.end - w.start, 24 * 3600000);
   // Summer time (UTC+3) vs winter (UTC+2) both resolve to 09:00 Cairo.

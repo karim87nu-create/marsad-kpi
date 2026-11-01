@@ -199,7 +199,7 @@
           if (m) {
             // A payment badge on the card, when the card says it (only these words; no customer details are kept).
             const pay = txt.split('\n').map(x => x.trim()).find(x => /^(?:cash|collect cash|cash on delivery|paid|paid online|online|كاش|نقدي|مدفوع)(?:\s|$)/i.test(x));
-            out.set(t, { id: t, code: m[1], store: (txt.split('\n').find(x => /الدهان/.test(x)) || '').trim() || null, ...(pay ? { pay: pay.slice(0, 40) } : {}) }); break;
+            out.set(t, { id: t, code: m[1], store: (txt.split('\n').find(x => /الدهان/.test(x) && !/شاشة مراقبة|مرصد الدهان/.test(x)) || '').trim() || null, ...(pay ? { pay: pay.slice(0, 40) } : {}) }); break;
           }
         }
       }

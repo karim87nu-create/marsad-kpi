@@ -448,3 +448,14 @@ browser.runtime.onInstalled.addListener(async ({ reason }) => {
   }
 });
 browser.browserAction?.onClicked.addListener(() => browser.tabs.create({ url: browser.runtime.getURL('collector.html') }));
+
+// ---------- Updates (Karim 01-11: the staff PCs stayed on 3.1.19/3.1.20 while 3.1.33 was out) ----------
+// Firefox looks for a new version about once a day; ask every 30 minutes, and install it as soon as it is downloaded —
+// but not in the middle of a call or a break: then wait until the employee is free (checked every minute).
+let updateWaiting = false;
+const busyNow = async () => { try { const tabs = await store.get(TABS, {}); return Object.values(tabs).some(t => /call|break|بريك|مكالمة/i.test(String(t?.identity?.state || t?.state || ''))); } catch { return false; } };
+try { browser.runtime.onUpdateAvailable?.addListener(() => { updateWaiting = true; }); } catch {}
+setInterval(async () => { if (updateWaiting && !(await busyNow())) browser.runtime.reload?.(); }, 60000);
+const askUpdate = () => { try { browser.runtime.requestUpdateCheck?.()?.catch?.(() => {}); } catch {} };
+setTimeout(askUpdate, 2 * 60000);
+setInterval(askUpdate, 30 * 60000);

@@ -881,5 +881,27 @@ while ($true) {
     $script:conn = $null
   }
   # When Apex answers slowly (the server is struggling), read less often so the monitor adds nothing to its load.
+  # Daily backup of the Marsad server's data on this PC (Karim 01-11): once a day between 4 and 8 in the morning (closed),
+  # every table page by page into backups\<date>\<table>.json; the last 14 days are kept. No keys or hashes are in it.
+  try {
+    $bdir = Join-Path $here ('backups\' + (Get-Date).ToString('yyyy-MM-dd'))
+    if ((Get-Date).Hour -ge 4 -and (Get-Date).Hour -lt 8 -and -not (Test-Path (Join-Path $bdir 'done.txt'))) {
+      [void](New-Item -ItemType Directory -Force -Path $bdir)
+      $hdr = @{ 'x-orders-token' = $OrdersKey }
+      $tabs = (Invoke-RestMethod -Method Post -Uri "$ServerUrl/api/backup" -Headers $hdr -Body '{}' -ContentType 'application/json' -TimeoutSec 30).tables
+      foreach($tb in $tabs){
+        $after = 0; $all = New-Object System.Collections.ArrayList
+        do {
+          $r = Invoke-RestMethod -Method Post -Uri "$ServerUrl/api/backup" -Headers $hdr -Body ((@{ table = $tb; after = $after }) | ConvertTo-Json -Compress) -ContentType 'application/json' -TimeoutSec 60
+          foreach($row in $r.rows){ [void]$all.Add($row) }
+          $after = $r.next
+        } while ($after)
+        ($all | ConvertTo-Json -Depth 6 -Compress) | Set-Content -Path (Join-Path $bdir ($tb + '.json')) -Encoding UTF8
+      }
+      Set-Content -Path (Join-Path $bdir 'done.txt') -Value (Get-Date).ToString('s')
+      Get-ChildItem (Join-Path $here 'backups') -Directory | Where-Object { $_.CreationTime -lt (Get-Date).AddDays(-14) } | Remove-Item -Recurse -Force
+      L "backup saved: $bdir ($($tabs.Count) tables)"
+    }
+  } catch { L "backup: $($_.Exception.Message)" }
   if ($script:cycleSqlMs -ge 3000) { L "Apex slow (SQL sum=$($script:cycleSqlMs) ms) - next read in 3 minutes"; Start-Sleep -Seconds 180 } else { Start-Sleep -Seconds $PollSeconds }
 }

@@ -182,7 +182,7 @@ window.MarsadOrders = function MarsadOrders(ctx) {
     for (const c of list) byWho.set(c.by || '—', (byWho.get(c.by || '—') || 0) + 1);
     const top = [...byWho].sort((a, b) => b[1] - a[1])[0];
     $('cancelCards').replaceChildren(kpi('إلغاء بعد التحميل', list.length, list.length ? 'bad' : 'good'), kpi('قيمة الإلغاء', money(total), list.length ? 'bad' : ''),
-      kpi('متوسط الوقت بعد التحميل', after.length ? Math.round(after.reduce((n, v) => n + v, 0) / after.length) + ' د' : '—'), kpi('أكتر حد لغى', top ? top[0] : '—', '', top ? top[1] + ' إلغاء' : ''));
+      kpi('الوقت بعد التحميل (الوسيط)', after.length ? [...after].sort((a, b) => a - b)[Math.floor((after.length - 1) / 2)] + ' د' : '—'), kpi('أكتر حد لغى', top ? top[0] : '—', '', top ? top[1] + ' إلغاء' : ''));
     const byB = new Map(); for (const c of list) { const x = byB.get(c.branch) || { name: c.branch, n: 0, v: 0 }; x.n++; x.v += Number(c.amount) || 0; byB.set(c.branch, x); }
     const rows = [...byB.values()].sort((a, b) => b.n - a.n), max = Math.max(1, ...rows.map(r => r.n));
     $('cancelRanks').replaceChildren(rows.length ? h('div', { className: 'ranks' }, ...rows.map(r => h('div', { className: 'r' }, h('span', { textContent: r.name }), h('b', { textContent: r.n + ' · ' + money(r.v) }), C.meter(r.n, max, 'var(--bad)')))) : h('p', { className: 'muted', textContent: 'مفيش إلغاءات بعد التحميل' }));

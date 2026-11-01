@@ -60,5 +60,5 @@ test('recorded breaks and break heartbeats are merged, not added twice; night wo
   const states = mergeBreaks(r.states, [{ employeeId: 1, extension: '101', startedAt: new Date(at(23, 5)).toISOString(), endedAt: new Date(at(23, 25)).toISOString() }], w.operatingEnd);
   assert.equal(breakTotals(states)[0].totalBreakSeconds, 25 * 60);   // 23:00 → 23:25
   assert.ok(states.some(x => x.outsideHours && x.state === 'ready'));
-  assert.equal(r.sessions[0].daySeconds, 5 * 3600);                    // 22:00 → 03:00 only
+  assert.equal(r.sessions[0].daySeconds, 4 * 3600);                    // 22:00 → 02:00 only
 });

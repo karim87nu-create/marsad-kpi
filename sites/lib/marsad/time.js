@@ -9,7 +9,7 @@ const partsFormat = new Intl.DateTimeFormat('en-CA', {
 
 const RULES = {
   businessStartHour: 9,   // data day starts 09:00
-  operatingEndHour: 3,    // operating hours end 03:00 next day
+  operatingEndHour: 2,    // operating hours end 02:00 next day (Karim: the restaurant works 9 ص → 2 الفجر)
   slaSeconds: 10,
   shortAbandonSeconds: 7,
   callAlertSeconds: 240,
