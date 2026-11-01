@@ -13,10 +13,13 @@ import { canonicalStore } from './store-names.js';
 const OUT = new Set(['PICKED_UP', 'PICKED UP', 'IN_DELIVERY', 'IN DELIVERY', 'DELIVERED', 'COMPLETED', 'CANCELLED', 'REJECTED']);
 const clean = c => {
   const branches = {};
+  // One entry per branch (Karim 01-11: «الفرع بيتقري كذا مره بكذا اسم»): English, live and Order History spellings
+  // become the one name; when two spellings of a branch were saved, a setting that is on wins.
   for (const [store, v] of Object.entries(c?.branches || {}).slice(0, 40)) {
-    const name = String(store).trim().slice(0, 120); if (!name) continue;
-    const minutes = Math.round(Number(v?.minutes));
-    branches[name] = { accept: v?.accept === true, minutes: minutes >= 5 && minutes <= 180 ? minutes : null, onTheWay: v?.onTheWay === true };
+    const name = String(canonicalStore(store) || '').trim().slice(0, 120); if (!name) continue;
+    const minutes = Math.round(Number(v?.minutes)), had = branches[name];
+    const next = { accept: v?.accept === true, minutes: minutes >= 5 && minutes <= 180 ? minutes : null, onTheWay: v?.onTheWay === true };
+    branches[name] = had ? { accept: had.accept || next.accept, minutes: had.minutes ?? next.minutes, onTheWay: had.onTheWay || next.onTheWay } : next;
   }
   return { branches };
 };
@@ -36,7 +39,7 @@ function setup(app) {
   app.route('GET', '/api/talabat/actions-config', async ctx => {
     await app.requireAdmin(ctx);
     const since = businessDay(ctx.now - 7 * 86400000);
-    const stores = (await db.prepare('SELECT DISTINCT store FROM talabat_orders WHERE day >= ? AND store IS NOT NULL').all(since)).map(r => r.store).filter(Boolean).sort();
+    const stores = [...new Set((await db.prepare('SELECT DISTINCT store FROM talabat_orders WHERE day >= ? AND store IS NOT NULL').all(since)).map(r => canonicalStore(r.store)).filter(Boolean))].sort();
     const c = await config();
     const log = parseJson(await setting('talabat_actions_log'), []);
     const ui = {};
@@ -64,7 +67,7 @@ function setup(app) {
       const snap = parseJson((await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(day))?.data, {});
       const outOf = new Map([...(snap.lateOut || []), ...(snap.online || [])].filter(a => a.out).map(a => [String(a.no), a.out]));
       for (const o of tm.rows) {
-        if (!wantOut.includes(o.store) || OUT.has(String(o.status || '').toUpperCase()) || o.picked_up_at || o.delivered_at) continue;
+        if (!wantOut.includes(canonicalStore(o.store)) || OUT.has(String(o.status || '').toUpperCase()) || o.picked_up_at || o.delivered_at) continue;
         const a = tm.matches.get(o.id), out = a && outOf.get(String(a.no));
         if (out) onTheWay.push({ id: String(o.id), code: o.code || null, out });
       }

@@ -73,3 +73,15 @@ test('system watch: a shift open 12+ hours gives one Telegram message', async ()
     assert.match(l[0].text, /فاتح الشيفت/);
   } finally { await t.close(); }
 });
+
+test('Talabat actions: one row per branch however Talabat spelled it', async () => {
+  const t = await start();
+  try {
+    const admin = await t.admin();
+    await admin('POST', '/api/talabat/actions-config', { branches: { 'El Dahan, Makram Ebeid': { onTheWay: true }, 'الدهان سيتي ستار مول، مكرم عبيد': { minutes: 40 }, 'El Dahan, Madinaty - South Park': {}, 'الدهان, مدينتي - ساوث بارك': {} } });
+    const b = (await admin('GET', '/api/talabat/actions-config')).body.branches;
+    assert.equal(b.length, 2, JSON.stringify(b));
+    const mk = b.find(x => /مكرم/.test(x.store));
+    assert.equal(mk.onTheWay, true); assert.equal(mk.minutes, 40);
+  } finally { await t.close(); }
+});
