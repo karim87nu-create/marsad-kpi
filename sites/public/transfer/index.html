@@ -234,7 +234,8 @@ function render(force) {
   // Talabat: only what is on a live screen now (Karim 01-11). A claimed order stays with its employee.
   const onScreen = o => o.source !== 'talabat' || o.onLive || (o.job && !/^(?:released)$/.test(o.job.state || ''));
   const waiting = o => !o.apex && !o.out && !/^(?:entered|auto_done)$/.test(o.job?.state || '') && recent(o) && onScreen(o);
-  const list = data.orders.filter(o => (!source || o.source === source) && (filter === 'all' || waiting(o)));
+  // Newest first (Karim 01-11): the order that just came is at the top, older ones go down.
+  const list = data.orders.filter(o => (!source || o.source === source) && (filter === 'all' || waiting(o))).sort((x, y) => String(y.at || '').localeCompare(String(x.at || '')));
   const todo = data.orders.filter(waiting).length;
   $('count').textContent = 'لسه: ' + todo + ' · الكل: ' + data.orders.length;
   if (data.liveScreen === false) $('count').textContent += ' · ⚠️ مفيش شاشة لايف طلبات شغالة دلوقتي';
