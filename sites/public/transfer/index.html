@@ -50,6 +50,41 @@ main{max-width:1100px;margin:0 auto;padding:16px}
 .empty{text-align:center;color:var(--muted);padding:40px}
 #toast{position:fixed;bottom:16px;left:16px;right:16px;max-width:420px;margin:auto;background:#7f1d1d;color:#fff;padding:10px 14px;border-radius:10px;display:none}
 @media (max-width:600px){header h1{font-size:16px}.code{font-size:18px}}
+
+/* the order card (redesigned 01-11): Apex's customer screen as fields, then the order as Apex will print it */
+.card{gap:12px}
+.head{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline}
+.head .code{font-size:24px}
+.when{color:var(--muted);font-size:14px}
+.form{display:grid;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.f{display:grid;grid-template-columns:84px 1fr auto;gap:8px;align-items:center;padding:7px 10px;border-top:1px solid var(--line)}
+.f:first-child{border-top:0}
+.fl{color:var(--muted);font-size:13px}
+.fv{min-width:0;overflow-wrap:anywhere}
+.fv select{width:100%;max-width:320px}
+.seg{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.seg button{padding:4px 12px;min-height:32px}
+.cp{background:transparent;color:var(--accent);border:1px solid var(--line);padding:3px 10px;min-height:30px;font-size:13px;font-weight:400}
+.muted{color:var(--muted);font-size:12px}
+.ticket{background:#e9eef5;color:#0f172a;border-radius:4px;padding:12px 14px;font-size:14px;box-shadow:inset 0 3px 0 #cbd5e1}
+.ticket .warn{color:#a16207} .ticket .ok{color:#15803d;font-weight:700} .ticket .muted{color:#64748b}
+.tr{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+.ti{padding:6px 0;border-bottom:1px dashed #b8c4d4}
+.ti.addon{padding-inline-start:14px}
+.tsrc{color:#64748b;font-size:12px}
+.ticket .tr:not(.big){padding:3px 0}
+.tag{color:#64748b;font-size:12px}
+.warnrow{color:#a16207}
+.tt{border-top:2px solid #0f172a;margin-top:6px;padding-top:6px}
+.tr.big{font-size:18px;font-weight:700}
+.verdict{margin-top:6px}
+.bill{margin-top:8px;color:#64748b;font-size:12px}
+.pick{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+.pick select,.pick input{background:#fff;color:#0f172a;border-color:#b8c4d4;min-height:34px;flex:1 1 140px;min-width:0}
+.link{background:none;border:0;color:#0369a1;padding:0 4px;min-height:0;font-size:12px;font-weight:700;text-decoration:underline}
+.actions button.primary{flex:1 1 100%;min-height:46px;font-size:16px}
+@media (max-width:600px){.f{grid-template-columns:70px 1fr auto}}
 </style>
 </head>
 <body>
@@ -172,23 +207,6 @@ function payText(o) {
   if (o.payment === 'unpaid') return '<span class="bad">أونلاين ولسه مادفعش — ماتسجلوش قبل الدفع</span>';
   return '<span class="warn">طريقة الدفع مش واضحة من المصدر — بص على الأوردر واختار</span>';
 }
-function discountsHtml(o, pay) {
-  if (!o.discounts?.length) return '';
-  return o.discounts.map(d => '<div style="font-size:13px">' + esc(d.text) + (d.amount != null ? ' <b>' + money(d.amount) + '</b>' : '') + ' — ' +
-    (d.who === 'platform' ? '<span class="ok">على طلبات: ' + (pay === 'paid' ? 'يتخصم ويتكتب في العلامة المميزة' : 'في العلامة المميزة بس') + '</span>'
-      : d.who === 'restaurant' ? '<span class="ok">على المطعم: يتخصم</span>' : '<span class="warn">مش واضح على حساب مين — اسأل المشرف</span>') + '</div>').join('');
-}
-function itemsHtml(o) {
-  if (!o.items?.length) return '<div class="warn">' + (o.detailRead ? 'مفيش أصناف' : 'تفاصيل الأوردر لسه ماوصلتش — بص عليه في ' + (o.source === 'talabat' ? 'طلبات' : 'الموقع')) + '</div>';
-  return '<ul class="items">' + o.items.map(i => '<li><b>' + esc(i.qty) + '×</b> ' + esc(i.name) + (i.price != null ? ' <span style="color:var(--muted)">(' + money(i.price) + ')</span>' : '') +
-    (i.sizeOption ? '<div class="mods">الحجم: ' + esc(i.sizeOption) + '</div>' : '') +
-    ((i.freeOptions || [])?.length ? '<div class="mods">اختيارات ببلاش (تتكتب في تعليق الأوردر): ' + i.freeOptions.map(esc).join('، ') + '</div>' : '') +
-    (i.addons?.length ? '<div class="warn">إضافات بفلوس (كل واحدة بتتسجل صنف لوحدها): ' + i.addons.map(a => esc(a.qty) + '× ' + esc(a.name) + ' (' + money(a.price) + ')' + (a.apex?.length ? ' → ' + a.apex.map(x => esc(x.name || x.no)).join(' أو ') : '')).join('، ') + '</div>' : '') +
-    (o.source === 'talabat' && !i.modifiersComplete ? '<div class="warn">الإضافات مش ظاهرة كاملة — بص عليها في طلبات</div>' : '') +
-    // Names only, at most three (Karim 01-11: «ابسط»); the numbers and the full list are in the picker below.
-    (o.source === 'talabat' ? (i.apex?.length ? '<div class="apex">على Apex: ' + i.apex.slice(0, 3).map(a => esc(a.name || a.no)).join(' أو ') + (i.apex.length > 3 ? ' (+' + (i.apex.length - 3) + ')' : '') + (i.apex.length > 1 ? ' <span class="warn">— اختار الحجم الصح</span>' : '') + '</div>'
-      : '<div class="apex none">لسه مش معروف على Apex — اختاره بالاسم</div>') : '') + '</li>').join('') + '</ul>';
-}
 // Automatic transfer: branch and Apex item for each line, confirmed by the employee (nothing is guessed).
 // The Apex lines of an order: each dish, then each of its add-ons that cost money (its own Apex line, not a free note).
 function flatLines(o) {
@@ -198,55 +216,6 @@ function flatLines(o) {
     for (const a of i.addons || []) out.push({ kind: 'addon', qty: a.qty ?? '?', name: a.name, label: '+ ' + a.name + ' (' + money(a.price) + ') — إضافة بفلوس على ' + i.name, apex: a.apex || [], note: '' });
   }
   return out;
-}
-// Talabat (or the site) against what Apex will come out at, before sending (Karim 01-11), all with tax as Talabat shows
-// it: Apex's online price + 14% (Apex taxes items and delivery before the discount).
-// The writer computes it again on Apex itself and stops on a big difference.
-function compareHtml(o, fl, p) {
-  const amt = t => { const m = String(t || '').split(' | ').slice(1).join(' ').replace(/,/g, '').match(/-?\d+(?:\.\d+)?/); return m ? Number(m[0]) : null; };
-  const line = k => { const b = (o.bill || []).find(x => new RegExp(k, 'i').test(x.k || '')); return b ? amt(b.text) : null; };
-  const r2 = v => Math.round(v * 100) / 100, f = v => v == null ? '<span style="color:var(--muted)">لسه</span>' : typeof v === 'string' ? v : money(r2(v));
-  const rest = (o.discounts || []).filter(d => d.who === 'restaurant').reduce((a, d) => a + (Number(d.amount) || 0), 0);
-  const plat = (o.discounts || []).filter(d => d.who === 'platform').reduce((a, d) => a + (Number(d.amount) || 0), 0);
-  // Karim 01-11 («الفروقات دي بسبب إيه»): both sides line by line as they will really be recorded, and the reason in words.
-  const pay = choice[key(o)] || o.job?.payment || (o.payment === 'cash' || o.payment === 'paid' ? o.payment : null), paid = pay === 'paid';
-  const billRead = !!o.bill?.length, tItems = o.subtotal ?? line('^(?:المجموع الفرعي|subtotal)$'), tDel = line('توصيل|delivery') ?? (billRead ? 0 : null), tFee = line('رسوم الخدمة|service') ?? (billRead ? 0 : null);
-  const tTotal = line('^(?:مجموع|total)$') ?? o.total;
-  const want = o.target == null ? null : paid ? r2(o.target - plat) : o.target;   // paid: what the customer paid; cash: before Talabat's discount
-  const tb = [['الأصناف', tItems], ['التوصيل', tDel], ['رسوم الخدمة', tFee], ['خصم المطعم', rest ? -rest : 0], ['خصم طلبات', plat ? -plat : 0], ['العميل ' + (paid ? 'دفع' : 'يدفع'), tTotal]];
-  // Apex: online price + 14% tax, the «خدمة» line every Talabat order starts with, the area's delivery charge.
-  let items = 0, missing = 0;
-  fl.forEach((i, n) => { const pr = apexPrices.get(p.items[n]); if (pr == null || !p.items[n]) missing++; else items += pr * (Number(i.qty) || 1); });
-  const fee = o.source === 'talabat' ? (apexPrices.get('0114006') || 7.02) : 0;
-  const loc = (data.locations || []).find(l => String(l.no) === String(p.loc) && (l.branch == null || String(l.branch) === String(p.branch))) || (data.locations || []).find(l => String(l.no) === String(p.loc));
-  const service = loc?.service ?? null;
-  const T = v => r2(v * 1.14);
-  const off = rest + (paid ? plat : 0);                    // what comes off on Apex before matching the total
-  const before = service == null ? null : r2(T(items) + T(fee) + T(service) - off);
-  const gap = before == null || want == null ? null : r2(before - want);
-  const back = gap != null && gap < 0 ? Math.min(-gap, off) : 0;   // Apex lower: the discount is given back first (writer)
-  const left = gap != null && gap < 0 ? r2(-gap - back) : 0;
-  const ap = [['الأصناف', T(items)], ['خدمة طلبات', T(fee)], ['التوصيل (' + (loc?.name || 'المنطقة') + ')', service == null ? null : T(service)], ['خصم المطعم', rest ? -rest : 0],
-    ['خصم طلبات', plat ? (paid ? -plat : 'في العلامة المميزة') : 0], ['فرق يتخصم', gap > 0.009 ? -gap : 0], ['خصم يترجع', back > 0.009 ? back : 0],
-    ['يتسجل على Apex', gap == null ? null : gap > 0.009 ? want : r2(before + back)]];
-  // Why: item prices against Talabat's, delivery against Talabat's delivery + service fee.
-  const why = [];
-  if (!missing && tItems != null) { const d = r2(T(items) - tItems); if (Math.abs(d) > 1) why.push('الأصناف على Apex ' + (d > 0 ? 'أغلى' : 'أرخص') + ' من طلبات بـ ' + money(Math.abs(d)) + (Math.abs(d) > 0.1 * tItems ? ' — غالبًا صنف أو حجم غلط' : ' (فرق أسعار المنيو)')); }
-  if (service != null) { const d = r2(T(service) + T(fee) - (tDel || 0) - (tFee || 0)); if (Math.abs(d) > 1) why.push('التوصيل على Apex (' + money(T(service) + T(fee)) + ') ' + (d > 0 ? 'أكتر' : 'أقل') + ' من توصيل طلبات' + (tFee ? ' ورسومها' : '') + ' (' + money((tDel || 0) + (tFee || 0)) + ') بـ ' + money(Math.abs(d))); }
-  const verdict = missing ? '<span class="warn">فاضل ' + missing + ' صنف لسه ماختارتوش</span>' : service == null ? '<span class="warn">اختار المنطقة عشان التوصيل يتحسب</span>'
-    : (Math.abs(gap) <= 0.009 ? '<span style="color:var(--ok,#2c9)">✓ الإجمالي هيطلع زي طلبات بالظبط</span>'
-      : gap > 0 ? '<span' + (gap > 0.1 * want + 15 ? ' class="warn"' : ' style="color:var(--ok,#2c9)"') + '>Apex أزيد بـ ' + money(gap) + ' — هيتخصم ويتسجل ' + money(want) + '</span>'
-      : left <= 0.009 ? '<span style="color:var(--ok,#2c9)">Apex أقل بـ ' + money(-gap) + ' — هيرجع من الخصم ويتسجل ' + money(want) + '</span>'
-      : '<span class="warn">⚠️ Apex أقل من ' + (paid ? 'المدفوع' : 'طلبات') + ' بـ ' + money(left) + ' حتى بعد الخصم — اتأكد من الأصناف والأحجام</span>') +
-      '';
-  const whyHtml = why.length ? '<div style="font-size:12px;color:var(--muted);margin-top:4px">السبب: ' + why.map(esc).join(' · ') + '</div>' : '';
-  // Only the lines that have something (a zero discount is not a line); «لسه» when it is not known yet.
-  const has = r => r[1] !== 0 && r[1] !== '0';
-  tb.splice(0, tb.length, ...tb.filter(has)); ap.splice(0, ap.length, ...ap.filter(has));
-  const rows = Math.max(tb.length, ap.length);
-  let h = '<table style="width:100%;font-size:13px;margin-top:8px;border-collapse:collapse"><tr><th style="text-align:start">' + (o.source === 'talabat' ? 'طلبات' : 'الموقع') + '</th><th></th><th style="text-align:start">على Apex (بالضريبة)</th><th></th></tr>';
-  for (let i = 0; i < rows; i++) h += '<tr><td>' + (tb[i]?.[0] || '') + '</td><td>' + (tb[i] ? f(tb[i][1]) : '') + '</td><td>' + (ap[i]?.[0] || '') + '</td><td>' + (ap[i] ? f(ap[i][1]) : '') + '</td></tr>';
-  return h + '</table><div class="pay" style="margin-top:4px">' + verdict + '</div>' + whyHtml;
 }
 // One row per Apex area with the branches it belongs to (LocationBranches) and its delivery charge.
 let areaCache = null, areaSrc = null;
@@ -266,74 +235,146 @@ function pickArea(p, no) {
   const a = areaList().find(l => String(l.no) === String(no));
   if (a && a.branches.length === 1 && String(a.branches[0]) !== String(p.branch)) { p.branch = String(a.branches[0]); p.moved = true; }
 }
-function autoHtml(o) {
-  const mode = data.autoTransfer;
-  if (!mode || mode === 'off' || o.apex || /^auto_(?:pending|sending|done|preview)$/.test(o.job?.state || '')) return '';
-  const fl = flatLines(o), k = key(o), p = picks[k] || (picks[k] = { branch: o.apexBranch || '', items: fl.map(i => i.apex?.length === 1 ? i.apex[0].no : '') });
-  const br = '<select data-pick="branch"><option value="">اختار الفرع…</option>' + (data.branches || []).map(b => '<option value="' + b.no + '"' + (String(p.branch) === String(b.no) ? ' selected' : '') + '>' + esc(b.name) + '</option>').join('') + '</select>';
-  // Delivery area on Apex: the AREA decides the branch, as on Apex (Karim 01-11: a Nasr City customer who ordered
-  // from the Tagamoa outlet went to Tagamoa). Every area is listed with its branch; picking one moves the branch to it.
-  const all = areaList();
-  // Karim 01-11: the list shows only the chosen branch's areas (the address suggestion still searches them all and
-  // moves the branch when the area belongs to another one).
-  const areas = all.filter(l => !p.branch || !l.branches.length || l.branches.some(b => String(b) === String(p.branch)));
-  // Suggested area: the Apex area whose name appears in the customer's address or Talabat area (the longest one).
-  if (!p.loc && !p.locTried && (o.customer?.address || o.customer?.area)) {
-    p.locTried = true;
-    const nz = v => String(v || '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/[ًٌٍَُِّْـ]/g, '').replace(/[^\u0600-\u06ffa-z0-9 ]/gi, ' ').replace(/\s+/g, ' ').trim();
-    const addr = ' ' + nz((o.customer.area || '') + ' ' + (o.customer.address || '')) + ' ';
-    const hit = all.filter(l => nz(l.name).length >= 3 && addr.includes(' ' + nz(l.name) + ' ')).sort((a, b) => nz(b.name).length - nz(a.name).length)[0];
-    if (hit) { pickArea(p, hit.no); p.locGuess = true; }
-  }
-  const cur = all.find(l => String(l.no) === String(p.loc)), bname = no => (data.branches || []).find(b => String(b.no) === String(no))?.name || ('فرع ' + no);
-  const loc = '<select data-pick="loc"><option value="">اختار المنطقة…</option>' + areas.map(l => '<option value="' + l.no + '"' + (String(p.loc) === String(l.no) ? ' selected' : '') + '>' + esc(l.name) + (l.service != null ? ' (توصيل ' + money(l.service) + ')' : '') + '</option>').join('') + '</select>' +
-    (cur && cur.branches.length && !cur.branches.some(b => String(b) === String(p.branch)) ? ' <span class="bad">المنطقة دي تبع ' + esc(cur.branches.map(bname).join(' / ')) + ' — غيّر الفرع</span>' : '') +
-    (p.moved ? ' <span class="warn">الفرع اتغير لـ ' + esc(bname(p.branch)) + ' عشان المنطقة تبعه' + (o.apexBranch && String(o.apexBranch) !== String(p.branch) ? ' (الأوردر جه على ' + esc(bname(o.apexBranch)) + ' في طلبات)' : '') + '</span>' : '');
-  // The employee picks by name (nobody knows the Apex numbers): the suggestion is shown by name, other sizes in a list, and a search by name for anything else.
-  const nameOf = no => apexNames.get(no) || '';
-  // Karim 01-11 («ابسط»): a chosen item is one line with «تغيير»; the lists show only when changing it or not chosen yet.
-  const lines = fl.map((i, n) => '<div class="pay" style="margin-top:6px;flex-wrap:wrap"><span' + (i.kind === 'addon' ? ' class="warn"' : '') + '>' + esc(i.qty) + '× ' + esc(i.label) + '</span> ← ' +
-    (p.items[n] ? '<b>' + esc(nameOf(p.items[n]) || ((i.apex || []).find(a => a.no === p.items[n])?.name) || 'صنف ' + p.items[n]) + '</b>' : '<span class="warn">اختار الصنف على Apex</span>') + ' ' +
-    (p.items[n] && !p.edit?.[n] ? ' <button class="ghost copy" data-edit="' + n + '">تغيير</button></div>' : '') + (p.items[n] && !p.edit?.[n] ? '' : '<div style="display:flex;gap:6px;flex-wrap:wrap;width:100%">' +
-    (i.apex?.length > 1 ? '<select data-pick="item" data-n="' + n + '"><option value="">' + (p.items[n] ? 'غيّر الحجم/الصنف…' : 'اختار…') + '</option>' + i.apex.map(a => '<option value="' + esc(a.no) + '"' + (p.items[n] === a.no ? ' selected' : '') + '>' + esc(a.name || nameOf(a.no) || a.no) + '</option>').join('') + '</select>' : '') +
-    // Karim 01-11: another item picked like on Apex — the section first, then its items in Apex's order.
-    (data.sections?.length ? '<select data-pick="sec" data-n="' + n + '"><option value="">' + (p.secs?.[n] != null ? 'قسم تاني…' : 'اختار من أقسام Apex…') + '</option>' + data.sections.map((x, k) => '<option value="' + k + '"' + (String(p.secs?.[n]) === String(k) ? ' selected' : '') + '>' + esc(x.name) + '</option>').join('') + '</select>' +
-      (p.secs?.[n] != null && data.sections[p.secs[n]] ? '<select data-pick="item" data-n="' + n + '"><option value="">اختار الصنف…</option>' + data.sections[p.secs[n]].items.map(no => '<option value="' + esc(no) + '"' + (p.items[n] === no ? ' selected' : '') + '>' + esc(nameOf(no) || no) + (apexPrices.get(no) != null ? ' — ' + money(Math.round(apexPrices.get(no) * 114) / 100) : '') + '</option>').join('') + '</select>' : '') : '') +
-    '<input data-pick="item" data-find="1" data-n="' + n + '" list="apexItems" placeholder="' + (p.items[n] ? 'أو اكتب اسمه' : 'أو اكتب اسم الصنف') + '" style="width:150px"></div></div>')).join('');
-  const label = mode === 'shadow' ? 'جرّب التسجيل (مش هيتسجل فعلاً)' : mode === 'test' ? 'سجّله على نسخة التجربة' : 'سجّله على Apex من هنا';
-  // Closed: only the title (the lists of areas and items are built when it is opened — the page stays light).
-  return '<div class="box" data-pick-box><h3>التسجيل على Apex من هنا</h3><div class="pay" style="margin-top:6px"><span>الفرع:</span> ' + br + '</div><div class="pay" style="margin-top:6px"><span>المنطقة:</span> ' + loc + (p.locGuess ? ' <span class="warn">اخترناها من العنوان — اتأكد منها</span>' : '') + '</div>' + lines + compareHtml(o, fl, p) +
-    '<div class="actions" style="margin-top:8px"><button data-act="auto">' + label + '</button></div></div>';
+// ---------- the order card (Karim 01-11: redesigned from the start) ----------
+// Laid out in the order the employee works on Apex: the customer screen (each field with its own copy button), then
+// the order as Apex will print it — a ticket — with the total next to what the customer pays on Talabat.
+// Nothing folded; each line says one thing.
+const r2 = v => Math.round(v * 100) / 100, T = v => r2(v * 1.14);   // Apex: online price + 14% tax
+const payOf = o => choice[key(o)] || o.job?.payment || (o.payment === 'cash' || o.payment === 'paid' ? o.payment : null);
+const discountSum = (o, who) => (o.discounts || []).filter(d => d.who === who).reduce((a, d) => a + (Number(d.amount) || 0), 0);
+// Floor and flat as Talabat writes them in the address («— الدور: 4 — الشقة: 403»); the address without them.
+function addressParts(a) {
+  const t = String(a || ''), pick = re => { const m = t.match(re); return m ? m[1].trim() : ''; };
+  return { floor: pick(/(?:الدور|الطابق)\s*[:：]\s*([^—]+)/), flat: pick(/الشقة\s*[:：]\s*([^—]+)/),
+    street: t.replace(/\s*—\s*(?:الدور|الطابق|الشقة)\s*[:：]\s*[^—]*/g, '').trim() };
 }
+const copyBtn = text => text ? '<button class="cp" data-copytext="' + esc(text) + '" aria-label="نسخ">نسخ</button>' : '';
+const field = (label, value, copy, extra) => '<div class="f"><span class="fl">' + label + '</span><span class="fv">' + (value || '<span class="warn">مش ظاهر</span>') + (extra || '') + '</span>' + (copy ? copyBtn(copy) : '<span></span>') + '</div>';
+
+// What Apex will record for this order, from the employee's picks (the writer does the same sum on Apex).
+function ticketCalc(o, fl, p) {
+  const pay = payOf(o), paid = pay === 'paid', rest = discountSum(o, 'restaurant'), plat = discountSum(o, 'platform');
+  const amt = t => { const m = String(t || '').split(' | ').slice(1).join(' ').replace(/,/g, '').match(/-?\d+(?:\.\d+)?/); return m ? Number(m[0]) : null; };
+  const bill = k => { const b = (o.bill || []).find(x => new RegExp(k, 'i').test(x.k || '')); return b ? amt(b.text) : null; };
+  const tItems = o.subtotal ?? bill('^(?:المجموع الفرعي|subtotal)$'), tDel = (bill('توصيل|delivery') || 0) + (bill('رسوم الخدمة|service') || 0);
+  const want = o.target == null ? null : paid ? r2(o.target - plat) : o.target;   // paid: what was paid; cash: before Talabat's discount
+  let items = 0, missing = 0;
+  fl.forEach((i, n) => { const pr = apexPrices.get(p.items?.[n]); if (pr == null) missing++; else items += pr * (Number(i.qty) || 1); });
+  const fee = o.source === 'talabat' ? (apexPrices.get('0114006') || 7.02) : 0;
+  const loc = (data.locations || []).find(l => String(l.no) === String(p.loc) && (l.branch == null || String(l.branch) === String(p.branch))) || (data.locations || []).find(l => String(l.no) === String(p.loc));
+  const service = loc?.service ?? null, off = rest + (paid ? plat : 0);
+  const before = service == null ? null : r2(T(items) + T(fee) + T(service) - off);
+  const gap = before == null || want == null ? null : r2(before - want);
+  const back = gap != null && gap < 0 ? Math.min(-gap, off) : 0, left = gap != null && gap < 0 ? r2(-gap - back) : 0;
+  const why = [];
+  if (!missing && tItems != null) { const d = r2(T(items) - tItems); if (Math.abs(d) > 1) why.push('أصناف Apex ' + (d > 0 ? 'أغلى' : 'أرخص') + ' من طلبات بـ ' + money(Math.abs(d)) + (Math.abs(d) > 0.1 * tItems ? '، غالبًا صنف أو حجم غلط' : '')); }
+  if (service != null && o.source === 'talabat') { const d = r2(T(service) + T(fee) - tDel); if (Math.abs(d) > 1) why.push('توصيل Apex ' + money(T(service) + T(fee)) + ' وتوصيل طلبات ' + money(tDel)); }
+  return { pay, paid, rest, plat, want, items, missing, fee, loc, service, gap, back, left, why, total: gap == null ? null : gap > 0.009 ? want : r2(before + back) };
+}
+
+function ticketHtml(o, p, fl, c, auto) {
+  const nameOf = no => apexNames.get(no) || '';
+  const row = (a, b, cls) => '<div class="tr' + (cls ? ' ' + cls : '') + '"><span>' + a + '</span><span class="num">' + b + '</span></div>';
+  let h = '';
+  if (!o.items?.length) return '<div class="ticket"><div class="warn">' + (o.detailRead ? 'مفيش أصناف' : 'تفاصيل الأوردر لسه ماوصلتش — بص عليه في ' + (o.source === 'talabat' ? 'طلبات' : 'الموقع')) + '</div></div>';
+  fl.forEach((i, n) => {
+    const no = p.items?.[n], name = no ? (nameOf(no) || (i.apex || []).find(a => a.no === no)?.name || 'صنف ' + no) : '';
+    const price = no && apexPrices.get(no) != null ? money(T(apexPrices.get(no) * (Number(i.qty) || 1))) : '';
+    const src = esc(i.qty) + '× ' + esc(i.label);
+    h += '<div class="ti' + (i.kind === 'addon' ? ' addon' : '') + '">' +
+      '<div class="tr"><span><b>' + esc(i.qty) + '×</b> ' + (name ? esc(name) : auto ? '<span class="warn">اختار الصنف على Apex</span>' : (i.apex || []).length ? (i.apex || []).map(a => esc(a.name || a.no)).join(' أو ') + (i.apex.length > 1 ? ' <span class="warn">— اختار الحجم</span>' : '') : '<span class="warn">مش معروف على Apex — دوّر عليه بالاسم</span>') + '</span><span class="num">' + price + '</span></div>' +
+      '<div class="tsrc">' + (o.source === 'talabat' ? 'طلبات: ' : 'الموقع: ') + src + (auto && no && !p.edit?.[n] ? ' <button class="link" data-edit="' + n + '">تغيير الصنف</button>' : '') + '</div>';
+    if (auto && (!no || p.edit?.[n])) {
+      h += '<div class="pick">' +
+        (i.apex?.length > 1 ? '<select data-pick="item" data-n="' + n + '"><option value="">الأحجام المقترحة…</option>' + i.apex.map(a => '<option value="' + esc(a.no) + '"' + (no === a.no ? ' selected' : '') + '>' + esc(a.name || nameOf(a.no) || a.no) + '</option>').join('') + '</select>' : '') +
+        (data.sections?.length ? '<select data-pick="sec" data-n="' + n + '"><option value="">قسم على Apex…</option>' + data.sections.map((x, k) => '<option value="' + k + '"' + (String(p.secs?.[n]) === String(k) ? ' selected' : '') + '>' + esc(x.name) + '</option>').join('') + '</select>' : '') +
+        (p.secs?.[n] != null && data.sections?.[p.secs[n]] ? '<select data-pick="item" data-n="' + n + '"><option value="">الصنف…</option>' + data.sections[p.secs[n]].items.map(x => '<option value="' + esc(x) + '"' + (no === x ? ' selected' : '') + '>' + esc(nameOf(x) || x) + (apexPrices.get(x) != null ? ' (' + money(T(apexPrices.get(x))) + ')' : '') + '</option>').join('') + '</select>' : '') +
+        '<input data-pick="item" data-find="1" data-n="' + n + '" list="apexItems" placeholder="أو اكتب اسم الصنف">' +
+        '</div>';
+    }
+    if (i.kind === 'item') {
+      const it = (o.items || []).find(x => x.name === i.name);
+      if (o.source === 'talabat' && it && !it.modifiersComplete) h += '<div class="warn tsrc">الإضافات مش ظاهرة كاملة — بص عليها في طلبات</div>';
+    }
+    h += '</div>';   // .ti
+  });
+  if (auto) {
+    if (c.fee) h += row('خدمة طلبات', money(T(c.fee)));
+    h += row('توصيل' + (c.loc ? ' ' + esc(c.loc.name) : ''), c.service == null ? '<span class="warn">اختار المنطقة</span>' : money(T(c.service)));
+  }
+  for (const d of o.discounts || []) {
+    const onApex = d.who === 'restaurant' || (d.who === 'platform' && c.paid);
+    h += row(esc(d.text) + ' <span class="tag">' + (d.who === 'restaurant' ? 'على المطعم' : d.who === 'platform' ? 'على طلبات' + (c.paid ? '' : '، في العلامة المميزة') : 'مش واضح على حساب مين') + '</span>',
+      onApex ? '−' + money(d.amount) : '<span class="muted">' + money(d.amount) + '</span>', d.who ? '' : 'warnrow');
+  }
+  if (auto && c.gap > 0.009) h += row('فرق يتخصم', '−' + money(c.gap));
+  if (auto && c.back > 0.009) h += row('يرجع من الخصم', '+' + money(c.back));
+  // The total, and Talabat's next to it.
+  const tal = o.total;
+  h += '<div class="tt">' +
+    '<div class="tr big"><span>' + (auto ? 'يتسجل على Apex' : 'الإجمالي') + '</span><span class="num">' + (auto ? (c.total == null ? '—' : money(c.total)) : money(tal)) + '</span></div>' +
+    (auto ? '<div class="tr"><span>العميل ' + (c.paid ? 'دفع' : 'يدفع') + ' على ' + (o.source === 'talabat' ? 'طلبات' : 'الموقع') + '</span><span class="num">' + money(tal) + '</span></div>' : '') +
+    '</div>';
+  if (auto) {
+    const v = c.missing ? '<span class="warn">فاضل ' + c.missing + ' صنف ماتختارش</span>' : c.service == null ? '<span class="warn">اختار المنطقة</span>'
+      : c.left > 0.009 ? '<span class="warn">Apex أقل بـ ' + money(c.left) + ' — راجع الأصناف والأحجام</span>'
+      : c.gap > 0.1 * c.want + 15 ? '<span class="warn">فرق كبير ' + money(c.gap) + ' — راجع الأصناف والأحجام</span>'
+      : '<span class="ok">✓ مظبوط</span>';
+    h += '<div class="verdict">' + v + (c.why.length ? '<div class="muted">السبب: ' + c.why.map(esc).join('، ') + '</div>' : '') + '</div>';
+  }
+  if (o.bill?.length) h += '<div class="bill">فاتورة ' + (o.source === 'talabat' ? 'طلبات' : 'الموقع') + ': ' + o.bill.map(b => esc(String(b.text).replace(/\s*\|\s*/, ' '))).join('، ') + '</div>';
+  return '<div class="ticket">' + h + '</div>';
+}
+
 function card(o) {
-  // Already on Apex or out with the rider: one short line (the server sends no details for them).
-  if (o.done) { const st = stateOf(o); return '<div class="card done" data-k="' + esc(key(o)) + '"><div class="top"><span class="src ' + o.source + '">' + (o.source === 'talabat' ? 'طلبات' : 'الموقع') + '</span><span class="code">' + (o.code ? '#' + esc(o.code) : esc(o.ref)) + '</span><span style="color:var(--muted)">' + time(o.at) + ' · ' + esc(o.branch || '') + (o.total != null ? ' · ' + money(o.total) : '') + '</span><span class="state ' + st.cls + '">' + esc(st.text) + '</span></div></div>'; }
-  const st = stateOf(o), pay = choice[key(o)] || o.job?.payment || (o.payment === 'cash' || o.payment === 'paid' ? o.payment : null);
-  const freeJob = !o.job || ['released', 'auto_failed', 'auto_preview'].includes(o.job.state);   // a failed automatic transfer is anyone's
-  const mineOrFree = freeJob || o.job.mine;
-  const done = !!o.apex;
-  return '<div class="card' + (done ? ' done' : '') + '" data-k="' + esc(key(o)) + '">' +
-    '<div class="top"><span class="src ' + o.source + '">' + (o.source === 'talabat' ? 'طلبات' : 'الموقع') + '</span><span class="code">' + (o.code ? '#' + esc(o.code) : esc(o.ref)) + '</span>' +
-      '<span style="color:var(--muted)">' + time(o.at) + ' · ' + esc(o.branch || 'الفرع مش معروف') + (o.deliveryType ? ' · ' + esc(o.deliveryType) : '') + (o.scheduled ? ' · <span class="warn">بميعاد</span>' : '') + '</span>' +
-      '<span class="state ' + st.cls + '">' + esc(st.text) + '</span></div>' +
-    '<div class="label"><span style="color:var(--muted)">في خانة الاسم:</span><input readonly value="' + esc(fullLabel(o, pay)) + '"><button class="ghost copy" data-copy>نسخ</button></div>' +
-    '<div class="pay"><span>الدفع:</span> ' + payText(o) + ' <button class="' + (pay === 'cash' ? 'on' : 'ghost') + ' copy" data-pay="cash">كاش</button><button class="' + (pay === 'paid' ? 'on' : 'ghost') + ' copy" data-pay="paid">مدفوع</button></div>' +
-    '<div class="grid">' +
-      '<div class="box"><h3>العميل</h3>' + esc(o.customer?.name || '—') + '<br>' + (o.customer?.phone ? esc(o.customer.phone) + ' <button class="ghost copy" data-copytext="' + esc(o.customer.phone) + '">نسخ</button>' : '<span class="warn">الرقم مش ظاهر</span>') + '</div>' +
-      '<div class="box"><h3>العنوان</h3>' + (o.customer?.address ? esc(o.customer.address) : '<span class="warn">العنوان مش ظاهر — خده من الأوردر</span>') +
-        (o.customer?.original ? '<div style="color:var(--muted);font-size:12px;margin-top:4px" dir="auto">مترجم من: ' + esc(o.customer.original) + '</div>' : '') + '</div>' +
+  const st = stateOf(o);
+  // On Apex or out with the rider: one line.
+  if (o.done) return '<div class="card done" data-k="' + esc(key(o)) + '"><div class="head"><span class="src ' + o.source + '">' + (o.source === 'talabat' ? 'طلبات' : 'الموقع') + '</span><span class="code">' + (o.code ? '#' + esc(o.code) : esc(o.ref)) + '</span><span class="when">' + time(o.at) + ' ' + esc(o.branch || '') + '</span><span class="state ' + st.cls + '">' + esc(st.text) + '</span></div></div>';
+  const pay = payOf(o), fl = flatLines(o), k = key(o);
+  const mode = data.autoTransfer, auto = !!mode && mode !== 'off' && !o.apex && !/^auto_(?:pending|sending|done|preview)$/.test(o.job?.state || '');
+  const p = picks[k] || (picks[k] = { branch: o.apexBranch || '', items: fl.map(i => i.apex?.length === 1 ? i.apex[0].no : '') });
+  const freeJob = !o.job || ['released', 'auto_failed', 'auto_preview'].includes(o.job.state), mineOrFree = freeJob || o.job.mine;
+  const c = ticketCalc(o, fl, p);
+  const ad = addressParts(o.customer?.address), cu = o.customer || {};
+  // Branch and area: the area decides the branch (Apex's own rule); the list shows the chosen branch's areas.
+  let branchSel = '', areaSel = '', areaNote = '';
+  if (auto) {
+    const all = areaList();
+    if (!p.loc && !p.locTried && (cu.address || cu.area)) {
+      p.locTried = true;
+      const nz = v => String(v || '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/[ًٌٍَُِّْـ]/g, '').replace(/[^؀-ۿa-z0-9 ]/gi, ' ').replace(/\s+/g, ' ').trim();
+      const addr = ' ' + nz((cu.area || '') + ' ' + (cu.address || '')) + ' ';
+      const hit = all.filter(l => nz(l.name).length >= 3 && addr.includes(' ' + nz(l.name) + ' ')).sort((a, b) => nz(b.name).length - nz(a.name).length)[0];
+      if (hit) { pickArea(p, hit.no); p.locGuess = true; }
+    }
+    const bname = no => (data.branches || []).find(b => String(b.no) === String(no))?.name || ('فرع ' + no);
+    branchSel = '<select data-pick="branch" aria-label="الفرع على Apex"><option value="">اختار الفرع…</option>' + (data.branches || []).map(b => '<option value="' + b.no + '"' + (String(p.branch) === String(b.no) ? ' selected' : '') + '>' + esc(b.name) + '</option>').join('') + '</select>';
+    const areas = all.filter(l => !p.branch || !l.branches.length || l.branches.some(b => String(b) === String(p.branch)));
+    areaSel = '<select data-pick="loc" aria-label="المنطقة على Apex"><option value="">اختار المنطقة…</option>' + areas.map(l => '<option value="' + l.no + '"' + (String(p.loc) === String(l.no) ? ' selected' : '') + '>' + esc(l.name) + '</option>').join('') + '</select>';
+    areaNote = p.moved ? '<div class="warn">الفرع اتغير لـ ' + esc(bname(p.branch)) + ' عشان المنطقة تبعه</div>' : p.locGuess ? '<div class="muted">اتختارت من العنوان — اتأكد منها</div>' : '';
+  }
+  const label = fullLabel(o, pay);
+  const actLabel = mode === 'shadow' ? 'جرّب التسجيل (مش هيتسجل)' : mode === 'test' ? 'سجّل على نسخة التجربة' : 'سجّل على Apex';
+  return '<div class="card" data-k="' + esc(k) + '">' +
+    '<div class="head"><span class="src ' + o.source + '">' + (o.source === 'talabat' ? 'طلبات' : 'الموقع') + '</span><span class="code">' + (o.code ? '#' + esc(o.code) : esc(o.ref)) + '</span>' +
+      '<span class="when">' + time(o.at) + (o.scheduled ? ' <span class="warn">بميعاد</span>' : '') + '</span><span class="state ' + st.cls + '">' + esc(st.text) + '</span></div>' +
+    // The customer screen on Apex, field by field.
+    '<div class="form">' +
+      field('الاسم', '<b>' + esc(label) + '</b>', label) +
+      field('التليفون', cu.phone ? esc(cu.phone) : '', cu.phone) +
+      (auto ? field('الفرع', branchSel, '') + field('المنطقة', areaSel, '', areaNote) : field('الفرع', esc(o.branch || ''), '')) +
+      field('العنوان', esc(ad.street || cu.address || ''), ad.street || cu.address, cu.original ? '<div class="muted">مترجم من: ' + esc(cu.original) + '</div>' : '') +
+      (ad.floor || ad.flat ? field('الدور', esc(ad.floor), ad.floor) + field('الشقة', esc(ad.flat), ad.flat) : '') +
+      (o.note ? field('ملاحظة', esc(o.note), o.note, o.noteOriginal ? '<div class="muted">الأصل: ' + esc(o.noteOriginal) + '</div>' : '') : '') +
+      '<div class="f"><span class="fl">الدفع</span><span class="fv seg"><button class="' + (pay === 'cash' ? 'on' : 'ghost') + '" data-pay="cash">كاش</button><button class="' + (pay === 'paid' ? 'on' : 'ghost') + '" data-pay="paid">مدفوع</button> ' + payText(o) + '</span><span></span></div>' +
     '</div>' +
-    (o.note ? '<div class="box"><h3>ملاحظة العميل</h3>' + esc(o.note) + (o.noteOriginal ? '<div style="color:var(--muted);font-size:12px;margin-top:4px" dir="auto">الأصل: ' + esc(o.noteOriginal) + '</div>' : '') + '</div>' : '') +
-    // Karim 01-11: nothing folded, few short lines — the total, each discount and Talabat's bill in one line.
-    '<div class="pay"><span>الإجمالي:</span> <b>' + (o.total != null ? money(o.total) : '—') + '</b>' + (o.subtotal != null && o.subtotal !== o.total ? ' <span style="color:var(--muted);font-size:13px">(الأصناف ' + money(o.subtotal) + ')</span>' : '') + '</div>' +
-    discountsHtml(o, pay) +
-    (o.bill?.length ? '<div style="font-size:12px;color:var(--muted);margin-top:4px">فاتورة طلبات: ' + o.bill.map(b => esc(String(b.text).replace(/\s*\|\s*/, ': '))).join(' · ') + '</div>' : '') +
-    itemsHtml(o) + autoHtml(o) +
-    (done ? '' : '<div class="actions">' +
-      (freeJob ? '<button data-act="claim">أنا هسجله</button>' : '') +
-      (mineOrFree ? '<button data-act="entered">اتسجل على Apex</button>' : '') +
+    ticketHtml(o, p, fl, c, auto) +
+    '<div class="actions">' +
+      (auto && mineOrFree ? '<button class="primary" data-act="auto">' + actLabel + '</button>' : '') +
+      (freeJob ? '<button class="ghost" data-act="claim">أنا هسجله بإيدي</button>' : '') +
+      (mineOrFree ? '<button class="ghost" data-act="entered">سجلته على Apex</button>' : '') +
       (o.job?.mine && o.job.state !== 'released' ? '<button class="ghost" data-act="release">سيبه</button>' : '') +
-      '</div>') +
+    '</div>' +
   '</div>';
 }
 let apexNames = new Map(), apexPrices = new Map(), lastDraw = '';
@@ -386,8 +427,8 @@ $('list').addEventListener('click', async e => {
   const c = b.closest('.card'), o = data.orders.find(x => key(x) === c.dataset.k); if (!o) return;
   if (b.dataset.edit !== undefined) { const p = picks[key(o)]; if (p) { (p.edit || (p.edit = {}))[Number(b.dataset.edit)] = true; p.open = true; render(true); } return; }
   if (b.dataset.copy !== undefined || b.dataset.copytext) {
-    const text = b.dataset.copytext || c.querySelector('.label input').value;
-    try { await navigator.clipboard.writeText(text); b.textContent = 'اتنسخ ✓'; setTimeout(() => b.textContent = 'نسخ', 1500); } catch { c.querySelector('.label input').select(); }
+    const text = b.dataset.copytext || '';
+    try { await navigator.clipboard.writeText(text); b.textContent = 'اتنسخ ✓'; setTimeout(() => b.textContent = 'نسخ', 1500); } catch { toast('انسخه بإيدك: ' + text); }
     return;
   }
   if (b.dataset.pay) { choice[key(o)] = b.dataset.pay; render(true); return; }
