@@ -73,6 +73,55 @@
   if (state.role === 'live') {
     if (!location.pathname.startsWith('/live-orders')) { location.href = '/live-orders'; return; }
     say('بيقرا أكواد الأوردرات اللايف');
+    // ---- The live orders as the page itself holds them (found 01-11-2026): Talabat's own data for each live order —
+    // number, #code, branch, customer, address, payment, items with add-ons, discounts with who funds them, comment.
+    // Read straight from the page's memory: no click, nothing opened, nothing changed.
+    let pageStore = null;
+    const W = x => (x && x.wrappedJSObject) || x;   // Firefox: the page's own objects, as the page sees them
+    const findStore = () => {
+      if (pageStore) { try { if (W(pageStore).getState()['orders-state']) return pageStore; } catch {} pageStore = null; }
+      const els = document.querySelectorAll('#root, #root *, body > div, body > div *');
+      for (let n = 0; n < els.length && n < 4000; n++) {
+        const w = W(els[n]); let key = null;
+        try { key = Object.keys(w).find(k => k.startsWith('__reactFiber$')); } catch {}
+        if (!key) continue;
+        let f = w[key];
+        for (let i = 0; f && i < 250; i++, f = f.return) {
+          try { const st = f.memoizedProps && f.memoizedProps.store; if (st && typeof st.getState === 'function' && st.getState()['orders-state']) { pageStore = st; return st; } } catch {}
+        }
+      }
+      return null;
+    };
+    const stateOrders = () => {
+      const st = findStore(); if (!st) return null;
+      try { const page = W(window); const txt = page.JSON.stringify(W(st).getState()['orders-state'].orders || []); return JSON.parse(txt); } catch { return null; }
+    };
+    const money2 = v => Math.round((Number(v) || 0) * 100) / 100;
+    // One live order → the same shape the order window gives (bill lines, customer, items), so the server reads it as before.
+    const fromState = o => {
+      const a = o.address || {}, c = o.customer || {}, pay = o.payment || {};
+      const phone = String(c.phone || '').replace(/^\+?20(?=1\d{9}$)/, '0');
+      const address = [a.street, a.area, a.city].filter(Boolean).join('، ') + [a.building && 'مبنى: ' + a.building, a.floor && 'الدور: ' + a.floor, a.apartment && 'الشقة: ' + a.apartment].filter(Boolean).map(x => ' — ' + x).join('');
+      const bill = [{ k: 'المجموع الفرعي', text: 'المجموع الفرعي | ' + money2(pay.itemsTotalPrice) }];
+      for (const f of o.fees || []) bill.push({ k: String(f.name || ''), text: f.name + ' | ' + money2(f.value) });
+      // Item discounts split by who funds them: «ممول من قبلك» (the restaurant, deducted on Apex), «ممول من قبل Talabat».
+      const share = { vendor: 0, platform: 0 };
+      for (const i of o.items || []) for (const d of i.discounts || []) for (const sp of d.sponsorships || []) share[/VENDOR|RESTAURANT|PARTNER/i.test(sp.sponsor || '') ? 'vendor' : 'platform'] += Math.abs(Number(sp.amount) || 0);
+      if (share.vendor) bill.push({ k: 'خصم ممول من قبلك', text: 'خصم ممول من قبلك | -' + money2(share.vendor) });
+      if (share.platform) bill.push({ k: 'خصم ممول من قبل Talabat', text: 'خصم ممول من قبل Talabat | -' + money2(share.platform) });
+      for (const d of o.discounts || []) if (!/^item discounts$/i.test(String(d.name || '').trim())) bill.push({ k: String(d.name || 'خصم'), text: (d.name || 'خصم') + ' | ' + money2(d.value) });
+      bill.push({ k: 'مجموع', text: 'مجموع | ' + money2(pay.total) });
+      bill.push({ k: 'التحصيل من العميل', text: 'التحصيل من العميل | ' + money2(pay.collectAtDropoff) });
+      if (pay.paymentType) bill.push({ k: 'payment', text: String(pay.paymentType) });
+      if (pay.paid && pay.paymentMethod) bill.push({ k: 'payment', text: 'تم الدفع بواسطة ' + pay.paymentMethod });
+      if (o.comment) bill.push({ k: 'ملاحظة العميل', text: 'ملاحظة العميل | ' + String(o.comment).slice(0, 180) });
+      const items = (o.items || []).map(i => ({ qty: Number(i.amount) || 1, name: String(i.name || '').trim(), productId: i.productId ? String(i.productId) : undefined, price: money2(i.total),
+        modifiers: (i.modifiers || []).map(m => (Number(m.amount) || 1) + '× ' + String(m.name || '').trim()), modifierRead: true, modifierComplete: true,
+        options: (i.modifiers || []).map(m => ({ qty: Number(m.amount) || null, name: String(m.name || '').trim(), price: money2(m.total), productId: m.productId ? String(m.productId) : undefined })) }));
+      return { id: String(o.externalId), store: o.vendorName || undefined,
+        detail: { receivedAt: o.timestamp || undefined, acceptedAt: o.acceptedAt || undefined, subtotal: money2(pay.itemsTotalPrice), customer: { name: [c.firstName, c.lastName].filter(Boolean).join(' '), phone, address }, items, bill } };
+    };
+    const statePushed = new Map();
     // Each live card: the long order number and the short #code (both may be split into several pieces on the page).
     // The card is the smallest block around the number that holds exactly one long number and a #code.
     const readCodes = () => {
@@ -165,7 +214,23 @@
       try {
         // «Please allow notifications»: close it (English or Arabic), only inside that window.
         for (const d of document.querySelectorAll('[role="dialog"]')) if (/notification|إشعار/i.test(d.innerText || '')) [...d.querySelectorAll('button')].find(b => /^(?:got it|حسنًا|حسنا|فهمت|تمام)$/i.test(b.textContent.trim()))?.click();
-        const codes = readCodes(), key = JSON.stringify(codes);
+        const live = stateOrders();
+        const codes = live ? live.filter(o => o.externalId && o.shortCode && !/CANCEL|REJECT/i.test(o.state || '')).map(o => ({ id: String(o.externalId), code: String(o.shortCode), ...(o.vendorName ? { store: o.vendorName } : {}), ...(o.payment?.paymentType ? { pay: String(o.payment.paymentType).slice(0, 40) } : {}) })) : readCodes();
+        const key = JSON.stringify(codes);
+        // From the page's data: each live order's full details, sent again only when something in it changed.
+        if (live) {
+          const fresh = [];
+          for (const o of live) {
+            if (!o.externalId || /CANCEL|REJECT/i.test(o.state || '')) continue;
+            const p = fromState(o), sig = JSON.stringify(p);
+            if (statePushed.get(p.id) !== sig) fresh.push([p, sig]);
+          }
+          for (let i = 0; i < fresh.length; i += 20) {
+            const part = fresh.slice(i, i + 20), r = await bg({ type: 'TALABAT_PUSH', orders: part.map(x => x[0]), codes: [] }).catch(() => null);
+            if (r?.ok) for (const [p, sig] of part) statePushed.set(p.id, sig);
+          }
+          lastDiag = { ...lastDiag, source: 'page-data', readAt: new Date().toISOString(), readOk: true, readFail: null, readCode: live.length ? String(live[live.length - 1].shortCode || '') : null };
+        }
         // Every minute even with no orders: the screen tells admin it is alive (version, last detail read and why it failed).
         if (key !== lastKey || Date.now() - lastAt > 60000) {
           const r = await bg({ type: 'TALABAT_PUSH', orders: [], codes, diag: { live: codes.length, ...lastDiag } }).catch(() => null);
@@ -183,7 +248,7 @@
         }
         // Payment and bill come only from the live screen (Order History shows them a day later): open each live
         // order's details once (a click on its number, never on a button), read, and close. Nothing is changed.
-        for (const c of codes) {
+        for (const c of live ? [] : codes) {   // only when the page's data could not be read: open the order (old way)
           if (liveRead.get(c.id) > Date.now() - 10 * 60000 || newOrderDialog()) continue;
           liveRead.set(c.id, Date.now());
           const d = await readLiveDetail(c.id);

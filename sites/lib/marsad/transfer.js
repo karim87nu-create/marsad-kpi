@@ -36,7 +36,7 @@ function talabatPayment(bill, liveBadge) {
   // a cash line = cash. «التحصيل من العميل» is not used: it can read 0.00 on a cash order.
   const text = rows.map(x => String(x.text || '')).join('\n');
   const online = /\bONLINE\b|تم الدفع بواسطة|paid by|CREDIT_CARD|DEBIT_CARD|WALLET/i.test(text);
-  const cash = /\bCASH\b|cash on delivery|الدفع عند الاستلام|نقد(?:ي|ا)?\b|كاش/i.test(text.replace(/cash to collect|التحصيل من العميل[^\n]*/gi, ''));
+  const cash = /\bCASH|cash on delivery|الدفع عند الاستلام|نقد(?:ي|ا)?\b|كاش/i.test(text.replace(/cash to collect|التحصيل من العميل[^\n]*/gi, ''));
   if (online && !cash) return 'paid';
   if (cash && !online) return 'cash';
   if (cash && online) return 'mixed';
@@ -126,8 +126,21 @@ function setup(app) {
       for (const a of [...(snap.online || []), ...(snap.orders || [])]) for (const i of a.items || []) if (i?.no && i?.name) apexName.set(String(i.no).trim(), i.name);
       const learned = new Map();
       if (app.learn) for (const [n, m] of await app.learn.pairs('match-v2:item:talabat')) { const ok = new Map([...m].filter(([, c]) => c >= 2)); if (ok.size) learned.set(n, ok); }
+      // Apex items for a Talabat name: the item map first; else (live orders name add-ons in Arabic, «ممبار») the Apex item
+      // with exactly that name, or the only one whose name holds it.
+      const arKey = v => String(v || '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/[ًٌٍَُِّْ]/g, '').replace(/\s+/g, ' ').trim();
+      const suggest = (...names) => {
+        for (const n of names.filter(Boolean)) { const k = knownNos(n, learned); if (k.length) return k; }
+        for (const n of names.filter(n => /[\u0600-\u06ff]/.test(n || ''))) {
+          const want = arKey(n), exact = [...apexName].filter(([, nm]) => arKey(nm) === want).map(([no]) => no);
+          if (exact.length) return exact;
+          const part = [...apexName].filter(([, nm]) => arKey(nm).includes(want)).map(([no]) => no);
+          if (part.length === 1) return part;
+        }
+        return [];
+      };
       const itemOut = (x, withApex) => {
-        let apex = (withApex ? knownNos(x.name, learned) : []).map(no => ({ no, name: apexName.get(no) || null }));
+        let apex = (withApex ? suggest(x.name, x.nameShown) : []).map(no => ({ no, name: apexName.get(no) || null }));
         // A size/weight chosen on Talabat («Quarter Kilo») narrows the Apex choices to that size, when their names say it.
         const size = WEIGHTS.find(w => (x.options || []).some(o => w[0].test(o.name)) || (x.modifiers || []).some(m => w[0].test(m)));
         const sized = size ? apex.filter(a => a.name && size[1].test(a.name)) : [];
@@ -151,7 +164,7 @@ function setup(app) {
         const opts = (Array.isArray(x.options) ? x.options : []).filter(o => !isDisc(o));
         const sizeOpt = opts.find(o => WEIGHTS.some(w => w[0].test(o.name))) || (opts.length && x.price && opts[0].price && Math.abs(opts[0].price - x.price) < 0.01 ? opts[0] : null);
         const addons = opts.filter(o => o !== sizeOpt && Number(o.price) > 0).map(o => ({ name: o.name, qty: Number(o.qty) > 0 ? Number(o.qty) : null, price: Number(o.price),   // the count shown is for all the dishes together
-          apex: (withApex ? knownNos(o.name, learned) : []).map(no => ({ no, name: apexName.get(no) || null })) }));
+          apex: (withApex ? suggest(o.name) : []).map(no => ({ no, name: apexName.get(no) || null })) }));
         const free = opts.filter(o => o !== sizeOpt && !(Number(o.price) > 0)).map(o => o.name);
         return { qty: x.qty, name: x.name, price: x.price ?? null, modifiers: x.modifiers || [], modifiersComplete: x.modifierComplete === true || !withApex, size: size ? size[2] : null, apex,
           // The size picks the Apex item itself (ربع كيلو نيفة): it is neither an add-on nor a comment.
@@ -178,7 +191,7 @@ function setup(app) {
           // (not deducted on Apex). The writer discounts any amount Apex comes out above it.
           target: (() => { const t = bill.find(x => /^(?:مجموع|المجموع|الإجمالي|total|order total)$/i.test(String(x.k || '').trim())), v = t ? amountOf(String(t.text).split(' | ').slice(1).join(' ')) : o.total ?? null;
             return v == null ? null : Math.round((v + discounts.filter(d => d.who === 'platform').reduce((a, d) => a + (Number(d.amount) || 0), 0)) * 100) / 100; })(),
-          payment: talabatPayment(bill, p.livePay), bill, discounts, subtotal: o.subtotal ?? null, total: o.total ?? null,
+          note: (bill.find(x => x.k === 'ملاحظة العميل')?.text || '').split(' | ').slice(1).join(' | ') || null, payment: talabatPayment(bill, p.livePay), bill, discounts, subtotal: o.subtotal ?? null, total: o.total ?? null,
           items, detailRead: !!o.detail_at,
           apex: a ? { no: a.no, sn: a.sn ?? null, user: a.user || null, how: a.how || null } : null, matching: tm.states.get(o.id) || null, job: null });
       }

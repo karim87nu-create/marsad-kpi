@@ -7,6 +7,11 @@ import { businessDay, iso, validDate } from './time.js';
 import { sha256, randomToken } from './security.js';
 import { compareItems, itemKey, SEED } from './items.js';
 import { resolveOrders, customerOf, parseJson } from './order-match.js';
+import { TALABAT_PRODUCTS } from './menu-seed.js';
+// Live orders carry Talabat's product number: the dish's menu name (English, as Order History and the item map use it).
+const PRODUCT_NAME = new Map(TALABAT_PRODUCTS.map(p => [p[0], p[1]]));
+// One spelling of a branch: the live screen writes «الدهان, مدينتي», Order History «الدهان، مدينتي».
+const storeSpelling = s => s ? String(s).replace(/\s*,\s*/g, '، ').trim().slice(0, 160) : null;
 
 const NOT_ENTERED_MIN = 10, STALE_MS = 5 * 60000, WINDOW_MIN = 45;
 const cancelReady = o => o.status === 'CANCELLED' && !!o.cancelled_at && !!o.store && !!o.cancel_owner?.trim() && !!o.cancel_reason?.trim();
@@ -83,7 +88,7 @@ function setup(app) {
       // First seen on a live screen: its time counts as received until Order History gives the real one, so the order shows
       // on the transfer page at once (Karim 31-10: live orders on other PCs never appeared until History caught up).
       writes.push(db.prepare('INSERT INTO talabat_orders (id, day, code, store, first_seen, updated_at, received_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET code = excluded.code, store = COALESCE(talabat_orders.store, excluded.store), received_at = CASE WHEN talabat_orders.received_at IS NULL AND talabat_orders.placed_at IS NULL THEN excluded.received_at ELSE talabat_orders.received_at END')
-        .bind(id, businessDay(now), code, c.store ? String(c.store).slice(0, 160) : null, now, now, now));
+        .bind(id, businessDay(now), code, storeSpelling(c.store), now, now, now));
       // A payment badge seen on the live card (its exact words), kept for the transfer page.
       if (c.pay) {
         const prof = parseJson((await db.prepare("SELECT data FROM match_profiles WHERE source = 'talabat' AND ref = ?").get(id))?.data, {});
@@ -148,9 +153,9 @@ function setup(app) {
         if (bill?.length) old.bill = bill;   // the bill lines as Talabat shows them, for the transfer page
         orderWrites.push(db.prepare("INSERT INTO match_profiles (source, ref, data) SELECT 'talabat',?,? WHERE " + guard + " ON CONFLICT(source, ref) DO UPDATE SET data = excluded.data").bind(id, JSON.stringify(old), id, guardTime));
       }
-      const items = d && Array.isArray(d.items) ? JSON.stringify(d.items.slice(0, 60).map(x => ({ qty: Number(x.qty) || 1, name: String(x.name || '').slice(0, 120), price: Number(x.price) || null,
+      const items = d && Array.isArray(d.items) ? JSON.stringify(d.items.slice(0, 60).map(x => ({ qty: Number(x.qty) || 1, name: String(PRODUCT_NAME.get(String(x.productId || '')) || x.name || '').slice(0, 120), ...(x.productId ? { productId: String(x.productId).slice(0, 20), nameShown: String(x.name || '').slice(0, 120) } : {}), price: Number(x.price) || null,
         modifiers: Array.isArray(x.modifiers) ? [...new Set(x.modifiers.map(v => String(v || '').trim().slice(0, 120)).filter(Boolean))].slice(0, 20) : [], modifierRead: x.modifierRead === true, modifierComplete: x.modifierComplete === true,
-        options: Array.isArray(x.options) ? x.options.slice(0, 20).map(v => ({ qty: Number(v?.qty) > 0 ? Number(v.qty) : null, name: String(v?.name || '').slice(0, 120), price: Number(v?.price) || null })).filter(v => v.name) : [],
+        options: Array.isArray(x.options) ? x.options.slice(0, 20).map(v => ({ qty: Number(v?.qty) > 0 ? Number(v.qty) : null, name: String(v?.name || '').slice(0, 120), price: Number(v?.price) || null, ...(v?.productId ? { productId: String(v.productId).slice(0, 20) } : {}) })).filter(v => v.name) : [],
         discountLines: Array.isArray(x.discountLines) ? x.discountLines.slice(0, 6).map(v => String(v || '').trim().slice(0, 160)).filter(Boolean) : [] }))) : null;
       orderWrites.push(db.prepare(`INSERT INTO talabat_orders (id, day, vendor_id, store, status, billable, placed_at, total, received_at, accept_seconds, accepted_at, picked_up_at, delivered_at,
           cancelled_at, cancel_owner, cancel_reason, items, subtotal, delivery_type, milestones, detail_at, first_seen, updated_at)
@@ -165,7 +170,7 @@ function setup(app) {
           subtotal = COALESCE(excluded.subtotal, talabat_orders.subtotal), delivery_type = COALESCE(excluded.delivery_type, talabat_orders.delivery_type),
           detail_at = CASE WHEN excluded.detail_at IS NOT NULL THEN excluded.detail_at WHEN excluded.status IS NOT talabat_orders.status THEN NULL ELSE talabat_orders.detail_at END,
           updated_at = excluded.updated_at`)
-        .bind(id, businessDay(placed || now), o.vendorId ? String(o.vendorId).slice(0, 20) : null, o.store ? String(o.store).slice(0, 160) : null, String(o.status || '').toUpperCase().slice(0, 40) || null,
+        .bind(id, businessDay(placed || now), o.vendorId ? String(o.vendorId).slice(0, 20) : null, storeSpelling(o.store), String(o.status || '').toUpperCase().slice(0, 40) || null,
           d?.billable ? String(d.billable).slice(0, 40) : null, placed, Number(o.total) || null, ms(d?.receivedAt), Number.isFinite(d?.acceptSeconds) ? d.acceptSeconds : null, ms(d?.acceptedAt),
           ms(d?.pickedUpAt), ms(d?.deliveredAt), ms(d?.cancelledAt), d?.cancelOwner ? String(d.cancelOwner).slice(0, 60) : null, d?.cancelReason ? String(d.cancelReason).slice(0, 300) : null,
           items, Number(d?.subtotal) || null, d?.deliveryType ? String(d.deliveryType).slice(0, 60) : null, d?.milestones ? JSON.stringify(d.milestones).slice(0, 2000) : null, d ? now : null, now, now, id, guardTime));

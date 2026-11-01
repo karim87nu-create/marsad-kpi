@@ -201,3 +201,34 @@ test('Talabat: an order first seen on a live screen shows on the transfer page a
     assert.deepEqual(q.orders.map(o => [o.ref, o.code]), [['4689282172', '9301']]);
   } finally { await t.close(); }
 });
+
+test('transfer page: a live order read from the page data (real shape, 01-11-2026) gives customer, paid, discount by funder, English dish names and Arabic add-ons on Apex', async () => {
+  const t = await start({ at: cairoToUtc(2026, 10, 31, 15, 20, 0) });
+  try {
+    const admin = await t.admin();
+    await t.employee(admin, { name: 'سارة', code: 'E1', pin: '1111' });
+    const tok = (await t.call('POST', '/api/transfer/login', { body: { pin: '1111' } })).body.token;
+    const dev = { 'x-device-token': '7000865f1220458f86506b41a97cab7d' };
+    await t.call('POST', '/api/talabat/push', { headers: dev, body: { codes: [{ id: '4688138970', code: '3356', store: 'الدهان, مدينتي - ساوث بارك', pay: 'ONLINE' }] } });
+    await t.call('POST', '/api/talabat/push', { headers: dev, body: { orders: [{ id: '4688138970', store: 'الدهان, مدينتي - ساوث بارك', detail: {
+      receivedAt: '2026-10-31T13:10:52.026Z', acceptedAt: '2026-10-31T13:10:57.324Z', subtotal: 565,
+      customer: { name: 'Hend Atia', phone: '01202427365', address: 'الاسكان القومي، الشروق - المنطقة الاولي، القاهرة — مبنى: 4 — الدور: الاول — الشقة: شقة 11' },
+      items: [{ qty: 1, name: 'ساندوتش كباب', productId: '3114762279', price: 179, options: [{ qty: 1, name: 'رول', price: 0, productId: '3114764287' }] },
+        { qty: 1, name: 'نصف دجاجة مشوية علي الفحم', productId: '3114762439', price: 226, options: [{ qty: 2, name: 'ممبار', price: 50, productId: '3114765000' }] },
+        { qty: 1, name: 'ممبار', productId: '3114762263', price: 110, options: [] }],
+      bill: [{ k: 'المجموع الفرعي', text: 'المجموع الفرعي | 565' }, { k: 'رسوم الخدمة', text: 'رسوم الخدمة | 8' }, { k: 'رسوم التوصيل', text: 'رسوم التوصيل | 40' },
+        { k: 'خصم ممول من قبلك', text: 'خصم ممول من قبلك | -40.75' }, { k: 'خصم ممول من قبل Talabat', text: 'خصم ممول من قبل Talabat | -20' },
+        { k: 'مجموع', text: 'مجموع | 552.25' }, { k: 'التحصيل من العميل', text: 'التحصيل من العميل | 0' }, { k: 'payment', text: 'ONLINE' }, { k: 'payment', text: 'تم الدفع بواسطة CREDIT_CARD' },
+        { k: 'ملاحظة العميل', text: 'ملاحظة العميل | من غير بصل' }] } }] } });
+    const o = (await t.call('GET', '/api/transfer/queue?day=2026-10-31', { headers: { 'x-transfer-session': tok } })).body.orders[0];
+    assert.equal(o.code, '3356'); assert.equal(o.payment, 'paid'); assert.equal(o.branch, 'الدهان، مدينتي - ساوث بارك');
+    assert.equal(o.customer.phone, '01202427365'); assert.match(o.customer.address, /الدور: الاول/);
+    assert.deepEqual(o.discounts.map(d => [d.who, d.amount]).sort(), [['platform', 20], ['restaurant', 40.75]]);
+    assert.equal(o.target, 572.25, 'what the customer pays + Talabat\'s share');
+    assert.equal(o.note, 'من غير بصل');
+    assert.deepEqual(o.items.map(i => i.name), ['Kebab Sandwich', 'Half grilled chicken on charcoal', 'Mombar'], 'menu names from the product number');
+    assert.ok(o.items[1].apex.some(a => a.no === '0107001'), 'half chicken suggested');
+    assert.deepEqual(o.items[1].addons.map(a => [a.name, a.qty, a.apex.map(x => x.no)]), [['ممبار', 2, ['0103001']]], 'paid Arabic add-on → its Apex item');
+    assert.deepEqual(o.items[0].freeOptions, ['رول']);
+  } finally { await t.close(); }
+});
