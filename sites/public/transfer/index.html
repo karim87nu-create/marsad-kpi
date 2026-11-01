@@ -163,31 +163,33 @@ function flatLines(o) {
   }
   return out;
 }
-// Talabat (or the site) against what Apex will come out at, before sending (Karim 01-11). Apex prices are the online
-// prices read from Apex (before tax); tax 14% on items + delivery service, before the discount — as Apex computes it.
+// Talabat (or the site) against what Apex will come out at, before sending (Karim 01-11), all with tax as Talabat shows
+// it: Apex's online price + 14% (Apex taxes items and delivery before the discount).
 // The writer computes it again on Apex itself and stops on a big difference.
 function compareHtml(o, fl, p) {
   const amt = t => { const m = String(t || '').split(' | ').slice(1).join(' ').replace(/,/g, '').match(/-?\d+(?:\.\d+)?/); return m ? Number(m[0]) : null; };
   const line = k => { const b = (o.bill || []).find(x => new RegExp(k, 'i').test(x.k || '')); return b ? amt(b.text) : null; };
-  const r2 = v => Math.round(v * 100) / 100, f = v => v == null ? '—' : money(r2(v));
+  const r2 = v => Math.round(v * 100) / 100, f = v => v == null ? '—' : typeof v === 'string' ? v : money(r2(v));
   const rest = (o.discounts || []).filter(d => d.who === 'restaurant').reduce((a, d) => a + (Number(d.amount) || 0), 0);
   const plat = (o.discounts || []).filter(d => d.who === 'platform').reduce((a, d) => a + (Number(d.amount) || 0), 0);
   const tb = [['الأصناف', o.subtotal ?? line('^(?:المجموع الفرعي|subtotal)$')], ['التوصيل', line('توصيل|delivery')], ['رسوم الخدمة', line('رسوم الخدمة|service')],
     ['خصم المطعم', rest ? -rest : 0], ['خصم طلبات', plat ? -plat : 0], ['العميل يدفع', line('^(?:مجموع|total)$') ?? o.total], ['المطلوب على Apex', o.target]];
-  let sub = 0, missing = 0;
-  fl.forEach((i, n) => { const pr = apexPrices.get(p.items[n]); if (pr == null || !p.items[n]) missing++; else sub += pr * (Number(i.qty) || 1); });
-  if (o.source === 'talabat') sub += apexPrices.get('0114006') || 7.02;   // the «خدمة» line Apex's Talabat orders start with
+  // Everything with tax (as Talabat shows its prices): Apex's online price × 1.14.
+  let items = 0, missing = 0;
+  fl.forEach((i, n) => { const pr = apexPrices.get(p.items[n]); if (pr == null || !p.items[n]) missing++; else items += pr * (Number(i.qty) || 1); });
+  const fee = o.source === 'talabat' ? (apexPrices.get('0114006') || 7.02) : 0;   // the «خدمة» line Apex's Talabat orders start with
   const loc = (data.locations || []).find(l => String(l.no) === String(p.loc)), service = loc?.service ?? null;
-  const tax = service == null ? null : r2((sub + service) * 0.14), before = service == null ? null : r2(sub + service + tax);
+  const T = v => r2(v * 1.14);
+  const before = service == null ? null : r2(T(items) + T(fee) + T(service));
   const gap = before == null || o.target == null ? null : r2(before - rest - o.target);
   const limit = o.target ? Math.max(15, 0.05 * o.target) : 15;
-  const ap = [['الأصناف (قبل الضريبة)', sub], ['خدمة التوصيل', service], ['الضريبة 14%', tax], ['قبل الخصم', before], ['خصم المطعم', rest ? -rest : 0],
-    ['فرق يتخصم', gap > 0.009 && gap <= limit ? -gap : 0], ['إجمالي Apex', gap == null ? null : gap > 0.009 && gap <= limit ? o.target : before - rest]];
+  const ap = [['الأصناف', T(items)], ['التوصيل', service == null ? null : T(service)], ['رسوم الخدمة', T(fee)], ['خصم المطعم', rest ? -rest : 0],
+    ['خصم طلبات', plat ? 'في العلامة المميزة' : 0], ['فرق يتخصم', gap > 0.009 && gap <= limit ? -gap : 0], ['إجمالي Apex', gap == null ? null : gap > 0.009 && gap <= limit ? o.target : before - rest]];
   const verdict = missing ? '<span class="warn">فيه ' + missing + ' صنف لسه مااتختارش على Apex</span>' : service == null ? '<span class="warn">اختار المنطقة علشان التوصيل والضريبة يتحسبوا</span>'
     : gap > limit ? '<span class="warn">⚠️ Apex أزيد من طلبات بـ ' + money(gap) + ' — غالبًا صنف أو وزن غلط</span>' : gap < -1 ? '<span class="warn">⚠️ Apex أقل من طلبات بـ ' + money(-gap) + ' — راجع الأصناف</span>'
     : '<span style="color:var(--ok,#2c9)">✓ الإجمالي هيطلع زي طلبات' + (gap > 0.009 ? ' (بعد خصم فرق ' + money(gap) + ')' : '') + '</span>';
   const rows = Math.max(tb.length, ap.length);
-  let h = '<table style="width:100%;font-size:13px;margin-top:8px;border-collapse:collapse"><tr><th style="text-align:start">' + (o.source === 'talabat' ? 'طلبات' : 'الموقع') + '</th><th></th><th style="text-align:start">Apex (تقريبي)</th><th></th></tr>';
+  let h = '<table style="width:100%;font-size:13px;margin-top:8px;border-collapse:collapse"><tr><th style="text-align:start">' + (o.source === 'talabat' ? 'طلبات' : 'الموقع') + '</th><th></th><th style="text-align:start">Apex (تقريبي، بالضريبة)</th><th></th></tr>';
   for (let i = 0; i < rows; i++) h += '<tr><td>' + (tb[i]?.[0] || '') + '</td><td>' + (tb[i] ? f(tb[i][1]) : '') + '</td><td>' + (ap[i]?.[0] || '') + '</td><td>' + (ap[i] ? f(ap[i][1]) : '') + '</td></tr>';
   return h + '</table><div class="pay" style="margin-top:4px">' + verdict + '</div>';
 }
