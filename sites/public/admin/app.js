@@ -799,7 +799,7 @@
         : [h('p', { className: 'muted', textContent: 'أسماء الفروع هتظهر هنا أول ما مرصد الأوردرات يبعت من جهاز الكاشير.' })]));
     $('tgSettings').elements.enabled.checked = t.enabled;
     const box = (title, list) => list.length ? [h('h3', { textContent: title }), ...list.map(r => h('label', {}, h('input', { type: 'checkbox', name: 'rule', value: r.key, checked: r.on }), ' ' + r.label.replace(/^الأوردرات: /, '')))] : [];
-    const BR = ['ordersLate', 'ordersCancel', 'talabatCancel', 'sitePrep', 'talabatClosed'], orderish = k => /^(orders|talabat|site|system)/.test(k);
+    const BR = ['ordersLate', 'ordersCancel', 'talabatCancel', 'sitePrep'], orderish = k => /^(orders|talabat|site|system)/.test(k);
     $('tgRules').replaceChildren(...box('الكول سنتر', t.rules.filter(r => !orderish(r.key))), ...box('الفروع', t.rules.filter(r => BR.includes(r.key))), ...box('الأونلاين وضرب الأوردر والسيستم', t.rules.filter(r => orderish(r.key) && !BR.includes(r.key))));
     const log = (await api('/api/telegram?log=1&date=' + cairoToday())).log;
     table('tgLog', [{ title: 'الوقت', get: x => x.createdAt, show: x => clock(x.createdAt), type: 'datetime' }, { title: 'الجروب', get: x => x.group || 'الكول سنتر' }, { title: 'النوع', get: x => x.label }, { title: 'الرسالة', get: x => x.text.split('\n')[0] },

@@ -149,3 +149,31 @@ test('talabat: bare and partial codes need full evidence; past days get codes la
     assert.deepEqual([...new Set(d.orders.map(x => x.store))], ['مدينة نصر'], 'Arabic and English store names are one branch');
   } finally { await t.close(); }
 });
+
+test('talabat: «في الطريق» pressed on the branch machine before the order left on Apex alerts the call center; the reply says when it left', async () => {
+  const t0 = cairoToUtc(2026, 11, 1, 20, 0, 0), at = m => new Date(t0 + m * 60000).toISOString();
+  const t = await start({ at: t0 + 20 * 60000 });
+  try {
+    const admin = await t.admin();
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const push = body => t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body });
+    const ot = (await admin('POST', '/api/orders/token')).body.token;
+    const apex = out => t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': ot }, body: { v: 1, day: '2026-11-01', online: [
+      { no: 9001, sn: 41, kind: 'طلبات', branch: 'التجمع', at: at(2), user: 'u', amount: 200, tag: '#5501', out },
+      { no: 9002, sn: 42, kind: 'طلبات', branch: 'التجمع', at: at(2), user: 'u', amount: 200, tag: '#5502', out: at(14) }] } });
+    await apex(null);
+    await push({ codes: [{ id: '3977550100', code: '5501', store: 'الدهان، التجمع الخامس' }, { id: '3977550200', code: '5502', store: 'الدهان، التجمع الخامس' }] });
+    const order = (id, picked) => ({ id, store: 'الدهان، التجمع الخامس', status: 'PICKED_UP', placedAt: at(0), detail: { receivedAt: at(0), acceptedAt: at(0.5), pickedUpAt: at(picked), deliveryType: 'Vendor delivery' } });
+    await push({ orders: [order('3977550100', 10), order('3977550200', 13)] });
+    t.advance(31000); await push({ orders: [] });
+    const log = () => t.app.db.raw.prepare("SELECT key, text, target, reply_to FROM telegram_log WHERE kind = 'talabatEarly' ORDER BY id").all();
+    let l = log();
+    assert.equal(l.length, 1, 'only the order still not out on Apex; 5502 left a minute after');
+    assert.equal(l[0].target, 'online'); assert.match(l[0].text, /#5501/); assert.match(l[0].text, /لسه ماخرجش على Apex/);
+    await apex(at(25)); t.advance(31000); await push({ orders: [] });
+    l = log();
+    assert.equal(l.length, 2); assert.equal(l[1].reply_to, l[0].key); assert.match(l[1].text, /بعد «في الطريق» بـ 15 دقيقة/);
+    t.advance(31000); await push({ orders: [] });
+    assert.equal(log().length, 2, 'no repeats');
+  } finally { await t.close(); }
+});

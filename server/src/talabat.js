@@ -339,6 +339,27 @@ function setup(app) {
       else if ((c.ok || c.reviewedOk) && sent.has(key) && !sent.has('resolved:' + key))
         out.push({ key: 'resolved:' + key, kind: 'talabatItems', target: 'online', replyTo: key, text: '🛵 طلبات | ✅ أوردر طلبات ' + (o.code ? '#' + o.code : o.id) + ': الأصناف بقت مطابقة على Apex' + (c.reviewedOk && !c.ok ? ' (اتراجع: مش غلط)' : '') });
     }
+    // «في الطريق» pressed on the branch's Talabat machine before the order left with a rider on Apex (Karim 01-11): the
+    // customer sees it on the way while it is still in the kitchen. The call center hears it; the reply says when it left.
+    // Our own presses (the live screen presses it when Apex shows the rider) and pickup orders are not counted.
+    {
+      const snap = parseJson((await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(day))?.data, {});
+      const outOf = new Map([...(snap.lateOut || []), ...(snap.online || [])].filter(x => x.out).map(x => [String(x.no), Date.parse(x.out)]));
+      const ours = new Set(parseJson((await db.prepare("SELECT value FROM settings WHERE key = 'talabat_actions_log'").get())?.value, []).filter(x => x.action === 'onTheWay' && x.ok).map(x => x.id));
+      const early = new Set((await db.prepare("SELECT key FROM telegram_log WHERE (key LIKE 'talabat:early:%' OR key LIKE 'resolved:talabat:early:%') AND created_at >= ?").all(now - 6 * 3600000)).map(x => x.key));
+      for (const o of m.rows) {
+        const a = m.matches.get(o.id), picked = o.picked_up_at, key = 'talabat:early:' + o.id;
+        if (!Array.isArray(snap.online) || !a || !picked || ours.has(String(o.id)) || (o.code && ours.has(String(o.code))) || /pick|استلام/i.test(String(o.delivery_type || '')) || now - picked > 3 * 3600000) continue;
+        const left = outOf.get(String(a.no)), ref = o.code ? '#' + o.code : o.id;
+        const tooEarly = left ? left - picked > 3 * 60000 : now - picked > 3 * 60000;
+        if (tooEarly && !early.has(key))
+          out.push({ key, kind: 'talabatEarly', target: 'online', text: '🛵 طلبات | ⚠️ أوردر ' + ref + ' اتعمل «في الطريق» على طلبات من مكنة الفرع وهو لسه ماخرجش مع طيار على Apex' +
+            '\nالفرع: ' + (a.branch || storeName(o.store) || '') + '\n«في الطريق» على طلبات الساعة ' + clock(picked) + (left ? '\nخرج فعلاً على Apex الساعة ' + clock(left) + ' (بعدها بـ ' + Math.round((left - picked) / 60000) + ' دقيقة)' : '\nلسه ماخرجش على Apex') +
+            '\nرقمه على Apex: ' + (a.sn ?? a.no) });
+        else if (left && early.has(key) && !early.has('resolved:' + key))
+          out.push({ key: 'resolved:' + key, kind: 'talabatEarly', target: 'online', replyTo: key, text: '🛵 طلبات | ✅ أوردر ' + ref + ' خرج فعلاً على Apex الساعة ' + clock(left) + ' — بعد «في الطريق» بـ ' + Math.round((left - picked) / 60000) + ' دقيقة' });
+      }
+    }
     if (out.length) await db.batch(out.map(a => db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, sent_at, target, reply_to, branch) VALUES (?,?,?,?,?,?,?,?,?)').bind(a.key, a.kind, null, a.text, now, r[a.kind] === false && !a.replyTo ? now : null, a.target, a.replyTo || null, a.branch || null)));
   }
 

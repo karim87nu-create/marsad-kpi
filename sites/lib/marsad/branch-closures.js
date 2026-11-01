@@ -1,5 +1,5 @@
-// إغلاق الفروع على طلبات (Karim 01-11): when a branch closes (or turns busy) on Talabat, its group and the call center
-// hear it at once — with the reason and until when, as Talabat's own page says — and again when it opens, with how long it
+// إغلاق الفروع على طلبات (Karim 01-11): when a branch closes (or turns busy) on Talabat, the call center (not the branch's
+// group) hears it at once — with the reason and until when, as Talabat's own page says — and again when it opens, with how long it
 // was closed. Every closure is kept for admin's report. Read from the Talabat screen (the page's own data, nothing clicked).
 import { businessDay, isOperating, iso, validDate } from './time.js';
 import { parseJson } from './order-match.js';
@@ -38,14 +38,14 @@ function setup(app) {
           const reason = reasonOf(raw), until = untilText(untilOf(raw)), key = 'talabat:closed:' + outlet + ':' + now;
           const text = '🛵 طلبات | ⛔ فرع ' + name + ' اتقفل على طلبات الساعة ' + clock(now) + '\nالحالة: ' + stateAr(state) + (reason ? '\nالسبب: ' + reason : '\nالسبب: طلبات ماكتبتش سبب') + (until ? '\nلحد: ' + until : '');
           const alert = isOperating(now);
-          if (alert) { writes.push(log(key, 'talabatClosed', text, 'branches', branch)); writes.push(log(key + ':cc', 'talabatClosed', text, 'online', null)); }
+          if (alert) writes.push(log(key, 'talabatClosed', text, 'online', branch));   // Karim 01-11: the call center only, not the branch's group
           writes.push(db.prepare('INSERT INTO talabat_closures (day, outlet, name, branch, state, reason, until_text, raw, started_at, ended_at, alert_key) VALUES (?,?,?,?,?,?,?,?,?,NULL,?)')
             .bind(businessDay(now), outlet, String(x.name || '').slice(0, 120), branch, state, reason, until, JSON.stringify(raw).slice(0, 1500), now, alert ? key : null));
           cur[outlet] = { state, since: now, key: alert ? key : null };
         } else if (open && was && was.state !== 'OPEN') {
           // Open again: the reply under the closing message, with how long it was closed.
           const text = '🛵 طلبات | ✅ فرع ' + name + ' رجع فتح على طلبات الساعة ' + clock(now) + (was.since ? '\nكان مقفول ' + mins(now - was.since) + ' (من ' + clock(was.since) + ')' : '');
-          if (was.key) { writes.push(log('resolved:' + was.key, 'talabatClosed', text, 'branches', branch, was.key)); writes.push(log('resolved:' + was.key + ':cc', 'talabatClosed', text, 'online', null, was.key + ':cc')); }
+          if (was.key) writes.push(log('resolved:' + was.key, 'talabatClosed', text, 'online', branch, was.key));
           writes.push(db.prepare('UPDATE talabat_closures SET ended_at = ? WHERE outlet = ? AND ended_at IS NULL').bind(now, outlet));
           cur[outlet] = { state, since: now, key: null };
         } else {
