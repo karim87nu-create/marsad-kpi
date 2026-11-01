@@ -342,13 +342,18 @@ function setup(app) {
     if (!row) fail(404, 'الأوردر مش موجود');
     const payment = ['cash', 'paid'].includes(b.payment) ? b.payment : null, note = b.note ? String(b.note).slice(0, 300) : null;
     const cur = await db.prepare('SELECT * FROM transfer_jobs WHERE source = ? AND ref = ?').get(source, ref);
-    const othersClaim = cur && cur.state !== 'released' && cur.employee_id !== me.id && !(cur.state === 'claimed' && ctx.now - cur.at > CLAIM_MS);
+    // Whose order it is: the one who claimed it (10 minutes), entered it, or sent it to the writer. A failed or preview-only
+    // automatic transfer belongs to nobody (Karim 01-11: #53 failed under one name and nobody else could mark it entered).
+    const free = !cur || ['released', 'auto_failed', 'auto_preview'].includes(cur.state) || (cur.state === 'claimed' && ctx.now - cur.at > CLAIM_MS);
+    const othersClaim = !free && cur.employee_id !== me.id;
+    // Already on Apex or on its way there: nobody (the same employee included) sends or claims it again.
+    if (cur && (/^auto_(?:sending|done)$/.test(cur.state) || (cur.state === 'auto_pending' && b.action !== 'release'))) fail(409, cur.state === 'auto_done' ? 'الأوردر اتسجل على Apex بالفعل (آلي)' : 'الأوردر بيتسجل على Apex دلوقتي');
     if (b.action === 'claim') {
       if (othersClaim) fail(409, (cur.employee_name || 'حد تاني') + (cur.state === 'entered' ? ' سجله بالفعل' : ' شغال عليه دلوقتي'));
       // Atomic: only one claim wins even if two employees press at the same moment.
       const r = await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at) VALUES (?,?,?,'claimed',?,?,?,?,?)
         ON CONFLICT(source, ref) DO UPDATE SET state = 'claimed', employee_id = excluded.employee_id, employee_name = excluded.employee_name, at = excluded.at
-        WHERE transfer_jobs.state = 'released' OR transfer_jobs.employee_id IS excluded.employee_id OR (transfer_jobs.state = 'claimed' AND transfer_jobs.at < ?)`)
+        WHERE transfer_jobs.state IN ('released', 'auto_failed', 'auto_preview') OR (transfer_jobs.employee_id IS excluded.employee_id AND transfer_jobs.state = 'claimed') OR (transfer_jobs.state = 'claimed' AND transfer_jobs.at < ?)`)
         .run(source, ref, row.day, me.id, me.name, payment, note, ctx.now, ctx.now - CLAIM_MS);
       if (!r.changes) fail(409, 'حد تاني لسه ماسكه');
     } else if (b.action === 'entered') {

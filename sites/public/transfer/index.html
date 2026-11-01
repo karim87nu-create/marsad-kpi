@@ -288,7 +288,8 @@ function card(o) {
   // Already on Apex or out with the rider: one short line (the server sends no details for them).
   if (o.done) { const st = stateOf(o); return '<div class="card done" data-k="' + esc(key(o)) + '"><div class="top"><span class="src ' + o.source + '">' + (o.source === 'talabat' ? 'طلبات' : 'الموقع') + '</span><span class="code">' + (o.code ? '#' + esc(o.code) : esc(o.ref)) + '</span><span style="color:var(--muted)">' + time(o.at) + ' · ' + esc(o.branch || '') + (o.total != null ? ' · ' + money(o.total) : '') + '</span><span class="state ' + st.cls + '">' + esc(st.text) + '</span></div></div>'; }
   const st = stateOf(o), pay = choice[key(o)] || o.job?.payment || (o.payment === 'cash' || o.payment === 'paid' ? o.payment : null);
-  const mineOrFree = !o.job || o.job.mine || o.job.state === 'released';
+  const freeJob = !o.job || ['released', 'auto_failed', 'auto_preview'].includes(o.job.state);   // a failed automatic transfer is anyone's
+  const mineOrFree = freeJob || o.job.mine;
   const done = !!o.apex;
   return '<div class="card' + (done ? ' done' : '') + '" data-k="' + esc(key(o)) + '">' +
     '<div class="top"><span class="src ' + o.source + '">' + (o.source === 'talabat' ? 'طلبات' : 'الموقع') + '</span><span class="code">' + (o.code ? '#' + esc(o.code) : esc(o.ref)) + '</span>' +
@@ -307,7 +308,7 @@ function card(o) {
     (o.bill?.length ? '<details><summary style="color:var(--muted);font-size:13px">الفاتورة زي ما طلبات كاتباها</summary>' + o.bill.map(b => '<div style="font-size:13px">' + esc(b.text) + '</div>').join('') + '</details>' : '') +
     itemsHtml(o) + autoHtml(o) +
     (done ? '' : '<div class="actions">' +
-      (!o.job || o.job.state === 'released' ? '<button data-act="claim">أنا هسجله</button>' : '') +
+      (freeJob ? '<button data-act="claim">أنا هسجله</button>' : '') +
       (mineOrFree ? '<button data-act="entered">اتسجل على Apex</button>' : '') +
       (o.job?.mine && o.job.state !== 'released' ? '<button class="ghost" data-act="release">سيبه</button>' : '') +
       '</div>') +

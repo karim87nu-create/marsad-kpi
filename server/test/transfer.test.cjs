@@ -284,3 +284,31 @@ test('a failed or stuck live automatic transfer is told to the call center at on
     assert.equal(log().length, 2, 'once');
   } finally { await t.close(); }
 });
+
+test('whose order: a failed automatic transfer is free for anyone; one on Apex or on its way cannot be taken again', async () => {
+  const t = await start({ at: Date.now() });
+  try {
+    const admin = await t.admin();
+    await t.employee(admin, { name: 'سارة', code: 'E1', pin: '1111' }); await t.employee(admin, { name: 'منى', code: 'E2', pin: '2222' });
+    const tok = async pin => (await t.call('POST', '/api/transfer/login', { body: { pin } })).body.token;
+    const sara = await tok('1111'), mona = await tok('2222');
+    const as = s => (method, path, body) => t.call(method, path, { body, headers: { 'x-transfer-session': s } });
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: [{ id: '3977800001', store: 'الدهان، التجمع الخامس', status: 'ACCEPTED', placedAt: new Date(t.clock.now).toISOString(), total: 300 }] } });
+    await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'live', confirm: 'LIVE' });
+    const job = { source: 'talabat', ref: '3977800001', action: 'auto', payment: 'cash', branchNo: 1, locationNo: 218, items: [{ itemNo: '0108004', qty: 2 }], expectedTotal: 300, code: '01', label: 'x' };
+    assert.equal((await as(sara)('POST', '/api/transfer/job', job)).status, 200);
+    assert.equal((await as(mona)('POST', '/api/transfer/job', { source: 'talabat', ref: '3977800001', action: 'claim' })).status, 409, 'on its way to Apex');
+    assert.equal((await as(sara)('POST', '/api/transfer/job', job)).status, 409, 'not sent twice');
+    const wtoken = (await admin('POST', '/api/apex-writer', { action: 'token' })).body.token;
+    const w = (path, body) => t.call('POST', path, { body: body || {}, headers: { 'x-apex-writer': wtoken } });
+    await w('/api/apex-writer/next');
+    assert.equal((await as(sara)('POST', '/api/transfer/job', { source: 'talabat', ref: '3977800001', action: 'release' })).status, 409, 'cannot be dropped while the writer has it');
+    await w('/api/apex-writer/result', { source: 'talabat', ref: '3977800001', ok: false, db: 'live', error: 'x' });
+    // Failed under Sara's name: Mona can take it and mark it entered by hand.
+    assert.equal((await as(mona)('POST', '/api/transfer/job', { source: 'talabat', ref: '3977800001', action: 'claim' })).status, 200);
+    assert.equal((await as(sara)('POST', '/api/transfer/job', { source: 'talabat', ref: '3977800001', action: 'claim' })).status, 409, 'now with Mona');
+    assert.equal((await as(mona)('POST', '/api/transfer/job', { source: 'talabat', ref: '3977800001', action: 'entered', payment: 'cash' })).status, 200);
+    assert.equal((await as(sara)('POST', '/api/transfer/job', { source: 'talabat', ref: '3977800001', action: 'entered', payment: 'cash' })).status, 409, 'Mona entered it');
+  } finally { await t.close(); }
+});
