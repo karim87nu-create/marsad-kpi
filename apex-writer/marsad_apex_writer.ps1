@@ -125,7 +125,9 @@ DECLARE @Gap money = 0;
 IF @Target > 0 BEGIN
   IF @Total > @Target + 0.009 BEGIN
     SET @Gap = @Total - @Target;
-    IF @Gap > CASE WHEN @Target * 0.05 > 15 THEN @Target * 0.05 ELSE 15 END AND @Exec = 1 THROW 51016, 'Apex total is far above the order total (check the items)', 1;
+    -- Staff take Apex's delivery charge off in the discount when Talabat delivered for free (01-11: every manual Talabat
+    -- order today has the area's service and a discount that brings it to Talabat's total), so that part is allowed too.
+    IF @Gap > ROUND(@Service * (1 + ISNULL(@TaxRatio, 0) / 100.0), 2) + CASE WHEN @Target * 0.05 > 15 THEN @Target * 0.05 ELSE 15 END AND @Exec = 1 THROW 51016, 'Apex total is far above the order total (check the items)', 1;
     SET @RestDiscount = @RestDiscount + @Gap; SET @Total = @Target;
   END
   ELSE IF @Total < @Target - 1 AND @Exec = 1 THROW 51017, 'Apex total is below the order total (check the items)', 1;
@@ -366,6 +368,17 @@ function Self-Test {
       $out.saved = $rows; $out.ok = $true
       throw 'INSPECT_DONE'
     }
+    if ($job.mode -eq 'inspect-tal') {
+      # Read-only, production: how staff enter Talabat orders today (sub, service, tax, discount, total, lines) — to match the writer to it.
+      $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[0]);Database=Resturant;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec)))
+      try { $c.Open() } catch { $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[1]);Database=Resturant;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec))); $c.Open() }
+      $out.mode = 'inspect-tal'; $rows = @()
+      foreach($q in @("SELECT TOP 60 'T' k, m.OrderNo, m.ShiftSerial, m.BranchNo, RTRIM(m.OnlineType) ot, RTRIM(m.PayWay) pw, m.SubTotal, m.Service, m.Tax, m.Discount, (m.SubTotal + m.Service + m.Tax - m.Discount) AS tot, m.o_LocationNo, LEFT(RTRIM(ISNULL(m.o_Sign,'')),60) sign, m.UserNo, m.TimeIn, (SELECT COUNT(*) FROM Orders_D_Daily d WITH (NOLOCK) WHERE d.OrderNo = m.OrderNo) lines, (SELECT SUM(d.ItemDiscount) FROM Orders_D_Daily d WITH (NOLOCK) WHERE d.OrderNo = m.OrderNo) idisc FROM Orders_M_Daily m WITH (NOLOCK) WHERE m.OnlineType LIKE 'TALABAT%' ORDER BY m.OrderNo DESC")){
+        try { $cmd = $c.CreateCommand(); $cmd.CommandTimeout = 30; $cmd.CommandText = $q; $rd = $cmd.ExecuteReader(); while ($rd.Read()) { $h = [ordered]@{}; for ($i = 0; $i -lt $rd.FieldCount; $i++) { $h[$rd.GetName($i)] = "$($rd.GetValue($i))".Trim() }; $rows += $h }; $rd.Close() } catch { $rows += @{ q = $q.Substring(0, 40); error = $_.Exception.Message } }
+      }
+      $out.saved = $rows; $out.ok = $true
+      throw 'INSPECT_DONE'
+    }
     if ($job.mode -eq 'inspect-print') {
       # Read-only, test copy: the print flags Apex's own client left on the orders it created there (no branch printer runs on the test copy).
       $c = New-Object System.Data.SqlClient.SqlConnection("Server=$($Servers[0]);Database=Resturant_Test;Application Name=MarsadApexWriter-inspect;Connect Timeout=10", (New-Object System.Data.SqlClient.SqlCredential('marsad_reader', $readerSec)))
@@ -463,7 +476,7 @@ for (;;) {
         $res.preview = $true; $res.total = [double]$r.Total; $res.branchOrderNo = $r.BranchOrderNo
         $res.detail = "gap=$($r.Gap) discount=$($r.RestDiscountAll) sub=$($r.SubTotal) tax=$($r.Tax) ratio=$($r.TaxRatio) service=$($r.Service) template=$($r.Template) posSerial=$($r.PosSerial) typeSerial=$($r.TypeSerial) cust=$($r.CustNo) | " + (($job.items | ForEach-Object { "$($_.itemNo)x$($_.qty): $($_.candidates -join ',')" }) -join ' ; ')
         $want = $(if ($job.targetTotal) { $job.targetTotal } else { $job.expectedTotal })
-        if ([double]$r.Gap -gt [math]::Max(15, 0.05 * [double]$want)) { $res.ok = $false; $res.error = "فرق كبير: Apex أزيد من الأوردر بـ $([math]::Round([double]$r.Gap,2)) — راجع الأصناف" }
+        if ([double]$r.Gap -gt [double]$r.Service * (1 + [double]$r.TaxRatio / 100) + [math]::Max(15, 0.05 * [double]$want)) { $res.ok = $false; $res.error = "فرق كبير: Apex أزيد من الأوردر بـ $([math]::Round([double]$r.Gap,2)) — راجع الأصناف" }
         elseif ($want -and [math]::Abs([double]$r.Total - [double]$want) -gt [math]::Max(1, 0.01 * [double]$want)) { $res.ok = $false; $res.error = "القيمة $([math]::Round([double]$r.Total,2)) مش زي الأوردر $want" }
       } else {
         $res.orderNo = $r.OrderNo; $res.shiftSerial = $r.ShiftSerial; $res.branchOrderNo = $r.BranchOrderNo; $res.total = [double]$r.Total

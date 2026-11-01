@@ -194,7 +194,8 @@ function compareHtml(o, fl, p) {
   const T = v => r2(v * 1.14);
   const before = service == null ? null : r2(T(items) + T(fee) + T(service));
   const gap = before == null || o.target == null ? null : r2(before - rest - o.target);
-  const limit = o.target ? Math.max(15, 0.05 * o.target) : 15;
+  // Apex's delivery charge is taken off in the discount when Talabat delivered for free (as staff do), plus a small margin.
+  const limit = (service == null ? 0 : T(service)) + (o.target ? Math.max(15, 0.05 * o.target) : 15);
   const ap = [['الأصناف', T(items)], ['التوصيل', service == null ? null : T(service)], ['رسوم الخدمة', T(fee)], ['خصم المطعم', rest ? -rest : 0],
     ['خصم طلبات', plat ? 'في العلامة المميزة' : 0], ['فرق سعر يتخصم', gap > 0.009 && gap <= limit ? -gap : 0], ['إجمالي Apex', gap == null ? null : gap > 0.009 && gap <= limit ? o.target : before - rest]];
   const verdict = missing ? '<span class="warn">فاضل ' + missing + ' صنف لسه ماختارتوش</span>' : service == null ? '<span class="warn">اختار المنطقة عشان التوصيل يتحسب</span>'
