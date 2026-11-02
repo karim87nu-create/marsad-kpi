@@ -12,6 +12,7 @@ $VeryLateMinutes = 45
 $DiscPctPlatform = 35
 $DiscPctHotline  = 20
 $DupWindowMin    = 3
+$SplitWindowMin  = 20       # minutes between two orders of one customer that count as one split order
 $DayStartHour    = 9
 $ServerUrl       = 'https://marsad-v2.karim87nu.chatgpt.site'
 # The order serial the staff see on the screen/receipt (an Orders_M_Daily column name). Empty = not sent yet.
@@ -543,6 +544,7 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
     $o = [pscustomobject]@{
       No = [int64](N $r.OrderNo); Branch = [int](N $r.BranchNo); User = [int](N $r.UserNo); Trans = S $r.TransType; Pay = S $r.PayWay
       Online = $online; Kind = KindOf $online; Entry = $entry; Out = $outT; Waiter = $waiter; Sub = N $r.SubTotal; Disc = N $r.Discount; Amt = AmtOf $r
+      Phone = ((S $r.o_Phone) -replace '\D', '')
       Sn = $(if ($selSn) { SnOf $r.SnX } else { $null })
       WaitMin = $null; Open = $false; Sched = $null; Over = $null
       Loc = $(if ($script:Locations) { $script:Locations[[int](N $r.o_LocationNo)] } else { $null })
@@ -666,6 +668,23 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
         [void]$issues.Add([ordered]@{ type = 'تكرار'; no = $c.No; sn = $c.Sn; branch = BName $c.Branch; kind = $c.Kind; user = UName $c.User; at = IsoT $c.Entry; detail = "نفس مبلغ أوردر $($a.Disp) ($([math]::Round($c.Amt,0)) ج) بعد $gap دقيقة" })
         Raise "dup:$($c.No)" 'ordersEntry' ("🖥️ Apex | 🔁 أوردر ممكن يكون متضرب مرتين`nالفرع: $(BName $c.Branch)`nالأوردرين: $($a.Disp) و $($c.Disp) ($(KindAr $c.Kind)) بنفس المبلغ $([math]::Round($c.Amt,0)) ج`nالفرق بينهم: $gap دقيقة`nاللي ضربهم: $(UName $a.User) / $(UName $c.User)$(Extra $c)$($bstat[$c.Branch])") $script:firstCycle (BName $c.Branch) $c.Sn
       }
+    }
+  }
+  # One customer split into several orders on one branch (Karim 02-11: «ياسمين / وفرها» — 9 orders in 10 minutes, one per
+  # Waffarha voucher plus one for the delivery; the branch got one delivery, so its order count no longer matched ours).
+  # Told at the second order, while it can still be put together before the branch gets it.
+  $byPhone = @($list | Where-Object { $_.Entry -and $_.Phone.Length -ge 8 } | Group-Object { "$($_.Branch)|$($_.Phone)" } | Where-Object { $_.Count -gt 1 })
+  foreach($g in $byPhone){
+    $sorted = @($g.Group | Sort-Object Entry); $run = @($sorted[0])
+    for($i=1; $i -le $sorted.Count; $i++){
+      $c = $(if ($i -lt $sorted.Count) { $sorted[$i] } else { $null })
+      if ($c -and (Mins $run[-1].Entry $c.Entry) -le $SplitWindowMin) { $run += $c; continue }
+      if ($run.Count -gt 1) {
+        $f = $run[0]; $span = Mins $f.Entry $run[-1].Entry
+        [void]$issues.Add([ordered]@{ type = 'تقسيم'; no = $run[-1].No; sn = $run[-1].Sn; branch = BName $f.Branch; kind = $f.Kind; user = UName $f.User; at = IsoT $run[-1].Entry; detail = "نفس العميل $($run.Count) أوردرات في $span دقيقة" })
+        Raise "split:$($f.No)" 'ordersEntry' ("🖥️ Apex | ✂️ نفس العميل اتعمله $($run.Count) أوردرات في $span دقيقة`nالفرع: $(BName $f.Branch)`nالأوردرات: $((@($run | ForEach-Object { $_.Disp })) -join '، ')`nالموظف: $(UName $f.User)`nلو ده أوردر واحد (زي قسايم وفّرها) اتجمع في أوردر واحد — كل أوردر زيادة بيخلّي عدد أوردرات الفرع مختلف عن الكول سنتر")
+      }
+      if ($c) { $run = @($c) }
     }
   }
   foreach($c in $cancels){
