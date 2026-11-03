@@ -354,16 +354,16 @@ function card(o) {
       '<span class="when">' + time(o.at) + (o.scheduled ? ' <span class="warn">بميعاد</span>' : '') + '</span><span class="state ' + st.cls + '">' + esc(st.text) + '</span></div>' +
     // The customer screen on Apex, field by field.
     '<div class="form">' +
-      field('الاسم', '<b>' + esc(label) + '</b>' + (/[A-Za-z]{2,}/.test(cu.name || '') ? '<input data-arabic="name" placeholder="اكتب اسم العميل بالعربي" value="' + esc(p.arabic?.name || '') + '">' : ''), label) +
+      field('الاسم', '<b>' + esc(label) + '</b>' + (/[A-Za-z]{2,}/.test(cu.name || '') ? '<input data-arabic="name" placeholder="تعريب الاسم (اختياري)" value="' + esc(p.arabic?.name || '') + '">' : ''), label) +
       field('التليفون', cu.phone ? esc(cu.phone) : '', cu.phone) +
       (auto ? field('الفرع', branchSel, '') + field('المنطقة', areaSel, '', areaNote) : field('الفرع', esc(o.branch || ''), '')) +
-      field('العنوان', esc(ad.street || cu.address || ''), ad.street || cu.address, /[A-Za-z]{2,}/.test(cu.address || '') ? '<input data-arabic="address" placeholder="اكتب العنوان بالعربي" value="' + esc(p.arabic?.address || '') + '">' : '') +
+      field('العنوان', esc(ad.street || cu.address || ''), ad.street || cu.address, /[A-Za-z]{2,}/.test(cu.address || '') ? '<input data-arabic="address" placeholder="تعريب العنوان (اختياري)" value="' + esc(p.arabic?.address || '') + '">' : '') +
       (ad.floor || ad.flat ? field('الدور', esc(ad.floor), ad.floor) + field('الشقة', esc(ad.flat), ad.flat) : '') +
       (o.note ? field('ملاحظة', esc(o.note), o.note, '') : '') +
       '<div class="f"><span class="fl">الدفع</span><span class="fv seg"><button class="' + (pay === 'cash' ? 'on' : 'ghost') + '" data-pay="cash">كاش</button><button class="' + (pay === 'paid' ? 'on' : 'ghost') + '" data-pay="paid">مدفوع</button> ' + payText(o) + '</span><span></span></div>' +
     '</div>' +
     ticketHtml(o, p, fl, c, auto) +
-    (auto && /[A-Za-z]{2,}/.test(deliveryComment(o)) ? '<label>تعريب الملاحظات والإضافات المجانية<textarea data-arabic="note">' + esc(p.arabic?.note || deliveryComment(o)) + '</textarea></label>' : '') +
+    (auto && /[A-Za-z]{2,}/.test(deliveryComment(o)) ? '<label>تعريب الملاحظات والإضافات المجانية (اختياري)<textarea data-arabic="note">' + esc(p.arabic?.note || deliveryComment(o)) + '</textarea></label>' : '') +
     '<div class="actions">' +
       (auto && mineOrFree ? '<button class="primary" data-act="auto">' + actLabel + '</button>' : '') +
       (freeJob ? '<button class="ghost" data-act="claim">أنا هسجله بإيدي</button>' : '') +

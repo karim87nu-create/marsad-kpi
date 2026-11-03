@@ -453,7 +453,6 @@ function setup(app) {
       const translatedName = arabic.get(b.customer?.name) || b.customer?.name;
       const translatedAddress = arabic.get(b.customer?.address) || b.customer?.address;
       const translatedNote = arabic.get(b.note) || b.note || '';
-      if ([translatedName, translatedAddress, translatedNote, sign, ...clean.map(i => i.note)].some(v => /[A-Za-z]{2,}/.test(String(v || '')))) fail(400, 'فيه نص لسه بالإنجليزي — عرّب الاسم والعنوان والملاحظات قبل الإرسال');
       if (translatedNote.length > 200) fail(400, 'الملاحظات بعد الترجمة أطول من مساحة Apex — اختصرها');
       const address = deliveryAddress(translatedAddress, area?.name || '');
       const deliveryFields = { address: [address.street, address.floor ? 'الدور: ' + address.floor : '', address.flat ? 'الشقة: ' + address.flat : ''].filter(Boolean).join(' — '), floor: address.floor, flat: address.flat };
