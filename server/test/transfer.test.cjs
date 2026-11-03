@@ -108,6 +108,7 @@ test('automatic transfer: off by default, cash only, frozen order handed to the 
     const q = (await as('GET', '/api/transfer/queue?day=2026-10-22')).body;
     assert.equal(q.autoTransfer, 'shadow', 'until an admin chooses, it only previews'); assert.equal(q.orders[0].apexBranch, 1);
     assert.equal((await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'off' })).status, 200);
+    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: [{ id: '3977600001', store, status: 'ACCEPTED', placedAt: at(0), total: 300, detail: { items: [], bill: [{ k: 'خصم طلبات', text: 'خصم طلبات | -22.00' }] } }] } });
     const job = { source: 'talabat', ref: '3977600001', action: 'auto', payment: 'cash', branchNo: 1, locationNo: 370, items: [{ itemNo: '0108004', qty: 2 }], expectedTotal: 300, code: '2701', label: 'اطلب/كاش #2701' };
     assert.equal((await as('POST', '/api/transfer/job', job)).status, 409, 'off until an admin turns it on');
     assert.equal((await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'live' })).status, 400, 'live needs explicit confirmation');
@@ -128,6 +129,9 @@ test('automatic transfer: off by default, cash only, frozen order handed to the 
     const okey = (await admin('POST', '/api/orders/token')).body.token;
     if (okey) assert.equal((await t.call('POST', '/api/apex-writer/next', { body: {}, headers: { 'x-apex-writer': okey } })).status, 200, 'the monitor key opens the writer too');
     let n = (await w('/api/apex-writer/next')).body;
+    assert.equal(n.job.sign, 'خصم طلبات 22.00', 'known platform discount is written even when the browser sends no sign');
+    assert.equal(n.job.platformDiscount, 22);
+    assert.equal(n.job.restaurantDiscount, 0, 'cash does not deduct platform discount');
     assert.equal(n.mode, 'test'); assert.equal(n.job.ref, '3977600001'); assert.equal(n.job.db, 'test'); assert.deepEqual(n.job.items, [{ itemNo: '0108004', qty: 2, note: '' }]);
     n = (await w('/api/apex-writer/next')).body;
     assert.equal(n.job.resume, true, 'the one in flight comes back until answered, never a second one');
@@ -138,11 +142,15 @@ test('automatic transfer: off by default, cash only, frozen order handed to the 
     assert.equal(job2.state, 'auto_done'); assert.equal(job2.result.orderNo, 701);
     assert.equal((await admin('GET', '/api/apex-writer')).body.jobs[0].state, 'auto_done');
     // Shadow mode: the writer only previews; the order stays for manual entry and the preview is kept.
-    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: [{ id: '3977600002', store, status: 'ACCEPTED', placedAt: at(1), total: 120 }] } });
+    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: [{ id: '3977600002', store, status: 'ACCEPTED', placedAt: at(1), total: 120, detail: { bill: [{ k: 'خصم طلبات', text: 'خصم طلبات | -22.00' }, { k: 'خصم ممول من قبلك', text: 'خصم ممول من قبلك | -10.00' }] } }] } });
     assert.equal((await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'shadow' })).status, 200);
-    assert.equal((await as('POST', '/api/transfer/job', { ...job, ref: '3977600002' })).status, 200);
+    assert.equal((await as('POST', '/api/transfer/job', { ...job, ref: '3977600002', payment: 'paid', sign: '', restaurantDiscount: 0 })).status, 200);
     n = (await w('/api/apex-writer/next')).body; assert.equal(n.mode, 'shadow'); assert.equal(n.job.db, 'shadow');
     assert.equal((await w('/api/apex-writer/result', { source: 'talabat', ref: '3977600002', ok: true, preview: true, db: 'shadow', total: 120.5, detail: 'sub=105.7' })).status, 200);
+    assert.equal(n.job.sign, 'خصم طلبات 22.00');
+    assert.equal(n.job.restaurantDiscount, 32, 'paid deducts restaurant and platform shares');
+    const savedDiscount = JSON.parse((await t.app.db.prepare('SELECT payload FROM transfer_jobs WHERE ref = ?').get('3977600002')).payload);
+    assert.equal(savedDiscount.sign, 'خصم طلبات 22.00', 'a different returned price never erases the recorded platform discount');
     const pj = (await as('GET', '/api/transfer/queue?day=2026-10-22')).body.orders.find(o => o.ref === '3977600002').job;
     assert.equal(pj.state, 'auto_preview'); assert.equal(pj.result.preview, true); assert.equal(pj.result.detail, 'sub=105.7');
   } finally { await t.close(); }

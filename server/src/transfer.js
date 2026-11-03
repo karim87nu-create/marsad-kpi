@@ -437,20 +437,29 @@ function setup(app) {
       }
       const area = areas.find(l => l.branch === branchNo) || areas.find(l => l.branch == null) || areas[0];
       const areaService = Number.isFinite(Number(area?.service)) && area?.service !== null ? Number(area.service) : null;
-      const restaurantDiscount = Math.max(0, Number(b.restaurantDiscount) || 0), expectedTotal = Number(b.expectedTotal) || null, targetTotal = Number(b.targetTotal) > 0 ? Math.round(Number(b.targetTotal) * 100) / 100 : null;
+      // The source's platform discount is a separate fact from any Apex price adjustment.
+      // A stale browser or an empty sign must never erase a known Talabat discount.
+      const sourceOrder = source === 'talabat' ? (await baseFor(row.day, ctx.now)).list.find(o => o.source === source && String(o.ref) === ref) : null;
+      const sourceDiscounts = sourceOrder?.discounts || [];
+      if (sourceDiscounts.some(d => !d.who || d.unclear)) fail(400, 'تمويل الخصم مش واضح — راجع بيانات طلبات');
+      const platformDiscount = Math.round(sourceDiscounts.filter(d => d.who === 'platform').reduce((sum, d) => sum + (Number(d.amount) || 0), 0) * 100) / 100;
+      const sourceRestaurantDiscount = sourceDiscounts.filter(d => d.who === 'restaurant').reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
+      const sign = platformDiscount > 0 ? 'خصم طلبات ' + platformDiscount.toFixed(2) : String(b.sign || '').slice(0, 120);
+      const restaurantDiscount = sourceDiscounts.length ? Math.round((sourceRestaurantDiscount + (payment === 'paid' ? platformDiscount : 0)) * 100) / 100 : Math.max(0, Number(b.restaurantDiscount) || 0);
+      const expectedTotal = Number(b.expectedTotal) || null, targetTotal = Number(b.targetTotal) > 0 ? Math.round(Number(b.targetTotal) * 100) / 100 : null;
       if (String(b.note || '').length > 200) fail(400, 'الملاحظات أطول من مساحة Apex (٢٠٠ حرف) — اختصرها مع الاحتفاظ بالمقصود');
       const texts = [b.customer?.name, b.customer?.address, b.note].filter(Boolean);
       const arabic = app.toArabic ? await app.toArabic(texts, { wait: true }) : new Map();
       const translatedName = arabic.get(b.customer?.name) || b.customer?.name;
       const translatedAddress = arabic.get(b.customer?.address) || b.customer?.address;
       const translatedNote = arabic.get(b.note) || b.note || '';
-      if ([translatedName, translatedAddress, translatedNote, b.sign, ...clean.map(i => i.note)].some(v => /[A-Za-z]{2,}/.test(String(v || '')))) fail(400, 'فيه نص لسه بالإنجليزي — عرّب الاسم والعنوان والملاحظات قبل الإرسال');
+      if ([translatedName, translatedAddress, translatedNote, sign, ...clean.map(i => i.note)].some(v => /[A-Za-z]{2,}/.test(String(v || '')))) fail(400, 'فيه نص لسه بالإنجليزي — عرّب الاسم والعنوان والملاحظات قبل الإرسال');
       if (translatedNote.length > 200) fail(400, 'الملاحظات بعد الترجمة أطول من مساحة Apex — اختصرها');
       const address = deliveryAddress(translatedAddress, area?.name || '');
       const deliveryFields = { address: [address.street, address.floor ? 'الدور: ' + address.floor : '', address.flat ? 'الشقة: ' + address.flat : ''].filter(Boolean).join(' — '), floor: address.floor, flat: address.flat };
       const payload = { v: 1, source, ref, code: String(b.code || '').replace(/[^\d]/g, '').slice(0, 10) || null, db: mode, branchNo, locationNo, payment,
         label: deliveryLabel(translatedName, source, payment, b.code), customer: { name: String(translatedName || '').slice(0, 80), phone: deliveryPhone(b.customer?.phone), address: String(b.customer?.address || '').slice(0, 360), ...deliveryFields },
-        sign: String(b.sign || '').slice(0, 120), note: translatedNote, items: clean, restaurantDiscount, expectedTotal, targetTotal, areaService, by: me.name, at: ctx.now };
+        sign, platformDiscount, note: translatedNote, items: clean, restaurantDiscount, expectedTotal, targetTotal, areaService, by: me.name, at: ctx.now };
       await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at, payload, result) VALUES (?,?,?,'auto_pending',?,?,?,?,?,?,NULL)
         ON CONFLICT(source, ref) DO UPDATE SET state = 'auto_pending', employee_id = excluded.employee_id, employee_name = excluded.employee_name, payment = excluded.payment, note = excluded.note, at = excluded.at, payload = excluded.payload, result = NULL`)
         .run(source, ref, row.day, me.id, me.name, payment, note, ctx.now, JSON.stringify(payload));
