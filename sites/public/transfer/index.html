@@ -118,7 +118,8 @@ main{max-width:1100px;margin:0 auto;padding:16px}
   </main>
 </div>
 <div id="toast"></div>
-<script>
+<script type="module">
+import { deliveryLabel, deliveryAddress, deliveryComment } from "./delivery-fields.js";
 'use strict';
 const API = '';
 let token = null, data = null, filter = 'todo', source = '', choice = {}, picks = {}, branchPick = '';
@@ -165,15 +166,7 @@ document.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { filter = 
 $('branchBar').addEventListener('click', e => { const b = e.target.closest('[data-b]'); if (!b) return; branchPick = b.dataset.b; try { localStorage.setItem('marsadTransferBranch', branchPick); } catch {} render(true); });
 document.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { source = b.dataset.s; document.querySelectorAll('[data-s]').forEach(x => x.className = x === b ? 'on' : 'ghost'); render(true); });
 
-// What the employee writes next to the customer name on Apex.
-// Apex keeps only the first 20 characters of the customer's name (checked 01-11: every Talabat order today was cut at 20,
-// so «…#9981» became «…#9»). The #code goes first, then the payment, then the name, so the code is never lost.
-function labelOf(o, pay) {
-  const tag = o.code ? '#' + o.code + ' ' : '';
-  if (o.source === 'talabat') return tag + (pay === 'paid' ? 'اطلب/مدفوع' : pay === 'cash' ? 'اطلب/كاش' : 'اطلب/؟؟');
-  return tag + (pay === 'paid' ? 'مدفوع' : pay === 'cash' ? 'كاش' : '؟؟') + ' موقع';
-}
-const fullLabel = (o, pay) => labelOf(o, pay) + (o.customer?.name ? ' ' + o.customer.name : '');
+const fullLabel = (o, pay) => deliveryLabel(o.customer?.name, o.source, pay, o.code);
 const key = o => o.source + ':' + o.ref;
 // What went wrong, in the words staff use (the writer reports Apex's technical message).
 function plain(e) {
@@ -243,11 +236,7 @@ const r2 = v => Math.round(v * 100) / 100, T = v => r2(v * 1.14);   // Apex: onl
 const payOf = o => choice[key(o)] || o.job?.payment || (o.payment === 'cash' || o.payment === 'paid' ? o.payment : null);
 const discountSum = (o, who) => (o.discounts || []).filter(d => d.who === who).reduce((a, d) => a + (Number(d.amount) || 0), 0);
 // Floor and flat as Talabat writes them in the address («— الدور: 4 — الشقة: 403»); the address without them.
-function addressParts(a) {
-  const t = String(a || ''), pick = re => { const m = t.match(re); return m ? m[1].trim() : ''; };
-  return { floor: pick(/(?:الدور|الطابق)\s*[:：]\s*([^—]+)/), flat: pick(/الشقة\s*[:：]\s*([^—]+)/),
-    street: t.replace(/\s*—\s*(?:الدور|الطابق|الشقة)\s*[:：]\s*[^—]*/g, '').trim() };
-}
+const addressParts = deliveryAddress;
 const copyBtn = text => text ? '<button class="cp" data-copytext="' + esc(text) + '" aria-label="نسخ">نسخ</button>' : '';
 const field = (label, value, copy, extra) => '<div class="f"><span class="fl">' + label + '</span><span class="fv">' + (value || '<span class="warn">مش ظاهر</span>') + (extra || '') + '</span>' + (copy ? copyBtn(copy) : '<span></span>') + '</div>';
 
@@ -335,7 +324,7 @@ function card(o) {
   const p = picks[k] || (picks[k] = { branch: o.apexBranch || '', items: fl.map(i => i.apex?.length === 1 ? i.apex[0].no : '') });
   const freeJob = !o.job || ['released', 'auto_failed', 'auto_preview'].includes(o.job.state), mineOrFree = freeJob || o.job.mine;
   const c = ticketCalc(o, fl, p);
-  const ad = addressParts(o.customer?.address), cu = o.customer || {};
+  const ad = addressParts(o.customer?.address, (data.locations || []).find(l => String(l.no) === String(p.loc))?.name || ''), cu = o.customer || {};
   // Branch and area: the area decides the branch (Apex's own rule); the list shows the chosen branch's areas.
   let branchSel = '', areaSel = '', areaNote = '';
   if (auto) {
@@ -450,7 +439,7 @@ $('list').addEventListener('click', async e => {
       await api('POST', '/api/transfer/job', { source: o.source, ref: o.ref, action: 'auto', payment: pay, branchNo: Number(p.branch), locationNo: Number(p.loc), code: o.code,
         items: flatLines(o).map((i, n) => ({ itemNo: p.items[n], qty: i.qty, note: '' })),
         // Free choices and the customer's note go in the order comment on Apex (تعليقات الطلب), as the staff do.
-        note: [...flatLines(o).filter(i => i.kind === 'item' && i.note).map(i => i.name + ': ' + i.note), ...(o.note ? ['ملاحظة العميل: ' + o.note] : [])].join(' | ').slice(0, 300),
+        note: deliveryComment(o),
         // Paid (Karim 01-11): the whole discount comes off on Apex, so the Ledge equals what the customer paid.
         // Cash: the restaurant's comes off. Either way the special mark shows Talabat's discount only.
         label: fullLabel(o, pay), customer: o.customer || {},
@@ -490,17 +479,23 @@ $('list').addEventListener('change', e => {
 });
 $('list').addEventListener('focusout', () => setTimeout(() => { if (render.pending && !$('list').contains(document.activeElement)) render(); }, 0));
 $('list').addEventListener('toggle', e => { const d = e.target.closest?.('[data-pick-box]'); if (d) { const p = picks[d.closest('.card').dataset.k]; if (p && p.open !== d.open) { p.open = d.open; if (d.open) render(true); } } }, true);
-async function load() {
+let loadingQueue = null;
+function load() {
+  if (loadingQueue) return loadingQueue;
+  loadingQueue = loadQueue().finally(() => { loadingQueue = null; });
+  return loadingQueue;
+}
+async function loadQueue() {
   try {
     // The Apex items and areas come once (and again only when they change): the page stays light.
     const prev = data, d = await api('GET', '/api/transfer/queue' + (prev?.staticKey ? '?have=' + encodeURIComponent(prev.staticKey) : ''));
     if (!d.apexItems && prev) { d.apexItems = prev.apexItems; d.locations = prev.locations; d.sections = prev.sections; }
-    data = d; $('me').textContent = data.me.name; const a = $('auto'); a.textContent = { off: 'التحويل الآلي متوقف — سجّل على Apex بإيدك', shadow: 'التحويل الآلي: معاينة بس — سجّل بإيدك', test: 'التحويل الآلي: تجربة على قاعدة الاختبار — سجّل بإيدك', live: 'التحويل الآلي شغال' }[data.autoTransfer] || ''; a.className = 'pill' + (data.autoTransfer === 'live' ? '' : ' off'); if (!$('list').contains(document.activeElement) || !/^(INPUT|SELECT)$/.test(document.activeElement.tagName)) render(); }
+    data = d; $('me').textContent = data.me.name; const a = $('auto'); a.textContent = { off: 'التحويل الآلي متوقف — سجّل على Apex بإيدك', shadow: 'التحويل الآلي: معاينة بس — سجّل بإيدك', test: 'التحويل الآلي: تجربة على قاعدة الاختبار — سجّل بإيدك', live: 'التحويل الآلي شغال' }[data.autoTransfer] || ''; a.className = 'pill' + (data.autoTransfer === 'live' ? '' : ' off'); render(); }
   catch (e) { if (token) toast(e.message); }
 }
 function boot() { $('login').hidden = true; $('app').hidden = false; load(); }
 if (token) boot(); else logout();
-setInterval(() => { if (token && !document.hidden) load(); }, 20000);
+setInterval(() => { if (token && !document.hidden) load(); }, 5000);
 </script>
 </body>
 </html>

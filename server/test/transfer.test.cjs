@@ -236,8 +236,8 @@ test('transfer page: a live order read from the page data (real shape, 01-11-202
     await t.call('POST', '/api/talabat/push', { headers: dev, body: { orders: [{ id: '4688138970', store: 'الدهان, مدينتي - ساوث بارك', detail: {
       receivedAt: '2026-10-31T13:10:52.026Z', acceptedAt: '2026-10-31T13:10:57.324Z', subtotal: 565,
       customer: { name: 'Hend Atia', phone: '01202427365', address: 'الاسكان القومي، الشروق - المنطقة الاولي، القاهرة — مبنى: 4 — الدور: الاول — الشقة: شقة 11' },
-      items: [{ qty: 1, name: 'ساندوتش كباب', productId: '3114762279', price: 179, options: [{ qty: 1, name: 'رول', price: 0, productId: '3114764287' }] },
-        { qty: 1, name: 'نصف دجاجة مشوية علي الفحم', productId: '3114762439', price: 226, options: [{ qty: 2, name: 'ممبار', price: 50, productId: '3114765000' }] },
+      items: [{ qty: 1, name: 'ساندوتش كباب', productId: '3114762279', price: 179, options: [{ qty: 3, name: 'رول', price: 0, productId: '3114764287' }] },
+        { qty: 3, name: 'نصف دجاجة مشوية علي الفحم', productId: '3114762439', price: 226, options: [{ qty: 2, name: 'ممبار', price: 50, productId: '3114765000' }] },
         { qty: 1, name: 'ممبار', productId: '3114762263', price: 110, options: [] }],
       bill: [{ k: 'المجموع الفرعي', text: 'المجموع الفرعي | 565' }, { k: 'رسوم الخدمة', text: 'رسوم الخدمة | 8' }, { k: 'رسوم التوصيل', text: 'رسوم التوصيل | 40' },
         { k: 'خصم ممول من قبلك', text: 'خصم ممول من قبلك | -40.75' }, { k: 'خصم ممول من قبل Talabat', text: 'خصم ممول من قبل Talabat | -20' },
@@ -252,7 +252,8 @@ test('transfer page: a live order read from the page data (real shape, 01-11-202
     assert.deepEqual(o.items.map(i => i.name), ['Kebab Sandwich', 'Half grilled chicken on charcoal', 'Mombar'], 'menu names from the product number');
     assert.ok(o.items[1].apex.some(a => a.no === '0107001'), 'half chicken suggested');
     assert.deepEqual(o.items[1].addons.map(a => [a.name, a.qty, a.apex.map(x => x.no)]), [['ممبار', 2, ['0103001']]], 'paid Arabic add-on → its Apex item');
-    assert.deepEqual(o.items[0].freeOptions, ['رول']);
+    assert.deepEqual(o.items[0].freeOptions, ['3× رول']);
+    assert.equal(o.items[1].qty, 3); // Two additions in total, not six for three dishes.
   } finally { await t.close(); }
 });
 

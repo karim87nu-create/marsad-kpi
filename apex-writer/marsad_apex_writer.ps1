@@ -1,4 +1,4 @@
-﻿# كاتب Apex للمرصد — Marsad → Apex order writer, runs on the restaurant PC next to the monitor.
+# كاتب Apex للمرصد — Marsad → Apex order writer, runs on the restaurant PC next to the monitor.
 # It asks the Marsad server for orders an employee confirmed for automatic transfer, and writes each one into Apex
 # the way the Apex call-center client does (numbers, customer, header, lines, log, print snapshot), in one short
 # transaction (cash, or prepaid as Ledge with its customer-ledger row). Three modes, chosen on the server by an admin:
@@ -214,7 +214,7 @@ BEGIN TRY
     o_Address, o_Sign, o_PersonName, MobileNo, MyFatoorah, Modified, o_LocationNo, o_FloorNo, o_FlatNo, o_StreetNo, operation_id)
   SELECT @OrderNo, @ShiftSerial, @BranchShift, @TypeSerial, t.TakeAwayLoc, @Cust, t.TableNo, t.GuestNo, 0, 0, @Date, @Time, @UserNo,
     0, 0, @Shift, t.TransType, @Sub, @Service, 0, @Tax, 0, @Time, @RestDiscount, 0, 0, @PayWay, CASE WHEN @PayWay = 'Ledge' THEN 0 ELSE @Total END, 0,
-    LEFT(@Remarks, 100), @Pos, CASE WHEN @RestDiscount > 0 THEN t.DiscountType ELSE NULL END, t.HallNo, 1, DATEPART(hour, @Now), '0', NULL, CASE WHEN @PayWay = 'Ledge' THEN 0 ELSE @Total END, '0', 0, 0, '', 0, 0, @Branch, @BranchOrderNo,
+    LEFT(@Remarks, 200), @Pos, CASE WHEN @RestDiscount > 0 THEN t.DiscountType ELSE NULL END, t.HallNo, 1, DATEPART(hour, @Now), '0', NULL, CASE WHEN @PayWay = 'Ledge' THEN 0 ELSE @Total END, '0', 0, 0, '', 0, 0, @Branch, @BranchOrderNo,
     0, @TaxRatio, 0, @PosSerial, @CheckNo, @Time, t.Otlob, '', @OnlineType, '', '', 0, t.DeliveryTrack, @Phone, LEFT(@Label, 50),
     LEFT(@Address, 100), LEFT(@Sign, 100), '', @Phone, 0, 1, @LocationNo, LEFT(@Floor, 20), LEFT(@Flat, 20), 0, NEWID()
   FROM (SELECT TOP 1 * FROM (
@@ -282,7 +282,7 @@ function Write-Order($c, $job, [string]$mode){
   }
   $cmd.CommandText = $decl + $Batch
   # The address loses the floor/flat parts and «، القاهرة»: Apex keeps 100 characters of it (Karim 01-11: «String or binary data would be truncated»).
-  $p = @{ '@Exec' = $(if ($mode -eq 'shadow') { 0 } else { 1 }); '@IsTest' = $(if ($mode -eq 'test') { 1 } else { 0 }); '@PayWay' = $(if ($job.payment -eq 'paid') { 'Ledge' } else { 'Cash' }); '@Floor' = $(if ([string]$job.customer.address -match '(?:الدور|الطابق)\s*[:：]\s*([^،,—\-]+)') { $Matches[1].Trim() } else { '' }); '@Flat' = $(if ([string]$job.customer.address -match 'الشقة\s*[:：]\s*([^،,—\-]+)') { $Matches[1].Trim() } else { '' }); '@Pos' = $WriterPos; '@LocationNo' = [int]$job.locationNo; '@ServiceItem' = [string]$TalabatServiceItem; '@RefPos' = $(if ($mode -eq 'test') { $RefPosTest } else { $RefPos }); '@Branch' = [int]$job.branchNo
+  $p = @{ '@Exec' = $(if ($mode -eq 'shadow') { 0 } else { 1 }); '@IsTest' = $(if ($mode -eq 'test') { 1 } else { 0 }); '@PayWay' = $(if ($job.payment -eq 'paid') { 'Ledge' } else { 'Cash' }); '@Floor' = $(if ($null -ne $job.customer.floor) { [string]$job.customer.floor } elseif ([string]$job.customer.address -match '(?:الدور|الطابق)\s*[:：]\s*([^،,—\-]+)') { $Matches[1].Trim() } else { '' }); '@Flat' = $(if ($null -ne $job.customer.flat) { [string]$job.customer.flat } elseif ([string]$job.customer.address -match 'الشقة\s*[:：]\s*([^،,—\-]+)') { $Matches[1].Trim() } else { '' }); '@Pos' = $WriterPos; '@LocationNo' = [int]$job.locationNo; '@ServiceItem' = [string]$TalabatServiceItem; '@RefPos' = $(if ($mode -eq 'test') { $RefPosTest } else { $RefPos }); '@Branch' = [int]$job.branchNo
           '@Marker' = ('M' + $(if ($job.source -eq 'site') { 'S' } else { 'T' }) + ':' + $job.ref); '@Kind' = [string]$job.source; '@Phone' = [string]$job.customer.phone
           '@Label' = [string]$job.label; '@Address' = ((([string]$job.customer.address) -replace '\s*—\s*(?:الدور|الطابق|الشقة)\s*[:：]\s*[^—]*', '') -replace '\s*[،,]\s*(?:القاهرة|Cairo|Egypt|مصر)\s*(?=—|$)', '').Trim(); '@Sign' = [string]$job.sign; '@Remarks' = [string]$job.note
           '@NoTpl' = $(if ($mode -eq 'test' -and $job.noTemplate) { 1 } else { 0 }); '@AreaService' = $(if ($job.areaService -ne $null -and "$($job.areaService)" -ne '') { [decimal]$job.areaService } else { [decimal]-1 }); '@RestDiscount' = [decimal]$job.restaurantDiscount; '@Target' = $(if ($job.targetTotal) { [decimal]$job.targetTotal } else { [decimal]0 }); '@AddPrinted' = $(if ($AddPrintedOrders) { 1 } else { 0 }); '@PrintedFlag' = $PrintedFlag; '@UserNo' = $WriterUserNo

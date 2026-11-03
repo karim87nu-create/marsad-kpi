@@ -1,5 +1,6 @@
 import { compareItems, itemKey } from './items.js';
 import { referenceEvidence } from './order-identifiers.js';
+import { deliveryPhone } from './delivery-fields.js';
 
 export const digits = x => String(x ?? '').replace(/[٠-٩۰-۹]/g, c => String(c.charCodeAt(0) >= 0x6f0 ? c.charCodeAt(0) - 0x6f0 : c.charCodeAt(0) - 0x660));
 export const textKey = x => digits(x).toLowerCase().replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/[\u064b-\u065fـ]/g, '').replace(/#\s*\d+|\b\d{1,2}[:.]\d{2}\b/g, ' ').replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ');
@@ -14,6 +15,7 @@ const clean = (x, n) => typeof x === 'string' ? x.trim().slice(0, n) : '';
 export function customerOf(x = {}) {
   if (!x || typeof x !== 'object') x = {};
   return { name: clean(x.name, 160), phone: phoneKey(x.phone), mobile: phoneKey(x.mobile),
+    phoneDisplay: deliveryPhone(x.phoneDisplay || x.phone), mobileDisplay: deliveryPhone(x.mobileDisplay || x.mobile),
     address: clean(x.address, 360), area: clean(x.area, 80), accountNo: clean(String(x.accountNo || ''), 40) };
 }
 export const parseJson = (x, fallback = null) => { try { return JSON.parse(x) ?? fallback; } catch { return fallback; } };

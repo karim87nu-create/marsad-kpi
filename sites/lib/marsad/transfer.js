@@ -9,6 +9,7 @@
 // the bridge is proven (numbering under live work and the branch delivery); this page never writes to Apex.
 import { businessDay, iso, validDate } from './time.js';
 import { parseJson } from './order-match.js';
+import { deliveryPhone, deliveryLabel, deliveryAddress } from './delivery-fields.js';
 import { knownNos } from './items.js';
 import { APEX_NAMES, APEX_PRICES } from './menu-seed.js';
 import { APEX_SECTIONS } from './apex-sections.js';
@@ -171,7 +172,7 @@ function setup(app) {
     // English typed by the customer (address, name, comments) shown and sent in Arabic (Karim 01-11); the original is kept.
     if (app.toArabic) {
       const open = list.filter(o => !o.done), texts = [];
-      for (const o of open) texts.push(o.customer?.name, o.customer?.address, o.customer?.area, o.note, ...(o.items || []).map(i => i.note));
+      for (const o of open) texts.push(o.customer?.name, o.customer?.address, o.customer?.area, o.note, ...(o.items || []).flatMap(i => [i.note, ...(i.freeOptions || [])]));
       const ar = await app.toArabic(texts.filter(Boolean), { waitUntil: ctx.waitUntil });
       const tr = v => (v && ar.get(v)) || v, changed = v => v && ar.get(v) && ar.get(v) !== v;
       for (let i = 0; i < list.length; i++) {
@@ -180,7 +181,7 @@ function setup(app) {
         list[i] = { ...o,
           ...(c ? { customer: { ...c, name: tr(c.name), address: tr(c.address), area: tr(c.area), ...(changed(c.address) || changed(c.name) ? { original: [c.name, c.address].filter(Boolean).join(' — ') } : {}) } } : {}),
           ...(changed(o.note) ? { note: tr(o.note), noteOriginal: o.note } : {}),
-          ...(o.items?.some(x => changed(x.note)) ? { items: o.items.map(x => changed(x.note) ? { ...x, note: tr(x.note) } : x) } : {}) };
+          ...(o.items ? { items: o.items.map(x => ({ ...x, note: tr(x.note), freeOptions: (x.freeOptions || []).map(tr) })) } : {}) };
       }
     }
     // Until an admin chooses, the automatic transfer only previews (shadow): it never writes to Apex.
@@ -199,17 +200,17 @@ function setup(app) {
   // database too (Karim 01-11: the page was slow on first opening — a cold server rebuilt the whole day while the
   // employee waited). The page reads the last build; only one older than a minute is rebuilt while it waits.
   // Per day: the last build, whether something changed since (a push), and the build running now.
-  const st = new Map(), S = day => st.get(day) || (st.set(day, { dirty: true, run: null }), st.get(day));
+  const st = new Map(), S = day => st.get(day) || (st.set(day, { dirty: false, run: null }), st.get(day));
   function rebuild(day) {
     const x = S(day);
     if (x.run) return x.run;
     x.run = (async () => {
-      let base;
+      let base, passes = 0;
       do {
         x.dirty = false;
         base = await buildBase(day, app.now());
         queueCache.set(day, base);
-      } while (x.dirty);
+      } while (x.dirty && ++passes < 2);
       const keep = { at: base.at, locations: base.locations, list: base.list.map(o => o.apex || o.out ? { source: o.source, ref: o.ref, code: o.code, at: o.at, status: o.status, out: o.out, branch: o.branch, apexBranch: o.apexBranch, total: o.total, apex: o.apex } : o) };
       await db.prepare('INSERT INTO transfer_cache (day, at, data) VALUES (?,?,?) ON CONFLICT(day) DO UPDATE SET at = excluded.at, data = excluded.data').run(day, base.at, JSON.stringify(keep)).catch(() => {});
       return base;
@@ -224,8 +225,7 @@ function setup(app) {
     // Pushes may reach another server: the last build any server saved (Karim 01-11: a fresh server rebuilt the whole
     // day on the first opening while the employee waited).
     const r = await db.prepare('SELECT at, data FROM transfer_cache WHERE day = ?').get(day);
-    if (r && r.at > (b?.at || 0) && now - r.at < 30000) { const d = parseJson(r.data, null); if (d) { queueCache.set(day, d); x.dirty = false; return d; } }
-    if (b && !x.dirty && now - b.at < 30000) return b;
+    if (!x.dirty && r && r.at > (b?.at || 0) && now - r.at < QUEUE_CACHE_MS) { const d = parseJson(r.data, null); if (d) { queueCache.set(day, d); x.dirty = false; return d; } }
     return rebuild(day);
   }
   // Every push from the Talabat screens, the cashier PC or the website (and the page's own actions): the next read
@@ -282,10 +282,10 @@ function setup(app) {
         const itemDiscounts = funded.length && !fundedOk ? [{ text: (top?.label || 'خصم') + ' — ' + x.name + ' (التقسيم مش واضح)', amount: top?.amount ?? null, who: null }] : funded.length ? [...new Map(funded.map(d => [discountWho(d.label) + d.amount, { text: d.label + ' — ' + x.name, amount: d.amount, who: discountWho(d.label) }])).values()]
           : top ? [{ text: top.label + ' — ' + x.name, amount: top.amount, who: 'restaurant' }] : found.length ? [{ text: found[0].label + ' — ' + x.name, amount: null, who: 'restaurant' }] : [];
         const opts = (Array.isArray(x.options) ? x.options : []).filter(o => !isDisc(o));
-        const sizeOpt = opts.find(o => WEIGHTS.some(w => w[0].test(o.name))) || (opts.length && x.price && opts[0].price && Math.abs(opts[0].price - x.price) < 0.01 ? opts[0] : null);
+        const sizeOpt = opts.find(o => WEIGHTS.some(w => w[0].test(o.name))) || null;
         const addons = opts.filter(o => o !== sizeOpt && Number(o.price) > 0).map(o => ({ name: o.name, qty: Number(o.qty) > 0 ? Number(o.qty) : null, price: Number(o.price),   // the count shown is for all the dishes together
           apex: (withApex ? suggest(o.name) : []).map(no => ({ no, name: apexName.get(no) || null })) }));
-        const free = opts.filter(o => o !== sizeOpt && !(Number(o.price) > 0)).map(o => o.name);
+        const free = opts.filter(o => o !== sizeOpt && !(Number(o.price) > 0)).map(o => (Number(o.qty) > 1 ? o.qty + '× ' : '') + o.name);
         return { qty: x.qty, name: x.name, price: x.price ?? null, modifiers: x.modifiers || [], modifiersComplete: x.modifierComplete === true || !withApex, size: size ? size[2] : null, apex,
           // The size picks the Apex item itself (ربع كيلو نيفة): it is neither an add-on nor a comment.
           addons, sizeOption: sizeOpt ? sizeOpt.name : null, freeOptions: opts.length ? free : (x.modifiers || []).filter(m => !WEIGHTS.some(w => w[0].test(m)) && !DISC_WORDS.test(m)), itemDiscounts };
@@ -306,7 +306,7 @@ function setup(app) {
         const billDiscounts = talabatDiscounts(bill).filter(d => !(dishTotal > 0 && d.amount != null && Math.abs(d.amount - dishTotal) < 0.01 && !/(talabat|طلبات)/i.test(d.text)));
         const discounts = [...dishDiscounts, ...billDiscounts];
         list.push({ source: 'talabat', ref: o.id, code: o.code || null, at: iso(o.accepted_at || o.received_at || o.placed_at), status: o.status, out: TALABAT_OUT.has(String(o.status || '').toUpperCase()) || !!o.picked_up_at || !!o.delivered_at, branch: o.store, apexBranch: apexBranchOf(o.store), deliveryType: o.delivery_type || null,
-          customer: { name: /^(?:information|details|customer|العميل)$/i.test(p.name || '') ? null : p.name || null, phone: phoneOut(p.phone), address: p.address || null },
+          customer: { name: /^(?:information|details|customer|العميل)$/i.test(p.name || '') ? null : p.name || null, phone: phoneOut(p.phoneDisplay || p.phone || p.mobileDisplay || p.mobile), address: p.address || null },
           // What Apex must total (Karim 31-10): the bill's «مجموع» (what the customer pays) plus Talabat's share of the discounts
           // (not deducted on Apex). The writer discounts any amount Apex comes out above it.
           target: (() => { const t = bill.find(x => /^(?:مجموع|المجموع|الإجمالي|total|order total)$/i.test(String(x.k || '').trim())), v = t ? amountOf(String(t.text).split(' | ').slice(1).join(' ')) : o.total ?? null;
@@ -326,7 +326,7 @@ function setup(app) {
         const discounts = pay ? [...(pay.coupons || []).map(c => ({ text: 'كوبون ' + c.code, amount: c.amount, who: 'restaurant' })),
           ...(!pay.coupons?.length && pay.discount ? [{ text: 'خصم الموقع', amount: pay.discount, who: 'restaurant' }] : [])] : [];
         list.push({ source: 'site', ref: String(o.id), code: String(o.id), at: iso(o.created_at), status: o.status, out: !!o.out_at || !!o.delivered_at || o.status === 'completed', branch: o.branch || null, apexBranch: apexBranchOf(o.branch), scheduled: !!o.scheduled,
-          customer: { name: p.customer?.name || null, phone: phoneOut(p.customer?.phone || p.customer?.mobile), address: p.customer?.address || null },
+          customer: { name: p.customer?.name || null, phone: phoneOut(p.customer?.phoneDisplay || p.customer?.phone || p.customer?.mobileDisplay || p.customer?.mobile), address: p.customer?.address || null },
           target: o.total ?? null, payment: sitePayment(pay), paymentTitle: pay?.title || null, note: pay?.note || null, discounts, fees: pay?.fees || [], shipping: pay?.shipping ?? null, total: o.total ?? null,
           items: (p.items || []).map(x => itemOut(x, false)), detailRead: !!p.items?.length,
           apex: a ? { no: a.no, sn: a.sn ?? null, user: a.user || null, how: a.how || null } : null, matching: sm.states?.get(o.id) || null, job: null });
@@ -396,9 +396,18 @@ function setup(app) {
       const area = areas.find(l => l.branch === branchNo) || areas.find(l => l.branch == null) || areas[0];
       const areaService = Number.isFinite(Number(area?.service)) && area?.service !== null ? Number(area.service) : null;
       const restaurantDiscount = Math.max(0, Number(b.restaurantDiscount) || 0), expectedTotal = Number(b.expectedTotal) || null, targetTotal = Number(b.targetTotal) > 0 ? Math.round(Number(b.targetTotal) * 100) / 100 : null;
+      if (String(b.note || '').length > 200) fail(400, 'الملاحظات أطول من مساحة Apex (٢٠٠ حرف) — اختصرها مع الاحتفاظ بالمقصود');
+      const texts = [b.customer?.name, b.customer?.address, b.note].filter(Boolean);
+      const arabic = app.toArabic ? await app.toArabic(texts, { wait: true }) : new Map();
+      const translatedName = arabic.get(b.customer?.name) || b.customer?.name;
+      const translatedAddress = arabic.get(b.customer?.address) || b.customer?.address;
+      const translatedNote = arabic.get(b.note) || b.note || '';
+      if (translatedNote.length > 200) fail(400, 'الملاحظات بعد الترجمة أطول من مساحة Apex — اختصرها');
+      const address = deliveryAddress(translatedAddress, area?.name || '');
+      const deliveryFields = { address: [address.street, address.floor ? 'الدور: ' + address.floor : '', address.flat ? 'الشقة: ' + address.flat : ''].filter(Boolean).join(' — '), floor: address.floor, flat: address.flat };
       const payload = { v: 1, source, ref, code: String(b.code || '').replace(/[^\d]/g, '').slice(0, 10) || null, db: mode, branchNo, locationNo, payment,
-        label: String(b.label || '').slice(0, 80), customer: { name: String(b.customer?.name || '').slice(0, 80), phone: String(b.customer?.phone || '').replace(/[^\d+]/g, '').slice(0, 15), address: String(b.customer?.address || '').slice(0, 200) },
-        sign: String(b.sign || '').slice(0, 120), note: note || '', items: clean, restaurantDiscount, expectedTotal, targetTotal, areaService, by: me.name, at: ctx.now };
+        label: deliveryLabel(translatedName, source, payment, b.code), customer: { name: String(translatedName || '').slice(0, 80), phone: deliveryPhone(b.customer?.phone), address: String(b.customer?.address || '').slice(0, 360), ...deliveryFields },
+        sign: String(b.sign || '').slice(0, 120), note: translatedNote, items: clean, restaurantDiscount, expectedTotal, targetTotal, areaService, by: me.name, at: ctx.now };
       await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at, payload, result) VALUES (?,?,?,'auto_pending',?,?,?,?,?,?,NULL)
         ON CONFLICT(source, ref) DO UPDATE SET state = 'auto_pending', employee_id = excluded.employee_id, employee_name = excluded.employee_name, payment = excluded.payment, note = excluded.note, at = excluded.at, payload = excluded.payload, result = NULL`)
         .run(source, ref, row.day, me.id, me.name, payment, note, ctx.now, JSON.stringify(payload));
