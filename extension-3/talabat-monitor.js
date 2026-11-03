@@ -423,11 +423,16 @@
       // Reading them from there gives the full list without depending on expanding the product.
       const pid = String(p.dataset.testid || '').replace('existing-product__', '');
       const options = [...p.querySelectorAll('[data-testid^="existing-option__"]')].filter(o => String(o.dataset.testid).endsWith('_for_' + pid)).map(o => {
+        const normalizeCount = t => String(t).replace(/[٠-٩۰-۹]/g, c => String(c.charCodeAt(0) - (c >= '۰' ? 0x6f0 : 0x660)));
+        const isCount = t => /^(?:\d+(?:\.\d+)?\s*[x×]|[x×]\s*\d+(?:\.\d+)?)$/i.test(normalizeCount(t));
         const parts = [...o.querySelectorAll('p')].map(x => (x.textContent || '').trim()).filter(Boolean);
-        const q = parts.find(x => /^\d+(?:\.\d+)?\s*[x×]$|^[x×]\s*\d+$/i.test(x)), pr = parts.find(x => /(?:E£|EGP|£E|ج\.م)/.test(x));
+        // Counts may be in a span beside the option, not inside its name paragraph.
+        const countTexts = [...o.querySelectorAll('p,span')].filter(e => !e.querySelector('p,span')).map(e => (e.textContent || '').trim()).filter(isCount);
+        const counts = [...new Set(countTexts.map(t => Number(normalizeCount(t).replace(/[^\d.]/g, ''))))];
+        const q = parts.find(isCount), pr = parts.find(x => /(?:E£|EGP|£E|ج\.م)/.test(x));
         // A discount under the dish shows like an add-on with a minus price: keep the sign so it is never taken for a paid add-on.
         const neg = pr && /-\s*(?:E£|EGP|£E|ج\.م)|(?:E£|EGP|£E|ج\.م)\s*-|^-|\u2212/.test(pr);
-        return { qty: q ? Number(q.replace(/[^\d.]/g, '')) || null : null, name: parts.filter(x => x !== q && x !== pr).join(' ').slice(0, 120), price: pr ? (neg ? -money(pr) : money(pr)) : null };
+        return { qty: counts.length === 1 && counts[0] > 0 ? counts[0] : null, name: parts.filter(x => !isCount(x) && x !== pr).join(' ').slice(0, 120), price: pr ? (neg ? -money(pr) : money(pr)) : null };
       }).filter(o => o.name).slice(0, 20);
       // Discount lines shown under the dish (not as option elements): kept as written, for the transfer page.
       // Seen 31-10 under a dish: «خصم | -89.70», «خصم 30% على بعض المنتجات | -89.70», «ممول من قبلك | -44.85», «ممول من قبل Talabat | -44.85».

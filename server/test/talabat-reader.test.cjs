@@ -126,6 +126,14 @@ test('Talabat details: options are read from their own elements even while the p
   assert.equal(chicken.name,'Grilled Chicken Breasts'); assert.equal(chicken.price,285);
   assert.deepEqual(chicken.options,[{qty:1,name:'Quarter Kilo',price:214},{qty:2,name:'Basmati Rice',price:71}]);
   assert.deepEqual(chicken.modifiers,['1× Quarter Kilo','2× Basmati Rice']); assert.equal(chicken.modifierComplete,true);
+  const option = w.document.querySelector('[data-testid="existing-option__3114877476_for_3114762411"]');
+  option.innerHTML = '<span>٣×</span><div><p>Basmati Rice</p></div><p>E£71.00</p>';
+  const again = JSON.parse(w.eval('(()=>{'+code+';const clockAfter=()=>null;return JSON.stringify(readDetail("4687126962"));})()'));
+  assert.equal(again.detail.items[1].options[1].qty,3,'read the Arabic count beside the add-on, including span markup');
+  option.innerHTML = '<span>×2</span><div><p>Basmati Rice</p></div><p>E£71.00</p>';
+  const twice = JSON.parse(w.eval('(()=>{'+code+';const clockAfter=()=>null;return JSON.stringify(readDetail("4687126962"));})()'));
+  assert.equal(twice.detail.items[1].options[1].qty,2);
+
   assert.equal(r.detail.subtotal,1220);
   // Every product row is a button with aria-expanded="false" on the real page; a plain one still has no add-ons.
   // The bill comes as label | value pairs from «Subtotal» (the payment line has no testid of its own).
