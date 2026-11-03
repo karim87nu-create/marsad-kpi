@@ -3,7 +3,7 @@ import { createSigner, createLimiter, hashPassword, randomToken } from './securi
 import { createLegacy } from './legacy.js';
 import { migrate } from './db.js';
 // Raised with each change worth checking after a publish (shown by /api/health).
-const BUILD = '2026-11-03.5';
+const BUILD = '2026-11-03.6';
 
 class HttpError extends Error {
   constructor(status, code, extra) {
@@ -67,8 +67,11 @@ function createApp({ db, config: input = {}, now = () => Date.now() }) {
   };
 
   // Schema, and the server's own secret when none is configured (kept in the database).
-  let ready = null;
-  app.init = () => ready ??= (async () => {
+  let ready = null, initialized = false;
+  app.init = () => {
+    if (initialized) return Promise.resolve();
+    if (db.kind !== 'd1' && ready) return ready;
+    const run = (async () => {
     await migrate(db);
     if (!config.secret) {
       await db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('secret', ?)").run(randomToken(32) + randomToken(32));
@@ -76,7 +79,13 @@ function createApp({ db, config: input = {}, now = () => Date.now() }) {
     }
     if (!config.adminPasswordHash && config.adminPassword) config.adminPasswordHash = await hashPassword(config.adminPassword);
     app.signer = createSigner(config.secret);
-  })().catch(e => { ready = null; throw e; });
+    initialized = true;
+    })().finally(() => { if (ready === run) ready = null; });
+    // D1 I/O belongs to the request that started it. Share completed initialization,
+    // never an in-flight promise left by a disconnected request.
+    if (db.kind !== 'd1') ready = run;
+    return run;
+  };
 
   // waitUntil: keeps background work alive after the response (Cloudflare); Node just lets it run.
   app.fetch = async function handle(request, { ip = '', waitUntil = p => p.catch(() => {}) } = {}) {

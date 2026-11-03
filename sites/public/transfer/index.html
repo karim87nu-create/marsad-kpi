@@ -136,7 +136,7 @@ async function api(method, path, body) {
   const ctl = typeof AbortController === 'function' ? new AbortController() : null, stop = ctl && setTimeout(() => ctl.abort(), 25000);
   let r;
   try { r = await fetch(API + path, { method, signal: ctl?.signal, headers: { 'content-type': 'application/json', ...(token ? { 'x-transfer-session': token } : {}) }, body: body ? JSON.stringify(body) : undefined }); }
-  catch (e) { throw new Error(e?.name === 'AbortError' ? 'السيرفر مردّش — النت ضعيف، جرّب تاني' : 'مفيش اتصال بالسيرفر — جرّب تاني'); }
+  catch (e) { throw new Error(e?.name === 'AbortError' ? 'السيرفر اتأخر في الرد — جاري إعادة المحاولة' : 'تعذّر الوصول للموقع — حاول مرة تانية'); }
   finally { if (stop) clearTimeout(stop); }
   const j = await r.json().catch(() => ({}));
   if (r.status === 401 && path !== '/api/transfer/login') { logout(); $('loginErr').textContent = j.error || 'سجل دخول تاني'; throw new Error('سجل دخول تاني'); }
@@ -153,7 +153,7 @@ $('go').onclick = async () => {
   err.textContent = '';
   if (!pin) { err.textContent = 'اكتب الرقم السري (أرقام بس)'; return; }
   go.disabled = true; go.textContent = 'جاري الدخول…';
-  const slow = setTimeout(() => { err.textContent = 'النت بطيء… لسه بيحاول'; }, 6000);
+  const slow = setTimeout(() => { err.textContent = 'لسه منتظرين رد السيرفر…'; }, 6000);
   try {
     const r = await api('POST', '/api/transfer/login', { pin });
     token = r.token; try { sessionStorage.setItem('marsadTransfer', token); } catch {}
