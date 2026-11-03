@@ -222,11 +222,11 @@ function setup(app) {
   async function matchDay(day, options = {}) {
     const teach = !!options.teach, cached = matchCache.get(day);
     if (!teach && cached && Date.now() - cached.at < 8000) return cached.value;
-    const running = matchFlights.get(day);
+    const running = db.kind === 'd1' ? null : matchFlights.get(day);
     if (running) { await running; if (!teach) return matchDay(day, options); }
     const revision = matchRevision;
     const flight = computeMatchDay(day, { teach });
-    matchFlights.set(day, flight);
+    if (db.kind !== 'd1') matchFlights.set(day, flight);
     try {
       const value = await flight;
       if (revision === matchRevision) matchCache.set(day, { at: Date.now(), value });
