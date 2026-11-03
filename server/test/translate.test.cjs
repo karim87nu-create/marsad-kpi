@@ -32,3 +32,17 @@ test('English addresses, names and comments shown and sent in Arabic (dictionary
     const n = asked; await q(); await new Promise(r => setTimeout(r, 30)); assert.equal(asked, n, 'translated once');
   } finally { global.fetch = real; await t.close(); }
 });
+
+
+test('offline dictionary preserves negative instructions, numbers and explicit addon quantities', async () => {
+  const t = await start();
+  try {
+    const d = t.app.arabicDictionary;
+    assert.equal(d("don't ring the bell"), 'متضربش الجرس');
+    assert.equal(d('no onions'), 'من غير بصل');
+    assert.equal(d('no 12'), 'رقم 12');
+    assert.equal(d('3× extra bread'), '3× عيش زيادة');
+    assert.equal(d('please call me when you arrive'), 'من فضلك كلمني لما توصل');
+    assert.equal(d('Ismail Baraka'), 'إسماعيل بركة');
+  } finally { await t.close(); }
+});

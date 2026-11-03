@@ -349,15 +349,16 @@ function card(o) {
       '<span class="when">' + time(o.at) + (o.scheduled ? ' <span class="warn">بميعاد</span>' : '') + '</span><span class="state ' + st.cls + '">' + esc(st.text) + '</span></div>' +
     // The customer screen on Apex, field by field.
     '<div class="form">' +
-      field('الاسم', '<b>' + esc(label) + '</b>', label) +
+      field('الاسم', '<b>' + esc(label) + '</b>' + (/[A-Za-z]{2,}/.test(cu.name || '') ? '<input data-arabic="name" placeholder="اكتب اسم العميل بالعربي" value="' + esc(p.arabic?.name || '') + '">' : ''), label) +
       field('التليفون', cu.phone ? esc(cu.phone) : '', cu.phone) +
       (auto ? field('الفرع', branchSel, '') + field('المنطقة', areaSel, '', areaNote) : field('الفرع', esc(o.branch || ''), '')) +
-      field('العنوان', esc(ad.street || cu.address || ''), ad.street || cu.address, cu.original ? '<div class="muted">مترجم من: ' + esc(cu.original) + '</div>' : '') +
+      field('العنوان', esc(ad.street || cu.address || ''), ad.street || cu.address, /[A-Za-z]{2,}/.test(cu.address || '') ? '<input data-arabic="address" placeholder="اكتب العنوان بالعربي" value="' + esc(p.arabic?.address || '') + '">' : '') +
       (ad.floor || ad.flat ? field('الدور', esc(ad.floor), ad.floor) + field('الشقة', esc(ad.flat), ad.flat) : '') +
-      (o.note ? field('ملاحظة', esc(o.note), o.note, o.noteOriginal ? '<div class="muted">الأصل: ' + esc(o.noteOriginal) + '</div>' : '') : '') +
+      (o.note ? field('ملاحظة', esc(o.note), o.note, '') : '') +
       '<div class="f"><span class="fl">الدفع</span><span class="fv seg"><button class="' + (pay === 'cash' ? 'on' : 'ghost') + '" data-pay="cash">كاش</button><button class="' + (pay === 'paid' ? 'on' : 'ghost') + '" data-pay="paid">مدفوع</button> ' + payText(o) + '</span><span></span></div>' +
     '</div>' +
     ticketHtml(o, p, fl, c, auto) +
+    (auto && /[A-Za-z]{2,}/.test(deliveryComment(o)) ? '<label>تعريب الملاحظات والإضافات المجانية<textarea data-arabic="note">' + esc(p.arabic?.note || deliveryComment(o)) + '</textarea></label>' : '') +
     '<div class="actions">' +
       (auto && mineOrFree ? '<button class="primary" data-act="auto">' + actLabel + '</button>' : '') +
       (freeJob ? '<button class="ghost" data-act="claim">أنا هسجله بإيدي</button>' : '') +
@@ -439,10 +440,10 @@ $('list').addEventListener('click', async e => {
       await api('POST', '/api/transfer/job', { source: o.source, ref: o.ref, action: 'auto', payment: pay, branchNo: Number(p.branch), locationNo: Number(p.loc), code: o.code,
         items: flatLines(o).map((i, n) => ({ itemNo: p.items[n], qty: i.qty, note: '' })),
         // Free choices and the customer's note go in the order comment on Apex (تعليقات الطلب), as the staff do.
-        note: deliveryComment(o),
+        note: p.arabic?.note || deliveryComment(o),
         // Paid (Karim 01-11): the whole discount comes off on Apex, so the Ledge equals what the customer paid.
         // Cash: the restaurant's comes off. Either way the special mark shows Talabat's discount only.
-        label: fullLabel(o, pay), customer: o.customer || {},
+        label: fullLabel(o, pay), customer: { ...(o.customer || {}), ...(p.arabic?.name ? { name: p.arabic.name } : {}), ...(p.arabic?.address ? { address: p.arabic.address } : {}) },
         sign: plat.map(d => 'خصم طلبات ' + money(d.amount)).join(' + '),   // Karim 01-11: the special mark shows Talabat's discount only
         restaurantDiscount: pay === 'paid' ? rest + platSum : rest, expectedTotal: (o.subtotal ?? o.total ?? 0) - rest - (pay === 'paid' ? platSum : 0), targetTotal: o.target == null ? null : pay === 'paid' ? Math.round((o.target - platSum) * 100) / 100 : o.target });   // paid: what the customer paid (Talabat's discount off too)
       delete picks[key(o)]; await load();
@@ -477,6 +478,7 @@ $('list').addEventListener('change', e => {
     p.items[Number(el.dataset.n)] = no; if (p.edit) delete p.edit[Number(el.dataset.n)]; p.open = true; render(true);
   }
 });
+$('list').addEventListener('input', e => { const field = e.target.dataset.arabic; if (!field) return; const p = picks[e.target.closest('.card').dataset.k]; if (p) (p.arabic ||= {})[field] = e.target.value; });
 $('list').addEventListener('focusout', () => setTimeout(() => { if (render.pending && !$('list').contains(document.activeElement)) render(); }, 0));
 $('list').addEventListener('toggle', e => { const d = e.target.closest?.('[data-pick-box]'); if (d) { const p = picks[d.closest('.card').dataset.k]; if (p && p.open !== d.open) { p.open = d.open; if (d.open) render(true); } } }, true);
 let loadingQueue = null;

@@ -23,6 +23,16 @@ const WORDS = [
   ['mokattam', 'المقطم'], ['shorouk', 'الشروق'], ['obour', 'العبور'], ['katameya dunes', 'قطامية ديونز'], ['katameya heights', 'قطامية هايتس'], ['dunes', 'ديونز'], ['cluster', 'كلاستر'], ['hyde park', 'هايد بارك'], ['mivida', 'ميفيدا'], ['mountain view', 'ماونتن فيو'],
   ['makram ebeid', 'مكرم عبيد'], ['abbas el akkad', 'عباس العقاد'], ['abbas al akkad', 'عباس العقاد'], ['el nasr', 'النصر'], ['al nasr', 'النصر'], ['nasr', 'نصر'],
   ['and', 'و'], ['the', ''], ['of', ''], ['no\\.', 'رقم'], ['number', 'رقم'],
+  // Complete phrases precede individual words so negatives keep their meaning.
+  ["don't ring the bell", 'متضربش الجرس'], ['do not ring the bell', 'متضربش الجرس'], ['no onions', 'من غير بصل'],
+  ['when you arrive', 'لما توصل'], ['on arrival', 'عند الوصول'], ['well done', 'تسوية كاملة'], ['not spicy', 'غير حار'],
+  ['no spices', 'بدون توابل'], ['no salt', 'بدون ملح'], ['no sauce', 'بدون صوص'], ['sauce on the side', 'الصوص على جنب'],
+  ['extra bread', 'عيش زيادة'], ['extra rice', 'أرز زيادة'], ['white rice', 'أرز أبيض'], ['basmati rice', 'أرز بسمتي'],
+  ['rice with vermicelli', 'أرز بالشعرية'], ['with liver', 'بالكبدة'], ['with nuts', 'بالمكسرات'],
+  ['bread', 'عيش'], ['onions', 'بصل'], ['onion', 'بصل'], ['pickles', 'مخلل'], ['sauce', 'صوص'], ['salt', 'ملح'],
+  ['mohamed', 'محمد'], ['mohammed', 'محمد'], ['mohammad', 'محمد'], ['ahmed', 'أحمد'], ['mahmoud', 'محمود'],
+  ['karim', 'كريم'], ['kareem', 'كريم'], ['ismail', 'إسماعيل'], ['baraka', 'بركة'], ['mona', 'منى'], ['hend', 'هند'],
+  ['atia', 'عطية'], ['ali', 'علي'], ['hassan', 'حسن'], ['hussein', 'حسين'], ['omar', 'عمر'], ['youssef', 'يوسف'],
   // comments
   ['please', 'من فضلك'], ['call me', 'كلمني'], ['call', 'اتصل'], ['ring the bell', 'اضرب الجرس'], ["don't ring", 'متضربش الجرس'], ['no onion', 'من غير بصل'],
   ['without', 'من غير'], ['extra', 'زيادة'], ['spicy', 'حار'], ['no', 'من غير'], ['thanks', 'شكراً'], ['thank you', 'شكراً'],
@@ -30,7 +40,7 @@ const WORDS = [
 const RX = WORDS.map(([en, ar]) => [new RegExp('(^|[^A-Za-z])' + en.replace(/ /g, '\\s+') + '(?=[^A-Za-z]|$)', 'gi'), ar]);
 
 function dictionary(text) {
-  let s = String(text);
+  let s = String(text).replace(/\bno\.?\s*(?=\d)/gi, 'رقم ');
   // «Makram Ebeid Street» / «El-Nasr Road» → «شارع …» / «طريق …» (the name after the word, as in Arabic).
   s = s.replace(/\b((?:(?:El|Al)[-\s])?[A-Z][A-Za-z']*(?:\s+[A-Z][A-Za-z']*){0,3})\s+(Street|St\.?|Road|Rd\.?|Axis)(?=[^A-Za-z]|$)/g,
     (m, name, w) => ({ street: 'شارع', st: 'شارع', 'st.': 'شارع', road: 'طريق', rd: 'طريق', 'rd.': 'طريق', axis: 'محور' })[w.toLowerCase()] + ' ' + name);
@@ -84,7 +94,7 @@ export function setup(app) {
     for (const t of new Set(texts.filter(Boolean))) {
       if (!LATIN.test(t)) { res.set(t, t); continue; }
       const c = have.get(t);
-      if (c) res.set(t, c.ar); else res.set(t, dictionary(t));
+      if (c?.how === 'ai') res.set(t, c.ar); else res.set(t, dictionary(t));
       if ((!c || c.how !== 'ai') && key() && !busy.has(t)) todo.push(t);
     }
     await Promise.all([...res].filter(([t]) => LATIN.test(t) && !have.get(t)).map(([t, v]) => save(t, v, 'dict').catch(() => {})));
