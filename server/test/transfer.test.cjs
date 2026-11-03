@@ -37,6 +37,24 @@ test('transfer page: employee PIN sign-in, queue with label data, one claim at a
     assert.deepEqual(o.items[0].modifiers, ['Extra bread']);
     assert.ok(o.items[0].apex.some(a => a.no), 'known Apex item suggested');
 
+    // A deliberate staff selection is durable, audited, source/size scoped and authenticated.
+    const pick = { source: 'talabat', ref: o.ref, line: 0, choiceKey: o.items[0].choiceKey, itemNo: o.items[0].apex[0].no };
+    assert.equal((await t.call('POST', '/api/transfer/selection', { body: pick })).status, 401);
+    assert.equal((await as(sara)('POST', '/api/transfer/selection', { ...pick, choiceKey: 'stale' })).status, 409);
+    assert.equal((await as(sara)('POST', '/api/transfer/selection', pick)).status, 200);
+    q = (await as(sara)('GET', '/api/transfer/queue?day=2026-10-22')).body;
+    assert.deepEqual(q.orders[0].items[0].apex.map(a => a.no), [pick.itemNo]);
+    const facts = (await admin('GET', '/api/learned')).body.facts;
+    assert.ok(facts.some(f => f.kind === 'transfer-item-choice' && f.a === pick.choiceKey && f.b === pick.itemNo));
+
+    const audit = await t.app.db.prepare("SELECT details FROM audit WHERE action = 'transfer_item_selected' ORDER BY id DESC LIMIT 1").get();
+    assert.equal(JSON.parse(audit.details).actor, 'سارة');
+    assert.equal(JSON.parse(audit.details).itemNo, pick.itemNo);
+    await push({ orders: [{ id: '3977500099', store, status: 'ACCEPTED', placedAt: at(1), total: 300, detail: { receivedAt: at(1), acceptedAt: at(1), items: [{ qty: 2, name: 'Kofta', price: 280, modifierRead: true, modifierComplete: true }] } }] });
+    q = (await as(sara)('GET', '/api/transfer/queue?day=2026-10-22')).body;
+    assert.equal(q.orders.length, 2, 'distinct orders with equal values remain separate');
+    assert.deepEqual(q.orders.find(x => x.ref === '3977500099').items[0].apex.map(a => a.no), [pick.itemNo], 'future order learns staff choice');
+
     // One employee at a time.
     assert.equal((await as(sara)('POST', '/api/transfer/job', { source: 'talabat', ref: '3977500001', action: 'claim' })).status, 200);
     const busy = await as(ali)('POST', '/api/transfer/job', { source: 'talabat', ref: '3977500001', action: 'claim' });

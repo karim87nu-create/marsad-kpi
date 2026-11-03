@@ -573,13 +573,13 @@
   }
 
   // ---------- حالة النظام ----------
-  const AUDIT = { old_data_imported: 'نقل بيانات من النظام القديم', old_data_backfilled: 'إكمال بيانات ناقصة من النظام القديم', master_password_set: 'اختيار الباسورد الرئيسي', report_saved: 'حفظ تقرير اليوم',
+  const AUDIT = { transfer_item_selected: 'اختيار صنف للتحويل', transfer_auto: 'إرسال أوردر إلى Apex', transfer_claim: 'استلام أوردر', transfer_release: 'ترك أوردر', transfer_entered: 'تسجيل أوردر يدويًا', old_data_imported: 'نقل بيانات من النظام القديم', old_data_backfilled: 'إكمال بيانات ناقصة من النظام القديم', master_password_set: 'اختيار الباسورد الرئيسي', report_saved: 'حفظ تقرير اليوم',
     review_added: 'متابعة جديدة', review_updated: 'تعديل متابعة', shift_changed: 'قرار نهاية شيفت', employee_created: 'إضافة موظف', employee_changed: 'تعديل موظف', employee_deleted: 'حذف موظف (قديم)',
     admin_account_created: 'إضافة مستخدم إدارة', admin_account_changed: 'تعديل مستخدم إدارة', admin_account_deleted: 'حذف مستخدم إدارة (قديم)', break_request_decided: 'قرار طلب بريك',
     calls_assigned: 'نسبة مكالمات لموظف', calls_unassigned: 'إلغاء نسبة مكالمات', message_sent: 'رسالة للموظفين', telegram_settings: 'إعدادات تليجرام', telegram_bot_linked: 'ربط بوت تليجرام', telegram_group_linked: 'ربط جروب تليجرام', collector_linked: 'ربط الموصل' };
   let auditRows = [];
   const auditColumns = [{ title: 'الوقت', get: a => a.at, show: a => stamp(a.at), type: 'datetime' }, { title: 'التغيير', get: a => AUDIT[a.action] || a.action }, { title: 'بواسطة', get: a => a.actor || '—' }, { title: 'الموظف', get: a => a.employee || '—' },
-    { title: 'التفاصيل', get: a => Object.entries(a.details || {}).filter(([k]) => !['actor', 'legacyId'].includes(k)).map(([k, v]) => k + ': ' + (typeof v === 'object' ? JSON.stringify(v) : v)).join(' · ').slice(0, 300), cls: () => 'wrap' }];
+    { title: 'التفاصيل', get: a => Object.entries(a.details || {}).filter(([k]) => !['actor', 'legacyId'].includes(k)).map(([k, v]) => ({source:'المصدر',ref:'رقم الطلب',line:'السطر',sourceItem:'الصنف بالمصدر',itemNo:'كود Apex',itemName:'الصنف المختار',branch:'الفرع',location:'المنطقة',items:'الأصناف والكميات',customerName:'اسم العميل',address:'العنوان',note:'الملاحظات',payment:'الدفع'}[k] || k) + ': ' + (typeof v === 'object' ? JSON.stringify(v) : v)).join(' · ').slice(0, 300), cls: () => 'wrap' }];
   async function renderSystem() {
     const d = await api('/api/system'), now = Date.parse(d.serverNow), ago = v => v ? Math.round((now - Date.parse(v)) / 1000) : null;
     const c = d.collector, hAge = ago(c.lastHistory?.at), lAge = ago(c.lastLive);

@@ -331,11 +331,46 @@ function setup(app) {
           items: (p.items || []).map(x => itemOut(x, false)), detailRead: !!p.items?.length,
           apex: a ? { no: a.no, sn: a.sn ?? null, user: a.user || null, how: a.how || null } : null, matching: sm.states?.get(o.id) || null, job: null });
       }
+      // Explicit staff choices are separate from inferred matches and scoped to source,
+      // dish/add-on, parent dish and size. Conflicting choices stay visible for review.
+      const manual = app.learn ? await app.learn.pairs('transfer-item-choice') : new Map();
+      for (const order of list) for (const item of order.items) {
+        const lines = [[item, 'item', ''], ...(item.addons || []).map(a => [a, 'addon', item.name])];
+        for (const [line, kind, parent] of lines) {
+          line.choiceKey = sha256(JSON.stringify([order.source, kind, parent, line.name, item.sizeOption || '']));
+          const choices = [...(manual.get(line.choiceKey)?.keys() || [])].filter(no => apexName.has(no));
+          if (choices.length) line.apex = choices.map(no => ({ no, name: apexName.get(no) }));
+        }
+      }
       list.sort((x, y) => (x.apex ? 1 : 0) - (y.apex ? 1 : 0) || String(x.at || '').localeCompare(String(y.at || '')));
       return { at: now, list, locations: (Array.isArray(snap.locations) ? snap.locations : []) };
     }
   }
   // ---- claim / entered / release ----
+  app.route('POST', '/api/transfer/selection', async ctx => {
+    const me = await who(ctx), b = ctx.body;
+    const source = ['talabat', 'site'].includes(b.source) ? b.source : null, ref = String(b.ref || '');
+    if (!source || !/^\d{1,20}$/.test(ref)) fail(400, 'أوردر غير صحيح');
+    const row = await db.prepare(source === 'talabat' ? 'SELECT day FROM talabat_orders WHERE id = ?' : 'SELECT day FROM site_orders WHERE id = ?').get(ref);
+    if (!row) fail(404, 'الأوردر مش موجود');
+    const job = await db.prepare('SELECT * FROM transfer_jobs WHERE source = ? AND ref = ?').get(source, ref);
+    if (job && !['released', 'auto_failed', 'auto_preview'].includes(job.state) && !(job.state === 'claimed' && ctx.now - job.at > CLAIM_MS) && (job.employee_id !== me.id || job.state !== 'claimed')) fail(409, 'الأوردر محجوز أو اتبعت بالفعل');
+    const order = (await baseFor(row.day, ctx.now)).list.find(o => o.source === source && String(o.ref) === ref);
+    if (!order || order.apex || order.out) fail(409, 'الأوردر مش متاح للاختيار');
+    const lines = order.items.flatMap(i => [i, ...(i.addons || [])]);
+    const line = Number.isInteger(b.line) ? lines[b.line] : null, itemNo = String(b.itemNo || '');
+    if (!line || line.choiceKey !== b.choiceKey) fail(409, 'تفاصيل الأوردر اتغيرت — حدّث الصفحة');
+    if (!APEX_NAMES[itemNo]) fail(400, 'اختار صنف موجود على Apex');
+    const evidence = source + ':' + ref + ':' + b.line;
+    await db.batch([
+      db.prepare("DELETE FROM learned WHERE kind = 'transfer-item-choice' AND a = ? AND ref = ?").bind(line.choiceKey, evidence),
+      db.prepare("INSERT INTO learned (kind,a,b,ref,value,at) VALUES ('transfer-item-choice',?,?,?,?,?)").bind(line.choiceKey,itemNo,evidence,me.name,ctx.now)
+    ]);
+    await app.audit('transfer_item_selected', me.staff ? me.id : null, { actor: me.name, source, ref, line: b.line + 1, sourceItem: line.name, itemNo, itemName: APEX_NAMES[itemNo] });
+    S(row.day).dirty = true;
+    return { ok: true };
+  });
+
   app.route('POST', '/api/transfer/job', async ctx => {
     const me = await who(ctx);
     const b = ctx.body, source = b.source === 'talabat' || b.source === 'site' ? b.source : null, ref = String(b.ref || '').slice(0, 40);
@@ -413,7 +448,7 @@ function setup(app) {
         ON CONFLICT(source, ref) DO UPDATE SET state = 'auto_pending', employee_id = excluded.employee_id, employee_name = excluded.employee_name, payment = excluded.payment, note = excluded.note, at = excluded.at, payload = excluded.payload, result = NULL`)
         .run(source, ref, row.day, me.id, me.name, payment, note, ctx.now, JSON.stringify(payload));
     } else fail(400, 'invalid_action');
-    await app.audit('transfer_' + b.action, me.staff ? me.id : null, { actor: me.name, source, ref, payment });
+    await app.audit('transfer_' + b.action, me.staff ? me.id : null, { actor: me.name, source, ref, payment, ...(b.action === 'auto' ? { branch: b.branchNo, location: b.locationNo, items: b.items, customerName: b.customer?.name, address: b.customer?.address, note: b.note } : {}) });
     return { ok: true };
   });
 

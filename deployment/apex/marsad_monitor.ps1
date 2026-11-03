@@ -1,4 +1,4 @@
-﻿$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $self = $MyInvocation.MyCommand.Path
@@ -682,7 +682,7 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
       if ($run.Count -gt 1) {
         $f = $run[0]; $span = Mins $f.Entry $run[-1].Entry
         [void]$issues.Add([ordered]@{ type = 'تقسيم'; no = $run[-1].No; sn = $run[-1].Sn; branch = BName $f.Branch; kind = $f.Kind; user = UName $f.User; at = IsoT $run[-1].Entry; detail = "نفس العميل $($run.Count) أوردرات في $span دقيقة" })
-        Raise "split:$($f.No)" 'ordersEntry' ("🖥️ Apex | ✂️ نفس العميل اتعمله $($run.Count) أوردرات في $span دقيقة`nالفرع: $(BName $f.Branch)`nالأوردرات: $((@($run | ForEach-Object { $_.Disp })) -join '، ')`nالموظف: $(UName $f.User)`nلو ده أوردر واحد (زي قسايم وفّرها) اتجمع في أوردر واحد — كل أوردر زيادة بيخلّي عدد أوردرات الفرع مختلف عن الكول سنتر")
+        Raise "split:$($f.No)" 'ordersEntry' ("🖥️ Apex | ✂️ نفس العميل اتعمله $($run.Count) أوردرات في $span دقيقة`nالفرع: $(BName $f.Branch)`nالأوردرات: $((@($run | ForEach-Object { $_.Disp })) -join '، ')`nالموظف: $(UName $f.User)`nكل رقم أوردر مستقل لازم يوصل للفرع بنفس أصنافه وكمياته — لا تجمع الطلبات ولا تنقص عددها بسبب تشابه العميل أو القيمة")
       }
       if ($c) { $run = @($c) }
     }

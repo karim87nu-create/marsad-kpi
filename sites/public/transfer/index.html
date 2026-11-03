@@ -205,8 +205,8 @@ function payText(o) {
 function flatLines(o) {
   const out = [];
   for (const i of o.items || []) {
-    out.push({ kind: 'item', qty: i.qty, name: i.name, label: i.name + (i.sizeOption ? ' — ' + i.sizeOption : '') + ((i.freeOptions || []).length ? ' (' + i.freeOptions.join('، ') + ')' : ''), apex: i.apex || [], note: (i.freeOptions || []).join('، ').slice(0, 60) });
-    for (const a of i.addons || []) out.push({ kind: 'addon', qty: a.qty ?? '?', name: a.name, label: '+ ' + a.name + ' (' + money(a.price) + ') — إضافة بفلوس على ' + i.name, apex: a.apex || [], note: '' });
+    out.push({ choiceKey: i.choiceKey, kind: 'item', qty: i.qty, name: i.name, label: i.name + (i.sizeOption ? ' — ' + i.sizeOption : '') + ((i.freeOptions || []).length ? ' (' + i.freeOptions.join('، ') + ')' : ''), apex: i.apex || [], note: (i.freeOptions || []).join('، ').slice(0, 60) });
+    for (const a of i.addons || []) out.push({ choiceKey: a.choiceKey, kind: 'addon', qty: a.qty ?? '?', name: a.name, label: '+ ' + a.name + ' (' + money(a.price) + ') — إضافة بفلوس على ' + i.name, apex: a.apex || [], note: '' });
   }
   return out;
 }
@@ -322,6 +322,10 @@ function card(o) {
   const pay = payOf(o), fl = flatLines(o), k = key(o);
   const mode = data.autoTransfer, auto = !!mode && mode !== 'off' && !o.apex && !/^auto_(?:pending|sending|done|preview)$/.test(o.job?.state || '');
   const p = picks[k] || (picks[k] = { branch: o.apexBranch || '', items: fl.map(i => i.apex?.length === 1 ? i.apex[0].no : '') });
+  const signature = JSON.stringify(fl.map(i => [i.choiceKey, i.qty]));
+  if (p.signature && p.signature !== signature) { p.items = fl.map(i => i.apex?.length === 1 ? i.apex[0].no : ''); p.edit = {}; }
+  p.signature = signature;
+  fl.forEach((i, n) => { if (!p.items[n] && i.apex?.length === 1) p.items[n] = i.apex[0].no; });
   const freeJob = !o.job || ['released', 'auto_failed', 'auto_preview'].includes(o.job.state), mineOrFree = freeJob || o.job.mine;
   const c = ticketCalc(o, fl, p);
   const ad = addressParts(o.customer?.address, (data.locations || []).find(l => String(l.no) === String(p.loc))?.name || ''), cu = o.customer || {};
@@ -427,6 +431,7 @@ $('list').addEventListener('click', async e => {
     if (!pay) { toast('حدد الأول: كاش ولا مدفوع'); return; }
     if (!p.branch) { toast('اختار الفرع'); return; }
     if (!p.loc) { toast('اختار منطقة العميل'); return; }
+    if (p.saving) { toast('استنى حفظ اختيار الصنف'); return; }
     const missingAt = flatLines(o).findIndex((i, n) => !/^\d{1,10}$/.test(String(p.items?.[n] || '')));
     if (missingAt >= 0) { toast('اختار الصنف على Apex لـ: ' + flatLines(o)[missingAt].name); return; }
     if (o.discounts?.some(d => !d.who)) { toast('الخصم مش واضح على حساب مين — سجله بإيدك'); return; }
@@ -459,7 +464,7 @@ $('list').addEventListener('click', async e => {
     catch (err) { toast(err.message); b.disabled = false; }
   }
 });
-$('list').addEventListener('change', e => {
+$('list').addEventListener('change', async e => {
   const el = e.target.closest('[data-pick]'); if (!el) return;
   const c = el.closest('.card'), p = picks[c.dataset.k]; if (!p) return;
   if (el.dataset.pick === 'branch') {
@@ -475,6 +480,11 @@ $('list').addEventListener('change', e => {
     // A name typed in the search box → its Apex number (an exact name, else the one name that contains what was typed).
     let no = v;
     if (el.dataset.find) { const all = data.apexItems || [], hit = all.find(a => a.name === v) || (all.filter(a => a.name.includes(v)).length === 1 ? all.find(a => a.name.includes(v)) : null) || all.find(a => a.no === v); if (!hit) { toast('الصنف ده مش في Apex — اختاره من القايمة'); return; } no = hit.no; }
+    const order = data.orders.find(o => key(o) === c.dataset.k), n = Number(el.dataset.n), line = flatLines(order)[n];
+    el.disabled = true; p.saving = (p.saving || 0) + 1;
+    try { await api('POST', '/api/transfer/selection', { source: order.source, ref: order.ref, line: n, choiceKey: line.choiceKey, itemNo: no }); }
+    catch (err) { toast(err.message); el.disabled = false; return; }
+    finally { p.saving--; }
     p.items[Number(el.dataset.n)] = no; if (p.edit) delete p.edit[Number(el.dataset.n)]; p.open = true; render(true);
   }
 });
