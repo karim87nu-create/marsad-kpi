@@ -331,3 +331,35 @@ test('whose order: a failed automatic transfer is free for anyone; one on Apex o
     assert.equal((await as(sara)('POST', '/api/transfer/job', { source: 'talabat', ref: '3977800001', action: 'entered', payment: 'cash' })).status, 409, 'Mona entered it');
   } finally { await t.close(); }
 });
+
+
+test('worker queue does not await I/O owned by a different request', async () => {
+  const t = await start();
+  let release;
+  try {
+    const admin = await t.admin();
+    t.app.db.kind = 'd1';
+    const prepare = t.app.db.prepare.bind(t.app.db);
+    let first = true, entered;
+    const blocked = new Promise(r => { release = r; });
+    const ready = new Promise(r => { entered = r; });
+    t.app.db.prepare = sql => {
+      const statement = prepare(sql);
+      if (first && sql === 'SELECT data FROM orders_days WHERE day = ?') {
+        first = false;
+        const get = statement.get.bind(statement);
+        statement.get = async (...args) => { entered(); await blocked; return get(...args); };
+      }
+      return statement;
+    };
+    const pending = admin('GET', '/api/transfer/queue');
+    await ready;
+    const independent = await Promise.race([
+      admin('GET', '/api/transfer/queue'),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('queue waited on another request')), 1500))
+    ]);
+    assert.equal(independent.status, 200);
+    release();
+    assert.equal((await pending).status, 200);
+  } finally { release?.(); await t.close(); }
+});

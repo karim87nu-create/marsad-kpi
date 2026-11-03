@@ -203,8 +203,8 @@ function setup(app) {
   const st = new Map(), S = day => st.get(day) || (st.set(day, { dirty: false, run: null }), st.get(day));
   function rebuild(day) {
     const x = S(day);
-    if (x.run) return x.run;
-    x.run = (async () => {
+    if (db.kind !== 'd1' && x.run) return x.run;
+    const run = (async () => {
       let base, passes = 0;
       do {
         x.dirty = false;
@@ -214,12 +214,15 @@ function setup(app) {
       const keep = { at: base.at, locations: base.locations, list: base.list.map(o => o.apex || o.out ? { source: o.source, ref: o.ref, code: o.code, at: o.at, status: o.status, out: o.out, branch: o.branch, apexBranch: o.apexBranch, total: o.total, apex: o.apex } : o) };
       await db.prepare('INSERT INTO transfer_cache (day, at, data) VALUES (?,?,?) ON CONFLICT(day) DO UPDATE SET at = excluded.at, data = excluded.data').run(day, base.at, JSON.stringify(keep)).catch(() => {});
       return base;
-    })().finally(() => { x.run = null; });
-    return x.run;
+    })().finally(() => { if (x.run === run) x.run = null; });
+    // Worker I/O belongs to its initiating request: never await another request's
+    // in-flight promise. Only completed data can be shared between requests.
+    if (db.kind !== 'd1') x.run = run;
+    return run;
   }
   async function baseFor(day, now) {
     const x = S(day);
-    if (x.run) return x.run;                                    // a build is running here: its result is the freshest
+    if (db.kind !== 'd1' && x.run) return x.run;                                    // a build is running here: its result is the freshest
     const b = queueCache.get(day);
     if (b && !x.dirty && now - b.at < QUEUE_CACHE_MS) return b;
     // Pushes may reach another server: the last build any server saved (Karim 01-11: a fresh server rebuilt the whole
@@ -333,7 +336,11 @@ function setup(app) {
       }
       // Explicit staff choices are separate from inferred matches and scoped to source,
       // dish/add-on, parent dish and size. Conflicting choices stay visible for review.
-      const manual = app.learn ? await app.learn.pairs('transfer-item-choice') : new Map();
+      const manual = new Map();
+      for (const r of await db.prepare("SELECT DISTINCT a,b FROM learned WHERE kind = 'transfer-item-choice'").all()) {
+        if (!manual.has(r.a)) manual.set(r.a, new Map());
+        manual.get(r.a).set(r.b, 1);
+      }
       for (const order of list) for (const item of order.items) {
         const lines = [[item, 'item', ''], ...(item.addons || []).map(a => [a, 'addon', item.name])];
         for (const [line, kind, parent] of lines) {
