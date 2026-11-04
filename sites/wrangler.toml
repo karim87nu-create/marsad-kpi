@@ -1,0 +1,14 @@
+name = "marsad-v2-cloud"
+main = "worker.js"
+compatibility_date = "2026-11-04"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = ["/api/*", "/health"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "marsad-v2-cloud-staging"
+database_id = "d14ba50d-9fc5-46d3-b973-dd7ee9320d61"
