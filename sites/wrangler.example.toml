@@ -1,0 +1,16 @@
+# Copy to wrangler.toml only after creating a NEW staging D1 database.
+# Do not use the production database ID. Never commit credentials.
+name = "marsad-v2-cloud"
+main = "worker.js"
+compatibility_date = "2026-11-04"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = ["/api/*", "/health"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "marsad-v2-cloud-staging"
+database_id = "REPLACE_WITH_NEW_STAGING_D1_DATABASE_ID"
