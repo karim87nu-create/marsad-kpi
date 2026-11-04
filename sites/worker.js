@@ -71,6 +71,32 @@ export default {
     return result.meta?.changes===1?json({ok:true,demo:true}):json({error:'not_claimed_by_you'},409);
    }catch(e){console.error('demo-transfer write',e);return json({error:'demo_database_error'},500);}
   }
+  // Isolated read-only mirror ingestion: writes to staging D1 only; no live integrations.
+  if (path === '/api/mirror/ingest' && request.method === 'POST') {
+   if (!env.DB || !env.MIRROR_INGEST_TOKEN) return json({error:'mirror_not_configured'},503);
+   const provided=request.headers.get('x-mirror-token')||'';
+   const a=new TextEncoder().encode(provided), b=new TextEncoder().encode(env.MIRROR_INGEST_TOKEN);
+   if(a.length!==b.length || a.length<24)return json({error:'unauthorized'},401);
+   let diff=0;for(let i=0;i<a.length;i++)diff|=a[i]^b[i];
+   if(diff)return json({error:'unauthorized'},401);
+   const len=Number(request.headers.get('content-length')||0);
+   if(len>262144)return json({error:'payload_too_large'},413);
+   try {
+    const reader=request.body?.getReader();if(!reader)return json({error:'empty_body'},400);
+    const chunks=[];let size=0;
+    while(true){const part=await reader.read();if(part.done)break;size+=part.value.length;if(size>262144){await reader.cancel();return json({error:'payload_too_large'},413);}chunks.push(part.value);}
+    const bytes=new Uint8Array(size);let offset=0;for(const c of chunks){bytes.set(c,offset);offset+=c.length;}
+    const data=JSON.parse(new TextDecoder().decode(bytes));
+    const source=String(data?.source||''),ref=String(data?.ref||'');
+    if(!['talabat','site','apex'].includes(source)||!ref||ref.length>100||typeof data.payload!=='object'||!data.payload||Array.isArray(data.payload))return json({error:'invalid_mirror_payload'},400);
+    await env.DB.prepare("CREATE TABLE IF NOT EXISTS mirror_ingest (source TEXT NOT NULL, ref TEXT NOT NULL, payload TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY(source,ref))").run();
+    await env.DB.prepare("INSERT INTO mirror_ingest(source,ref,payload,updated_at) VALUES(?,?,?,?) ON CONFLICT(source,ref) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at").bind(source,ref,JSON.stringify(data.payload),Date.now()).run();
+    return json({ok:true,staging:true,source,ref});
+   }catch(e){console.error('mirror ingest',e);return json({error:'mirror_ingest_failed'},500);}
+  }
+  if(path==='/api/mirror/status' && request.method==='GET') {
+   return json({configured:!!env.MIRROR_INGEST_TOKEN,databaseConfigured:!!env.DB,liveApexWrites:false,liveNotifications:false});
+  }
   return json({error:'staging_locked'},403);
  }
 };
