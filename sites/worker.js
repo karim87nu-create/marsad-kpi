@@ -24,11 +24,11 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 async function refresh(){
  try{
  const r=await fetch('/api/demo-transfer/orders',{cache:'no-store'});const d=await r.json();if(!r.ok)throw Error(d.error||'فشل التحميل');
- $('orders').innerHTML=d.orders.map(o=>`<article><b>${esc(o.code)}</b> — ${esc(o.source)}<p>${esc(o.branch)} | ${esc(o.item)} | ${esc(o.payment)}</p>
- <p class="status">الحالة: ${esc(o.state)} ${o.by?'— '+esc(o.by):''}</p>
- <button data-id="${esc(o.id)}" data-action="claim" ${o.state!=='waiting'?'disabled':''}>استلام تجريبي</button>
- <button data-id="${esc(o.id)}" data-action="entered" ${o.state!=='claimed'?'disabled':''}>تم التسجيل تجريبيًا</button>
- <button class="secondary" data-id="${esc(o.id)}" data-action="reset">إعادة</button></article>`).join('');
+ $('orders').innerHTML=d.orders.map(o=>\`<article><b>\${esc(o.code)}</b> — \${esc(o.source)}<p>\${esc(o.branch)} | \${esc(o.item)} | \${esc(o.payment)}</p>
+ <p class="status">الحالة: \${esc(o.state)} \${o.by?'— '+esc(o.by):''}</p>
+ <button data-id="\${esc(o.id)}" data-action="claim" \${o.state!=='waiting'?'disabled':''}>استلام تجريبي</button>
+ <button data-id="\${esc(o.id)}" data-action="entered" \${o.state!=='claimed'?'disabled':''}>تم التسجيل تجريبيًا</button>
+ <button class="secondary" data-id="\${esc(o.id)}" data-action="reset">إعادة</button></article>\`).join('');
  }catch(e){$('error').textContent=e.message;}
 }
 $('orders').addEventListener('click',async e=>{
