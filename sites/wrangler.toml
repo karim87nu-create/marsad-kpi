@@ -1,4 +1,4 @@
-name = "marsad-v2-cloud"
+name = "marsad-kpi"
 main = "worker.js"
 compatibility_date = "2026-11-04"
 compatibility_flags = ["nodejs_compat"]
