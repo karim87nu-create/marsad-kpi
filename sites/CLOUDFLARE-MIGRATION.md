@@ -17,7 +17,7 @@ This branch contains an isolated Cloudflare Worker with three **synthetic** tran
 - Build command: none
 - Worker name in `wrangler.toml`: `marsad-kpi`
 - Git build trigger: `Marsad staging (cloudflare-migration)`
-- Cloudflare manual build passed on 2026-11-05. Automatic push builds must be confirmed separately; manual build success does not prove they are enabled.
+- Cloudflare manual build passed on 2026-11-05. Automatic push builds were enabled on 2026-11-05; a GitHub push smoke test is required to verify the trigger.
 
 ## Validation
 - `GET /api/health` should return HTTP 200 with `stage: cloudflare-migration`, `demoTransfer: true`, `liveTransfers: false`.
