@@ -1,0 +1,40 @@
+name: Check transfer queue repair
+
+on:
+  push:
+    branches: [repair/transfer-queue-resilience-20261105]
+  pull_request:
+    paths:
+      - 'sites/lib/marsad/transfer.js'
+      - 'sites/public/transfer/index.html'
+      - '.github/workflows/check-transfer-queue.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Check server transfer module syntax
+        run: node --check sites/lib/marsad/transfer.js
+      - name: Check transfer page module syntax
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          page=Path('sites/public/transfer/index.html').read_text()
+          script=re.search(r'<script type="module">(.*?)</script>',page,re.S)
+          assert script, 'Transfer page module missing'
+          Path('/tmp/marsad-transfer-page.mjs').write_text(script.group(1))
+          PY
+          node --check /tmp/marsad-transfer-page.mjs
+      - name: Test application
+        working-directory: server
+        run: |
+          npm ci
+          npm test
