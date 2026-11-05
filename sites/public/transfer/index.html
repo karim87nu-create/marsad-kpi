@@ -406,7 +406,8 @@ function render(force) {
   $('count').textContent = 'لسه: ' + todo + ' · الكل: ' + data.orders.length;
   if (data.liveScreen === false) $('count').textContent += ' · ⚠️ مفيش شاشة لايف طلبات شغالة دلوقتي';
   const html = list.length ? list.map(card).join('') : '<div class="empty">مفيش أوردرات هنا دلوقتي</div>';
-  if (html === lastDraw) return;   // nothing changed: the page is not rebuilt
+  const drawKey = (data.stale ? 'stale:' : 'fresh:') + html;
+  if (drawKey === lastDraw) return;   // nothing changed: the page is not rebuilt
   // Someone is choosing or typing in an order: the list waits until they leave the field (Karim 01-11: a new order
   // used to rebuild the page under them and they lost the order they were on).
   const act = document.activeElement;
@@ -414,7 +415,9 @@ function render(force) {
   // The order at the top of the screen stays where it is when new orders come in above it.
   const cards = [...$('list').querySelectorAll('.card')], anchor = cards.find(c => c.getBoundingClientRect().bottom > 80);
   const was = anchor ? { k: anchor.dataset.k, top: anchor.getBoundingClientRect().top } : null;
-  $('list').innerHTML = html; lastDraw = html; render.pending = false;
+  $('list').innerHTML = html; lastDraw = drawKey; render.pending = false;
+  // A cached queue is for visibility only: do not let staff act on stale order state.
+  if (data.stale) $('list').querySelectorAll('.card button, .card input, .card select').forEach(el => { el.disabled = true; });
   if (was) { const now = [...$('list').querySelectorAll('.card')].find(c => c.dataset.k === was.k); if (now) window.scrollBy(0, now.getBoundingClientRect().top - was.top); }
 }
 $('list').addEventListener('click', async e => {
@@ -503,7 +506,7 @@ async function loadQueue() {
     // The Apex items and areas come once (and again only when they change): the page stays light.
     const prev = data, d = await api('GET', '/api/transfer/queue' + (prev?.staticKey ? '?have=' + encodeURIComponent(prev.staticKey) : ''));
     if (!d.apexItems && prev) { d.apexItems = prev.apexItems; d.locations = prev.locations; d.sections = prev.sections; }
-    data = d; $('queueStatus').textContent = ''; $('me').textContent = data.me.name; const a = $('auto'); a.textContent = { off: 'التحويل الآلي متوقف — سجّل على Apex بإيدك', shadow: 'التحويل الآلي: معاينة بس — سجّل بإيدك', test: 'التحويل الآلي: تجربة على قاعدة الاختبار — سجّل بإيدك', live: 'التحويل الآلي شغال' }[data.autoTransfer] || ''; a.className = 'pill' + (data.autoTransfer === 'live' ? '' : ' off'); render(); }
+    data = d; $('queueStatus').textContent = d.stale ? '⚠️ أحدث تحديث فشل — دي آخر بيانات محفوظة، والتحويل متوقف مؤقتًا لحد ما التحديث يرجع.' : ''; $('me').textContent = data.me.name; const a = $('auto'); a.textContent = { off: 'التحويل الآلي متوقف — سجّل على Apex بإيدك', shadow: 'التحويل الآلي: معاينة بس — سجّل بإيدك', test: 'التحويل الآلي: تجربة على قاعدة الاختبار — سجّل بإيدك', live: 'التحويل الآلي شغال' }[data.autoTransfer] || ''; a.className = 'pill' + (data.autoTransfer === 'live' ? '' : ' off'); render(); }
   catch (e) { if (token) { $('queueStatus').textContent = 'تعذّر تحديث الطلبات: ' + e.message + ' — جاري إعادة المحاولة'; if (!data) $('auto').textContent = 'حالة التحويل لم تصل بعد'; toast(e.message); } }
 }
 function boot() { $('login').hidden = true; $('app').hidden = false; load(); }
