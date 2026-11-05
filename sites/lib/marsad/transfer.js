@@ -153,7 +153,7 @@ function setup(app) {
     const day = validDate(String(ctx.query.day || '')) ? ctx.query.day : businessDay(ctx.now);
     // The day's orders (heavy: Apex snapshot, matching) are built once every few seconds for everyone on the page;
     // only the claims (who has which order) are read fresh for each request.
-    const base = await baseFor(day, ctx.now);
+    const base = await baseFor(day, ctx.now, { allowStale: true });
     const snap = { locations: base.locations };
     const jobs = new Map((await db.prepare('SELECT * FROM transfer_jobs WHERE day = ?').all(day)).map(j => [j.source + ':' + j.ref, j]));
     const jobOf = (source, ref) => {
@@ -173,7 +173,7 @@ function setup(app) {
     if (app.toArabic) {
       const open = list.filter(o => !o.done), texts = [];
       for (const o of open) texts.push(o.customer?.name, o.customer?.address, o.customer?.area, o.note, ...(o.items || []).flatMap(i => [i.note, ...(i.freeOptions || [])]));
-      const ar = await app.toArabic(texts.filter(Boolean), { waitUntil: ctx.waitUntil });
+      const ar = await app.toArabic(texts.filter(Boolean), { waitUntil: ctx.waitUntil }).catch(() => new Map());
       const tr = v => (v && ar.get(v)) || v, changed = v => v && ar.get(v) && ar.get(v) !== v;
       for (let i = 0; i < list.length; i++) {
         const o = list[i]; if (o.done) continue;
@@ -192,7 +192,7 @@ function setup(app) {
     const sections = items.length ? APEX_SECTIONS.map(x => ({ name: x.name, items: x.items.filter(no => APEX_NAMES[no]) })).filter(x => x.items.length) : [];
     const staticKey = 's' + sections.length + ':' + items.length + ':' + locations.length + ':' + locations.reduce((a, l) => a + l.no * (l.branch || 1) + (Number(l.service) || 0), 0).toFixed(2);
     const fresh = String(ctx.query.have || '') !== staticKey;
-    return { day, me: { name: me.name, staff: me.staff }, serverNow: iso(ctx.now), liveScreen: ctx.now - (liveNow._screen || 0) < 3 * 60000, autoTransfer: mode, branches: APEX_BRANCHES, staticKey,
+    return { day, me: { name: me.name, staff: me.staff }, serverNow: iso(ctx.now), stale: base.stale === true, liveScreen: ctx.now - (liveNow._screen || 0) < 3 * 60000, autoTransfer: mode, branches: APEX_BRANCHES, staticKey,
       ...(fresh ? { locations, apexItems: items, sections } : {}), orders: list };
   });
 
@@ -220,7 +220,7 @@ function setup(app) {
     if (db.kind !== 'd1') x.run = run;
     return run;
   }
-  async function baseFor(day, now) {
+  async function baseFor(day, now, { allowStale = false } = {}) {
     const x = S(day);
     if (db.kind !== 'd1' && x.run) return x.run;                                    // a build is running here: its result is the freshest
     const b = queueCache.get(day);
@@ -229,7 +229,18 @@ function setup(app) {
     // day on the first opening while the employee waited).
     const r = await db.prepare('SELECT at, data FROM transfer_cache WHERE day = ?').get(day);
     if (!x.dirty && r && r.at > (b?.at || 0) && now - r.at < QUEUE_CACHE_MS) { const d = parseJson(r.data, null); if (d) { queueCache.set(day, d); x.dirty = false; return d; } }
-    return rebuild(day);
+    try { return await rebuild(day); }
+    catch (error) {
+      // Only the read-only queue may show a recent completed snapshot when matching or D1 is slow.
+      // Actions still require a successful fresh build, so a stale order cannot be claimed or entered.
+      if (allowStale) {
+        const persisted = r && parseJson(r.data, null);
+        const saved = persisted?.at > (b?.at || 0) ? persisted : (b || persisted);
+        if (saved && Array.isArray(saved.list) && Number.isFinite(saved.at) && now - saved.at <= 15 * 60000)
+          return { ...saved, stale: true };
+      }
+      throw error;
+    }
   }
   // Every push from the Talabat screens, the cashier PC or the website (and the page's own actions): the next read
   // is built in the background, so the page usually finds it ready.
