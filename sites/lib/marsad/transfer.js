@@ -488,7 +488,7 @@ function setup(app) {
       if (clean.length + noteItems.length > 40) fail(409, 'إجمالي أصناف الأوردر أكبر من الحد');
       // Exact note snapshot + customer ID will be checked AGAIN inside the Apex transaction before clearing.
       const noteBenefit = verifiedCardNote.text ? {
-        custNo: String(noteRecord.cust_no || ''), original: verifiedCardNote.text,
+        custNo: String(noteRecord.cust_no || ''), original: String(noteRecord.note || ''),
         oneTime: verifiedCardNote.oneTime && isAcknowledged, percent: notePercent,
         amount: noteAmount, items: noteItems
       } : null;
