@@ -12,7 +12,7 @@ function interpretApexCustomerNote(input) {
   if (pct.length === 1 && +pct[0][1].replace(',','.') > 0 && +pct[0][1].replace(',','.') <= 100) actions.push({kind:'discount_percent',value:+pct[0][1].replace(',','.'),label:pct[0][0]});
   if (amounts.length === 1 && +amounts[0][1].replace(',','.') > 0) actions.push({kind:'discount_amount',value:+amounts[0][1].replace(',','.'),label:amounts[0][0]});
   // Entitlement to items is never guessed into an APEX item code or price.
-  if (/(?:ليه|لها|له|يستحق|هدية|هديه|مجاني|صنف|اصناف|أصناف|قطعة|قطعه|اضافة|إضافة)\s+.{0,90}/i.test(norm)) actions.push({kind:'items_to_verify',label:raw});
+  if (/(?:هدية|هديه|مجاني|صنف مجاني|اصناف مجانيه|قطعة مجانية|قطعه مجانيه|(?:ليه|لها|له|يستحق)\s+(?:\d+\s+)?(?:صنف|اصناف|قطعة|قطعه|وجبة|وجبه|مشروب|هدية|هديه))/i.test(norm)) actions.push({kind:'items_to_verify',label:raw});
   const maybeDiscount = /خصم|discount|٪|\d\s*%/i.test(norm);
   const conflicting = !!(pct.length > 1 || amounts.length > 1 || (pct.length && amounts.length)) ||
     (maybeDiscount && !actions.some(a=>a.kind.startsWith('discount_')));
@@ -20,7 +20,7 @@ function interpretApexCustomerNote(input) {
   // Clear only a note explicitly marked one-order-only whose complete text can be consumed.
   // Mixed permanent instructions must never be erased along with a one-time entitlement.
   const hasPermanent = /(?:دائم|دايم|كل\s*(?:مرة|مره|اوردر|أوردر|طلب)|على\s*طول|علي\s*طول|ثابت|every\s*order|always)/i.test(norm);
-  const multipleInstructions = /[\\n;؛|]/.test(raw);
+  const multipleInstructions = /[\n;؛|]/.test(raw);
   const clearable = oneTime && !hasPermanent && !multipleInstructions && !conflicting;
   return {text:raw,category:conflicting?'ambiguous':actions.length?'actionable':'instructions',
     oneTime, clearable, actions, requiresReview:true, conflicting};
