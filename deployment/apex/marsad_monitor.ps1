@@ -507,6 +507,15 @@ function Probe-Payload($payload){
   }
 }
 
+# Finalization is after the operational day has ended (09:00 to 02:00 Cairo time).
+# Never infer that a branch has finished just because there are temporarily zero open orders.
+function EndOfDayReady([datetime]$day, [datetime]$now, [int]$openDelivery, $lastAction) {
+  $earliest = $day.Date.AddDays(1).AddHours(2).AddMinutes(15)
+  if ($now -lt $earliest -or $openDelivery -gt 0) { return $false }
+  if ($lastAction -and $now -lt $lastAction.AddMinutes(15)) { return $false }
+  return $true
+}
+
 # ===== one reading of Apex -> one summary =====
 function Cycle {
   $now = [datetime](Q 'SELECT GETDATE() AS n').Rows[0].n
@@ -830,6 +839,60 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
     [ordered]@{ no = $_.No; sn = $_.Sn; branch = BName $_.Branch; kind = $_.Kind; amount = R2 $_.Amt; user = UName $_.User; by = UName $_.Del; pilot = UName $_.Pilot
       at = IsoT $_.DelT; afterOut = $(if ($_.Out -and $_.DelT) { Mins $_.Out $_.DelT } else { $null }); reason = $_.Why
       reasonNo = $(if ($_.ReasonNo -gt 0) { $_.ReasonNo } else { $null }); reasonName = $(if ($_.ReasonNo -gt 0) { $script:Reasons[$_.ReasonNo] } else { $null }); entry = IsoT $_.Entry; out = IsoT $_.Out; customer = $_.Customer; tag = $dtags[$_.No]; items = @($dlines[$_.No]) } })
+  # Branch-by-branch day-end Telegram reports. Existing 'ordersLate' kind is used deliberately:
+  # current Sites server already routes it to the correct branch group, so only the cashier
+  # monitor needs updating. Unique per-day/per-branch alert keys prevent duplicate messages.
+  foreach($summary in $branchesOut){
+    $bn = [int]$summary.no
+    $key = "dayend:$bn"
+    if ($alerted.Contains($key) -or @($pending | Where-Object { $_.day -eq $dayKey -and $_.key -eq $key }).Count) { continue }
+    $bo = @($list | Where-Object { $_.Branch -eq $bn })
+    $lastAction = $null; $lastOut = $null; $lastCancel = $null
+    foreach($o in $bo){
+      foreach($t in @($o.Entry, $o.Out)){
+        if ($t -and ($null -eq $lastAction -or $t -gt $lastAction)) { $lastAction = $t }
+      }
+      if ($o.Out -and ($null -eq $lastOut -or $o.Out -gt $lastOut.Out)) { $lastOut = $o }
+    }
+    # ALL cancelled rows (including those cancelled before assigning a pilot) are used
+    # for the closing check and cancellation totals. Only rider-loaded cancellations
+    # with valid exit timestamps contribute to the delay rate computed above.
+    $allCancelled = 0; $lastCancelledAt = $null; $lastCancelledNo = $null
+    foreach($del in $dels.Rows){
+      if ([int](N $del.BranchNo) -ne $bn) { continue }
+      $allCancelled++
+      $dt = ParseT $del.DeleteTime $day
+      if ($dt -and ($null -eq $lastAction -or $dt -gt $lastAction)) { $lastAction = $dt }
+      if ($dt -and ($null -eq $lastCancelledAt -or $dt -gt $lastCancelledAt)){
+        $lastCancelledAt = $dt
+        $lastCancelledNo = $(if ($delSn -and (S $del.SnX)) { SnOf $del.SnX } else { [int64](N $del.OrderNo) })
+      }
+    }
+    if (-not (EndOfDayReady $day $now ([int]$summary.open) $lastAction)) { continue }
+    $allOrders = [int]$summary.orders + $allCancelled
+    $count = [int]$summary.delayRateCount
+    $late = [int]$summary.delayRateLate
+    $pct = $(if ($count -gt 0) { [math]::Round(100.0 * $late / $count, 1) } else { $null })
+    $lastExitText = $(if ($lastOut) { "$($lastOut.Disp) الساعة $(Tm $lastOut.Out)" } else { 'لا يوجد' })
+    $lastCancelText = $(if ($lastCancelledAt) { "$lastCancelledNo الساعة $(Tm $lastCancelledAt)" } elseif ($allCancelled) { 'يوجد إلغاء بدون وقت مؤكد' } else { 'لا يوجد' })
+    $avgText = $(if ($null -ne $summary.avgOut) { "$($summary.avgOut) دقيقة" } else { 'غير متاح' })
+    $pctText = $(if ($null -ne $pct) { "$pct%" } else { 'غير متاحة (لا توجد عمليات لها توقيت مؤكد)' })
+    $report = "📊 مرصد الدهان | التقرير الختامي للفرع" +
+      "`n📍 الفرع: $($summary.name) | يوم APEX: $dayKey" +
+      "`n✅ لا توجد أوردرات دليفري مفتوحة وقت إعداد التقرير" +
+      "`n📦 إجمالي الأوردرات: $allOrders (منها $($summary.orders) غير ملغي)" +
+      "`n🛵 خرج مع الطيار: $($summary.outCount)" +
+      "`n❌ الإلغاءات: $allCancelled (منها $($summary.cancelLoadedCount) بعد تحميل الطيار)" +
+      "`n⏰ تأخر خروج: $($summary.outLate) · تأخر ثم اتلغى بعد التحميل: $($summary.cancelLoadedLate)" +
+      "`n📉 نسبة التأخير: $pctText ($late متأخر من $count عملية مكتملة التوقيت)" +
+      "`n🕒 متوسط زمن الخروج: $avgText" +
+      "`n💰 قيمة الأوردرات غير الملغية على APEX: $([math]::Round($summary.sales, 0)) ج" +
+      "`n🔚 آخر خروج: $lastExitText" +
+      "`n🗑️ آخر إلغاء: $lastCancelText" +
+      "`nℹ️ الملغي قبل تحميل الطيار موجود في إجمالي الإلغاءات، وليس نسبة التأخير."
+    Raise $key 'ordersLate' $report $false $summary.name $null
+    L "end-of-day report queued: day=$dayKey branch=$bn orders=$allOrders loadedCancel=$($summary.cancelLoadedCount) late=$late/$count"
+  }
   return [ordered]@{
     v = 1; day = $dayKey; generatedAt = IsoT $now; source = 'Apex'
     settings = [ordered]@{ late = $LateMinutes; veryLate = $VeryLateMinutes }

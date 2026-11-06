@@ -1,0 +1,23 @@
+name: Validate Apex branch day-end report
+on:
+  pull_request:
+    paths:
+      - 'deployment/apex/marsad_monitor.ps1'
+      - 'deployment/apex/test-day-end.ps1'
+      - '.github/workflows/check-branch-day-end.yml'
+  push:
+    branches: [feat/branch-day-end-performance-20261106]
+    paths:
+      - 'deployment/apex/marsad_monitor.ps1'
+      - 'deployment/apex/test-day-end.ps1'
+      - '.github/workflows/check-branch-day-end.yml'
+permissions:
+  contents: read
+jobs:
+  powershell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test end-of-day detection and PowerShell syntax
+        shell: pwsh
+        run: ./deployment/apex/test-day-end.ps1
