@@ -643,12 +643,45 @@ function Apply-Stock {
   L ("stock: " + ($done | ConvertTo-Json -Compress))
 }
 
+# Read customer-card notes only; never modify customer records during lookup.
+# Scoped by the server to existing Talabat/website orders and confirmed phone numbers.
+function Sync-CustomerNotes {
+  $batch = Api '/api/apex-writer/customer-notes/pending' @{}
+  if (-not $batch.pending -or @($batch.pending).Count -eq 0) { return }
+  $c = $null; $results = @()
+  try {
+    $c = Open-Db 'shadow'
+    foreach($p in @($batch.pending | Select-Object -First 25)){
+      $result = @{ source = [string]$p.source; ref = [string]$p.ref; day = [string]$p.day; phone = [string]$p.phone; status = 'error' }
+      try {
+        $q = $c.CreateCommand(); $q.CommandTimeout = 12
+        $q.CommandText = 'SELECT TOP 1 CustNo, Note FROM dbo.Customers WITH (NOLOCK) WHERE Phone = @phone OR Mobile = @phone ORDER BY CustNo DESC'
+        [void]$q.Parameters.AddWithValue('@phone', [string]$p.phone)
+        $rd = $q.ExecuteReader()
+        try {
+          if ($rd.Read()) {
+            $result.status = 'found'
+            $result.custNo = [string]$rd['CustNo']
+            $result.note = $(if ($rd['Note'] -is [DBNull]) { '' } else { [string]$rd['Note'] })
+          } else { $result.status = 'none' }
+        } finally { $rd.Close() }
+      } catch { L ("customer note lookup failed source=$($p.source) ref=$($p.ref) - " + $_.Exception.Message) }
+      $results += $result
+    }
+  } finally { if($c) { $c.Close() } }
+  if ($results.Count) {
+    $ack = Api '/api/apex-writer/customer-notes/result' @{ results = $results }
+    L "customer notes checked=$($results.Count) saved=$($ack.updated)"
+  }
+}
+
 L "writer started (pos $WriterPos)"
 $failures = 0
 for (;;) {
   try { if ((Get-Item $self).LastWriteTimeUtc -ne $selfStamp) { L 'script updated - restarting'; $mutex.ReleaseMutex(); $mutex.Dispose(); Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $self + '"'); exit 0 } } catch {}
   try { Self-Test } catch { L "self-test: $($_.Exception.Message)" }
   try { Apply-Stock } catch { L "stock: $($_.Exception.Message)" }
+  try { Sync-CustomerNotes } catch { L "customer notes: $($_.Exception.Message)" }
   $c = $null
   try {
     $n = Api '/api/apex-writer/next' @{}
