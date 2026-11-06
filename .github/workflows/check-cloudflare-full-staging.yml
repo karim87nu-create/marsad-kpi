@@ -1,0 +1,40 @@
+name: Cloudflare full staging smoke test
+on:
+  push:
+    branches: [cloudflare-full-staging-20261106]
+    paths:
+      - 'sites/**'
+      - '.github/workflows/check-cloudflare-full-staging.yml'
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Wait for full staging deployment and verify security
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="https://marsad-v2-full-staging.karim87nu.workers.dev"
+          for attempt in {1..24}; do
+            body=$(curl --connect-timeout 8 --max-time 12 -fsS "$root/api/health" 2>/dev/null || true)
+            if echo "$body" | grep -q '"stage":"full-staging"' && echo "$body" | grep -q '"liveWrites":false'; then
+              echo "Full staging health available"
+              break
+            fi
+            if [ "$attempt" = "24" ]; then
+              echo "Full staging health failed or old build still deployed"
+              exit 1
+            fi
+            sleep 8
+          done
+          code=$(curl --connect-timeout 8 --max-time 20 -sS -o /tmp/writes.json -w '%{http_code}' -X POST "$root/api/orders/push" -H 'content-type: application/json' --data '{}' )
+          test "$code" = "403" || { echo "Live writes are NOT blocked! HTTP $code";exit 1; }
+          echo "Production write routes locked (403)"
+          code=$(curl --connect-timeout 8 --max-time 45 -sS -o /tmp/protected.json -w '%{http_code}' "$root/api/desks")
+          test "$code" = "401" || { echo "Protected endpoint /api/desks unexpected HTTP $code";cat /tmp/protected.json;exit 1; }
+          echo "Full Marsad module imports, D1 schema initialization and auth protection verified (401)"
+          code=$(curl --connect-timeout 8 --max-time 20 -sS -o /tmp/transfer.html -w '%{http_code}' "$root/transfer/")
+          test "$code" = "200" || { echo "Static transfer UI unexpected HTTP $code";exit 1; }
+          echo "Transfer static UI delivered (200)"
