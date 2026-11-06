@@ -748,7 +748,12 @@ for (;;) {
       $job = $n.job; $mode = [string]$n.mode
       if ($mode -eq 'live' -and -not $AllowLive) { throw 'live mode is locked on this PC ($AllowLive)' }
       if ($mode -eq 'live' -and $WriterUserNo -eq 0) { throw 'no Apex user for the writer yet ($WriterUserNo)' }
-      if ($mode -eq 'live' -and $job.apexCard -and -not $AllowCustomerNoteLive) { throw 'APEX customer note live benefits locked; test first and approve allow_customer_note_live.txt' }
+      $hasCardMoneyOrCleanup = $job.apexCard -and (
+        [decimal]$job.apexCard.percent -gt 0 -or [decimal]$job.apexCard.amount -gt 0 -or
+        $job.apexCard.oneTime -or @($job.items | Where-Object { $_.cardGift }).Count -gt 0)
+      if ($mode -eq 'live' -and $hasCardMoneyOrCleanup -and -not $AllowCustomerNoteLive) {
+        throw 'APEX customer note financial benefits or cleanup locked; test first and approve allow_customer_note_live.txt'
+      }
       $c = Open-Db $mode
       # Apex's own Talabat orders start with the «خدمة» service line; the employee's lines follow.
       if ($job.source -eq 'talabat' -and $TalabatServiceItem -and -not ($job.items | Where-Object { $_.itemNo -eq $TalabatServiceItem })) {
