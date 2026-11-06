@@ -484,6 +484,15 @@ function setup(app) {
       if (!['shadow', 'test', 'live'].includes(mode)) fail(409, 'التحويل الآلي مقفول — سجّل على Apex بإيدك');
       if (othersClaim) fail(409, 'الأوردر مع ' + (cur.employee_name || 'حد تاني'));
       if (cur && /^auto_(?:pending|sending|done|preview)$/.test(cur.state)) fail(409, 'الأوردر اتبعت للتحويل الآلي بالفعل');
+      // A customer-card benefit may change what Apex must write. Never silently ignore it.
+      // Until the note can be verified and applied transactionally, block auto transfer
+      // rather than sending an order with missing discount/products or clearing any note.
+      const card = await db.prepare('SELECT state,note FROM apex_customer_note_lookups WHERE source=? AND ref=?').get(source,ref);
+      if (!card || !['ready','empty'].includes(card.state)) fail(409,'ملاحظات بطاقة العميل على APEX لسه متراجعتش — انتظر المراجعة أو سجل الأوردر يدويًا');
+      if (card.state === 'ready') {
+        const parsed = interpretApexCustomerNote(card.note);
+        if (parsed.requiresReview) fail(409,'يوجد ملاحظة محفوظة على بطاقة العميل في APEX: راجع الخصم أو الأصناف والتعليمات يدويًا قبل التسجيل؛ التحويل الآلي متوقف لهذا الطلب حمايةً للعميل');
+      }
       // Cash, or prepaid (Apex: Ledge with the amount on the customer's ledger, like every prepaid Talabat order there).
       if (payment !== 'cash' && payment !== 'paid') fail(400, 'حدد: كاش ولا مدفوع');
       const branchNo = Number(b.branchNo);
