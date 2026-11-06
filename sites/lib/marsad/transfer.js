@@ -557,15 +557,17 @@ function setup(app) {
     for (const source of ['talabat', 'site']) {
       const orderTable = source === 'talabat' ? 'talabat_orders' : 'site_orders';
       const join = source === 'talabat' ? 'o.id = p.ref' : 'CAST(o.id AS TEXT) = p.ref';
-      const rows = await db.prepare(`SELECT p.ref, p.data, n.checked_at FROM ${orderTable} o
+      const terminal = source === 'talabat'
+        ? "AND UPPER(COALESCE(o.status,'')) NOT IN ('CANCELLED','REJECTED','DELIVERED','COMPLETED','PICKED_UP','IN_DELIVERY')"
+        : "AND LOWER(COALESCE(o.status,'')) NOT IN ('cancelled','failed','wallet-failed','refunded','completed')";
+      const rows = await db.prepare(`SELECT p.ref, p.data, n.checked_at, n.phone_hash FROM ${orderTable} o
         JOIN match_profiles p ON p.source = ? AND ${join}
         LEFT JOIN apex_customer_notes n ON n.source = p.source AND n.ref = p.ref
-        WHERE o.day = ? ORDER BY o.id DESC LIMIT 35`).all(source, day, due);
+        WHERE o.day = ? ${terminal} ORDER BY o.id DESC LIMIT 35`).all(source, day);
       for (const row of rows) {
         const phone = profilePhone(source, parseJson(row.data, {}));
         if (!phone || out.length >= 25) continue;
-        const existing = await db.prepare('SELECT checked_at, phone_hash FROM apex_customer_notes WHERE source = ? AND ref = ?').get(source, row.ref);
-        if (existing && existing.phone_hash === sha256(phone) && existing.checked_at >= due) continue;
+        if (row.phone_hash === sha256(phone) && Number(row.checked_at) >= due) continue;
         out.push({ source, ref: row.ref, day, phone });
       }
     }
