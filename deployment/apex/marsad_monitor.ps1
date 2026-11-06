@@ -580,9 +580,22 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
     if ((N $r.WaiterNo) -le 0) { continue }
     [void]$cancels.Add([pscustomobject]@{
       No = [int64](N $r.OrderNo); Branch = [int](N $r.BranchNo); User = [int](N $r.UserNo); Del = [int](N $r.DelUserNo); Pilot = [int](N $r.WaiterNo)
-      Kind = KindOf (S $r.OnlineType); Entry = ParseT $r.TimeIn $day; Out = ParseT $r.OrderTime $day; DelT = ParseT $r.DeleteTime $day
+      Kind = KindOf (S $r.OnlineType); Entry = ParseT $r.TimeIn $day; Out = ParseT $r.OrderTime $day; DelT = ParseT $r.DeleteTime $day; Sched = $null; RateEligible = $false; LateForRate = $false
       Sub = N $r.SubTotal; Amt = AmtOf $r; Sn = $(if ($delSn) { SnOf $r.SnX } else { $null }); Loc = $(if ($script:Locations) { $script:Locations[[int](N $r.o_LocationNo)] } else { $null }); Customer = CustomerOf $r; Why = S $r.Remarks; ReasonNo = [int](N $r.ReasonNo) })
-    $cancels[$cancels.Count - 1] | Add-Member -NotePropertyName Disp -NotePropertyValue $(if ($cancels[$cancels.Count - 1].Sn -ne $null) { $cancels[$cancels.Count - 1].Sn } else { $cancels[$cancels.Count - 1].No })
+    $c = $cancels[$cancels.Count - 1]
+    $c | Add-Member -NotePropertyName Disp -NotePropertyValue $(if ($c.Sn -ne $null) { $c.Sn } else { $c.No })
+    # Cancellation delay uses the pilot loading/exit timestamp (OrderTime), NEVER DeleteTime.
+    # WaiterNo > 0 is required above. Missing/impossible timestamps are excluded from the rate, not guessed.
+    if ($c.Entry -and $c.Out -and $c.Out -ge $c.Entry) {
+      foreach($nameField in @((S $r.o_CustName), (S $r.o_PersonName))){
+        $scheduled = ScheduleOf $nameField $c.Entry
+        if ($scheduled) { $c.Sched = $scheduled; break }
+      }
+      $due = $c.Entry.AddMinutes($LateMinutes)
+      if ($c.Sched -and $c.Sched.AddMinutes(-30) -gt $due) { $due = $c.Sched.AddMinutes(-30) }
+      $c.RateEligible = $true
+      $c.LateForRate = ($c.Out -ge $due)
+    }
   }
 
   # ---- comments on the items (e.g. «بدون بصل»), per order ----
@@ -620,10 +633,14 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
     $ok = @($op | Where-Object { -not $_.Sched -and $_.Over -lt $LateMinutes }).Count
     $out = @($bo | Where-Object { $_.Out }); $outN = @($out | Where-Object { -not $_.Sched -and $_.WaitMin -ne $null })
     $outL = @($out | Where-Object { $_.Over -ge $LateMinutes }).Count
+    $bcRate = @($cancels | Where-Object { $_.Branch -eq [int]$g.Name -and $_.RateEligible })
+    $bcLate = @($bcRate | Where-Object { $_.LateForRate }).Count
+    $rateCount = $out.Count + $bcRate.Count
+    $rateLate = $outL + $bcLate
     $avg = $(if ($outN.Count) { [math]::Round((($outN | Measure-Object WaitMin -Average).Average), 0) } else { $null })
     $bstat[[int]$g.Name] = $bline = "`n`n📊 حالة الفرع دلوقتي: $($op.Count) أوردر لسه ماخرجوش" +
       "`n🔴 $vl عدّى 45 د · 🟠 $lt عدّى 30 د · 🟢 $ok لسه في وقت التحضير · 🕒 $sc بمواعيد لسه في وقتها" +
-      "`nالنهارده: خرج $($out.Count) أوردر$(if ($out.Count) { " · نسبة التأخير $([math]::Round($outL * 100 / $out.Count, 0))% ($outL متأخر)" })"
+      "`nالنهارده: خرج $($out.Count) أوردر · ملغي بعد تحميله على طيار $($bcRate.Count)$(if ($rateCount) { " · نسبة التأخير $([math]::Round($rateLate * 100 / $rateCount, 0))% ($rateLate متأخر، منهم $bcLate ملغي)" })"
     $bline = $bstat[[int]$g.Name]; $script:branchStatus[(BName $g.Name)] = $bline.TrimStart("`n")
   }
   function Extra($o){ $x = ''; if ($o.Loc) { $x += "`n📍 المنطقة: $($o.Loc)" }; if (NoteWorth $o.Note) { $x += "`n💬 ملاحظة الأوردر: $($o.Note)" }; if (@($o.ItemNotes).Count) { $x += "`n🍽️ تعليقات على الأصناف:`n" + (@($o.ItemNotes) -join "`n") }; if (@($o.Msgs).Count) { $x += "`n📨 كومنتات اتبعتت بعد الضرب:`n" + (@($o.Msgs) -join "`n") }; return $x }
@@ -729,6 +746,9 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
   $openAll = @($list | Where-Object { $_.Open })
   $outd = @($list | Where-Object { $_.Out -and $_.WaitMin -ne $null })
   $outN = @($outd | Where-Object { -not $_.Sched })   # averages: set-time orders would only inflate them
+  $cancelRate = @($cancels | Where-Object { $_.RateEligible })
+  $cancelLate = @($cancelRate | Where-Object { $_.LateForRate }).Count
+  $allOutLate = @($outd | Where-Object { $_.Over -ge $LateMinutes }).Count
   $totKinds = NewCounts; foreach($o in $list){ Bump $totKinds $o.Kind }
   $branchesOut = @()
   foreach($bn in (@($list | ForEach-Object { $_.Branch }) + @($cancels | ForEach-Object { $_.Branch }) | Sort-Object -Unique)){
@@ -738,10 +758,14 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
     $boutN = @($bout | Where-Object { -not $_.Sched })
     $bk = NewCounts; foreach($o in $bo){ Bump $bk $o.Kind }
     $bc = @($cancels | Where-Object { $_.Branch -eq $bn })
+    $bcRate = @($bc | Where-Object { $_.RateEligible })
+    $bcLate = @($bcRate | Where-Object { $_.LateForRate }).Count
+    $outLateCount = @($bout | Where-Object { $_.Over -ge $LateMinutes }).Count
     $branchesOut += [ordered]@{
       no = $bn; name = BName $bn; orders = $bo.Count; sales = SumOf $bo 'Amt'; kinds = $bk
       open = $open.Count; late = @($open | Where-Object { $_.Over -ge $LateMinutes }).Count; veryLate = @($open | Where-Object { $_.Over -ge $VeryLateMinutes }).Count
-      avgOut = AvgOf $boutN 'WaitMin'; outLate = @($bout | Where-Object { $_.Over -ge $LateMinutes }).Count; outCount = $bout.Count
+      avgOut = AvgOf $boutN 'WaitMin'; outLate = $outLateCount; outCount = $bout.Count
+      delayRateCount = $bout.Count + $bcRate.Count; delayRateLate = $outLateCount + $bcLate; cancelLoadedCount = $bcRate.Count; cancelLoadedLate = $bcLate
       cancels = $bc.Count; cancelSales = SumOf $bc 'Amt'
     }
   }
@@ -812,7 +836,8 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
     totals = [ordered]@{
       orders = $list.Count; sales = SumOf $list 'Amt'; kinds = $totKinds
       open = $openAll.Count; late = @($openAll | Where-Object { $_.Over -ge $LateMinutes }).Count; scheduled = @($list | Where-Object { $_.Sched }).Count
-      avgOut = AvgOf $outN 'WaitMin'; outCount = $outd.Count; outLate = @($outd | Where-Object { $_.Over -ge $LateMinutes }).Count
+      avgOut = AvgOf $outN 'WaitMin'; outCount = $outd.Count; outLate = $allOutLate
+      delayRateCount = $outd.Count + $cancelRate.Count; delayRateLate = $allOutLate + $cancelLate; cancelLoadedCount = $cancelRate.Count; cancelLoadedLate = $cancelLate
       cancels = $cancels.Count; cancelSales = SumOf $cancels 'Amt'
       discounts = SumOf $list 'Disc'; issues = $issues.Count
     }
