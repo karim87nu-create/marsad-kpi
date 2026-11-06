@@ -17,7 +17,12 @@ function interpretApexCustomerNote(input) {
   const conflicting = (pct.length > 1 || amounts.length > 1 || (pct.length && amounts.length)) ||
     (maybeDiscount && !actions.some(a=>a.kind.startsWith('discount_')));
   const oneTime = /(?:للاوردر\s*(?:ده|دا|الحالي|فقط)|للطلب\s*(?:ده|دا|الحالي|فقط)|مرة\s*واحدة|مره\s*واحده|هذا\s*الطلب\s*فقط|single\s*order|one\s*time)/i.test(norm);
+  // Clear only a note explicitly marked one-order-only whose complete text can be consumed.
+  // Mixed permanent instructions must never be erased along with a one-time entitlement.
+  const hasPermanent = /(?:دائم|دايم|كل\s*(?:مرة|مره|اوردر|أوردر|طلب)|على\s*طول|علي\s*طول|ثابت|every\s*order|always)/i.test(norm);
+  const multipleInstructions = /[\\n;؛|]/.test(raw);
+  const clearable = oneTime && !hasPermanent && !multipleInstructions && !conflicting;
   return {text:raw,category:conflicting?'ambiguous':actions.length?'actionable':'instructions',
-    oneTime, actions, requiresReview:true, conflicting};
+    oneTime, clearable, actions, requiresReview:true, conflicting};
 }
 export { interpretApexCustomerNote };
