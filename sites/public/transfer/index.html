@@ -319,6 +319,7 @@ function ticketHtml(o, p, fl, c, auto) {
 function apexCustomerNotePanel(o, p) {
   const n = o.apexCustomerNote || {state:'unchecked'};
   if (n.state === 'empty') return '';
+  if (n.state === 'unchecked' && !o.customer?.phone) return '<div class="bad">رقم العميل غير متاح من المصدر؛ راجع ملاحظات بطاقته في APEX يدويًا.</div>';
   if (n.state === 'unchecked' || n.state === 'pending') return '<div class="warn" role="status">جارى مراجعة ملاحظات بطاقة العميل على APEX قبل تسجيل الأوردر…</div>';
   if (n.state === 'ambiguous') return '<div class="bad">يوجد أكثر من بطاقة بنفس الرقم بملاحظات مختلفة — راجع بطاقة العميل في APEX يدويًا قبل الضرب.</div>';
   if (n.state === 'error' || n.state === 'no_phone') return '<div class="bad">تعذّر التحقق من ملاحظات عميل APEX — راجعها يدويًا.</div>';
