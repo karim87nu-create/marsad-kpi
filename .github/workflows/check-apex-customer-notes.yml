@@ -1,0 +1,65 @@
+name: Validate APEX customer-card note feature
+on:
+  push:
+    branches: [feat/apex-customer-note-consumption-20261106]
+    paths:
+      - 'sites/lib/marsad/customer-note.js'
+      - 'sites/lib/marsad/transfer.js'
+      - 'sites/lib/marsad/db.js'
+      - 'sites/public/transfer/index.html'
+      - 'apex-writer/marsad_apex_writer.ps1'
+      - '.github/workflows/check-apex-customer-notes.yml'
+  pull_request:
+    paths:
+      - 'sites/lib/marsad/customer-note.js'
+      - 'sites/lib/marsad/transfer.js'
+      - 'sites/lib/marsad/db.js'
+      - 'sites/public/transfer/index.html'
+      - 'apex-writer/marsad_apex_writer.ps1'
+      - '.github/workflows/check-apex-customer-notes.yml'
+permissions:
+  contents: read
+jobs:
+  syntax-and-notes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check JavaScript and HTML module syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check sites/lib/marsad/customer-note.js
+          node --check sites/lib/marsad/transfer.js
+          node --check sites/lib/marsad/db.js
+          node --input-type=module <<'JS'
+          import {readFileSync} from 'node:fs';
+          import {writeFileSync} from 'node:fs';
+          const s=readFileSync('sites/public/transfer/index.html','utf8');
+          const script=s.match(/<script type="module">([\s\S]*?)<\/script>/i)?.[1];
+          if (!script || script.length<10000) throw Error('Transfer page script not found');
+          writeFileSync('/tmp/marsad-transfer-page.mjs',script);
+          JS
+          node --check /tmp/marsad-transfer-page.mjs
+      - name: Assert note parsing does not auto-clear permanent text
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import {interpretApexCustomerNote as p} from './sites/lib/marsad/customer-note.js';
+          assert.equal(p('خصم ١٠٪ للأوردر ده فقط').actions[0].value,10);
+          assert.equal(p('خصم 50 جنيه مرة واحدة').actions[0].value,50);
+          assert.equal(p('خصم 30% لكل اوردر').clearable,false);
+          assert.equal(p('خصم 10% للأوردر ده فقط; لا بصل دائما').clearable,false);
+          assert.equal(p('خصم 10% وخصم 50 جنيه').conflicting,true);
+          assert.equal(p('ليه صنف مجاني اوردر ده فقط').actions.some(x=>x.kind==='items_to_verify'),true);
+          assert.equal(p('بدون بصل').actions.length,0);
+          assert.equal(p('.').requiresReview,false);
+          console.log('PASS customer note parsing');
+          JS
+      - name: Parse PowerShell writer
+        shell: pwsh
+        run: |
+          $errors=$null; $tokens=$null
+          [void][Management.Automation.Language.Parser]::ParseFile('apex-writer/marsad_apex_writer.ps1',[ref]$tokens,[ref]$errors)
+          if ($errors.Count) { $errors | ForEach-Object {Write-Error $_.Message}; throw "PowerShell parse failed" }
+          Write-Host 'PASS PowerShell'
