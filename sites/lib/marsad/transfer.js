@@ -484,6 +484,14 @@ function setup(app) {
       if (!['shadow', 'test', 'live'].includes(mode)) fail(409, 'التحويل الآلي مقفول — سجّل على Apex بإيدك');
       if (othersClaim) fail(409, 'الأوردر مع ' + (cur.employee_name || 'حد تاني'));
       if (cur && /^auto_(?:pending|sending|done|preview)$/.test(cur.state)) fail(409, 'الأوردر اتبعت للتحويل الآلي بالفعل');
+      // Cash, or prepaid (Apex: Ledge with the amount on the customer's ledger, like every prepaid Talabat order there).
+      if (payment !== 'cash' && payment !== 'paid') fail(400, 'حدد: كاش ولا مدفوع');
+      const branchNo = Number(b.branchNo);
+      if (!Number.isInteger(branchNo) || branchNo < 1 || branchNo > 99) fail(400, 'اختار فرع Apex');
+      const items = Array.isArray(b.items) ? b.items : [];
+      if (!items.length || items.length > 40) fail(400, 'اختار أصناف Apex');
+      const clean = items.map(x => ({ itemNo: String(x?.itemNo || '').trim(), qty: Number(x?.qty), note: x?.note ? String(x.note).slice(0, 60) : '' }));
+      if (clean.some(x => !/^\d{1,10}$/.test(x.itemNo) || !(x.qty > 0 && x.qty <= 50))) fail(400, 'فيه صنف لسه مااتختارش أو عدده مش مظبوط');   // Apex offers have short numbers (111, 218, 315)
       // APEX customer benefits are never inferred from a web order or hidden from the employee.
       // The staff member must confirm the exact APEX note revision and any free item codes.
       const card = await db.prepare('SELECT state,note,customer_no,checked_at FROM apex_customer_note_lookups WHERE source=? AND ref=?').get(source,ref);
@@ -514,14 +522,7 @@ function setup(app) {
         };
         if (!/^\d{1,18}$/.test(apexCard.customerNo)) fail(409,'بطاقة العميل مش مؤكدة؛ لا يمكن تطبيق ملاحظتها تلقائيًا');
       }
-      // Cash, or prepaid (Apex: Ledge with the amount on the customer's ledger, like every prepaid Talabat order there).
-      if (payment !== 'cash' && payment !== 'paid') fail(400, 'حدد: كاش ولا مدفوع');
-      const branchNo = Number(b.branchNo);
-      if (!Number.isInteger(branchNo) || branchNo < 1 || branchNo > 99) fail(400, 'اختار فرع Apex');
-      const items = Array.isArray(b.items) ? b.items : [];
-      if (!items.length || items.length > 40) fail(400, 'اختار أصناف Apex');
-      const clean = items.map(x => ({ itemNo: String(x?.itemNo || '').trim(), qty: Number(x?.qty), note: x?.note ? String(x.note).slice(0, 60) : '' }));
-      if (clean.some(x => !/^\d{1,10}$/.test(x.itemNo) || !(x.qty > 0 && x.qty <= 50))) fail(400, 'فيه صنف لسه مااتختارش أو عدده مش مظبوط');   // Apex offers have short numbers (111, 218, 315)
+
       const locationNo = Number(b.locationNo);
       if (!Number.isInteger(locationNo) || locationNo < 1) fail(400, 'اختار منطقة العميل على Apex');
       // The area's own delivery charge on Apex (as the read-only monitor sent it), for an area nobody ordered to today.
