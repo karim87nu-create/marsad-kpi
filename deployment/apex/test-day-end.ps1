@@ -74,7 +74,7 @@ foreach($required in @(
   "'restaurant' {",
   "'external' {",
   "default {",
-  '$reasonKey = $reasonKey + ' + '"' + ':' + '"' + ' + $responsibility',
+  '$reasonKey = $reasonKey + ' + "':'" + ' + $responsibility',
   '100.0 * $restaurantCount / $allOrders',
   'إلغاءات بطلب العميل أو لأسباب خارج مسؤولية المطعم',
   'أسباب غير واضحة أو متعارضة',
