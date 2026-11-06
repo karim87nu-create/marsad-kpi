@@ -30,14 +30,26 @@ jobs:
             return { type:m[1].toLowerCase(), name:m[2], sql };
           });
           assert(rows.length >= 45);
+          // sqlite_master reflects columns added by the existing ALTER TABLE migrations,
+          // while the SCHEMA constant describes an older database's initial table shapes.
+          const legacyCols = {
+            events:['extra'], telegram_log:['reply_to','message_id','target','branch'],
+            transfer_jobs:['payload','result'], talabat_orders:['code','milestones'],
+            site_orders:['transfers','total'], wa_messages:['sending_at'],
+            telegram_config:['branch_chat_id','branch_chat_title']
+          };
+          const complete = rows.map(r => r.type==='table' ? ({
+            ...r,
+            sql: r.sql + ' ' + (legacyCols[r.name] || []).join(' ')
+          }) : r);
           const fake = data => ({ prepare: sql => {
             assert(sql.includes('sqlite_master'), 'Unexpected SQL: '+sql);
             return { all: async () => data };
           } });
-          assert.equal(await schemaReady(fake(rows)), true, 'Complete schema must skip migrations');
+          assert.equal(await schemaReady(fake(complete)), true, 'Complete schema must skip migrations');
           assert.equal(await schemaReady(fake([])), false, 'Empty schema must be migrated');
-          assert.equal(await schemaReady(fake(rows.slice(1))), false, 'Missing table/index must be migrated');
-          const noExtra = rows.map(r=> r.name==='events' ? {...r, sql:r.sql.replace(/,\\s*extra\\s+TEXT/i,'')} : r);
+          assert.equal(await schemaReady(fake(complete.slice(1))), false, 'Missing table/index must be migrated');
+          const noExtra = complete.map(r=> r.name==='events' ? {...r, sql:r.sql.replace(/\\s+extra\\b/i,'')} : r);
           // The legacy extra column is added by ALTER TABLE; simulating its absence must be detected.
           assert.equal(await schemaReady(fake(noExtra)), false, 'Missing legacy column must trigger migrations');
           const broken = {prepare: () => ({all: async()=>{throw new Error('offline')}})};
