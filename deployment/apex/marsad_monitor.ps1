@@ -760,7 +760,11 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
   $allOutLate = @($outd | Where-Object { $_.Over -ge $LateMinutes }).Count
   $totKinds = NewCounts; foreach($o in $list){ Bump $totKinds $o.Kind }
   $branchesOut = @()
-  foreach($bn in (@($list | ForEach-Object { $_.Branch }) + @($cancels | ForEach-Object { $_.Branch }) | Sort-Object -Unique)){
+  # Even a branch whose every order was cancelled BEFORE rider assignment needs its own closeout.
+  $branchIds = New-Object 'System.Collections.Generic.HashSet[int]'
+  foreach($row in $list) { if ([int]$row.Branch -gt 0) { [void]$branchIds.Add([int]$row.Branch) } }
+  foreach($row in $dels.Rows) { $id = [int](N $row.BranchNo); if ($id -gt 0) { [void]$branchIds.Add($id) } }
+  foreach($bn in @($branchIds | Sort-Object)){
     $bo = @($list | Where-Object { $_.Branch -eq $bn })
     $open = @($bo | Where-Object { $_.Open })
     $bout = @($bo | Where-Object { $_.Out -and $_.WaitMin -ne $null })
@@ -882,7 +886,7 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
       "`n✅ لا توجد أوردرات دليفري مفتوحة وقت إعداد التقرير" +
       "`n📦 إجمالي الأوردرات: $allOrders (منها $($summary.orders) غير ملغي)" +
       "`n🛵 خرج مع الطيار: $($summary.outCount)" +
-      "`n❌ الإلغاءات: $allCancelled (منها $($summary.cancelLoadedCount) بعد تحميل الطيار)" +
+      "`n❌ الإلغاءات: $allCancelled (منها $($summary.cancels) بعد تحميل الطيار، و$($summary.cancelLoadedCount) بتوقيت موثّق)" +
       "`n⏰ تأخر خروج: $($summary.outLate) · تأخر ثم اتلغى بعد التحميل: $($summary.cancelLoadedLate)" +
       "`n📉 نسبة التأخير: $pctText ($late متأخر من $count عملية مكتملة التوقيت)" +
       "`n🕒 متوسط زمن الخروج: $avgText" +
