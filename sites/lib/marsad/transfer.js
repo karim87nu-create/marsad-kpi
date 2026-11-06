@@ -249,9 +249,22 @@ function setup(app) {
     const day = businessDay(now), x = S(day);
     // The page's own actions (claim, entered, auto) and the writer's answers: shown at once.
     if (/^\/api\/(?:apex-writer\/result|transfer\/(?:job|selection))$/.test(path || '')) { x.dirty = true; return rebuild(day).catch(() => {}); }
-    // A push (a new order, a status): built again in the background — one build at a time, pushes during a build
-    // fold into one more — so a new order is on the page at once and the page itself never waits for a full build.
-    if (/^\/api\/(?:talabat|orders|site)\/push$/.test(path || '')) { x.dirty = true; return rebuild(day).catch(() => {}); }
+    // High-frequency source pushes must NOT rebuild the full day's matching on every request.
+    // A completed build is reusable for eight seconds, including across Cloudflare isolates via D1.
+    // The next queue read refreshes it after the window; explicit staff actions still rebuild immediately.
+    if (/^\/api\/(?:talabat|orders|site)\/push$/.test(path || '')) {
+      const b = queueCache.get(day);
+      if (b && now - b.at >= 0 && now - b.at < QUEUE_CACHE_MS) return;
+      if (db.kind !== 'd1' && x.run) { x.dirty = true; return; }
+      // The D1 cache is authoritative across requests; when another isolate just rebuilt it,
+      // skip this worker's redundant work rather than refreshing the entire day again.
+      return db.prepare('SELECT at FROM transfer_cache WHERE day = ?').get(day)
+        .then(r => {
+          if (r && now - r.at >= 0 && now - r.at < QUEUE_CACHE_MS) return;
+          x.dirty = true;
+          return rebuild(day);
+        }).catch(() => {});
+    }
   });
   async function buildBase(day, now) {
     {

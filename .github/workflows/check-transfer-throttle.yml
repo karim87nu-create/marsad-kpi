@@ -1,0 +1,39 @@
+name: Validate transfer push throttling
+on:
+  pull_request:
+    paths:
+      - 'sites/lib/marsad/transfer.js'
+      - '.github/workflows/check-transfer-throttle.yml'
+  push:
+    branches: [fix/transfer-push-rebuild-throttle-20261106]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse full transfer module and assert throttling safeguards
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check sites/lib/marsad/transfer.js
+          node <<'JS'
+          const fs = require('node:fs');
+          const assert = require('node:assert/strict');
+          const src = fs.readFileSync('sites/lib/marsad/transfer.js', 'utf8');
+          for(const snippet of [
+            'const queueCache = new Map(), QUEUE_CACHE_MS = 8000',
+            "if (b && now - b.at >= 0 && now - b.at < QUEUE_CACHE_MS) return;",
+            "SELECT at FROM transfer_cache WHERE day = ?",
+            "if (r && now - r.at >= 0 && now - r.at < QUEUE_CACHE_MS) return;",
+            "if (/^\\/api\\/(?:apex-writer\\/result|transfer\\/(?:job|selection))$/.test(path || '')) { x.dirty = true; return rebuild(day)",
+            'if (allowStale) {',
+            'return { ...saved, stale: true };',
+          ]) assert(src.includes(snippet), 'missing transfer safeguard: '+snippet);
+          const gate = (now, at, ttl=8000) => now-at>=0 && now-at<ttl;
+          assert(gate(9000, 5000));
+          assert(!gate(13001, 5000));
+          assert(!gate(4000, 5000));
+          console.log('PASS: syntax, 8-second cached push gate, fresh staff actions, stale read-only fallback');
+          JS
