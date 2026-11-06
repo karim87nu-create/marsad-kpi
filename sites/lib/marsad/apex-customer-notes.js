@@ -25,5 +25,6 @@ export function parseApexCustomerNote(raw) {
       directives.push({ kind: 'item', text: section, status: 'review', reason: 'اختار كود الصنف والكمية من APEX قبل إضافته' });
     } else other.push(section);
   }
-  return { text, directives, other, oneTime: oneTime && !permanent, permanent, requiresReview: directives.length > 0 || (oneTime && permanent) };
+  const financeUnrecognized = /(?:خصم|discount|هدية|هديه|مجاني|مجانا|يستحق|صنف|اصناف|أصناف|كوبون)/i.test(other.join(' '));
+  return { text, directives, other, oneTime: oneTime && !permanent, permanent, requiresReview: directives.length > 0 || oneTime || financeUnrecognized, unrecognized: financeUnrecognized || (oneTime && permanent) };
 }
