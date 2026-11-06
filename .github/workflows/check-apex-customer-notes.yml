@@ -75,6 +75,8 @@ jobs:
           const server=readFileSync('sites/lib/marsad/transfer.js','utf8');
           for (const line of [
             'IF @CardConfirmed = 1 AND @IsTest = 0 BEGIN',
+            'allow_customer_note_live.txt',
+            'test first and approve allow_customer_note_live.txt',
             'IF @CardCustNo <= 0 OR @CustFound IS NULL OR @CardCustNo <> @CustFound',
             "IF @CardOnce = 1 AND @CardConfirmed = 1 AND @IsTest = 0 BEGIN",
             "UPDATE dbo.Customers SET Note = '.' WHERE CustNo = @Cust AND RTRIM(ISNULL(Note,'')) = RTRIM(@CardRaw)",
