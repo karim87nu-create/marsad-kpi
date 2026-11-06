@@ -654,55 +654,7 @@ function Read-CustomerNotes {
     $db = Open-Db 'shadow'
     foreach($j in @($request.jobs)){
       $phone = ([string]$j.phone).Trim()
-      if ($phone -notmatch '^\d{10,15}
-$failures = 0
-for (;;) {
-  try { if ((Get-Item $self).LastWriteTimeUtc -ne $selfStamp) { L 'script updated - restarting'; $mutex.ReleaseMutex(); $mutex.Dispose(); Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $self + '"'); exit 0 } } catch {}
-  try { Self-Test } catch { L "self-test: $($_.Exception.Message)" }
-  try { Read-CustomerNotes } catch { L "customer note lookup failed" }
-  try { Apply-Stock } catch { L "stock: $($_.Exception.Message)" }
-  $c = $null
-  try {
-    $n = Api '/api/apex-writer/next' @{}
-    $failures = 0
-    if ($n.job) {
-      $job = $n.job; $mode = [string]$n.mode
-      if ($mode -eq 'live' -and -not $AllowLive) { throw 'live mode is locked on this PC ($AllowLive)' }
-      if ($mode -eq 'live' -and $WriterUserNo -eq 0) { throw 'no Apex user for the writer yet ($WriterUserNo)' }
-      $c = Open-Db $mode
-      # Apex's own Talabat orders start with the «خدمة» service line; the employee's lines follow.
-      if ($job.source -eq 'talabat' -and $TalabatServiceItem -and -not ($job.items | Where-Object { $_.itemNo -eq $TalabatServiceItem })) {
-        $job.items = @([pscustomobject]@{ itemNo = $TalabatServiceItem; qty = 1; note = '' }) + @($job.items)
-      }
-      Price-Lines $c $job
-      $r = Write-Order $c $job $mode
-      $res = @{ source = $job.source; ref = $job.ref; db = $mode; ok = $true }
-      if ($r.r -eq 'preview') {
-        $res.preview = $true; $res.total = [double]$r.Total; $res.branchOrderNo = $r.BranchOrderNo
-        $res.detail = "gap=$($r.Gap) discount=$($r.RestDiscountAll) sub=$($r.SubTotal) tax=$($r.Tax) ratio=$($r.TaxRatio) service=$($r.Service) template=$($r.Template) posSerial=$($r.PosSerial) typeSerial=$($r.TypeSerial) cust=$($r.CustNo) | " + (($job.items | ForEach-Object { "$($_.itemNo)x$($_.qty): $($_.candidates -join ',')" }) -join ' ; ')
-        $want = $(if ($job.targetTotal) { $job.targetTotal } else { $job.expectedTotal })
-        $res.gap = [math]::Round([double]$r.Gap, 2); $res.short = [math]::Round([double]$r.Short, 2); $res.before = [math]::Round([double]$r.Before, 2); $res.service = [double]$r.Service
-      } else {
-        $res.orderNo = $r.OrderNo; $res.shiftSerial = $r.ShiftSerial; $res.branchOrderNo = $r.BranchOrderNo; $res.total = [double]$r.Total
-        $res.prints = ($r.Prints -eq $true -or "$($r.Prints)" -eq '1' -or "$($r.Prints)" -eq 'True')   # Apex's printed copy saved (needs the Prints grant)
-        # The price difference, for admin's «فروق الأسعار» (the order is saved either way).
-        $res.gap = [math]::Round([double]$r.Gap, 2); $res.short = [math]::Round([double]$r.Short, 2); $res.before = [math]::Round([double]$r.Before, 2); $res.service = [double]$r.Service; $res.target = $job.targetTotal
-        if ($r.r -eq 'written' -and [int]$r.SameBranchNo -gt 1) { $res.error = 'رقم الفرع اتكرر مع أوردر تاني؛ راجعه' }
-      }
-      [void](Api '/api/apex-writer/result' $res)
-      L ("job " + $job.source + ':' + $job.ref + ' -> ' + ($res | ConvertTo-Json -Compress))
-      continue
-    }
-  } catch {
-    $failures++
-    L "error: $($_.Exception.Message)"
-    # What the failed job carried (numbers only, no customer details), so the cause can be found from this log.
-    if ($job) { try { L ("  job " + $job.source + ':' + $job.ref + ' branch=' + $job.branchNo + ' loc=' + $job.locationNo + ' areaService=' + $job.areaService + ' pay=' + $job.payment + ' disc=' + $job.restaurantDiscount + ' target=' + $job.targetTotal + ' phoneLen=' + ([string]$job.customer.phone).Length + ' items=' + (($job.items | ForEach-Object { "$($_.itemNo)x$($_.qty)@$($_.price)" }) -join ',')) } catch {} }
-    if ($job -and $_.Exception.Message -notmatch 'Unable to connect|timed out|remote name') { try { [void](Api '/api/apex-writer/result' @{ source = $job.source; ref = $job.ref; ok = $false; error = $_.Exception.Message }) } catch {} }
-  } finally { if ($c) { try { $c.Close() } catch {} }; $job = $null }
-  Start-Sleep -Seconds ([math]::Min(120, $PollSeconds * [math]::Max(1, $failures)))
-}
-) { continue }
+      if ($phone -notmatch '^\d{10,15}$') { continue }
       $state = 'empty'; $customerNo = $null; $note = $null
       try {
         $cmd = $db.CreateCommand()
@@ -711,15 +663,19 @@ for (;;) {
         [void]$cmd.Parameters.AddWithValue('@phone',$phone)
         $table = New-Object System.Data.DataTable
         $table.Load($cmd.ExecuteReader())
-        $nonempty = @($table.Rows | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.Note) -and ([string]$_.Note).Trim() -notin @('.','-') })
-        if ($nonempty.Count -gt 1) {
+        $rows = @($table.Rows)
+        $nonempty = @($rows | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.Note) -and ([string]$_.Note).Trim() -notin @('.','-') })
+        $headNote = $(if ($rows.Count) { ([string]$rows[0].Note).Trim() } else { '' })
+        if ($nonempty.Count -gt 0 -and ($headNote -eq '' -or $headNote -eq '.' -or $headNote -eq '-')) {
+          $state = 'ambiguous'  # older customer card has the note, newest matching card does not
+        } elseif ($nonempty.Count -gt 1) {
           $distinct = @($nonempty | ForEach-Object { ([string]$_.Note).Trim() } | Sort-Object -Unique)
           if ($distinct.Count -gt 1) { $state = 'ambiguous' }
         }
         if ($state -ne 'ambiguous' -and $nonempty.Count -gt 0) {
           $state = 'ready'
-          $note = ([string]$nonempty[0].Note).Trim()
-          $customerNo = [string]$nonempty[0].CustNo
+          $note = ([string]$rows[0].Note).Trim()
+          $customerNo = [string]$rows[0].CustNo
         }
       } catch { $state = 'error' }
       $results += @{source=[string]$j.source;ref=[string]$j.ref;phone=$phone;state=$state;customerNo=$customerNo;note=$note}
@@ -733,6 +689,7 @@ $failures = 0
 for (;;) {
   try { if ((Get-Item $self).LastWriteTimeUtc -ne $selfStamp) { L 'script updated - restarting'; $mutex.ReleaseMutex(); $mutex.Dispose(); Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $self + '"'); exit 0 } } catch {}
   try { Self-Test } catch { L "self-test: $($_.Exception.Message)" }
+  try { Read-CustomerNotes } catch { L "customer note lookup failed" }
   try { Apply-Stock } catch { L "stock: $($_.Exception.Message)" }
   $c = $null
   try {
