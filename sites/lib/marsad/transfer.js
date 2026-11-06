@@ -177,7 +177,7 @@ function setup(app) {
       const linked = note && note.phone_hash === sha256(deliveryPhone(o.customer?.phone) || '');
       return { ...(o.apex || o.out ? slim(o) : o), ...(o.source === 'talabat' ? { onLive: onLive(o.ref) } : {}),
         job: jobOf(o.source, o.source === 'site' ? String(o.ref) : o.ref),
-        apexCustomerNote: linked ? { custNo: note.custNo, status: note.status, checkedAt: note.checkedAt, text: note.text, directives: note.directives, other: note.other, oneTime: note.oneTime, permanent: note.permanent, requiresReview: note.requiresReview } : { status: 'pending' } };
+        apexCustomerNote: linked ? { custNo: note.custNo, status: note.status, checkedAt: note.checkedAt, text: note.text, directives: note.directives, other: note.other, oneTime: note.oneTime, permanent: note.permanent, requiresReview: note.requiresReview, unrecognized: note.unrecognized } : { status: 'pending' } };
     });
     // English typed by the customer (address, name, comments) shown and sent in Arabic (Karim 01-11); the original is kept.
     if (app.toArabic) {
