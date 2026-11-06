@@ -7,12 +7,12 @@ function interpretApexCustomerNote(input) {
   if (!raw || raw === '.' || raw === '-') return { text:'', category:'empty', oneTime:false, actions:[], requiresReview:false };
   const norm = raw.replace(/[أإآ]/g,'ا').replace(/ى/g,'ي').replace(/\s+/g,' ').toLowerCase();
   const actions = [];
-  const pct = [...norm.matchAll(/(?:خصم|discount)\s*[:：-]?\s*(\d{1,3}(?:[.,]\d{1,2})?)\s*(?:%|٪|بالم[يئ]ة|في\s*الم[يئ]ة|percent)/gi)];
-  const amounts = [...norm.matchAll(/(?:خصم|discount)\s*[:：-]?\s*(\d{1,6}(?:[.,]\d{1,2})?)\s*(?:جنيه|جنيها|ج\b|egp|le\b)/gi)];
+  const pct = [...norm.matchAll(/(?:خصم|discount)\s*(?:بنسبة|نسبة)?\s*[:：-]?\s*(\d{1,3}(?:[.,]\d{1,2})?)\s*(?:%|٪|بالم[يئ]ة|في\s*الم[يئ]ة|percent)/gi)];
+  const amounts = [...norm.matchAll(/(?:خصم|discount)\s*(?:بمبلغ|مبلغ|قيمته|بقيمة|قيمة)?\s*[:：-]?\s*(\d{1,6}(?:[.,]\d{1,2})?)\s*(?:جنيه|جنيها|ج\b|egp|le\b)/gi)];
   if (pct.length === 1 && +pct[0][1].replace(',','.') > 0 && +pct[0][1].replace(',','.') <= 100) actions.push({kind:'discount_percent',value:+pct[0][1].replace(',','.'),label:pct[0][0]});
   if (amounts.length === 1 && +amounts[0][1].replace(',','.') > 0) actions.push({kind:'discount_amount',value:+amounts[0][1].replace(',','.'),label:amounts[0][0]});
   // Entitlement to items is never guessed into an APEX item code or price.
-  if (/(?:هدية|هديه|مجاني|صنف مجاني|اصناف مجانيه|قطعة مجانية|قطعه مجانيه|(?:ليه|لها|له|يستحق)\s+(?:\d+\s+)?(?:صنف|اصناف|قطعة|قطعه|وجبة|وجبه|مشروب|هدية|هديه))/i.test(norm)) actions.push({kind:'items_to_verify',label:raw});
+  if (/(?:هدية|هديه|مجاني|صنف مجاني|اصناف مجانيه|قطعة مجانية|قطعه مجانيه|(?:ليه|لها|له|يستحق)\s+(?:(?:\d+\s+)?(?:صنف|اصناف|قطعة|قطعه|وجبة|وجبه|مشروب|هدية|هديه)|\d+\s+(?!جنيه|جنيها|%|٪)\S+))/i.test(norm)) actions.push({kind:'items_to_verify',label:raw});
   const maybeDiscount = /خصم|discount|٪|\d\s*%/i.test(norm);
   const conflicting = !!(pct.length > 1 || amounts.length > 1 || (pct.length && amounts.length)) ||
     (maybeDiscount && !actions.some(a=>a.kind.startsWith('discount_')));
