@@ -126,7 +126,7 @@ IF EXISTS (SELECT 1 FROM @Lines l JOIN dbo.Items i WITH (NOLOCK) ON i.ItemNo = l
 SELECT @Sub = SUM(Qty * Price) FROM @Lines;
 SET @Tax = ROUND((@Sub + @Service) * ISNULL(@TaxRatio, 0) / 100.0, 2);   -- Apex taxes SubTotal + Service, before the discount (checked on real orders)
 DECLARE @CardDiscount money = ROUND(@Sub * @NotePercent / 100.0, 2) + @NoteAmount;
-IF @NotePercent < 0 OR @NotePercent > 100 OR @NoteAmount < 0 OR @CardDiscount > @Sub + @Service + @Tax
+IF @NotePercent < 0 OR @NotePercent > 100 OR @NoteAmount < 0 OR @CardDiscount > @Sub + @Service + @Tax OR (@Target > 0 AND @CardDiscount >= @Target)
   THROW 51031, 'APEX customer-card discount invalid; review manually', 1;
 SET @RestDiscount = @RestDiscount + @CardDiscount;
 IF @Target > 0 SET @Target = @Target - @CardDiscount;
@@ -163,7 +163,7 @@ IF @Phone <> '' SELECT TOP 1 @CustFound = CustNo FROM dbo.Customers WITH (NOLOCK
 BEGIN TRY
   BEGIN TRANSACTION;
   -- Exact one-time customer note must still be on this same APEX customer.
-  IF @ConsumeCardNote = 1 BEGIN
+  IF @CheckCardNote = 1 BEGIN
     IF @CardCustNo <= 0 OR @CustFound IS NULL OR @CustFound <> @CardCustNo
       THROW 51032, 'APEX customer changed before one-time note redemption', 1;
     IF NOT EXISTS (SELECT 1 FROM dbo.Customers WITH (UPDLOCK, HOLDLOCK)
@@ -312,6 +312,7 @@ function Write-Order($c, $job, [string]$mode){
           '@NoTpl' = $(if ($mode -eq 'test' -and $job.noTemplate) { 1 } else { 0 }); '@AreaService' = $(if ($job.areaService -ne $null -and "$($job.areaService)" -ne '') { [decimal]$job.areaService } else { [decimal]-1 }); '@RestDiscount' = [decimal]$job.restaurantDiscount; '@Target' = $(if ($job.targetTotal) { [decimal]$job.targetTotal } else { [decimal]0 }); '@AddPrinted' = $(if ($AddPrintedOrders) { 1 } else { 0 }); '@PrintedFlag' = $PrintedFlag; '@UserNo' = $WriterUserNo
           '@NotePercent' = $(if ($job.apexCustomerBenefit) { [decimal]$job.apexCustomerBenefit.percent } else { [decimal]0 })
           '@NoteAmount' = $(if ($job.apexCustomerBenefit) { [decimal]$job.apexCustomerBenefit.amount } else { [decimal]0 })
+          '@CheckCardNote' = $(if ($mode -eq 'live' -and [string]$job.apexCustomerBenefit.original) { 1 } else { 0 })
           '@ConsumeCardNote' = $(if ($mode -eq 'live' -and $job.apexCustomerBenefit.oneTime) { 1 } else { 0 })
           '@CardCustNo' = $(if ([string]$job.apexCustomerBenefit.custNo -match '^\d{1,18}$') { [decimal]$job.apexCustomerBenefit.custNo } else { [decimal]0 })
           '@ExpectedCardNote' = [string]$job.apexCustomerBenefit.original
@@ -686,10 +687,10 @@ function Sync-CustomerNotes {
   $c = $null; $results = @()
   try {
     $c = Open-Db 'shadow'
-    foreach($p in @($batch.pending | Select-Object -First 25)){
+    foreach($p in @($batch.pending | Select-Object -First 3)){
       $result = @{ source = [string]$p.source; ref = [string]$p.ref; day = [string]$p.day; phone = [string]$p.phone; status = 'error' }
       try {
-        $q = $c.CreateCommand(); $q.CommandTimeout = 12
+        $q = $c.CreateCommand(); $q.CommandTimeout = 5
         $q.CommandText = 'SELECT TOP 1 CustNo, Note FROM dbo.Customers WITH (NOLOCK) WHERE Phone = @phone OR Mobile = @phone ORDER BY CustNo DESC'
         [void]$q.Parameters.AddWithValue('@phone', [string]$p.phone)
         $rd = $q.ExecuteReader()
@@ -716,7 +717,6 @@ for (;;) {
   try { if ((Get-Item $self).LastWriteTimeUtc -ne $selfStamp) { L 'script updated - restarting'; $mutex.ReleaseMutex(); $mutex.Dispose(); Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $self + '"'); exit 0 } } catch {}
   try { Self-Test } catch { L "self-test: $($_.Exception.Message)" }
   try { Apply-Stock } catch { L "stock: $($_.Exception.Message)" }
-  try { Sync-CustomerNotes } catch { L "customer notes: $($_.Exception.Message)" }
   $c = $null
   try {
     $n = Api '/api/apex-writer/next' @{}
@@ -750,6 +750,8 @@ for (;;) {
       L ("job " + $job.source + ':' + $job.ref + ' -> ' + ($res | ConvertTo-Json -Compress))
       continue
     }
+    # Never delay actual Apex order writes for extra customer-card note lookups.
+    try { Sync-CustomerNotes } catch { L "customer notes: $($_.Exception.Message)" }
   } catch {
     $failures++
     L "error: $($_.Exception.Message)"
