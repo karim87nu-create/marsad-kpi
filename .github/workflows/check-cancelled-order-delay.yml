@@ -1,0 +1,46 @@
+name: Validate cancelled-order delay metric
+
+on:
+  push:
+    branches: [fix/cancelled-orders-delay-rate-20261106]
+    paths:
+      - 'deployment/apex/marsad_monitor.ps1'
+      - '.github/workflows/check-cancelled-order-delay.yml'
+  pull_request:
+    paths:
+      - 'deployment/apex/marsad_monitor.ps1'
+      - '.github/workflows/check-cancelled-order-delay.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse PowerShell script and check cancel-rate guards
+        shell: pwsh
+        run: |
+          $path = 'deployment/apex/marsad_monitor.ps1'
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
+          if ($errors.Count) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            throw "PowerShell syntax check failed"
+          }
+          $code = Get-Content -Path $path -Raw
+          $checks = @(
+            'if ((N $r.WaiterNo) -le 0) { continue }',
+            'if ($c.Entry -and $c.Out -and $c.Out -ge $c.Entry)',
+            '$c.LateForRate = ($c.Out -ge $due)',
+            '$rateCount = $out.Count + $bcRate.Count',
+            '$rateLate = $outL + $bcLate',
+            'delayRateCount = $bout.Count + $bcRate.Count',
+            'delayRateLate = $allOutLate + $cancelLate'
+          )
+          foreach ($check in $checks) {
+            if (-not $code.Contains($check)) { throw "Required metric safeguard missing: $check" }
+          }
+          Write-Host 'PowerShell parses and all cancellation delay guards are present.'
