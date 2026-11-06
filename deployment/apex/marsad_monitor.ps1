@@ -904,7 +904,7 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
     $reasonLines = @()
     foreach($g in @($cancelByReason.Values | Sort-Object @{Expression={$_['count']};Descending=$true}, @{Expression={$_['name']};Descending=$false})){
       $reasonPercent = $(if ($allOrders -gt 0) { [math]::Round(100.0 * $g['count'] / $allOrders,1) } else { 0 })
-      $reasonLines += "• $($g['name']): $($g['count']) أوردر | $([math]::Round($g.amount,2)) ج | $reasonPercent% من إجمالي الأوردرات"
+      $reasonLines += "• $($g['name']): $($g['count']) أوردر | $([math]::Round($g['amount'],2)) ج | $reasonPercent% من إجمالي الأوردرات"
     }
     $reasonsText = $(if ($reasonLines.Count) { $reasonLines -join "`n" } else { 'لا توجد إلغاءات' })
     $report = "📊 مرصد الدهان | التقرير الختامي للفرع" +
