@@ -500,7 +500,7 @@ function setup(app) {
       if (card.state === 'ready') {
         const parsed = interpretApexCustomerNote(card.note);
         if (parsed.conflicting) fail(409,'الملاحظة على APEX فيها خصم غير واضح أو متعارض؛ راجعه مع الإدارة قبل التسجيل');
-        if (b.apexNoteConfirmed !== true || Number(b.apexNoteCheckedAt) !== card.checked_at)
+        if (b.apexNoteConfirmed !== true || String(b.apexNoteCheckedAt || '') !== iso(card.checked_at))
           fail(409,'لازم الموظف يراجع ويؤكد ملاحظة بطاقة العميل على APEX قبل تنفيذ الأوردر');
         const discounts = parsed.actions.filter(a=>a.kind.startsWith('discount_'));
         if (discounts.length > 1) fail(409,'مينفعش تطبيق خصمين من نفس الملاحظة بدون مراجعة');
