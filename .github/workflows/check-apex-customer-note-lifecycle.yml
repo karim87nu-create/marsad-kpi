@@ -1,0 +1,97 @@
+name: Validate APEX customer-note lifecycle
+on:
+  push:
+    branches: [feat/apex-customer-note-lifecycle-20261106]
+    paths:
+      - 'sites/lib/marsad/apex-customer-notes.js'
+      - 'sites/lib/marsad/db.js'
+      - 'sites/lib/marsad/transfer.js'
+      - 'sites/public/transfer/index.html'
+      - 'apex-writer/marsad_apex_writer.ps1'
+      - '.github/workflows/check-apex-customer-note-lifecycle.yml'
+  pull_request:
+    paths:
+      - 'sites/lib/marsad/apex-customer-notes.js'
+      - 'sites/lib/marsad/db.js'
+      - 'sites/lib/marsad/transfer.js'
+      - 'sites/public/transfer/index.html'
+      - 'apex-writer/marsad_apex_writer.ps1'
+      - '.github/workflows/check-apex-customer-note-lifecycle.yml'
+permissions:
+  contents: read
+jobs:
+  javascript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate script syntax and note handling
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check sites/lib/marsad/apex-customer-notes.js
+          node --check sites/lib/marsad/transfer.js
+          node --check sites/lib/marsad/db.js
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          t=Path('sites/public/transfer/index.html').read_text()
+          m=re.findall(r'<script[^>]*type="module"[^>]*>(.*?)</script>',t,re.S)
+          assert len(m)==1, f'Expected exactly one transfer page module, found {len(m)}'
+          Path('/tmp/check-transfer-page.mjs').write_text(m[0])
+          PY
+          node --check /tmp/check-transfer-page.mjs
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { parseApexCustomerNote as parse } from './sites/lib/marsad/apex-customer-notes.js';
+          let n=parse('خصم 10% مرة واحدة');
+          assert.equal(n.oneTime,true);assert.equal(n.directives[0].kind,'percent');assert.equal(n.directives[0].value,10);
+          n=parse('خصم 50 جنيه للطلب القادم');
+          assert.equal(n.oneTime,true);assert.equal(n.directives[0].kind,'amount');assert.equal(n.directives[0].value,50);
+          n=parse('له صنف مجاني مرة واحدة');
+          assert.equal(n.directives[0].kind,'item');assert.equal(n.oneTime,true);
+          n=parse('كل طلب خصم 5%');
+          assert.equal(n.permanent,true);assert.equal(n.oneTime,false);
+          n=parse('يرجى الاتصال قبل الوصول');
+          assert.equal(n.directives.length,0);assert.equal(n.other.length,1);
+          n=parse('خصم ١٥٪ للطلب القادم');
+          assert.equal(n.directives[0].value,15);
+          n=parse('خصم 200%');
+          assert.equal(n.unrecognized,true);
+          const server=await import('node:fs').then(fs=>fs.readFileSync('sites/lib/marsad/transfer.js','utf8'));
+          for(const required of ['apex_customer_notes','apexCustomerBenefit','isAcknowledged',
+            'verifiedCardNote.oneTime','phone_hash !== sha256(currentPhone)','payment === \'paid\'',
+            'noteItems','customer-notes/pending','customer-notes/result'])
+            assert(server.includes(required),'Missing validation: '+required);
+          console.log('PASS: JS parser, Apex notes percentages/amounts/items, safety guards');
+          JS
+  powershell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: PowerShell AST and atomic APEX guard checks
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $f='apex-writer/marsad_apex_writer.ps1'
+          $tokens=$null; $errors=$null
+          $ast=[Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f).Path,[ref]$tokens,[ref]$errors)
+          if($errors.Count){ $errors | ForEach-Object { Write-Host $_.ToString() }; throw 'Writer syntax invalid' }
+          $src=Get-Content $f -Raw -Encoding UTF8
+          foreach($required in @(
+            "function Sync-CustomerNotes",
+            "Open-Db 'shadow'",
+            "WHERE Phone = @phone OR Mobile = @phone",
+            "@CardDiscount money",
+            "@ConsumeCardNote = 1",
+            "CONVERT(nvarchar(1000), Note) COLLATE Latin1_General_BIN2",
+            "UPDATE dbo.Customers SET Note = '.'",
+            "IF @@ROWCOUNT <> 1 THROW 51034",
+            "SET @Target = @Target - @CardDiscount",
+            '$job.apexCustomerBenefit.oneTime',
+            '$l.free -eq $true'
+          )){ if(-not $src.Contains($required)){ throw "Missing writer safety guard: $required" }}
+          $txn=$src.IndexOf('BEGIN TRANSACTION;')
+          $update=$src.IndexOf("UPDATE dbo.Customers SET Note = '.'")
+          $commit=$src.IndexOf('COMMIT TRANSACTION;')
+          if($txn -lt 0 -or $update -lt $txn -or $commit -lt $update){ throw 'One-time note delete must occur inside the order-save transaction' }
+          Write-Host 'PASS: PowerShell parser and atomic, scoped one-time Apex customer-note clearing'

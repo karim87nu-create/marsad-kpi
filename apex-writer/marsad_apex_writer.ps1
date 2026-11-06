@@ -125,6 +125,12 @@ IF EXISTS (SELECT 1 FROM @Lines l LEFT JOIN dbo.Items i WITH (NOLOCK) ON i.ItemN
 IF EXISTS (SELECT 1 FROM @Lines l JOIN dbo.Items i WITH (NOLOCK) ON i.ItemNo = l.ItemNo WHERE ISNULL(i.StopItem, 0) <> 0) THROW 51007, 'an item is stopped on Apex', 1;
 SELECT @Sub = SUM(Qty * Price) FROM @Lines;
 SET @Tax = ROUND((@Sub + @Service) * ISNULL(@TaxRatio, 0) / 100.0, 2);   -- Apex taxes SubTotal + Service, before the discount (checked on real orders)
+DECLARE @BenefitBase money = ISNULL((SELECT SUM(Qty * Price) FROM @Lines WHERE ItemNo <> @ServiceItem), 0);
+DECLARE @CardDiscount money = ROUND(@BenefitBase * @NotePercent / 100.0, 2) + @NoteAmount;
+IF @NotePercent < 0 OR @NotePercent > 100 OR @NoteAmount < 0 OR @CardDiscount > @Sub + @Service + @Tax OR (@Target > 0 AND @CardDiscount >= @Target)
+  THROW 51031, 'APEX customer-card discount invalid; review manually', 1;
+SET @RestDiscount = @RestDiscount + @CardDiscount;
+IF @Target > 0 SET @Target = @Target - @CardDiscount;
 SET @Total = @Sub - @RestDiscount + @Tax + @Service;   -- Apex: CashPayment = SubTotal - Discount + Tax + Service
 -- Karim 31-10: the order's total on Apex must equal ours on Talabat/the site (@Target). When Apex comes out higher, the
 -- difference is added to the restaurant discount. Karim 01-11: a price difference never stops the order — it is saved and
@@ -157,6 +163,14 @@ DECLARE @CustFound numeric(18,0);
 IF @Phone <> '' SELECT TOP 1 @CustFound = CustNo FROM dbo.Customers WITH (NOLOCK) WHERE Mobile = @Phone OR Phone = @Phone ORDER BY CustNo DESC;
 BEGIN TRY
   BEGIN TRANSACTION;
+  -- Exact one-time customer note must still be on this same APEX customer.
+  IF @CheckCardNote = 1 BEGIN
+    IF @CardCustNo <= 0 OR @CustFound IS NULL OR @CustFound <> @CardCustNo
+      THROW 51032, 'APEX customer changed before one-time note redemption', 1;
+    IF NOT EXISTS (SELECT 1 FROM dbo.Customers WITH (UPDLOCK, HOLDLOCK)
+      WHERE CustNo = @CardCustNo AND CONVERT(nvarchar(1000), Note) COLLATE Latin1_General_BIN2 = @ExpectedCardNote COLLATE Latin1_General_BIN2)
+      THROW 51033, 'APEX customer note changed; refresh and review', 1;
+  END;
   DECLARE @Lock int; EXEC @Lock = sys.sp_getapplock @Resource = N'Marsad-Apex-Writer', @LockMode = N'Exclusive', @LockOwner = N'Transaction', @LockTimeout = 5000;
   IF @Lock < 0 THROW 51010, 'another writer is busy', 1;
   -- Short exclusive locks: Apex's own saves wait a few milliseconds; its NOLOCK reads see this order as soon as it exists.
@@ -257,8 +271,18 @@ BEGIN TRY
   IF NOT EXISTS (SELECT 1 FROM dbo.Orders_M_Daily m JOIN dbo.Orders_Serials s ON s.OrderNo = m.OrderNo AND s.ShiftSerial = m.ShiftSerial
                  JOIN dbo.Orders_Checks c ON c.OrderNo = m.OrderNo AND c.CheckNo = m.CheckNo WHERE m.OrderNo = @OrderNo)
     THROW 51014, 'saved order failed its consistency check', 1;
+  -- Atomic: clear ONLY the explicitly one-time note after saved lines and print copy.
+  IF @ConsumeCardNote = 1 BEGIN
+    UPDATE dbo.Customers SET Note = '.' WHERE CustNo = @CardCustNo
+      AND CONVERT(nvarchar(1000), Note) COLLATE Latin1_General_BIN2 = @ExpectedCardNote COLLATE Latin1_General_BIN2;
+    IF @@ROWCOUNT <> 1 THROW 51034, 'customer note not cleared; order rolled back', 1;
+    IF HAS_PERMS_BY_NAME('dbo.Customers_Log', 'OBJECT', 'INSERT') = 1
+      INSERT INTO dbo.Customers_Log (CustNo, SNo, Name, CType, Phone, Address, FlatNo, FloorNo, Sign, CLedge, LocationNo, Note, UBranchNo, StreetNo, TransDate, ModifyUser)
+      SELECT CustNo, (SELECT ISNULL(MAX(SNo), 0) + 1 FROM dbo.Customers_Log WHERE CustNo = @CardCustNo), Name, CType, Phone, Address, FlatNo, FloorNo, Sign, CLedge, LocationNo, Note, UBranchNo, StreetNo, @Now, 'MARSAD'
+      FROM dbo.Customers WHERE CustNo = @CardCustNo;
+  END;
   COMMIT TRANSACTION;
-  SELECT 'written' AS r, @Prints AS Prints, @Gap AS Gap, @Short AS Short, @Before AS Before, @Service AS Service, @OrderNo AS OrderNo, @ShiftSerial AS ShiftSerial, @BranchOrderNo AS BranchOrderNo, @CheckNo AS CheckNo, @Total AS Total, @Cust AS CustNo,
+  SELECT 'written' AS r, @CardDiscount AS CardDiscount, @ConsumeCardNote AS CardCleared, @Prints AS Prints, @Gap AS Gap, @Short AS Short, @Before AS Before, @Service AS Service, @OrderNo AS OrderNo, @ShiftSerial AS ShiftSerial, @BranchOrderNo AS BranchOrderNo, @CheckNo AS CheckNo, @Total AS Total, @Cust AS CustNo,
     (SELECT COUNT(*) FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE BranchNo = @Branch AND BranchOrderNo = @BranchOrderNo) AS SameBranchNo;
 END TRY
 BEGIN CATCH
@@ -277,7 +301,8 @@ function Write-Order($c, $job, [string]$mode){
     $decl += "INSERT INTO @Lines VALUES ($i, @it$i, @q$i, @p$i, @n$i);`r`n"
     [void]$cmd.Parameters.AddWithValue("@it$i", [string]$l.itemNo)
     [void]$cmd.Parameters.AddWithValue("@q$i", [decimal]$l.qty)
-    [void]$cmd.Parameters.AddWithValue("@p$i", [decimal]$l.price); $cmd.Parameters["@p$i"].SqlDbType = [System.Data.SqlDbType]::Money
+    $priced = $(if ($l.free -eq $true) { [decimal]0 } else { [decimal]$l.price })
+    [void]$cmd.Parameters.AddWithValue("@p$i", $priced); $cmd.Parameters["@p$i"].SqlDbType = [System.Data.SqlDbType]::Money
     [void]$cmd.Parameters.AddWithValue("@n$i", [string]$l.note)
   }
   $cmd.CommandText = $decl + $Batch
@@ -286,11 +311,23 @@ function Write-Order($c, $job, [string]$mode){
           '@Marker' = ('M' + $(if ($job.source -eq 'site') { 'S' } else { 'T' }) + ':' + $job.ref); '@Kind' = [string]$job.source; '@Phone' = [string]$job.customer.phone
           '@Label' = [string]$job.label; '@Address' = ((([string]$job.customer.address) -replace '\s*—\s*(?:الدور|الطابق|الشقة)\s*[:：]\s*[^—]*', '') -replace '\s*[،,]\s*(?:القاهرة|Cairo|Egypt|مصر)\s*(?=—|$)', '').Trim(); '@Sign' = [string]$job.sign; '@Remarks' = [string]$job.note
           '@NoTpl' = $(if ($mode -eq 'test' -and $job.noTemplate) { 1 } else { 0 }); '@AreaService' = $(if ($job.areaService -ne $null -and "$($job.areaService)" -ne '') { [decimal]$job.areaService } else { [decimal]-1 }); '@RestDiscount' = [decimal]$job.restaurantDiscount; '@Target' = $(if ($job.targetTotal) { [decimal]$job.targetTotal } else { [decimal]0 }); '@AddPrinted' = $(if ($AddPrintedOrders) { 1 } else { 0 }); '@PrintedFlag' = $PrintedFlag; '@UserNo' = $WriterUserNo
+          '@NotePercent' = $(if ($job.apexCustomerBenefit) { [decimal]$job.apexCustomerBenefit.percent } else { [decimal]0 })
+          '@NoteAmount' = $(if ($job.apexCustomerBenefit) { [decimal]$job.apexCustomerBenefit.amount } else { [decimal]0 })
+          '@CheckCardNote' = $(if ($mode -eq 'live' -and [string]$job.apexCustomerBenefit.original) { 1 } else { 0 })
+          '@ConsumeCardNote' = $(if ($mode -eq 'live' -and $job.apexCustomerBenefit.oneTime) { 1 } else { 0 })
+          '@CardCustNo' = $(if ([string]$job.apexCustomerBenefit.custNo -match '^\d{1,18}$') { [decimal]$job.apexCustomerBenefit.custNo } else { [decimal]0 })
+          '@ExpectedCardNote' = [string]$job.apexCustomerBenefit.original
           '@TimeText' = (Get-Date).ToString('hh:mm:ss tt', [Globalization.CultureInfo]::GetCultureInfo('ar-EG')) }
   foreach($k in $p.Keys){ [void]$cmd.Parameters.AddWithValue($k, $p[$k]) }
   # Amounts as money (Karim 01-11, «Arithmetic overflow»): a parameter takes its size from its value, so a restaurant
   # discount of 0 became numeric(1,0) and adding the price difference to it overflowed. Money holds any amount.
-  foreach($k in @('@RestDiscount', '@Target', '@AreaService')){ $cmd.Parameters[$k].SqlDbType = [System.Data.SqlDbType]::Money }
+  foreach($k in @('@RestDiscount', '@Target', '@AreaService', '@NoteAmount')){ $cmd.Parameters[$k].SqlDbType = [System.Data.SqlDbType]::Money }
+  $cmd.Parameters['@NotePercent'].SqlDbType = [System.Data.SqlDbType]::Decimal
+  $cmd.Parameters['@NotePercent'].Precision = 6; $cmd.Parameters['@NotePercent'].Scale = 2
+  $cmd.Parameters['@CardCustNo'].SqlDbType = [System.Data.SqlDbType]::Decimal
+  $cmd.Parameters['@CardCustNo'].Precision = 18; $cmd.Parameters['@CardCustNo'].Scale = 0
+  $cmd.Parameters['@ExpectedCardNote'].SqlDbType = [System.Data.SqlDbType]::NVarChar
+  $cmd.Parameters['@ExpectedCardNote'].Size = 1000
   $cmd.Parameters['@Phone'].SqlDbType = [System.Data.SqlDbType]::VarChar   # digits only; varchar so the customer search can use Apex's index
   $t = New-Object System.Data.DataTable; $t.Load($cmd.ExecuteReader()); return $t.Rows[0]
 }
@@ -308,7 +345,7 @@ function Price-Lines($c, $job){
     $l | Add-Member -NotePropertyName candidates -NotePropertyValue ($cand.Keys | Where-Object { $cand[$_] -isnot [DBNull] -and $cand[$_] -ne $null } | ForEach-Object { "$_=$([math]::Round([double]$cand[$_],2))" }) -Force
     $v = $cand[$PriceSource]   # only the proven source; no fallback to another list
     if ($v -is [DBNull] -or $v -eq $null -or [decimal]$v -le 0) { throw ('no price on Apex for item ' + $l.itemNo) }
-    $l | Add-Member -NotePropertyName price -NotePropertyValue ([decimal]$v) -Force
+    $l | Add-Member -NotePropertyName price -NotePropertyValue $(if ($l.free -eq $true) { [decimal]0 } else { [decimal]$v }) -Force
   }
 }
 
@@ -643,6 +680,38 @@ function Apply-Stock {
   L ("stock: " + ($done | ConvertTo-Json -Compress))
 }
 
+# Read customer-card notes only; never modify customer records during lookup.
+# Scoped by the server to existing Talabat/website orders and confirmed phone numbers.
+function Sync-CustomerNotes {
+  $batch = Api '/api/apex-writer/customer-notes/pending' @{}
+  if (-not $batch.pending -or @($batch.pending).Count -eq 0) { return }
+  $c = $null; $results = @()
+  try {
+    $c = Open-Db 'shadow'
+    foreach($p in @($batch.pending | Select-Object -First 3)){
+      $result = @{ source = [string]$p.source; ref = [string]$p.ref; day = [string]$p.day; phone = [string]$p.phone; status = 'error' }
+      try {
+        $q = $c.CreateCommand(); $q.CommandTimeout = 5
+        $q.CommandText = 'SELECT TOP 1 CustNo, Note FROM dbo.Customers WITH (NOLOCK) WHERE Phone = @phone OR Mobile = @phone ORDER BY CustNo DESC'
+        [void]$q.Parameters.AddWithValue('@phone', [string]$p.phone)
+        $rd = $q.ExecuteReader()
+        try {
+          if ($rd.Read()) {
+            $result.status = 'found'
+            $result.custNo = [string]$rd['CustNo']
+            $result.note = $(if ($rd['Note'] -is [DBNull]) { '' } else { [string]$rd['Note'] })
+          } else { $result.status = 'none' }
+        } finally { $rd.Close() }
+      } catch { L ("customer note lookup failed source=$($p.source) ref=$($p.ref) - " + $_.Exception.Message) }
+      $results += $result
+    }
+  } finally { if($c) { $c.Close() } }
+  if ($results.Count) {
+    $ack = Api '/api/apex-writer/customer-notes/result' @{ results = $results }
+    L "customer notes checked=$($results.Count) saved=$($ack.updated)"
+  }
+}
+
 L "writer started (pos $WriterPos)"
 $failures = 0
 for (;;) {
@@ -672,6 +741,7 @@ for (;;) {
         $res.gap = [math]::Round([double]$r.Gap, 2); $res.short = [math]::Round([double]$r.Short, 2); $res.before = [math]::Round([double]$r.Before, 2); $res.service = [double]$r.Service
       } else {
         $res.orderNo = $r.OrderNo; $res.shiftSerial = $r.ShiftSerial; $res.branchOrderNo = $r.BranchOrderNo; $res.total = [double]$r.Total
+        $res.cardDiscount = [double]$r.CardDiscount; $res.cardNoteCleared = ("$($r.CardCleared)" -eq '1')
         $res.prints = ($r.Prints -eq $true -or "$($r.Prints)" -eq '1' -or "$($r.Prints)" -eq 'True')   # Apex's printed copy saved (needs the Prints grant)
         # The price difference, for admin's «فروق الأسعار» (the order is saved either way).
         $res.gap = [math]::Round([double]$r.Gap, 2); $res.short = [math]::Round([double]$r.Short, 2); $res.before = [math]::Round([double]$r.Before, 2); $res.service = [double]$r.Service; $res.target = $job.targetTotal
@@ -681,6 +751,8 @@ for (;;) {
       L ("job " + $job.source + ':' + $job.ref + ' -> ' + ($res | ConvertTo-Json -Compress))
       continue
     }
+    # Never delay actual Apex order writes for extra customer-card note lookups.
+    try { Sync-CustomerNotes } catch { L "customer notes: $($_.Exception.Message)" }
   } catch {
     $failures++
     L "error: $($_.Exception.Message)"
