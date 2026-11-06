@@ -32,8 +32,8 @@ jobs:
           code=$(curl --connect-timeout 8 --max-time 20 -sS -o /tmp/writes.json -w '%{http_code}' -X POST "$root/api/orders/push" -H 'content-type: application/json' --data '{}' )
           test "$code" = "403" || { echo "Live writes are NOT blocked! HTTP $code";exit 1; }
           echo "Production write routes locked (403)"
-          code=$(curl --connect-timeout 8 --max-time 45 -sS -o /tmp/protected.json -w '%{http_code}' "$root/api/desks")
-          test "$code" = "401" || { echo "Protected endpoint /api/desks unexpected HTTP $code";cat /tmp/protected.json;exit 1; }
+          code=$(curl --connect-timeout 8 --max-time 45 -sS -o /tmp/protected.json -w '%{http_code}' "$root/api/orders/live")
+          test "$code" = "401" || { echo "Protected endpoint /api/orders/live unexpected HTTP $code";cat /tmp/protected.json;exit 1; }
           echo "Full Marsad module imports, D1 schema initialization and auth protection verified (401)"
           code=$(curl --connect-timeout 8 --max-time 20 -sS -o /tmp/transfer.html -w '%{http_code}' "$root/transfer/")
           test "$code" = "200" || { echo "Static transfer UI unexpected HTTP $code";exit 1; }
