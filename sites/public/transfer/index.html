@@ -365,12 +365,22 @@ function card(o) {
         if (!n || n.status === 'pending') return '<div class="warn">ملاحظات بطاقة العميل على APEX: جاري طلبها من جهاز الكاشير…</div>';
         if (n.status === 'error') return '<div class="warn">تعذّر قراءة ملاحظات بطاقة العميل من APEX — راجع البطاقة بنفسك قبل التنفيذ</div>';
         if (!n.text) return '';
-        const benefit = (n.directives || []).map(d => '<div class="warn">' + esc(d.text) + ' — ' + esc(d.reason) + '</div>').join('');
+        const benefit = (n.directives || []).map((d, i) => {
+          const details = d.kind === 'percent' ? 'خصم ' + d.value + '% من قيمة الأصناف قبل الضريبة'
+            : d.kind === 'amount' ? 'خصم ' + money(d.value) + ' جنيه إضافي'
+            : 'صنف مستحق — يحتاج كود وكمية من APEX';
+          return '<div class="warn">' + esc(d.text) + ' — ' + esc(details) + '</div>' +
+            (d.kind === 'item' ? '<div class="pick"><input data-card-item="' + i + '" list="apexItems" placeholder="كود أو اسم الصنف في APEX" value="' + esc(p.noteItems?.[i]?.no || '') + '">' +
+              '<input data-card-qty="' + i + '" type="number" min="1" max="50" step="1" placeholder="الكمية" value="' + esc(p.noteItems?.[i]?.qty || '1') + '"></div>' : '');
+        }).join('');
         return '<div class="f"><span class="fl">ملاحظات بطاقة العميل على APEX</span><span class="fv"><b>' + esc(n.text) + '</b>' +
           '<div>' + (n.oneTime ? '⚠️ ملاحظة للطلب الواحد؛ لا تُحذف إلا بعد تنفيذ الطلب وتأكيد الاستفادة' :
             n.permanent ? 'ملاحظة دائمة؛ لا تُحذف بعد الطلب' : 'مدة سريان الملاحظة غير واضحة؛ لا تُحذف تلقائيًا') + '</div>' +
           benefit + (n.other || []).map(x => '<div>تعليمات أخرى: ' + esc(x) + '</div>').join('') +
-          (n.requiresReview ? '<div class="warn">⛔ راجع الخصومات والأصناف المستحقة على APEX؛ التحويل الآلي متوقف حتى يتم دعم تأكيد التنفيذ بشكل آمن.</div>' : '') +
+          (n.unrecognized ? '<div class="warn">⚠️ تعليمات غير واضحة؛ سجّل الأوردر يدويًا بعد المراجعة ولا تحذف الملاحظة.</div>' : '') +
+          (n.requiresReview && !n.unrecognized ? '<label><input type="checkbox" data-card-approved ' + (p.apexNoteApproved ? 'checked ' : '') +
+            '> راجعت بطاقة العميل: الخصم إضافي وغير مطبق في المصدر، والنسبة على الأصناف قبل الضريبة، والأصناف المستحقة مجانية، وتنفيذها مرة واحدة عند توضيح ذلك.</label>' : '') +
+          (n.directives?.some(d => d.kind !== 'item') && pay === 'paid' ? '<div class="warn">أوردر مدفوع بالفعل: لازم مراجعة فرق التحصيل/الاسترداد يدويًا؛ لا تحويل آلي بخصم إضافي.</div>' : '') +
           '</span>' + copyBtn(n.text) + '</div>';
       })() +
       '<div class="f"><span class="fl">الدفع</span><span class="fv seg"><button class="' + (pay === 'cash' ? 'on' : 'ghost') + '" data-pay="cash">كاش</button><button class="' + (pay === 'paid' ? 'on' : 'ghost') + '" data-pay="paid">مدفوع</button> ' + payText(o) + '</span><span></span></div>' +
@@ -453,7 +463,19 @@ $('list').addEventListener('click', async e => {
     if (missingAt >= 0) { toast('اختار الصنف على Apex لـ: ' + flatLines(o)[missingAt].name); return; }
     if (o.discounts?.some(d => !d.who)) { toast('الخصم مش واضح على حساب مين — سجله بإيدك'); return; }
     if (o.apexCustomerNote?.status !== 'none' && o.apexCustomerNote?.status !== 'found') { toast('استنى قراءة ملاحظات العميل من APEX قبل التسجيل'); return; }
-    if (o.apexCustomerNote?.requiresReview) { toast('على بطاقة العميل تعليمات خصم أو أصناف لازم تتراجع وتتسجل صح؛ التحويل الآلي مش هيُكمل قبل تنفيذها'); return; }
+    const cardNote = o.apexCustomerNote;
+    if (cardNote?.unrecognized) { toast('تعليمات بطاقة العميل غير واضحة؛ سجّلها يدويًا واتأكد قبل التنفيذ'); return; }
+    if (cardNote?.requiresReview && !p.apexNoteApproved) { toast('أكّد مراجعة الخصم والأصناف الخاصة ببطاقة العميل أولًا'); return; }
+    if (pay === 'paid' && cardNote?.directives?.some(d => d.kind !== 'item')) { toast('العميل دفع بالفعل؛ لازم مراجعة الاسترداد يدويًا'); return; }
+    const noteItems = [];
+    for (const [i, d] of (cardNote?.directives || []).entries()) {
+      if (d.kind !== 'item') continue;
+      const x = p.noteItems?.[i] || {};
+      if (!/^\\d{1,10}$/.test(String(x.no || '')) || !Number.isInteger(Number(x.qty)) || Number(x.qty) < 1 || Number(x.qty) > 50) {
+        toast('اختار كود الصنف المستحق وكميته من APEX'); return;
+      }
+      noteItems.push({ itemNo: String(x.no), qty: Number(x.qty), free: true });
+    }
     if (o.source === 'talabat' && o.items.some(i => !i.modifiersComplete)) { toast('الإضافات مش ظاهرة كاملة — سجله بإيدك'); return; }
     if (o.items.some(i => (i.addons || []).some(a => a.qty == null))) { toast('عدد إضافة مش واضح — سجله بإيدك'); return; }
     const rest = (o.discounts || []).filter(d => d.who === 'restaurant').reduce((a, d) => a + (Number(d.amount) || 0), 0);
@@ -463,6 +485,7 @@ $('list').addEventListener('click', async e => {
     try {
       await api('POST', '/api/transfer/job', { source: o.source, ref: o.ref, action: 'auto', payment: pay, branchNo: Number(p.branch), locationNo: Number(p.loc), code: o.code,
         items: flatLines(o).map((i, n) => ({ itemNo: p.items[n], qty: i.qty, note: '' })),
+        apexNote: cardNote?.status === 'found' ? { approved: !!p.apexNoteApproved, note: cardNote.text, custNo: cardNote.custNo, items: noteItems } : null,
         // Free choices and the customer's note go in the order comment on Apex (تعليقات الطلب), as the staff do.
         note: p.arabic?.note || deliveryComment(o),
         // Paid (Karim 01-11): the whole discount comes off on Apex, so the Ledge equals what the customer paid.
@@ -484,6 +507,26 @@ $('list').addEventListener('click', async e => {
   }
 });
 $('list').addEventListener('change', async e => {
+  const cardInput = e.target.closest('[data-card-approved],[data-card-item],[data-card-qty]');
+  if (cardInput) {
+    const node = cardInput.closest('.card'), p = picks[node?.dataset.k];
+    if (!p) return;
+    if (cardInput.hasAttribute('data-card-approved')) p.apexNoteApproved = !!cardInput.checked;
+    else {
+      const idx = Number(cardInput.dataset.cardItem ?? cardInput.dataset.cardQty);
+      p.noteItems ||= {};
+      p.noteItems[idx] ||= { no: '', qty: 1 };
+      if (cardInput.hasAttribute('data-card-qty')) p.noteItems[idx].qty = Number(cardInput.value);
+      else {
+        const input = cardInput.value.trim();
+        const found = (data.apexItems || []).find(a => a.no === input || a.name === input);
+        if (!found) { toast('اختار كود أو اسم صنف معروف على APEX'); return; }
+        p.noteItems[idx].no = found.no;
+      }
+    }
+    render(true);
+    return;
+  }
   const el = e.target.closest('[data-pick]'); if (!el) return;
   const c = el.closest('.card'), p = picks[c.dataset.k]; if (!p) return;
   if (el.dataset.pick === 'branch') {
