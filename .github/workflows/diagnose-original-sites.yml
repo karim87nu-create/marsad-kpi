@@ -1,0 +1,31 @@
+name: Read-only diagnose original Sites production
+on:
+  push:
+    branches: [diagnostic/sites-production-20261106]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Probe public health and auth boundaries only
+        shell: bash
+        run: |
+          set -u
+          base="https://marsad-v2.karim87nu.chatgpt.site"
+          echo "Testing original Sites host (no credentials or customer payloads)"
+          for route in /health /api/health /transfer/ /api/transfer/queue /api/orders/live /api/pulse; do
+            echo "::group::GET $route"
+            output=$(curl -sS --location --connect-timeout 8 --max-time 22 --retry 1 --retry-delay 1 -o /tmp/marsad-probe-body -w 'http=%{http_code} dns_ip=%{remote_ip} tls=%{ssl_verify_result} redirects=%{num_redirects} elapsed=%{time_total}' "$base$route" 2>&1)
+            code=$?
+            echo "curl_exit=$code $output"
+            if [ "$route" = "/health" ] || [ "$route" = "/api/health" ]; then
+              head -c 350 /tmp/marsad-probe-body 2>/dev/null | tr '\n' ' ' || true
+              echo
+            else
+              echo 'Body omitted for privacy; auth-protected 401 or 403 is expected'
+            fi
+            echo "::endgroup::"
+          done
