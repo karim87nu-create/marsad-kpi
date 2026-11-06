@@ -26,5 +26,5 @@ export function parseApexCustomerNote(raw) {
     } else other.push(section);
   }
   const financeUnrecognized = /(?:خصم|discount|هدية|هديه|مجاني|مجانا|يستحق|صنف|اصناف|أصناف|كوبون)/i.test(other.join(' '));
-  return { text, directives, other, oneTime: oneTime && !permanent, permanent, requiresReview: directives.length > 0 || oneTime || financeUnrecognized, unrecognized: financeUnrecognized || (oneTime && permanent) };
+  return { text, directives, other, oneTime: oneTime && !permanent && other.length === 0, permanent, requiresReview: directives.length > 0 || oneTime || financeUnrecognized, unrecognized: financeUnrecognized || (oneTime && permanent) };
 }
