@@ -125,7 +125,8 @@ IF EXISTS (SELECT 1 FROM @Lines l LEFT JOIN dbo.Items i WITH (NOLOCK) ON i.ItemN
 IF EXISTS (SELECT 1 FROM @Lines l JOIN dbo.Items i WITH (NOLOCK) ON i.ItemNo = l.ItemNo WHERE ISNULL(i.StopItem, 0) <> 0) THROW 51007, 'an item is stopped on Apex', 1;
 SELECT @Sub = SUM(Qty * Price) FROM @Lines;
 SET @Tax = ROUND((@Sub + @Service) * ISNULL(@TaxRatio, 0) / 100.0, 2);   -- Apex taxes SubTotal + Service, before the discount (checked on real orders)
-DECLARE @CardDiscount money = ROUND(@Sub * @NotePercent / 100.0, 2) + @NoteAmount;
+DECLARE @BenefitBase money = ISNULL((SELECT SUM(Qty * Price) FROM @Lines WHERE ItemNo <> @ServiceItem), 0);
+DECLARE @CardDiscount money = ROUND(@BenefitBase * @NotePercent / 100.0, 2) + @NoteAmount;
 IF @NotePercent < 0 OR @NotePercent > 100 OR @NoteAmount < 0 OR @CardDiscount > @Sub + @Service + @Tax OR (@Target > 0 AND @CardDiscount >= @Target)
   THROW 51031, 'APEX customer-card discount invalid; review manually', 1;
 SET @RestDiscount = @RestDiscount + @CardDiscount;
