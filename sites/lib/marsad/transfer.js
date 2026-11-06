@@ -650,12 +650,19 @@ function setup(app) {
     const result = { ok: !!b.ok, preview: !!b.preview, db: ['shadow', 'test', 'live'].includes(b.db) ? b.db : null, orderNo: b.orderNo ?? null, shiftSerial: b.shiftSerial ?? null, branchOrderNo: b.branchOrderNo ?? null,
       total: Number(b.total) || null, error: b.error ? String(b.error).slice(0, 300) : null, detail: b.detail ? String(b.detail).slice(0, 1500) : null, at: ctx.now,
       // The price difference (Karim 01-11: the order is saved, admin sees the difference to fix the price or the item).
-      gap: Number(b.gap) || 0, short: Number(b.short) || 0, before: Number(b.before) || null, service: Number.isFinite(Number(b.service)) ? Number(b.service) : null, target: Number(b.target) || null };
+      gap: Number(b.gap) || 0, short: Number(b.short) || 0, before: Number(b.before) || null, service: Number.isFinite(Number(b.service)) ? Number(b.service) : null, target: Number(b.target) || null,
+      cardDiscount: Number(b.cardDiscount) || 0, cardNoteCleared: b.cardNoteCleared === true };
     // A shadow preview writes nothing: the employee still enters the order by hand; the preview is kept for comparison.
     const state = result.preview ? 'auto_preview' : result.ok ? 'auto_done' : 'auto_failed';
     const r = await db.prepare("UPDATE transfer_jobs SET state = ?, result = ?, at = ? WHERE source = ? AND ref = ? AND state = 'auto_sending'")
       .run(state, JSON.stringify(result), ctx.now, source, ref);
     if (!r.changes) fail(409, 'الأوردر مش في حالة إرسال');
+    if (state === 'auto_done' && result.db === 'live' && result.cardNoteCleared) {
+      // The APEX transaction already cleared the exact one-off note; remove it from
+      // the current transfer card, retaining the frozen job payload for order audit.
+      await db.prepare("UPDATE apex_customer_notes SET note = '', status = 'consumed', checked_at = ? WHERE source = ? AND ref = ?")
+        .run(ctx.now, source, ref);
+    }
     await app.audit('apex_writer_result', null, { source, ref, ...result });
     // Karim 01-11 (#53 stayed «ماتسجلش» for 3 hours): a failed automatic transfer is told to the call center at once.
     if (state === 'auto_failed' && result.db === 'live') {
