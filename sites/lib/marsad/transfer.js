@@ -16,6 +16,7 @@ import { APEX_SECTIONS } from './apex-sections.js';
 import { canonicalStore } from './store-names.js';
 const APEX_ITEM_LIST = Object.entries(APEX_NAMES).map(([no, name]) => ({ no, name, price: APEX_PRICES[no] ?? null }));
 import { sha256, randomToken } from './security.js';
+import { interpretApexCustomerNote } from './customer-note.js';
 
 const TOKEN_MS = 12 * 3600000;
 const CLAIM_MS = 10 * 60000;               // a claim left untouched for 10 minutes is free again
@@ -155,6 +156,10 @@ function setup(app) {
     // only the claims (who has which order) are read fresh for each request.
     const base = await baseFor(day, ctx.now, { allowStale: true });
     const snap = { locations: base.locations };
+    // Lookup is keyed to the source order, never to the customer's name.
+    // Only authenticated staff receive the sensitive APEX customer-card note.
+    const customerNotes = new Map((await db.prepare('SELECT source, ref, state, note, checked_at FROM apex_customer_note_lookups WHERE day = ?').all(day))
+      .map(r => [r.source + ':' + r.ref, r]));
     const jobs = new Map((await db.prepare('SELECT * FROM transfer_jobs WHERE day = ?').all(day)).map(j => [j.source + ':' + j.ref, j]));
     const jobOf = (source, ref) => {
       const j = jobs.get(source + ':' + ref);
@@ -168,7 +173,13 @@ function setup(app) {
     const onLive = id => ctx.now - (liveNow[id] || 0) < 3 * 60000;
     // Orders already on Apex or out with the rider: a short line only (no items, bill or customer) — most of the day's orders.
     const slim = o => ({ source: o.source, ref: o.ref, code: o.code, at: o.at, status: o.status, out: o.out, branch: o.branch, apexBranch: o.apexBranch, total: o.total, apex: o.apex, done: true });
-    const list = base.list.map(o => ({ ...(o.apex || o.out ? slim(o) : o), ...(o.source === 'talabat' ? { onLive: onLive(o.ref) } : {}), job: jobOf(o.source, o.source === 'site' ? String(o.ref) : o.ref) }));
+    const list = base.list.map(o => {
+      const n = customerNotes.get(o.source + ':' + o.ref);
+      return { ...(o.apex || o.out ? slim(o) : o), ...(o.source === 'talabat' ? { onLive: onLive(o.ref) } : {}),
+        job: jobOf(o.source, o.source === 'site' ? String(o.ref) : o.ref),
+        apexCustomerNote: n ? { state: n.state, checkedAt: n.checked_at ? iso(n.checked_at) : null,
+          ...(n.state === 'ready' ? { ...interpretApexCustomerNote(n.note) } : {}) } : { state:'unchecked' } };
+    });
     // English typed by the customer (address, name, comments) shown and sent in Arabic (Karim 01-11); the original is kept.
     if (app.toArabic) {
       const open = list.filter(o => !o.done), texts = [];
@@ -194,6 +205,39 @@ function setup(app) {
     const fresh = String(ctx.query.have || '') !== staticKey;
     return { day, me: { name: me.name, staff: me.staff }, serverNow: iso(ctx.now), stale: base.stale === true, liveScreen: ctx.now - (liveNow._screen || 0) < 3 * 60000, autoTransfer: mode, branches: APEX_BRANCHES, staticKey,
       ...(fresh ? { locations, apexItems: items, sections } : {}), orders: list };
+  });
+
+  // Staff request notes only for real open source orders. Never accept a phone from the browser.
+  // The writer on the cashier PC resolves the phone against Customers with a read-only login.
+  app.route('POST', '/api/transfer/customer-notes/lookup', async ctx => {
+    await who(ctx);
+    const ids = Array.isArray(ctx.body.orders) ? ctx.body.orders.slice(0,15) : [];
+    const results = [];
+    for (const item of ids) {
+      const source = ['talabat','site'].includes(item?.source) ? item.source : null;
+      const ref = String(item?.ref || '');
+      if (!source || !/^\d{1,20}$/.test(ref)) continue;
+      const row = source === 'talabat'
+        ? await db.prepare('SELECT day, status FROM talabat_orders WHERE id = ?').get(ref)
+        : await db.prepare('SELECT day, status FROM site_orders WHERE id = ?').get(Number(ref));
+      if (!row || (source === 'talabat' ? TALABAT_DONE.has(String(row.status).toUpperCase()) : SITE_DONE.has(String(row.status).toLowerCase()))) continue;
+      const profile = parseJson((await db.prepare('SELECT data FROM match_profiles WHERE source = ? AND ref = ?').get(source,ref))?.data,{});
+      const customer = source === 'site' ? profile.customer || {} : profile;
+      const phone = deliveryPhone(customer.phoneDisplay || customer.phone || customer.mobileDisplay || customer.mobile);
+      if (!/^\d{10,15}$/.test(phone)) { results.push({source,ref,state:'no_phone'}); continue; }
+      const previous = await db.prepare('SELECT phone, checked_at, requested_at, state FROM apex_customer_note_lookups WHERE source = ? AND ref = ?').get(source,ref);
+      if (previous && previous.phone === phone && (previous.checked_at && ctx.now - previous.checked_at < 10*60000 ||
+        !previous.checked_at && ctx.now - previous.requested_at < 30000)) {
+        results.push({source,ref,state:previous.state}); continue;
+      }
+      await db.prepare(`INSERT INTO apex_customer_note_lookups (source,ref,day,phone,state,note,customer_no,checked_at,requested_at)
+        VALUES (?,?,?,?,'pending',NULL,NULL,NULL,?)
+        ON CONFLICT(source,ref) DO UPDATE SET day=excluded.day,phone=excluded.phone,state='pending',
+          note=NULL,customer_no=NULL,checked_at=NULL,requested_at=excluded.requested_at`)
+        .run(source,ref,row.day,phone,ctx.now);
+      results.push({source,ref,state:'pending'});
+    }
+    return {results};
   });
 
   // The day's orders (heavy: Apex snapshot, matching): built in the background after every push and kept in the
@@ -516,6 +560,31 @@ function setup(app) {
     }
     fail(400, 'invalid_action');
   });
+  // Read-only customer-card note lookup. No arbitrary phone lookup is exposed to clients.
+  app.route('POST','/api/apex-writer/customer-notes/next', async ctx => {
+    await writer(ctx);
+    const jobs = await db.prepare("SELECT source,ref,phone FROM apex_customer_note_lookups WHERE state='pending' AND requested_at > ? ORDER BY requested_at LIMIT 10")
+      .all(ctx.now - 3*3600000);
+    return {jobs};
+  });
+  app.route('POST','/api/apex-writer/customer-notes/result', async ctx => {
+    await writer(ctx);
+    const batch = Array.isArray(ctx.body.results) ? ctx.body.results.slice(0,10) : [];
+    let updated = 0;
+    for(const r of batch) {
+      const source = ['talabat','site'].includes(r?.source) ? r.source : null, ref=String(r?.ref || ''),
+        phone=String(r?.phone || ''), status=String(r?.state || '');
+      if (!source || !/^\d{1,20}$/.test(ref) || !/^\d{10,15}$/.test(phone) ||
+        !['ready','empty','ambiguous','error'].includes(status)) continue;
+      const note = status==='ready' ? String(r.note || '').slice(0,500) : null;
+      const custNo = /^\d{1,18}$/.test(String(r.customerNo||'')) ? String(r.customerNo) : null;
+      const x = await db.prepare("UPDATE apex_customer_note_lookups SET state=?,note=?,customer_no=?,checked_at=? WHERE source=? AND ref=? AND phone=? AND state='pending'")
+        .run(status,note,custNo,ctx.now,source,ref,phone);
+      updated += x.changes;
+    }
+    return {ok:true,updated};
+  });
+
   // The writer asks for the next order. A job stays «sending» until the writer answers; it is never handed out
   // twice (the writer also checks Apex for its own marker before writing, so a lost answer cannot double an order).
   app.route('POST', '/api/apex-writer/next', async ctx => {
