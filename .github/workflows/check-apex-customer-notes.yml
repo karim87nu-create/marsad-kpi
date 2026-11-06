@@ -63,3 +63,57 @@ jobs:
           [void][Management.Automation.Language.Parser]::ParseFile('apex-writer/marsad_apex_writer.ps1',[ref]$tokens,[ref]$errors)
           if ($errors.Count) { $errors | ForEach-Object {Write-Error $_.Message}; throw "PowerShell parse failed" }
           Write-Host 'PASS PowerShell'
+
+      - name: Verify no double discount and atomic one-order note cleanup guards
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import {readFileSync} from 'node:fs';
+          import {interpretApexCustomerNote as p} from './sites/lib/marsad/customer-note.js';
+          const w=readFileSync('apex-writer/marsad_apex_writer.ps1','utf8');
+          const server=readFileSync('sites/lib/marsad/transfer.js','utf8');
+          for (const line of [
+            'IF @CardConfirmed = 1 AND @IsTest = 0 BEGIN',
+            'IF @CardCustNo <= 0 OR @CustFound IS NULL OR @CardCustNo <> @CustFound',
+            "IF @CardOnce = 1 AND @CardConfirmed = 1 AND @IsTest = 0 BEGIN",
+            "UPDATE dbo.Customers SET Note = '.' WHERE CustNo = @Cust AND RTRIM(ISNULL(Note,'')) = RTRIM(@CardRaw)",
+            "IF @@ROWCOUNT <> 1 THROW 51026",
+            "SET @RestDiscount = @RestDiscount + @CardDiscount + @CardGifts",
+            "IF @Target > 0 SET @Target = @Target - @CardDiscount",
+            'CardGift bit',
+            'WHERE l.CardGift = 0 AND l.ItemNo <> @ServiceItem',
+            'WHERE l.CardGift = 1'
+          ]) assert(w.includes(line), 'Missing writer guard: '+line);
+          assert(w.indexOf('IF @CardOnce = 1') > w.indexOf('saved order failed its consistency check'));
+          assert(w.indexOf('IF @CardOnce = 1') < w.indexOf('COMMIT TRANSACTION;'));
+          for (const line of [
+            "await who(ctx);",
+            "await writer(ctx);",
+            "SELECT state,note,customer_no,checked_at FROM apex_customer_note_lookups",
+            "parsed.clearable",
+            "b.apexNoteConfirmed !== true",
+            "clean.push(...free)",
+            "apexCard,"
+          ]) assert(server.includes(line), 'Missing server safeguard '+line);
+          assert.equal(p('خصم بنسبة ١٠٪ للأوردر ده فقط').actions.find(a=>a.kind==='discount_percent')?.value,10);
+          assert.equal(p('خصم مبلغ 50 جنيه مره واحده').actions.find(a=>a.kind==='discount_amount')?.value,50);
+          assert.equal(p('ليه 2 سلطة هدية للاوردر ده فقط').actions.some(a=>a.kind==='items_to_verify'),true);
+          assert.equal(p('له خصم 10%').actions.some(a=>a.kind==='items_to_verify'),false);
+          assert.equal(p('بدون بصل على طول; خصم ١٠٪ مرة واحدة').clearable,false);
+          const calculate=(base,service,tax,sourceDiscount,pct,free)=>{
+            const target=base+service+(base+service)*tax-sourceDiscount;
+            const fullSub=base+free;
+            const fullTax=(fullSub+service)*tax;
+            const cardDiscount=base*pct;
+            const gifts=free*(1+tax);
+            const before=fullSub+service+fullTax-sourceDiscount-cardDiscount-gifts;
+            return {before,target:target-cardDiscount};
+          };
+          const noGift=calculate(100,10,.14,0,.1,0);
+          const gift=calculate(100,10,.14,0,.1,30);
+          assert(Math.abs(noGift.before-115.4)<0.001);
+          assert(Math.abs(gift.before-gift.target)<0.001);
+          assert(Math.abs(gift.before-noGift.before)<0.001,'Gift added to customer payable');
+          console.log('PASS discount/entitlement arithmetic, note review and cleanup safety guards');
+          JS
