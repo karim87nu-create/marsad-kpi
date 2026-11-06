@@ -526,12 +526,13 @@ async function loadQueue() {
     // The Apex items and areas come once (and again only when they change): the page stays light.
     const prev = data, d = await api('GET', '/api/transfer/queue' + (prev?.staticKey ? '?have=' + encodeURIComponent(prev.staticKey) : ''));
     if (!d.apexItems && prev) { d.apexItems = prev.apexItems; d.locations = prev.locations; d.sections = prev.sections; }
-    data = d; $('queueStatus').textContent = d.stale ? '⚠️ أحدث تحديث فشل — دي آخر بيانات محفوظة، والتحويل متوقف مؤقتًا لحد ما التحديث يرجع.' : ''; $('me').textContent = data.me.name; const a = $('auto'); a.textContent = { off: 'التحويل الآلي متوقف — سجّل على Apex بإيدك', shadow: 'التحويل الآلي: معاينة بس — سجّل بإيدك', test: 'التحويل الآلي: تجربة على قاعدة الاختبار — سجّل بإيدك', live: 'التحويل الآلي شغال' }[data.autoTransfer] || ''; a.className = 'pill' + (data.autoTransfer === 'live' ? '' : ' off'); render(); }
+    data = d; $('queueStatus').textContent = d.stale ? '⚠️ أحدث تحديث فشل — دي آخر بيانات محفوظة، والتحويل متوقف مؤقتًا لحد ما التحديث يرجع.' : ''; $('me').textContent = data.me.name; const a = $('auto'); a.textContent = { off: 'التحويل الآلي متوقف — سجّل على Apex بإيدك', shadow: 'التحويل الآلي: معاينة بس — سجّل بإيدك', test: 'التحويل الآلي: تجربة على قاعدة الاختبار — سجّل بإيدك', live: 'التحويل الآلي شغال' }[data.autoTransfer] || ''; a.className = 'pill' + (data.autoTransfer === 'live' ? '' : ' off'); render();
     // The browser never sends or receives a searchable phone index. The server resolves the
     // stored source order's phone, then the cashier writer reads only the corresponding APEX card.
     const needed = d.orders.filter(o => !o.done && o.apexCustomerNote?.state === 'unchecked'
       && o.customer?.phone).slice(0,15).map(o => ({source:o.source,ref:o.ref}));
     if (needed.length) api('POST','/api/transfer/customer-notes/lookup',{orders:needed}).catch(()=>{});
+  }
 
   catch (e) { if (token) { $('queueStatus').textContent = 'تعذّر تحديث الطلبات: ' + e.message + ' — جاري إعادة المحاولة'; if (!data) $('auto').textContent = 'حالة التحويل لم تصل بعد'; toast(e.message); } }
 }
