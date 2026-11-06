@@ -1,0 +1,60 @@
+name: Check D1 cold-start schema guard
+on:
+  pull_request:
+    paths:
+      - 'sites/lib/marsad/db.js'
+      - 'sites/lib/marsad/app.js'
+      - '.github/workflows/check-sites-d1-init.yml'
+  push:
+    branches: [fix/sites-d1-coldstart-schema-probe-20261106]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate syntax and non-destructive schema guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check sites/lib/marsad/db.js
+          node --check sites/lib/marsad/app.js
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          import { SCHEMA_STATEMENTS, schemaReady } from './sites/lib/marsad/db.js';
+          const rows = SCHEMA_STATEMENTS.map(sql => {
+            const m = /^CREATE\s+(?:UNIQUE\s+)?(TABLE|INDEX)\s+IF\s+NOT\s+EXISTS\s+([\w]+)/i.exec(sql);
+            assert(m, 'Unexpected DDL statement: ' + sql);
+            return { type:m[1].toLowerCase(), name:m[2], sql };
+          });
+          assert(rows.length >= 45);
+          // sqlite_master reflects columns added by the existing ALTER TABLE migrations,
+          // while the SCHEMA constant describes an older database's initial table shapes.
+          const legacyCols = {
+            events:['extra'], telegram_log:['reply_to','message_id','target','branch'],
+            transfer_jobs:['payload','result'], talabat_orders:['code','milestones'],
+            site_orders:['transfers','total'], wa_messages:['sending_at'],
+            telegram_config:['branch_chat_id','branch_chat_title']
+          };
+          const complete = rows.map(r => r.type==='table' ? ({
+            ...r,
+            sql: r.sql + ' ' + (legacyCols[r.name] || []).join(' ')
+          }) : r);
+          const fake = data => ({ prepare: sql => {
+            assert(sql.includes('sqlite_master'), 'Unexpected SQL: '+sql);
+            return { all: async () => data };
+          } });
+          assert.equal(await schemaReady(fake(complete)), true, 'Complete schema must skip migrations');
+          assert.equal(await schemaReady(fake([])), false, 'Empty schema must be migrated');
+          assert.equal(await schemaReady(fake(complete.slice(1))), false, 'Missing table/index must be migrated');
+          const noExtra = complete.map(r=> r.name==='events' ? {...r, sql:r.sql.replace(/\bextra\b/gi,'unavailable_column')} : r);
+          // The legacy extra column is added by ALTER TABLE; simulating its absence must be detected.
+          assert.equal(await schemaReady(fake(noExtra)), false, 'Missing legacy column must trigger migrations');
+          const broken = {prepare: () => ({all: async()=>{throw new Error('offline')}})};
+          assert.equal(await schemaReady(broken), false, 'Read errors must never falsely skip migration');
+          const app = readFileSync('sites/lib/marsad/app.js','utf8');
+          assert(app.includes("if (db.kind !== 'd1' || !await schemaReady(db)) await migrate(db);"));
+          console.log('PASS: complete/empty/missing/index/legacy D1 schema and guard');
+          JS

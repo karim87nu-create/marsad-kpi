@@ -1,7 +1,7 @@
 // HTTP layer on the Fetch API (Request → Response), so the same app runs under Node and on Cloudflare.
 import { createSigner, createLimiter, hashPassword, randomToken } from './security.js';
 import { createLegacy } from './legacy.js';
-import { migrate } from './db.js';
+import { migrate, schemaReady } from './db.js';
 // Raised with each change worth checking after a publish (shown by /api/health).
 const BUILD = '2026-11-03.8';
 
@@ -72,7 +72,9 @@ function createApp({ db, config: input = {}, now = () => Date.now() }) {
     if (initialized) return Promise.resolve();
     if (db.kind !== 'd1' && ready) return ready;
     const run = (async () => {
-    await migrate(db);
+    // A live D1 database with the full schema must not run DDL on every cold request.
+    // Existing missing columns and older databases still use the non-destructive migration.
+    if (db.kind !== 'd1' || !await schemaReady(db)) await migrate(db);
     if (!config.secret) {
       await db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('secret', ?)").run(randomToken(32) + randomToken(32));
       config.secret = (await db.prepare("SELECT value FROM settings WHERE key = 'secret'").get()).value;
