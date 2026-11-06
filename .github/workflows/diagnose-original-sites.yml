@@ -25,7 +25,12 @@ jobs:
               head -c 350 /tmp/marsad-probe-body 2>/dev/null | tr '\n' ' ' || true
               echo
             else
-              echo 'Body omitted for privacy; auth-protected 401 or 403 is expected'
+              # Show only an error code, never customer data or successful endpoint content.
+              status=$(echo "$output" | sed -n 's/.*http=\\([0-9][0-9][0-9]\\).*/\\1/p')
+              if [ "$status" != "200" ]; then
+                grep -Eo '"error":"[^"]{1,100}"' /tmp/marsad-probe-body 2>/dev/null | head -1 || true
+                grep -Eo '<title>[^<]{1,100}</title>' /tmp/marsad-probe-body 2>/dev/null | head -1 || true
+              fi
             fi
             echo "::endgroup::"
           done
