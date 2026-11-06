@@ -458,6 +458,21 @@ function setup(app) {
       if (!items.length || items.length > 40) fail(400, 'اختار أصناف Apex');
       const clean = items.map(x => ({ itemNo: String(x?.itemNo || '').trim(), qty: Number(x?.qty), note: x?.note ? String(x.note).slice(0, 60) : '' }));
       if (clean.some(x => !/^\d{1,10}$/.test(x.itemNo) || !(x.qty > 0 && x.qty <= 50))) fail(400, 'فيه صنف لسه مااتختارش أو عدده مش مظبوط');   // Apex offers have short numbers (111, 218, 315)
+      // Trust the on-premises APEX note snapshot, never client-submitted discount numbers.
+      const noteRecord = await db.prepare('SELECT cust_no, note, status, phone_hash, checked_at FROM apex_customer_notes WHERE source = ? AND ref = ?').get(source, ref);
+      const noteProfile = await db.prepare('SELECT data FROM match_profiles WHERE source = ? AND ref = ?').get(source, ref);
+      const currentPhone = profilePhone(source, parseJson(noteProfile?.data, {}));
+      if (!noteRecord || !currentPhone || noteRecord.phone_hash !== sha256(currentPhone)
+        || noteRecord.status === 'error' || ctx.now - noteRecord.checked_at > 5 * 60000) {
+        fail(409, 'ملاحظات بطاقة العميل على APEX لسه ما اتراجعتش — استنى القراءة من جهاز الكاشير');
+      }
+      const verifiedCardNote = parseApexCustomerNote(noteRecord.note);
+      if (verifiedCardNote.requiresReview || /(?:خصم|مجاني|مجانا|هدية|هديه|يستحق|اضافه|إضافة|له\\s+صنف)/i.test(verifiedCardNote.text)) {
+        fail(409, 'بطاقة العميل فيها خصم أو أصناف مستحقة؛ لازم تنفيذها وتأكيدها على APEX قبل التحويل الآلي');
+      }
+      // Non-financial instructions travel with this order, not into the permanent customer card.
+      const safeRemarks = [String(b.note || '').trim(), verifiedCardNote.text ? 'ملاحظة بطاقة العميل: ' + verifiedCardNote.text : ''].filter(Boolean).join(' | ');
+      if (safeRemarks.length > 200) fail(409, 'ملاحظات الأوردر مع بطاقة العميل أطول من مساحة APEX — راجعها قبل التسجيل');
       const locationNo = Number(b.locationNo);
       if (!Number.isInteger(locationNo) || locationNo < 1) fail(400, 'اختار منطقة العميل على Apex');
       // The area's own delivery charge on Apex (as the read-only monitor sent it), for an area nobody ordered to today.
@@ -481,12 +496,12 @@ function setup(app) {
       const sign = platformDiscount > 0 ? 'خصم طلبات ' + platformDiscount.toFixed(2) : String(b.sign || '').slice(0, 120);
       const restaurantDiscount = sourceDiscounts.length ? Math.round((sourceRestaurantDiscount + (payment === 'paid' ? platformDiscount : 0)) * 100) / 100 : Math.max(0, Number(b.restaurantDiscount) || 0);
       const expectedTotal = Number(b.expectedTotal) || null, targetTotal = Number(b.targetTotal) > 0 ? Math.round(Number(b.targetTotal) * 100) / 100 : null;
-      if (String(b.note || '').length > 200) fail(400, 'الملاحظات أطول من مساحة Apex (٢٠٠ حرف) — اختصرها مع الاحتفاظ بالمقصود');
-      const texts = [b.customer?.name, b.customer?.address, b.note].filter(Boolean);
+      if (safeRemarks.length > 200) fail(400, 'الملاحظات أطول من مساحة Apex (٢٠٠ حرف) — اختصرها مع الاحتفاظ بالمقصود');
+      const texts = [b.customer?.name, b.customer?.address, safeRemarks].filter(Boolean);
       const arabic = app.toArabic ? await app.toArabic(texts, { wait: true }) : new Map();
       const translatedName = arabic.get(b.customer?.name) || b.customer?.name;
       const translatedAddress = arabic.get(b.customer?.address) || b.customer?.address;
-      const translatedNote = arabic.get(b.note) || b.note || '';
+      const translatedNote = arabic.get(safeRemarks) || safeRemarks;
       if (translatedNote.length > 200) fail(400, 'الملاحظات بعد الترجمة أطول من مساحة Apex — اختصرها');
       const address = deliveryAddress(translatedAddress, area?.name || '');
       const deliveryFields = { address: [address.street, address.floor ? 'الدور: ' + address.floor : '', address.flat ? 'الشقة: ' + address.flat : ''].filter(Boolean).join(' — '), floor: address.floor, flat: address.flat };
