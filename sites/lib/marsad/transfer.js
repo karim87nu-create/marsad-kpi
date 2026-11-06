@@ -157,8 +157,8 @@ function setup(app) {
     const base = await baseFor(day, ctx.now, { allowStale: true });
     const snap = { locations: base.locations };
     const jobs = new Map((await db.prepare('SELECT * FROM transfer_jobs WHERE day = ?').all(day)).map(j => [j.source + ':' + j.ref, j]));
-    const customerNotes = new Map((await db.prepare('SELECT source, ref, cust_no, note, status, checked_at FROM apex_customer_notes WHERE day = ?').all(day)).map(n => [
-      n.source + ':' + n.ref, { custNo: n.cust_no, status: n.status, checkedAt: iso(n.checked_at), ...parseApexCustomerNote(n.note) }
+    const customerNotes = new Map((await db.prepare('SELECT source, ref, cust_no, note, status, checked_at, phone_hash FROM apex_customer_notes WHERE day = ?').all(day)).map(n => [
+      n.source + ':' + n.ref, { custNo: n.cust_no, status: n.status, checkedAt: iso(n.checked_at), phone_hash: n.phone_hash, ...parseApexCustomerNote(n.note) }
     ]));
     const jobOf = (source, ref) => {
       const j = jobs.get(source + ':' + ref);
@@ -172,7 +172,13 @@ function setup(app) {
     const onLive = id => ctx.now - (liveNow[id] || 0) < 3 * 60000;
     // Orders already on Apex or out with the rider: a short line only (no items, bill or customer) — most of the day's orders.
     const slim = o => ({ source: o.source, ref: o.ref, code: o.code, at: o.at, status: o.status, out: o.out, branch: o.branch, apexBranch: o.apexBranch, total: o.total, apex: o.apex, done: true });
-    const list = base.list.map(o => ({ ...(o.apex || o.out ? slim(o) : o), ...(o.source === 'talabat' ? { onLive: onLive(o.ref) } : {}), job: jobOf(o.source, o.source === 'site' ? String(o.ref) : o.ref), apexCustomerNote: customerNotes.get(o.source + ':' + o.ref) || { status: 'pending' } }));
+    const list = base.list.map(o => {
+      const note = customerNotes.get(o.source + ':' + o.ref);
+      const linked = note && note.phone_hash === sha256(deliveryPhone(o.customer?.phone) || '');
+      return { ...(o.apex || o.out ? slim(o) : o), ...(o.source === 'talabat' ? { onLive: onLive(o.ref) } : {}),
+        job: jobOf(o.source, o.source === 'site' ? String(o.ref) : o.ref),
+        apexCustomerNote: linked ? { custNo: note.custNo, status: note.status, checkedAt: note.checkedAt, text: note.text, directives: note.directives, other: note.other, oneTime: note.oneTime, permanent: note.permanent, requiresReview: note.requiresReview } : { status: 'pending' } };
+    });
     // English typed by the customer (address, name, comments) shown and sent in Arabic (Karim 01-11); the original is kept.
     if (app.toArabic) {
       const open = list.filter(o => !o.done), texts = [];
@@ -517,10 +523,13 @@ function setup(app) {
       const rows = await db.prepare(`SELECT p.ref, p.data, n.checked_at FROM ${orderTable} o
         JOIN match_profiles p ON p.source = ? AND ${join}
         LEFT JOIN apex_customer_notes n ON n.source = p.source AND n.ref = p.ref
-        WHERE o.day = ? AND (n.checked_at IS NULL OR n.checked_at < ?) ORDER BY o.id DESC LIMIT 35`).all(source, day, due);
+        WHERE o.day = ? ORDER BY o.id DESC LIMIT 35`).all(source, day, due);
       for (const row of rows) {
         const phone = profilePhone(source, parseJson(row.data, {}));
-        if (phone && out.length < 25) out.push({ source, ref: row.ref, day, phone });
+        if (!phone || out.length >= 25) continue;
+        const existing = await db.prepare('SELECT checked_at, phone_hash FROM apex_customer_notes WHERE source = ? AND ref = ?').get(source, row.ref);
+        if (existing && existing.phone_hash === sha256(phone) && existing.checked_at >= due) continue;
+        out.push({ source, ref: row.ref, day, phone });
       }
     }
     return { pending: out };
@@ -539,10 +548,10 @@ function setup(app) {
       if (!dayRow || dayRow.day !== x.day) continue;
       const status = x.status === 'found' && x.custNo ? 'found' : x.status === 'none' ? 'none' : 'error';
       const note = status === 'found' ? String(x.note || '').slice(0, 1000) : '';
-      await db.prepare(`INSERT INTO apex_customer_notes(source,ref,day,phone_last4,cust_no,note,checked_at,status)
-        VALUES (?,?,?,?,?,?,?,?)
-        ON CONFLICT(source,ref) DO UPDATE SET day=excluded.day,phone_last4=excluded.phone_last4,cust_no=excluded.cust_no,note=excluded.note,checked_at=excluded.checked_at,status=excluded.status`)
-        .run(source, ref, dayRow.day, String(x.phone).slice(-4), status === 'found' ? String(x.custNo).slice(0, 30) : null, note, ctx.now, status);
+      await db.prepare(`INSERT INTO apex_customer_notes(source,ref,day,phone_last4,phone_hash,cust_no,note,checked_at,status)
+        VALUES (?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(source,ref) DO UPDATE SET day=excluded.day,phone_last4=excluded.phone_last4,phone_hash=excluded.phone_hash,cust_no=excluded.cust_no,note=excluded.note,checked_at=excluded.checked_at,status=excluded.status`)
+        .run(source, ref, dayRow.day, String(x.phone).slice(-4), sha256(deliveryPhone(x.phone)), status === 'found' ? String(x.custNo).slice(0, 30) : null, note, ctx.now, status);
       updated++;
     }
     return { updated };
