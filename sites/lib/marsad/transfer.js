@@ -467,10 +467,31 @@ function setup(app) {
         fail(409, 'ملاحظات بطاقة العميل على APEX لسه ما اتراجعتش — استنى القراءة من جهاز الكاشير');
       }
       const verifiedCardNote = parseApexCustomerNote(noteRecord.note);
-      if (verifiedCardNote.requiresReview || /(?:خصم|مجاني|مجانا|هدية|هديه|يستحق|اضافه|إضافة|له\\s+صنف)/i.test(verifiedCardNote.text)) {
-        fail(409, 'بطاقة العميل فيها خصم أو أصناف مستحقة؛ لازم تنفيذها وتأكيدها على APEX قبل التحويل الآلي');
-      }
-      // Non-financial instructions travel with this order, not into the permanent customer card.
+      const clientCard = b.apexNote && typeof b.apexNote === 'object' ? b.apexNote : {};
+      const isAcknowledged = clientCard.approved === true &&
+        String(clientCard.note || '') === verifiedCardNote.text &&
+        String(clientCard.custNo || '') === String(noteRecord.cust_no || '');
+      if (verifiedCardNote.unrecognized) fail(409, 'في بطاقة العميل تعليمات مالية غير واضحة — راجعها يدويًا، ولا تحذفها');
+      if (verifiedCardNote.requiresReview && !isAcknowledged) fail(409, 'لازم تأكيد خصم وأصناف بطاقة العميل قبل تنفيذ الأوردر');
+      if (verifiedCardNote.directives.filter(x => x.kind === 'percent' || x.kind === 'amount').length > 1)
+        fail(409, 'بطاقة العميل فيها أكتر من خصم؛ راجعها يدويًا حتى لا يتم الخصم مرتين');
+      const notePercent = verifiedCardNote.directives.find(x => x.kind === 'percent')?.value || 0;
+      const noteAmount = verifiedCardNote.directives.find(x => x.kind === 'amount')?.value || 0;
+      if ((notePercent || noteAmount) && payment === 'paid')
+        fail(409, 'الطلب مدفوع مسبقًا؛ خصم بطاقة العميل يحتاج تأكيد فرق التحصيل أو استرداد قبل تسجيله');
+      const benefitDirectives = verifiedCardNote.directives.filter(x => x.kind === 'item');
+      const benefitItems = Array.isArray(clientCard.items) ? clientCard.items : [];
+      if (benefitDirectives.length !== benefitItems.length) fail(409, 'اختار كل الأصناف المستحقة وكمياتها');
+      const noteItems = benefitItems.map(x => ({ itemNo: String(x?.itemNo || '').trim(), qty: Number(x?.qty), note: 'مستحق من ملاحظة العميل', free: true }));
+      if (noteItems.some(x => !APEX_NAMES[x.itemNo] || !Number.isInteger(x.qty) || x.qty <= 0 || x.qty > 50))
+        fail(409, 'كود الصنف المستحق أو كميته غير صحيح');
+      if (clean.length + noteItems.length > 40) fail(409, 'إجمالي أصناف الأوردر أكبر من الحد');
+      // Exact note snapshot + customer ID will be checked AGAIN inside the Apex transaction before clearing.
+      const noteBenefit = verifiedCardNote.text ? {
+        custNo: String(noteRecord.cust_no || ''), original: verifiedCardNote.text,
+        oneTime: verifiedCardNote.oneTime && isAcknowledged, percent: notePercent,
+        amount: noteAmount, items: noteItems
+      } : null;
       const safeRemarks = [String(b.note || '').trim(), verifiedCardNote.text ? 'ملاحظة بطاقة العميل: ' + verifiedCardNote.text : ''].filter(Boolean).join(' | ');
       if (safeRemarks.length > 200) fail(409, 'ملاحظات الأوردر مع بطاقة العميل أطول من مساحة APEX — راجعها قبل التسجيل');
       const locationNo = Number(b.locationNo);
@@ -507,7 +528,8 @@ function setup(app) {
       const deliveryFields = { address: [address.street, address.floor ? 'الدور: ' + address.floor : '', address.flat ? 'الشقة: ' + address.flat : ''].filter(Boolean).join(' — '), floor: address.floor, flat: address.flat };
       const payload = { v: 1, source, ref, code: String(b.code || '').replace(/[^\d]/g, '').slice(0, 10) || null, db: mode, branchNo, locationNo, payment,
         label: deliveryLabel(translatedName, source, payment, b.code), customer: { name: String(translatedName || '').slice(0, 80), phone: deliveryPhone(b.customer?.phone), address: String(b.customer?.address || '').slice(0, 360), ...deliveryFields },
-        sign, platformDiscount, note: translatedNote, items: clean, restaurantDiscount, expectedTotal, targetTotal, areaService, by: me.name, at: ctx.now };
+        sign, platformDiscount, note: translatedNote, items: [...clean, ...noteItems], apexCustomerBenefit: noteBenefit,
+        restaurantDiscount, expectedTotal, targetTotal, areaService, by: me.name, at: ctx.now };
       await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at, payload, result) VALUES (?,?,?,'auto_pending',?,?,?,?,?,?,NULL)
         ON CONFLICT(source, ref) DO UPDATE SET state = 'auto_pending', employee_id = excluded.employee_id, employee_name = excluded.employee_name, payment = excluded.payment, note = excluded.note, at = excluded.at, payload = excluded.payload, result = NULL`)
         .run(source, ref, row.day, me.id, me.name, payment, note, ctx.now, JSON.stringify(payload));
