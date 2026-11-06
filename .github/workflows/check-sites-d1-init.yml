@@ -49,7 +49,7 @@ jobs:
           assert.equal(await schemaReady(fake(complete)), true, 'Complete schema must skip migrations');
           assert.equal(await schemaReady(fake([])), false, 'Empty schema must be migrated');
           assert.equal(await schemaReady(fake(complete.slice(1))), false, 'Missing table/index must be migrated');
-          const noExtra = complete.map(r=> r.name==='events' ? {...r, sql:r.sql.replace(/\\s+extra\\b/i,'')} : r);
+          const noExtra = complete.map(r=> r.name==='events' ? {...r, sql:r.sql.replace(/\bextra\b/gi,'unavailable_column')} : r);
           // The legacy extra column is added by ALTER TABLE; simulating its absence must be detected.
           assert.equal(await schemaReady(fake(noExtra)), false, 'Missing legacy column must trigger migrations');
           const broken = {prepare: () => ({all: async()=>{throw new Error('offline')}})};
