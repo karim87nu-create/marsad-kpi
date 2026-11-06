@@ -269,7 +269,7 @@ async function schemaReady(db) {
     if (!EXPECTED_SCHEMA.every(e => found.has(e.type + ':' + e.name))) return false;
     for (const [table, cols] of Object.entries(REQUIRED_ADDED_COLUMNS)) {
       const ddl = found.get('table:' + table) || '';
-      if (!cols.every(col => new RegExp('\\\\b' + col + '\\\\b', 'i').test(ddl))) return false;
+      if (!cols.every(col => new RegExp('\\b' + col + '\\b', 'i').test(ddl))) return false;
     }
     return true;
   } catch {
