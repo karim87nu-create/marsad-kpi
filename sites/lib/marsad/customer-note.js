@@ -14,7 +14,7 @@ function interpretApexCustomerNote(input) {
   // Entitlement to items is never guessed into an APEX item code or price.
   if (/(?:ليه|لها|له|يستحق|هدية|هديه|مجاني|صنف|اصناف|أصناف|قطعة|قطعه|اضافة|إضافة)\s+.{0,90}/i.test(norm)) actions.push({kind:'items_to_verify',label:raw});
   const maybeDiscount = /خصم|discount|٪|\d\s*%/i.test(norm);
-  const conflicting = (pct.length > 1 || amounts.length > 1 || (pct.length && amounts.length)) ||
+  const conflicting = !!(pct.length > 1 || amounts.length > 1 || (pct.length && amounts.length)) ||
     (maybeDiscount && !actions.some(a=>a.kind.startsWith('discount_')));
   const oneTime = /(?:للاوردر\s*(?:ده|دا|الحالي|فقط)|للطلب\s*(?:ده|دا|الحالي|فقط)|مرة\s*واحدة|مره\s*واحده|هذا\s*الطلب\s*فقط|single\s*order|one\s*time)/i.test(norm);
   // Clear only a note explicitly marked one-order-only whose complete text can be consumed.
