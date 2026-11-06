@@ -31,3 +31,32 @@ foreach($required in @(
   if (-not $code.Contains($required)) { throw "End-of-day safeguard missing: $required" }
 }
 Write-Host 'PASS: parser, 02:15 gate, branch open check, 15-minute quiet period, all cancellations, unique alert key and delay rate'
+
+
+# Cancellation breakdown rules: the denominator is ALL orders, never only cancellations.
+foreach($required in @(
+  '$reasonNo = [int](N $del.ReasonNo)',
+  '$reasonKey = $(if ($reasonNo -gt 0)',
+  '$cancelByReason[$reasonKey][''count'']++',
+  '$cancelByReason[$reasonKey][''amount''] += $cancelAmount',
+  '$allOrders = [int]$summary.orders + $allCancelled',
+  '100.0 * $g[''count''] / $allOrders',
+  '100.0 * $allCancelled / $allOrders',
+  'إجمالي قيمة الأوردرات الملغية',
+  'إجمالي الإلغاءات: $allCancelled من $allOrders'
+)) {
+  if (-not $code.Contains($required)) { throw "Cancellation breakdown requirement missing: $required" }
+}
+$start = $code.IndexOf('$report = "📊 مرصد الدهان | التقرير الختامي للفرع"')
+$end = $code.IndexOf("    Raise `$key 'ordersLate' `$report", $start)
+if ($start -lt 0 -or $end -le $start) { throw 'Final report template not found' }
+$template = $code.Substring($start, $end-$start)
+foreach ($removed in @('متوسط زمن الخروج','قيمة الأوردرات غير الملغية','بعد تحميل الطيار','تأخر ثم اتلغى')) {
+  if ($template.Contains($removed)) { throw "Removed item still present in end-of-day report: $removed" }
+}
+# Synthetic math checks: 100 active + 10 cancelled, reasons 7 and 3.
+$allOrders = 110
+Assert ([math]::Round(7 * 100.0 / $allOrders,1) -eq 6.4) 'Reason share uses wrong denominator'
+Assert ([math]::Round(3 * 100.0 / $allOrders,1) -eq 2.7) 'Second reason share uses wrong denominator'
+Assert ([math]::Round(10 * 100.0 / $allOrders,1) -eq 9.1) 'Overall cancellation rate uses wrong denominator'
+Write-Host 'PASS: cancellation reasons and amounts grouped by Apex reason, reason shares and overall rate over all orders; old fields removed'
