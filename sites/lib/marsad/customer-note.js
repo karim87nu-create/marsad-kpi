@@ -14,8 +14,10 @@ function interpretApexCustomerNote(input) {
   // Entitlement to items is never guessed into an APEX item code or price.
   if (/(?:هدية|هديه|مجاني|صنف مجاني|اصناف مجانيه|قطعة مجانية|قطعه مجانيه|(?:ليه|لها|له|يستحق)\s+(?:(?:\d+\s+)?(?:صنف|اصناف|قطعة|قطعه|وجبة|وجبه|مشروب|هدية|هديه)|\d+\s+(?!جنيه|جنيها|%|٪)\S+))/i.test(norm)) actions.push({kind:'items_to_verify',label:raw});
   const maybeDiscount = /خصم|discount|٪|\d\s*%/i.test(norm);
+  const unsupportedBasis = /(?:خصم|discount).{0,45}(?:التوصيل|الدليفري|خدمة التوصيل|شامل الضريبة|شامل التوصيل|الاجمالي|الإجمالي|الفاتورة كاملة|total including)|(\b(?:delivery|shipping|vat)\b).{0,35}(?:discount)/i.test(norm);
+  const cancelledBenefit = /(?:لا تعمل|ممنوع|ملغي|ملغى|اتلغى|الغاء|إلغاء|وقف|موقوف|السابق|قديم).{0,25}(?:خصم|discount)/i.test(norm);
   const conflicting = !!(pct.length > 1 || amounts.length > 1 || (pct.length && amounts.length)) ||
-    (maybeDiscount && !actions.some(a=>a.kind.startsWith('discount_')));
+    (maybeDiscount && (!actions.some(a=>a.kind.startsWith('discount_')) || unsupportedBasis || cancelledBenefit));
   const oneTime = /(?:للاوردر\s*(?:ده|دا|الحالي|فقط)|للطلب\s*(?:ده|دا|الحالي|فقط)|مرة\s*واحدة|مره\s*واحده|هذا\s*الطلب\s*فقط|single\s*order|one\s*time)/i.test(norm);
   // Clear only a note explicitly marked one-order-only whose complete text can be consumed.
   // Mixed permanent instructions must never be erased along with a one-time entitlement.
