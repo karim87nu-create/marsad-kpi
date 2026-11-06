@@ -250,7 +250,7 @@ const SCHEMA_STATEMENTS = [...statements(SCHEMA), ...statements(EXTRA_SCHEMA)];
 // A single read-only schema inspection safely skips migrations on already-ready databases.
 // Missing tables, indexes or any legacy-added column still use the existing migrate() path.
 const EXPECTED_SCHEMA = SCHEMA_STATEMENTS.map(sql => {
-  const m = /^CREATE\\s+(?:UNIQUE\\s+)?(TABLE|INDEX)\\s+IF\\s+NOT\\s+EXISTS\\s+([\\w]+)/i.exec(sql);
+  const m = /^CREATE\s+(?:UNIQUE\s+)?(TABLE|INDEX)\s+IF\s+NOT\s+EXISTS\s+([\w]+)/i.exec(sql);
   return m ? { type: m[1].toLowerCase(), name: m[2].toLowerCase() } : null;
 }).filter(Boolean);
 const REQUIRED_ADDED_COLUMNS = {
