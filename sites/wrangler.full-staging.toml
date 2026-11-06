@@ -1,0 +1,14 @@
+name = "marsad-v2-full-staging"
+main = "worker-full-staging.js"
+compatibility_date = "2026-11-06"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = ["/api/*", "/health"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "marsad-v2-full-staging"
+database_id = "6a41ee4e-029b-4118-803e-55b2a643ad92"
