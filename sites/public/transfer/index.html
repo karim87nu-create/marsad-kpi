@@ -316,6 +316,30 @@ function ticketHtml(o, p, fl, c, auto) {
   return '<div class="ticket">' + h + '</div>';
 }
 
+function apexCustomerNotePanel(o, p) {
+  const n = o.apexCustomerNote || {state:'unchecked'};
+  if (n.state === 'empty') return '';
+  if (n.state === 'unchecked' && !o.customer?.phone) return '<div class="bad">رقم العميل غير متاح من المصدر؛ راجع ملاحظات بطاقته في APEX يدويًا.</div>';
+  if (n.state === 'unchecked' || n.state === 'pending') return '<div class="warn" role="status">جارى مراجعة ملاحظات بطاقة العميل على APEX قبل تسجيل الأوردر…</div>';
+  if (n.state === 'ambiguous') return '<div class="bad">يوجد أكثر من بطاقة بنفس الرقم بملاحظات مختلفة — راجع بطاقة العميل في APEX يدويًا قبل الضرب.</div>';
+  if (n.state === 'error' || n.state === 'no_phone') return '<div class="bad">تعذّر التحقق من ملاحظات عميل APEX — راجعها يدويًا.</div>';
+  if (n.state !== 'ready') return '';
+  const actions = (n.actions || []).map(a =>
+    '<div class="warn">' + (a.kind === 'discount_percent' ? 'خصم بالنسبة: ' + esc(a.value) + '%' :
+      a.kind === 'discount_amount' ? 'خصم بالمبلغ: ' + money(a.value) + ' ج' :
+      'أصناف مستحقة أو إضافات: محتاجة مطابقة الصنف والكمية مع APEX') + '</div>').join('');
+  return '<section class="ticket" aria-label="ملاحظات بطاقة العميل على APEX">' +
+    '<b>ملاحظات بطاقة العميل المحفوظة على APEX</b>' +
+    '<div class="warn" style="white-space:pre-wrap">' + esc(n.text) + '</div>' + actions +
+    (n.conflicting ? '<div class="bad">تفاصيل الخصم متعارضة أو غير مكتملة — يلزم مراجعة يدوية.</div>' : '') +
+    (n.clearable ? '<div class="muted">ملاحظة تخص أوردر واحد فقط؛ هتتم إزالتها بعد نجاح حفظ الأوردر، لو الموظف وافق.</div>' :
+      '<div class="muted">الملاحظة دائمة أو فيها أكثر من تعليمات؛ لا يتم حذفها من بطاقة العميل.</div>') +
+    (n.actions?.some(a => a.kind === 'items_to_verify') ?
+      '<label>أكواد الأصناف المستحقة مجانًا على APEX مع العدد (مثال: 0108001×1؛0108002×2)<textarea data-card-gifts placeholder="كود×عدد؛ كود×عدد">' + esc(p.apexBenefitItemsText || '') + '</textarea></label>' : '') +
+    '<label><input type="checkbox" data-card-confirm ' + (p.apexNoteApprovedAt === n.checkedAt ? 'checked' : '') + '> راجعت البطاقة، والخصومات المستحقة إضافية على خصومات المنصة، والأصناف المختارة مطابقة لـ APEX</label>' +
+    (n.clearable ? '<label><input type="checkbox" data-card-clear ' + (p.apexClear !== false ? 'checked' : '') + '> تم استخدام ملاحظة الأوردر الواحد — امسحها فقط بعد نجاح تسجيل الأوردر</label>' : '') +
+    '<div class="muted">الخصم بالنسبة يُحتسب على أصناف الأوردر قبل الضريبة والتوصيل، والهدية لا تزيد المطلوب من العميل.</div></section>';
+}
 function card(o) {
   const st = stateOf(o);
   // On Apex or out with the rider: one line.
@@ -360,6 +384,7 @@ function card(o) {
       field('العنوان', esc(ad.street || cu.address || ''), ad.street || cu.address, /[A-Za-z]{2,}/.test(cu.address || '') ? '<input data-arabic="address" placeholder="تعريب العنوان (اختياري)" value="' + esc(p.arabic?.address || '') + '">' : '') +
       (ad.floor || ad.flat ? field('الدور', esc(ad.floor), ad.floor) + field('الشقة', esc(ad.flat), ad.flat) : '') +
       (o.note ? field('ملاحظة', esc(o.note), o.note, '') : '') +
+      apexCustomerNotePanel(o,p) +
       '<div class="f"><span class="fl">الدفع</span><span class="fv seg"><button class="' + (pay === 'cash' ? 'on' : 'ghost') + '" data-pay="cash">كاش</button><button class="' + (pay === 'paid' ? 'on' : 'ghost') + '" data-pay="paid">مدفوع</button> ' + payText(o) + '</span><span></span></div>' +
     '</div>' +
     ticketHtml(o, p, fl, c, auto) +
@@ -441,6 +466,24 @@ $('list').addEventListener('click', async e => {
     if (o.discounts?.some(d => !d.who)) { toast('الخصم مش واضح على حساب مين — سجله بإيدك'); return; }
     if (o.source === 'talabat' && o.items.some(i => !i.modifiersComplete)) { toast('الإضافات مش ظاهرة كاملة — سجله بإيدك'); return; }
     if (o.items.some(i => (i.addons || []).some(a => a.qty == null))) { toast('عدد إضافة مش واضح — سجله بإيدك'); return; }
+    let apexBenefitItems = [];
+    const note = o.apexCustomerNote;
+    if (note?.state === 'ready') {
+      if (note.conflicting) { toast('خصم بطاقة العميل محتاج مراجعة الإدارة'); return; }
+      if (p.apexNoteApprovedAt !== note.checkedAt) { toast('لازم تراجع وتؤكد ملاحظات بطاقة العميل على APEX'); return; }
+      if (note.actions?.some(a=>a.kind==='items_to_verify')) {
+        const raw = String(p.apexBenefitItemsText || '').trim().replace(/،/g,'؛');
+        const chunks = raw.split(/[;؛\n]+/).map(x=>x.trim()).filter(Boolean);
+        if (!chunks.length) { toast('حدد الأصناف المجانية المستحقة بأكواد APEX وكمياتها'); return; }
+        for (const chunk of chunks) {
+          const m = chunk.replace(/[٠-٩]/g,c=>String(c.charCodeAt(0)-0x660)).match(/^(\d{1,10})\s*[x×*]\s*(\d{1,2})$/i);
+          if (!m || !apexNames.has(m[1]) || !(+m[2]>=1 && +m[2]<=20)) { toast('راجع كود وكمية الصنف المستحق: ' + chunk); return; }
+          apexBenefitItems.push({itemNo:m[1],qty:+m[2]});
+        }
+      }
+    } else if (!note || !['empty'].includes(note.state)) {
+      toast('استنى مراجعة بطاقة العميل على APEX قبل التحويل'); return;
+    }
     const rest = (o.discounts || []).filter(d => d.who === 'restaurant').reduce((a, d) => a + (Number(d.amount) || 0), 0);
     const plat = (o.discounts || []).filter(d => d.who === 'platform');
     const platSum = plat.reduce((a, d) => a + (Number(d.amount) || 0), 0);
@@ -449,7 +492,11 @@ $('list').addEventListener('click', async e => {
       await api('POST', '/api/transfer/job', { source: o.source, ref: o.ref, action: 'auto', payment: pay, branchNo: Number(p.branch), locationNo: Number(p.loc), code: o.code,
         items: flatLines(o).map((i, n) => ({ itemNo: p.items[n], qty: i.qty, note: '' })),
         // Free choices and the customer's note go in the order comment on Apex (تعليقات الطلب), as the staff do.
-        note: p.arabic?.note || deliveryComment(o),
+        note: [p.arabic?.note || deliveryComment(o), ...(note?.state === 'ready' ? ['تعليمات بطاقة العميل على APEX: ' + note.text] : [])].filter(Boolean).join(' | '),
+        apexNoteConfirmed: note?.state === 'ready' ? p.apexNoteApprovedAt === note.checkedAt : false,
+        apexNoteCheckedAt: note?.checkedAt || null,
+        apexOneTimeClear: note?.clearable === true && p.apexClear !== false,
+        apexBenefitItems,
         // Paid (Karim 01-11): the whole discount comes off on Apex, so the Ledge equals what the customer paid.
         // Cash: the restaurant's comes off. Either way the special mark shows Talabat's discount only.
         label: fullLabel(o, pay), customer: { ...(o.customer || {}), ...(p.arabic?.name ? { name: p.arabic.name } : {}), ...(p.arabic?.address ? { address: p.arabic.address } : {}) },
@@ -492,6 +539,17 @@ $('list').addEventListener('change', async e => {
     p.items[Number(el.dataset.n)] = no; if (p.edit) delete p.edit[Number(el.dataset.n)]; p.open = true; render(true);
   }
 });
+$('list').addEventListener('change', e => {
+   const el = e.target, c = el.closest('.card'); if (!c) return;
+   const p = picks[c.dataset.k]; if (!p) return;
+   const o = data?.orders.find(o=>key(o)===c.dataset.k);
+   if (el.dataset.cardConfirm !== undefined) p.apexNoteApprovedAt = el.checked ? o?.apexCustomerNote?.checkedAt : null;
+   if (el.dataset.cardClear !== undefined) p.apexClear = el.checked;
+ });
+ $('list').addEventListener('input', e => {
+   if (e.target.dataset.cardGifts === undefined) return;
+   const p = picks[e.target.closest('.card')?.dataset.k]; if (p) p.apexBenefitItemsText = e.target.value;
+ });
 $('list').addEventListener('input', e => { const field = e.target.dataset.arabic; if (!field) return; const p = picks[e.target.closest('.card').dataset.k]; if (p) (p.arabic ||= {})[field] = e.target.value; });
 $('list').addEventListener('focusout', () => setTimeout(() => { if (render.pending && !$('list').contains(document.activeElement)) render(); }, 0));
 $('list').addEventListener('toggle', e => { const d = e.target.closest?.('[data-pick-box]'); if (d) { const p = picks[d.closest('.card').dataset.k]; if (p && p.open !== d.open) { p.open = d.open; if (d.open) render(true); } } }, true);
@@ -506,7 +564,14 @@ async function loadQueue() {
     // The Apex items and areas come once (and again only when they change): the page stays light.
     const prev = data, d = await api('GET', '/api/transfer/queue' + (prev?.staticKey ? '?have=' + encodeURIComponent(prev.staticKey) : ''));
     if (!d.apexItems && prev) { d.apexItems = prev.apexItems; d.locations = prev.locations; d.sections = prev.sections; }
-    data = d; $('queueStatus').textContent = d.stale ? '⚠️ أحدث تحديث فشل — دي آخر بيانات محفوظة، والتحويل متوقف مؤقتًا لحد ما التحديث يرجع.' : ''; $('me').textContent = data.me.name; const a = $('auto'); a.textContent = { off: 'التحويل الآلي متوقف — سجّل على Apex بإيدك', shadow: 'التحويل الآلي: معاينة بس — سجّل بإيدك', test: 'التحويل الآلي: تجربة على قاعدة الاختبار — سجّل بإيدك', live: 'التحويل الآلي شغال' }[data.autoTransfer] || ''; a.className = 'pill' + (data.autoTransfer === 'live' ? '' : ' off'); render(); }
+    data = d; $('queueStatus').textContent = d.stale ? '⚠️ أحدث تحديث فشل — دي آخر بيانات محفوظة، والتحويل متوقف مؤقتًا لحد ما التحديث يرجع.' : ''; $('me').textContent = data.me.name; const a = $('auto'); a.textContent = { off: 'التحويل الآلي متوقف — سجّل على Apex بإيدك', shadow: 'التحويل الآلي: معاينة بس — سجّل بإيدك', test: 'التحويل الآلي: تجربة على قاعدة الاختبار — سجّل بإيدك', live: 'التحويل الآلي شغال' }[data.autoTransfer] || ''; a.className = 'pill' + (data.autoTransfer === 'live' ? '' : ' off'); render();
+    // The browser never sends or receives a searchable phone index. The server resolves the
+    // stored source order's phone, then the cashier writer reads only the corresponding APEX card.
+    const needed = d.orders.filter(o => !o.done && o.apexCustomerNote?.state === 'unchecked'
+      && o.customer?.phone).slice(0,15).map(o => ({source:o.source,ref:o.ref}));
+    if (needed.length) api('POST','/api/transfer/customer-notes/lookup',{orders:needed}).catch(()=>{});
+  }
+
   catch (e) { if (token) { $('queueStatus').textContent = 'تعذّر تحديث الطلبات: ' + e.message + ' — جاري إعادة المحاولة'; if (!data) $('auto').textContent = 'حالة التحويل لم تصل بعد'; toast(e.message); } }
 }
 function boot() { $('login').hidden = true; $('app').hidden = false; load(); }
