@@ -882,8 +882,8 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
         $cancelByReason[$reasonKey] = @{ name = $reasonName; count = 0; amount = 0.0 }
       }
       $cancelAmount = [double](AmtOf $del)
-      $cancelByReason[$reasonKey].count++
-      $cancelByReason[$reasonKey].amount += $cancelAmount
+      $cancelByReason[$reasonKey]['count']++
+      $cancelByReason[$reasonKey]['amount'] += $cancelAmount
       $totalCancelledAmount += $cancelAmount
       $dt = ParseT $del.DeleteTime $day
       if ($dt -and ($null -eq $lastAction -or $dt -gt $lastAction)) { $lastAction = $dt }
@@ -902,9 +902,9 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
     $pctText = $(if ($null -ne $pct) { "$pct%" } else { 'غير متاحة (لا توجد عمليات لها توقيت مؤكد)' })
     $cancelPercent = $(if ($allOrders -gt 0) { [math]::Round(100.0 * $allCancelled / $allOrders,1) } else { 0 })
     $reasonLines = @()
-    foreach($g in @($cancelByReason.Values | Sort-Object @{Expression='count';Descending=$true}, @{Expression='name';Descending=$false})){
-      $reasonPercent = $(if ($allOrders -gt 0) { [math]::Round(100.0 * $g.count / $allOrders,1) } else { 0 })
-      $reasonLines += "• $($g.name): $($g.count) أوردر | $([math]::Round($g.amount,2)) ج | $reasonPercent% من إجمالي الأوردرات"
+    foreach($g in @($cancelByReason.Values | Sort-Object @{Expression={$_['count']};Descending=$true}, @{Expression={$_['name']};Descending=$false})){
+      $reasonPercent = $(if ($allOrders -gt 0) { [math]::Round(100.0 * $g['count'] / $allOrders,1) } else { 0 })
+      $reasonLines += "• $($g['name']): $($g['count']) أوردر | $([math]::Round($g.amount,2)) ج | $reasonPercent% من إجمالي الأوردرات"
     }
     $reasonsText = $(if ($reasonLines.Count) { $reasonLines -join "`n" } else { 'لا توجد إلغاءات' })
     $report = "📊 مرصد الدهان | التقرير الختامي للفرع" +
