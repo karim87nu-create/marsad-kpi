@@ -484,14 +484,35 @@ function setup(app) {
       if (!['shadow', 'test', 'live'].includes(mode)) fail(409, 'التحويل الآلي مقفول — سجّل على Apex بإيدك');
       if (othersClaim) fail(409, 'الأوردر مع ' + (cur.employee_name || 'حد تاني'));
       if (cur && /^auto_(?:pending|sending|done|preview)$/.test(cur.state)) fail(409, 'الأوردر اتبعت للتحويل الآلي بالفعل');
-      // A customer-card benefit may change what Apex must write. Never silently ignore it.
-      // Until the note can be verified and applied transactionally, block auto transfer
-      // rather than sending an order with missing discount/products or clearing any note.
-      const card = await db.prepare('SELECT state,note FROM apex_customer_note_lookups WHERE source=? AND ref=?').get(source,ref);
+      // APEX customer benefits are never inferred from a web order or hidden from the employee.
+      // The staff member must confirm the exact APEX note revision and any free item codes.
+      const card = await db.prepare('SELECT state,note,customer_no,checked_at FROM apex_customer_note_lookups WHERE source=? AND ref=?').get(source,ref);
       if (!card || !['ready','empty'].includes(card.state)) fail(409,'ملاحظات بطاقة العميل على APEX لسه متراجعتش — انتظر المراجعة أو سجل الأوردر يدويًا');
+      let apexCard = null;
       if (card.state === 'ready') {
         const parsed = interpretApexCustomerNote(card.note);
-        if (parsed.requiresReview) fail(409,'يوجد ملاحظة محفوظة على بطاقة العميل في APEX: راجع الخصم أو الأصناف والتعليمات يدويًا قبل التسجيل؛ التحويل الآلي متوقف لهذا الطلب حمايةً للعميل');
+        if (parsed.conflicting) fail(409,'الملاحظة على APEX فيها خصم غير واضح أو متعارض؛ راجعه مع الإدارة قبل التسجيل');
+        if (b.apexNoteConfirmed !== true || Number(b.apexNoteCheckedAt) !== card.checked_at)
+          fail(409,'لازم الموظف يراجع ويؤكد ملاحظة بطاقة العميل على APEX قبل تنفيذ الأوردر');
+        const discounts = parsed.actions.filter(a=>a.kind.startsWith('discount_'));
+        if (discounts.length > 1) fail(409,'مينفعش تطبيق خصمين من نفس الملاحظة بدون مراجعة');
+        const benefitItems = Array.isArray(b.apexBenefitItems) ? b.apexBenefitItems : [];
+        const needsItems = parsed.actions.some(a=>a.kind==='items_to_verify');
+        if ((needsItems && !benefitItems.length) || (!needsItems && benefitItems.length))
+          fail(409,'الأصناف المستحقة في ملاحظة العميل لازم تتحدد في APEX وتتراجع قبل التنفيذ');
+        if (benefitItems.length > 10) fail(400,'عدد الأصناف المستحقة أكبر من الحد المسموح؛ راجع الإدارة');
+        const free = benefitItems.map(i=>({itemNo:String(i.itemNo || '').trim(),qty:Number(i.qty),note:'هدية حسب ملاحظة بطاقة العميل',cardGift:true}));
+        if (free.some(i=> !/^\d{1,10}$/.test(i.itemNo) || !APEX_NAMES[i.itemNo] || !Number.isInteger(i.qty) || i.qty<1 || i.qty>20))
+          fail(400,'اختار كود APEX صحيح وكمية صحيحة لكل صنف مستحق');
+        if (clean.length + free.length > 40) fail(400,'عدد أصناف الأوردر أكبر من الحد المسموح');
+        clean.push(...free);
+        apexCard = {
+          customerNo:String(card.customer_no || ''), note:parsed.text,
+          oneTime: b.apexOneTimeClear === true && parsed.clearable,
+          percent:discounts.find(a=>a.kind==='discount_percent')?.value || 0,
+          amount:discounts.find(a=>a.kind==='discount_amount')?.value || 0,
+        };
+        if (!/^\d{1,18}$/.test(apexCard.customerNo)) fail(409,'بطاقة العميل مش مؤكدة؛ لا يمكن تطبيق ملاحظتها تلقائيًا');
       }
       // Cash, or prepaid (Apex: Ledge with the amount on the customer's ledger, like every prepaid Talabat order there).
       if (payment !== 'cash' && payment !== 'paid') fail(400, 'حدد: كاش ولا مدفوع');
@@ -535,7 +556,7 @@ function setup(app) {
       const deliveryFields = { address: [address.street, address.floor ? 'الدور: ' + address.floor : '', address.flat ? 'الشقة: ' + address.flat : ''].filter(Boolean).join(' — '), floor: address.floor, flat: address.flat };
       const payload = { v: 1, source, ref, code: String(b.code || '').replace(/[^\d]/g, '').slice(0, 10) || null, db: mode, branchNo, locationNo, payment,
         label: deliveryLabel(translatedName, source, payment, b.code), customer: { name: String(translatedName || '').slice(0, 80), phone: deliveryPhone(b.customer?.phone), address: String(b.customer?.address || '').slice(0, 360), ...deliveryFields },
-        sign, platformDiscount, note: translatedNote, items: clean, restaurantDiscount, expectedTotal, targetTotal, areaService, by: me.name, at: ctx.now };
+        sign, platformDiscount, note: translatedNote, items: clean, apexCard, restaurantDiscount, expectedTotal, targetTotal, areaService, by: me.name, at: ctx.now };
       await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at, payload, result) VALUES (?,?,?,'auto_pending',?,?,?,?,?,?,NULL)
         ON CONFLICT(source, ref) DO UPDATE SET state = 'auto_pending', employee_id = excluded.employee_id, employee_name = excluded.employee_name, payment = excluded.payment, note = excluded.note, at = excluded.at, payload = excluded.payload, result = NULL`)
         .run(source, ref, row.day, me.id, me.name, payment, note, ctx.now, JSON.stringify(payload));
