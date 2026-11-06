@@ -60,3 +60,29 @@ Assert ([math]::Round(7 * 100.0 / $allOrders,1) -eq 6.4) 'Reason share uses wron
 Assert ([math]::Round(3 * 100.0 / $allOrders,1) -eq 2.7) 'Second reason share uses wrong denominator'
 Assert ([math]::Round(10 * 100.0 / $allOrders,1) -eq 9.1) 'Overall cancellation rate uses wrong denominator'
 Write-Host 'PASS: cancellation reasons and amounts grouped by Apex reason, reason shares and overall rate over all orders; old fields removed'
+
+
+# Attribution: only explicit restaurant responsibility enters the reported rate.
+$attribution = $ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'CancelResponsibility'},$true)
+if (-not $attribution) { throw 'Missing cancellation attribution classifier' }
+Invoke-Expression $attribution.Extent.Text
+Assert ((CancelResponsibility 'بناء على طلب العميل' '') -eq 'external') 'Customer-request cancellation must be excluded'
+Assert ((CancelResponsibility 'رفض العميل' '') -eq 'external') 'Customer refusal must be excluded'
+Assert ((CancelResponsibility 'خارج نطاق التوصيل' '') -eq 'external') 'Out-of-zone cancellation must be excluded'
+Assert ((CancelResponsibility 'نفاد الصنف' '') -eq 'restaurant') 'Out of stock is restaurant caused'
+Assert ((CancelResponsibility 'تأخير التحضير' '') -eq 'restaurant') 'Preparation delay is restaurant caused'
+Assert ((CancelResponsibility 'تأخير التحضير' 'بناء على طلب العميل') -eq 'review') 'Conflicting reasons must be reviewed, not attributed'
+Assert ((CancelResponsibility 'غير معروف' '') -eq 'review') 'Unknown reasons must be reviewed'
+foreach($required in @(
+  "'restaurant' {",
+  "'external' {",
+  "default {",
+  '$reasonKey = $reasonKey + '':' + '$responsibility',
+  '100.0 * $restaurantCount / $allOrders',
+  'إلغاءات بطلب العميل أو لأسباب خارج مسؤولية المطعم',
+  'أسباب غير واضحة أو متعارضة',
+  'مستبعدة من نسبة إلغاءات المطعم'
+)) {
+  if (-not $code.Contains($required)) { throw "Attribution report guard missing: $required" }
+}
+Write-Host 'PASS: restaurant-only cancellation rate, customer/external reasons shown outside KPI, ambiguous reasons separately flagged'
