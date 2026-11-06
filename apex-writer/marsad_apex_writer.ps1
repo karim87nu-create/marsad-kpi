@@ -126,7 +126,8 @@ IF EXISTS (SELECT 1 FROM @Lines l JOIN dbo.Items i WITH (NOLOCK) ON i.ItemNo = l
 SELECT @Sub = SUM(Qty * Price) FROM @Lines;
 -- Staff-approved APEX customer-card benefit. % applies to purchased menu lines only
 -- (excluding free gifts and the platform service item), before tax and delivery.
-DECLARE @CardDiscount money = 0, @CardGifts money = 0;
+DECLARE @CardDiscount money = 0, @CardGifts money = 0, @CardEligibleSub money = 0;
+SELECT @CardEligibleSub = ISNULL(SUM(Qty * Price),0) FROM @Lines WHERE CardGift = 0 AND ItemNo <> @ServiceItem;
 IF @CardConfirmed = 1 BEGIN
   IF @CardPct > 0 AND @CardAmount > 0 THROW 51020, 'ambiguous customer-card discount', 1;
   IF @CardPct < 0 OR @CardPct > 100 OR @CardAmount < 0 THROW 51021, 'invalid customer-card discount', 1;
@@ -135,7 +136,7 @@ IF @CardConfirmed = 1 BEGIN
   ELSE SET @CardDiscount = @CardAmount;
   SELECT @CardGifts = ROUND(ISNULL(SUM(l.Qty * l.Price),0) * (1 + ISNULL(@TaxRatio,0)/100.0), 2)
      FROM @Lines l WHERE l.CardGift = 1;
-  IF @CardDiscount > @Sub OR @CardDiscount < 0 THROW 51022, 'customer-card discount exceeds order subtotal', 1;
+  IF @CardDiscount > @CardEligibleSub OR @CardDiscount < 0 THROW 51022, 'customer-card discount exceeds purchased item subtotal', 1;
   SET @RestDiscount = @RestDiscount + @CardDiscount + @CardGifts;
   -- The customer card's discount is ADDITIONAL to the source platform total, approved
   -- explicitly by staff; gifts do not increase what the customer pays.
