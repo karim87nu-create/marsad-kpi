@@ -892,11 +892,11 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
       }
       $reasonKey = $(if ($reasonNo -gt 0) { "code:$reasonNo" } else { "text:$reasonName" })
       $responsibility = CancelResponsibility $reasonName (S $del.Remarks)
+      # Split mixed classifications sharing the same Apex reason code, so a clear
+      # customer-request order never silently changes the rate for other orders.
+      $reasonKey = $reasonKey + ':' + $responsibility
       if (-not $cancelByReason.ContainsKey($reasonKey)) {
         $cancelByReason[$reasonKey] = @{ name = $reasonName; count = 0; amount = 0.0; responsibility = $responsibility }
-      } elseif ($cancelByReason[$reasonKey]['responsibility'] -ne $responsibility) {
-        # Same Apex ReasonNo but conflicting notes must not make the whole group chargeable.
-        $cancelByReason[$reasonKey]['responsibility'] = 'review'
       }
       $cancelAmount = [double](AmtOf $del)
       $cancelByReason[$reasonKey]['count']++
