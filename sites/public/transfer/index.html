@@ -359,7 +359,20 @@ function card(o) {
       (auto ? field('الفرع', branchSel, '') + field('المنطقة', areaSel, '', areaNote) : field('الفرع', esc(o.branch || ''), '')) +
       field('العنوان', esc(ad.street || cu.address || ''), ad.street || cu.address, /[A-Za-z]{2,}/.test(cu.address || '') ? '<input data-arabic="address" placeholder="تعريب العنوان (اختياري)" value="' + esc(p.arabic?.address || '') + '">' : '') +
       (ad.floor || ad.flat ? field('الدور', esc(ad.floor), ad.floor) + field('الشقة', esc(ad.flat), ad.flat) : '') +
-      (o.note ? field('ملاحظة', esc(o.note), o.note, '') : '') +
+      (o.note ? field('ملاحظة الأوردر من المصدر', esc(o.note), o.note, '') : '') +
+      (() => {
+        const n = o.apexCustomerNote;
+        if (!n || n.status === 'pending') return '<div class="warn">ملاحظات بطاقة العميل على APEX: جاري طلبها من جهاز الكاشير…</div>';
+        if (n.status === 'error') return '<div class="warn">تعذّر قراءة ملاحظات بطاقة العميل من APEX — راجع البطاقة بنفسك قبل التنفيذ</div>';
+        if (!n.text) return '';
+        const benefit = (n.directives || []).map(d => '<div class="warn">' + esc(d.text) + ' — ' + esc(d.reason) + '</div>').join('');
+        return '<div class="f"><span class="fl">ملاحظات بطاقة العميل على APEX</span><span class="fv"><b>' + esc(n.text) + '</b>' +
+          '<div>' + (n.oneTime ? '⚠️ ملاحظة للطلب الواحد؛ لا تُحذف إلا بعد تنفيذ الطلب وتأكيد الاستفادة' :
+            n.permanent ? 'ملاحظة دائمة؛ لا تُحذف بعد الطلب' : 'مدة سريان الملاحظة غير واضحة؛ لا تُحذف تلقائيًا') + '</div>' +
+          benefit + (n.other || []).map(x => '<div>تعليمات أخرى: ' + esc(x) + '</div>').join('') +
+          (n.requiresReview ? '<div class="warn">⛔ راجع الخصومات والأصناف المستحقة على APEX؛ التحويل الآلي متوقف حتى يتم دعم تأكيد التنفيذ بشكل آمن.</div>' : '') +
+          '</span>' + copyBtn(n.text) + '</div>';
+      })() +
       '<div class="f"><span class="fl">الدفع</span><span class="fv seg"><button class="' + (pay === 'cash' ? 'on' : 'ghost') + '" data-pay="cash">كاش</button><button class="' + (pay === 'paid' ? 'on' : 'ghost') + '" data-pay="paid">مدفوع</button> ' + payText(o) + '</span><span></span></div>' +
     '</div>' +
     ticketHtml(o, p, fl, c, auto) +
@@ -439,6 +452,8 @@ $('list').addEventListener('click', async e => {
     const missingAt = flatLines(o).findIndex((i, n) => !/^\d{1,10}$/.test(String(p.items?.[n] || '')));
     if (missingAt >= 0) { toast('اختار الصنف على Apex لـ: ' + flatLines(o)[missingAt].name); return; }
     if (o.discounts?.some(d => !d.who)) { toast('الخصم مش واضح على حساب مين — سجله بإيدك'); return; }
+    if (o.apexCustomerNote?.status !== 'none' && o.apexCustomerNote?.status !== 'found') { toast('استنى قراءة ملاحظات العميل من APEX قبل التسجيل'); return; }
+    if (o.apexCustomerNote?.requiresReview) { toast('على بطاقة العميل تعليمات خصم أو أصناف لازم تتراجع وتتسجل صح؛ التحويل الآلي مش هيُكمل قبل تنفيذها'); return; }
     if (o.source === 'talabat' && o.items.some(i => !i.modifiersComplete)) { toast('الإضافات مش ظاهرة كاملة — سجله بإيدك'); return; }
     if (o.items.some(i => (i.addons || []).some(a => a.qty == null))) { toast('عدد إضافة مش واضح — سجله بإيدك'); return; }
     const rest = (o.discounts || []).filter(d => d.who === 'restaurant').reduce((a, d) => a + (Number(d.amount) || 0), 0);
