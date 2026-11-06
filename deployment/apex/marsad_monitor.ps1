@@ -862,9 +862,29 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
     # for the closing check and cancellation totals. Only rider-loaded cancellations
     # with valid exit timestamps contribute to the delay rate computed above.
     $allCancelled = 0; $lastCancelledAt = $null; $lastCancelledNo = $null
+    $cancelByReason = @{} 
+    $totalCancelledAmount = 0.0
     foreach($del in $dels.Rows){
       if ([int](N $del.BranchNo) -ne $bn) { continue }
       $allCancelled++
+      # Each deleted order contributes exactly once: group by Apex ReasonNo when available.
+      # No usable reason code: fall back to the stored reason note, never invent a reason.
+      $reasonNo = [int](N $del.ReasonNo)
+      $reasonName = $(if ($reasonNo -gt 0) { S $script:Reasons[$reasonNo] } else { '' })
+      if (-not $reasonName -and $reasonNo -gt 0) { $reasonName = "سبب رقم $reasonNo (الاسم غير متاح)" }
+      if (-not $reasonName) {
+        $reasonName = (S $del.Remarks) -replace '[\r\n]+',' '
+        if (-not $reasonName) { $reasonName = 'سبب غير مسجل' }
+        if ($reasonName.Length -gt 70) { $reasonName = $reasonName.Substring(0,70) + '…' }
+      }
+      $reasonKey = $(if ($reasonNo -gt 0) { "code:$reasonNo" } else { "text:$reasonName" })
+      if (-not $cancelByReason.ContainsKey($reasonKey)) {
+        $cancelByReason[$reasonKey] = @{ name = $reasonName; count = 0; amount = 0.0 }
+      }
+      $cancelAmount = [double](AmtOf $del)
+      $cancelByReason[$reasonKey].count++
+      $cancelByReason[$reasonKey].amount += $cancelAmount
+      $totalCancelledAmount += $cancelAmount
       $dt = ParseT $del.DeleteTime $day
       if ($dt -and ($null -eq $lastAction -or $dt -gt $lastAction)) { $lastAction = $dt }
       if ($dt -and ($null -eq $lastCancelledAt -or $dt -gt $lastCancelledAt)){
@@ -879,23 +899,29 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
     $pct = $(if ($count -gt 0) { [math]::Round(100.0 * $late / $count, 1) } else { $null })
     $lastExitText = $(if ($lastOut) { "$($lastOut.Disp) الساعة $(Tm $lastOut.Out)" } else { 'لا يوجد' })
     $lastCancelText = $(if ($lastCancelledAt) { "$lastCancelledNo الساعة $(Tm $lastCancelledAt)" } elseif ($allCancelled) { 'يوجد إلغاء بدون وقت مؤكد' } else { 'لا يوجد' })
-    $avgText = $(if ($null -ne $summary.avgOut) { "$($summary.avgOut) دقيقة" } else { 'غير متاح' })
     $pctText = $(if ($null -ne $pct) { "$pct%" } else { 'غير متاحة (لا توجد عمليات لها توقيت مؤكد)' })
+    $cancelPercent = $(if ($allOrders -gt 0) { [math]::Round(100.0 * $allCancelled / $allOrders,1) } else { 0 })
+    $reasonLines = @()
+    foreach($g in @($cancelByReason.Values | Sort-Object @{Expression='count';Descending=$true}, @{Expression='name';Descending=$false})){
+      $reasonPercent = $(if ($allOrders -gt 0) { [math]::Round(100.0 * $g.count / $allOrders,1) } else { 0 })
+      $reasonLines += "• $($g.name): $($g.count) أوردر | $([math]::Round($g.amount,2)) ج | $reasonPercent% من إجمالي الأوردرات"
+    }
+    $reasonsText = $(if ($reasonLines.Count) { $reasonLines -join "`n" } else { 'لا توجد إلغاءات' })
     $report = "📊 مرصد الدهان | التقرير الختامي للفرع" +
       "`n📍 الفرع: $($summary.name) | يوم APEX: $dayKey" +
       "`n✅ لا توجد أوردرات دليفري مفتوحة وقت إعداد التقرير" +
       "`n📦 إجمالي الأوردرات: $allOrders (منها $($summary.orders) غير ملغي)" +
       "`n🛵 خرج مع الطيار: $($summary.outCount)" +
-      "`n❌ الإلغاءات: $allCancelled (منها $($summary.cancels) بعد تحميل الطيار، و$($summary.cancelLoadedCount) بتوقيت موثّق)" +
-      "`n⏰ تأخر خروج: $($summary.outLate) · تأخر ثم اتلغى بعد التحميل: $($summary.cancelLoadedLate)" +
       "`n📉 نسبة التأخير: $pctText ($late متأخر من $count عملية مكتملة التوقيت)" +
-      "`n🕒 متوسط زمن الخروج: $avgText" +
-      "`n💰 قيمة الأوردرات غير الملغية على APEX: $([math]::Round($summary.sales, 0)) ج" +
+      "`n❌ تفاصيل الإلغاءات حسب السبب:" +
+      "`n$reasonsText" +
+      "`n💰 إجمالي قيمة الأوردرات الملغية: $([math]::Round($totalCancelledAmount,2)) ج" +
+      "`n📊 إجمالي الإلغاءات: $allCancelled من $allOrders أوردر — $cancelPercent%" +
       "`n🔚 آخر خروج: $lastExitText" +
       "`n🗑️ آخر إلغاء: $lastCancelText" +
-      "`nℹ️ الملغي قبل تحميل الطيار موجود في إجمالي الإلغاءات، وليس نسبة التأخير."
+      "`nℹ️ نسبة كل سبب ونسبة إجمالي الإلغاءات محسوبتان من كل أوردرات الفرع (الملغية وغير الملغية)."
     Raise $key 'ordersLate' $report $false $summary.name $null
-    L "end-of-day report queued: day=$dayKey branch=$bn orders=$allOrders loadedCancel=$($summary.cancelLoadedCount) late=$late/$count"
+    L "end-of-day report queued: day=$dayKey branch=$bn orders=$allOrders cancellations=$allCancelled late=$late/$count"
   }
   return [ordered]@{
     v = 1; day = $dayKey; generatedAt = IsoT $now; source = 'Apex'
