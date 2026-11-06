@@ -32,6 +32,8 @@ $TalabatServiceItem = '0114006'  # «خدمة» line (7.02) that Apex's own Tala
 
 $monitorDir = Split-Path -Parent $here
 if (Test-Path (Join-Path $here 'allow_live.txt')) { $AllowLive = $true }
+if (Test-Path (Join-Path $here 'allow_customer_note_live.txt')) { $AllowCustomerNoteLive = $true }
+else { $AllowCustomerNoteLive = $false } # require explicit approval after shadow/test verification
 $logFile = Join-Path $here 'writer_log.txt'
 function L($m){ try { if ((Test-Path $logFile) -and (Get-Item $logFile).Length -gt 5MB) { Move-Item $logFile ($logFile + '.old') -Force }; Add-Content $logFile ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '  ' + $m) -Encoding UTF8 } catch {} }
 
@@ -746,6 +748,7 @@ for (;;) {
       $job = $n.job; $mode = [string]$n.mode
       if ($mode -eq 'live' -and -not $AllowLive) { throw 'live mode is locked on this PC ($AllowLive)' }
       if ($mode -eq 'live' -and $WriterUserNo -eq 0) { throw 'no Apex user for the writer yet ($WriterUserNo)' }
+      if ($mode -eq 'live' -and $job.apexCard -and -not $AllowCustomerNoteLive) { throw 'APEX customer note live benefits locked; test first and approve allow_customer_note_live.txt' }
       $c = Open-Db $mode
       # Apex's own Talabat orders start with the «خدمة» service line; the employee's lines follow.
       if ($job.source -eq 'talabat' -and $TalabatServiceItem -and -not ($job.items | Where-Object { $_.itemNo -eq $TalabatServiceItem })) {
