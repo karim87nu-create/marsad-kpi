@@ -614,8 +614,10 @@ function setup(app) {
   });
   // The writer asks for the next order. A job stays «sending» until the writer answers; it is never handed out
   // twice (the writer also checks Apex for its own marker before writing, so a lost answer cannot double an order).
+  let seenWritten = 0;
   app.route('POST', '/api/apex-writer/next', async ctx => {
-    await writer(ctx); await put('apex_writer_seen', ctx.now);
+    // The writer asks every few seconds: «seen» is written once a minute, not on every ask (fewer database writes).
+    await writer(ctx); if (ctx.now - seenWritten > 60000) { seenWritten = ctx.now; await put('apex_writer_seen', ctx.now); }
     const mode = await setting('apex_bridge_mode') || 'shadow';
     if (mode === 'off') return { mode, job: null };
     const stuck = await db.prepare("SELECT source, ref, payload FROM transfer_jobs WHERE state = 'auto_sending' ORDER BY at LIMIT 1").get();
