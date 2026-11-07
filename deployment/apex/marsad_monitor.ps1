@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $self = $MyInvocation.MyCommand.Path
@@ -1076,27 +1076,70 @@ while ($true) {
     $script:conn = $null
   }
   # When Apex answers slowly (the server is struggling), read less often so the monitor adds nothing to its load.
-  # Daily backup of the Marsad server's data on this PC (Karim 01-11): once a day between 4 and 8 in the morning (closed),
-  # every table page by page into backups\<date>\<table>.json; the last 14 days are kept. No keys or hashes are in it.
+  # Daily backup of the Marsad server's data on this PC (Karim 01-11), once a day between 4 and 8 in the morning (closed).
+  # Karim 07-11: the full copy re-downloaded ~500 MB of call-center events every day and from 04-11 it never finished
+  # (it then started again every cycle). Now: the big tables that only grow are copied INCREMENTALLY (only the rows
+  # added since the last copy, into backups\inc\<table>\<date>.json — kept for good); the small ones are copied whole
+  # into backups\<date> (the last 14 days kept). A failed attempt waits 30 minutes. No keys or hashes are in any of it.
   try {
     $bdir = Join-Path $here ('backups\' + (Get-Date).ToString('yyyy-MM-dd'))
-    if ((Get-Date).Hour -ge 4 -and (Get-Date).Hour -lt 8 -and -not (Test-Path (Join-Path $bdir 'done.txt'))) {
+    if ((Get-Date).Hour -ge 4 -and (Get-Date).Hour -lt 8 -and -not (Test-Path (Join-Path $bdir 'done.txt')) -and ((-not $script:backupTried) -or ((Get-Date) - $script:backupTried).TotalMinutes -ge 30)) {
+      $script:backupTried = Get-Date
       [void](New-Item -ItemType Directory -Force -Path $bdir)
       $hdr = @{ 'x-orders-token' = $OrdersKey }
+      $grow = @('events', 'history_calls', 'audit', 'telegram_log', 'live_snapshots', 'employee_sessions', 'learning_evidence', 'order_ingest')
+      $curFile = Join-Path $here 'backups\cursor.json'
+      $cursor = @{}; if (Test-Path $curFile) { (Get-Content $curFile -Raw | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $cursor[$_.Name] = [int64]$_.Value } }
       $tabs = (Invoke-RestMethod -Method Post -Uri "$ServerUrl/api/backup" -Headers $hdr -Body '{}' -ContentType 'application/json' -TimeoutSec 30).tables
       foreach($tb in $tabs){
-        $after = 0; $all = New-Object System.Collections.ArrayList
+        $isGrow = $grow -contains $tb
+        $after = $(if ($isGrow -and $cursor.ContainsKey($tb)) { $cursor[$tb] } else { 0 })
+        $all = New-Object System.Collections.ArrayList
         do {
           $r = Invoke-RestMethod -Method Post -Uri "$ServerUrl/api/backup" -Headers $hdr -Body ((@{ table = $tb; after = $after }) | ConvertTo-Json -Compress) -ContentType 'application/json' -TimeoutSec 60
           foreach($row in $r.rows){ [void]$all.Add($row) }
+          if (@($r.rows).Count) { $last = [int64]@($r.rows)[-1]._rowid } else { $last = $after }
           $after = $r.next
+          # Big tables: written every 50,000 rows so memory stays small; the cursor moves only after a write.
+          if ($isGrow -and ($all.Count -ge 50000 -or -not $after) -and $all.Count) {
+            $idir = Join-Path $here ('backups\inc\' + $tb); [void](New-Item -ItemType Directory -Force -Path $idir)
+            ($all | ConvertTo-Json -Depth 6 -Compress) | Set-Content -Path (Join-Path $idir ((Get-Date).ToString('yyyy-MM-dd') + '-' + $last + '.json')) -Encoding UTF8
+            $cursor[$tb] = $last; ($cursor | ConvertTo-Json -Compress) | Set-Content -Path $curFile -Encoding UTF8
+            $all = New-Object System.Collections.ArrayList
+          }
         } while ($after)
-        ($all | ConvertTo-Json -Depth 6 -Compress) | Set-Content -Path (Join-Path $bdir ($tb + '.json')) -Encoding UTF8
+        if (-not $isGrow) { ($all | ConvertTo-Json -Depth 6 -Compress) | Set-Content -Path (Join-Path $bdir ($tb + '.json')) -Encoding UTF8 }
       }
       Set-Content -Path (Join-Path $bdir 'done.txt') -Value (Get-Date).ToString('s')
-      Get-ChildItem (Join-Path $here 'backups') -Directory | Where-Object { $_.CreationTime -lt (Get-Date).AddDays(-14) } | Remove-Item -Recurse -Force
+      Get-ChildItem (Join-Path $here 'backups') -Directory | Where-Object { $_.Name -match '^\d{4}-\d{2}-\d{2}$' -and $_.CreationTime -lt (Get-Date).AddDays(-14) } | Remove-Item -Recurse -Force
       L "backup saved: $bdir ($($tabs.Count) tables)"
     }
   } catch { L "backup: $($_.Exception.Message)" }
+  # Archive (Karim 07-11): rows the server is about to make small or remove (event bodies older than 60 days, Telegram
+  # messages older than 45 days, the change log older than 90 days) are written here first, by month, into
+  # backups\archive\<kind>\<yyyy-MM>.jsonl — and only then does the server remove them. At most 20 pages a cycle.
+  try {
+    if ((Get-Date).Hour -ge 4 -and (Get-Date).Hour -lt 9 -and (Test-Path (Join-Path $bdir 'done.txt')) -and -not $script:archiveDone) {
+      $hdr = @{ 'x-orders-token' = $OrdersKey }; $pages = 0
+      foreach($kind in @('events', 'telegram_log', 'audit')){
+        $after = 0
+        while ($pages -lt 20) {
+          $r = Invoke-RestMethod -Method Post -Uri "$ServerUrl/api/archive/next" -Headers $hdr -Body ((@{ kind = $kind; after = $after }) | ConvertTo-Json -Compress) -ContentType 'application/json' -TimeoutSec 60
+          $rows = @($r.rows); if (-not $rows.Count) { break }
+          $adir = Join-Path $here ('backups\archive\' + $kind); [void](New-Item -ItemType Directory -Force -Path $adir)
+          foreach($g in ($rows | Group-Object { $t = $(if ($_.occurred_at) { $_.occurred_at } else { $_.created_at }); ([DateTimeOffset]::FromUnixTimeMilliseconds([int64]$t)).ToString('yyyy-MM') })){
+            $lines = @($g.Group | ForEach-Object { $_ | ConvertTo-Json -Depth 6 -Compress })
+            [System.IO.File]::AppendAllLines((Join-Path $adir ($g.Name + '.jsonl')), [string[]]$lines, (New-Object System.Text.UTF8Encoding($false)))
+          }
+          $ids = @($rows | ForEach-Object { [int64]$_.id })
+          $d = Invoke-RestMethod -Method Post -Uri "$ServerUrl/api/archive/done" -Headers $hdr -Body ((@{ kind = $kind; ids = $ids }) | ConvertTo-Json -Compress) -ContentType 'application/json' -TimeoutSec 60
+          $pages++; $after = $r.next
+          if (-not $after) { break }
+        }
+      }
+      if ($pages -lt 20) { $script:archiveDone = $true; L "archive: up to date" } else { L "archive: 20 pages this cycle, more next cycle" }
+    }
+    if ((Get-Date).Hour -lt 4) { $script:archiveDone = $false }
+  } catch { L "archive: $($_.Exception.Message)" }
   if ($script:cycleSqlMs -ge 3000) { L "Apex slow (SQL sum=$($script:cycleSqlMs) ms) - next read in 3 minutes"; Start-Sleep -Seconds 180 } else { Start-Sleep -Seconds $PollSeconds }
 }

@@ -24,9 +24,10 @@ import * as transfer from './transfer.js';
 import * as talabatActions from './talabat-actions.js';
 import * as systemWatch from './system-watch.js';
 import * as backup from './backup.js';
+import * as archive from './archive.js';
 import * as kpi from './kpi.js';
 import * as branchClosures from './branch-closures.js';
 import * as translate from './translate.js';
 
-const MODULES = [translate, admin, employees, sessions, dashboard, breaks, messages, shifts, history, engine, telegram, importRows, ops, range, orders, names, learn, reviews, site, talabat, cancels, whatsapp, transfer, talabatActions, systemWatch, backup, kpi, branchClosures];
+const MODULES = [translate, admin, employees, sessions, dashboard, breaks, messages, shifts, history, engine, telegram, importRows, ops, range, orders, names, learn, reviews, site, talabat, cancels, whatsapp, transfer, talabatActions, systemWatch, backup, archive, kpi, branchClosures];
 export { MODULES };
