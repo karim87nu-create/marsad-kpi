@@ -1,4 +1,4 @@
-# كاتب Apex للمرصد — Marsad → Apex order writer, runs on the restaurant PC next to the monitor.
+﻿# كاتب Apex للمرصد — Marsad → Apex order writer, runs on the restaurant PC next to the monitor.
 # It asks the Marsad server for orders an employee confirmed for automatic transfer, and writes each one into Apex
 # the way the Apex call-center client does (numbers, customer, header, lines, log, print snapshot), in one short
 # transaction (cash, or prepaid as Ledge with its customer-ledger row). Three modes, chosen on the server by an admin:
@@ -682,7 +682,12 @@ function Apply-Stock {
 
 # Read customer-card notes only; never modify customer records during lookup.
 # Scoped by the server to existing Talabat/website orders and confirmed phone numbers.
+# Customers has no index on Phone/Mobile (checked 07-11: only PK_Customers on CustNo), so each lookup reads the whole
+# table: at most one batch (3 customers) every 30 seconds, to keep Apex light while the branches work.
+$script:notesNext = Get-Date
 function Sync-CustomerNotes {
+  if ((Get-Date) -lt $script:notesNext) { return }
+  $script:notesNext = (Get-Date).AddSeconds(30)
   $batch = Api '/api/apex-writer/customer-notes/pending' @{}
   if (-not $batch.pending -or @($batch.pending).Count -eq 0) { return }
   $c = $null; $results = @()
