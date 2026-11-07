@@ -1,0 +1,19 @@
+# مرصد الدهان — Cloudflare Worker + D1 + static pages. Deployed by .github/workflows/deploy-cloudflare.yml.
+name = "marsad"
+main = "worker.js"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[assets]
+directory = "../sites/public"
+binding = "ASSETS"
+not_found_handling = "none"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "marsad"
+database_id = "__D1_ID__"
+
+[observability]
+enabled = true
