@@ -3,10 +3,8 @@
 #   CLOUDFLARE_API_TOKEN  (a token from «Edit Cloudflare Workers» + D1 Edit)   CLOUDFLARE_ACCOUNT_ID
 # and, once, MARSAD_ADMIN_PASSWORD (the admin page password). Nothing secret is printed.
 name: Deploy to Cloudflare
+# Karim 08-11: staying on ChatGPT Sites — kept for later, runs only by hand.
 on:
-  push:
-    branches: [main]
-    paths: ['sites/lib/**', 'sites/public/**', 'cloudflare/**', '.github/workflows/deploy-cloudflare.yml']
   workflow_dispatch:
 concurrency: { group: deploy-cloudflare, cancel-in-progress: false }
 jobs:
