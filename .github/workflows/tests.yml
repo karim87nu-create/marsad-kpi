@@ -1,0 +1,35 @@
+# Before every publish: the server code is one (site copy = tested copy) and every test passes.
+# A red ✗ on the commit means: do not publish it.
+name: tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Same server code in sites/lib/marsad and server/src
+        run: node scripts/check-same-server.cjs
+      - name: Install
+        working-directory: server
+        run: npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+      - name: Tests
+        working-directory: server
+        run: npm test
+      - name: Scripts parse (PowerShell on the cashier PC)
+        shell: pwsh
+        run: |
+          $bad = 0
+          foreach ($f in @('apex-writer/marsad_apex_writer.ps1','deployment/apex/marsad_monitor.ps1')) {
+            if (-not (Test-Path $f)) { continue }
+            $errs = $null; [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f), [ref]$null, [ref]$errs) | Out-Null
+            if ($errs) { $bad++; $errs | ForEach-Object { Write-Host "::error file=$f,line=$($_.Extent.StartLineNumber)::$($_.Message)" } }
+          }
+          if ($bad) { exit 1 }
