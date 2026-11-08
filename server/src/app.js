@@ -1,9 +1,9 @@
 // HTTP layer on the Fetch API (Request → Response), so the same app runs under Node and on Cloudflare.
 import { createSigner, createLimiter, hashPassword, randomToken } from './security.js';
 import { createLegacy } from './legacy.js';
-import { migrate } from './db.js';
+import { migrate, schemaReady } from './db.js';
 // Raised with each change worth checking after a publish (shown by /api/health).
-const BUILD = '2026-11-03.8';
+const BUILD = '2026-11-08.1';
 
 class HttpError extends Error {
   constructor(status, code, extra) {
@@ -67,12 +67,15 @@ function createApp({ db, config: input = {}, now = () => Date.now() }) {
   };
 
   // Schema, and the server's own secret when none is configured (kept in the database).
+  const recentErrors = [], startedAt = new Date().toISOString();
   let ready = null, initialized = false;
   app.init = () => {
     if (initialized) return Promise.resolve();
     if (db.kind !== 'd1' && ready) return ready;
     const run = (async () => {
-    await migrate(db);
+    // A live D1 database with the full schema must not run DDL on every cold request.
+    // Existing missing columns and older databases still use the non-destructive migration.
+    if (db.kind !== 'd1' || !await schemaReady(db)) await migrate(db);
     if (!config.secret) {
       await db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('secret', ?)").run(randomToken(32) + randomToken(32));
       config.secret = (await db.prepare("SELECT value FROM settings WHERE key = 'secret'").get()).value;
@@ -104,6 +107,7 @@ function createApp({ db, config: input = {}, now = () => Date.now() }) {
     try { url = new URL(request.url); } catch { return send(400, { error: 'bad_url' }); }
     // build: which code is deployed (checked from outside after each publish; no secrets).
     if (url.pathname === '/health' || url.pathname === '/api/health') return send(200, { ok: true, build: BUILD });
+    if (url.pathname === '/api/health/errors') return send(200, { build: BUILD, since: startedAt, errors: recentErrors });
     const route = routes.get(request.method + ' ' + url.pathname);
     if (!route) return send(404, { error: 'not_found' });
     let response;
@@ -134,6 +138,10 @@ function createApp({ db, config: input = {}, now = () => Date.now() }) {
       if (e instanceof HttpError) response = send(e.status, { error: e.code, ...(e.extra || {}) });
       else {
         console.error(new Date().toISOString(), request.method, url.pathname, e);
+        // Karim 07-11: the cashier PC got «500» for days and nobody could see why. The last errors of this server
+        // (time, path, the error's own first words; no request data, no secrets) are readable at /api/health/errors.
+        recentErrors.unshift({ at: new Date(now()).toISOString(), path: request.method + ' ' + url.pathname, error: String(e?.message || e).replace(/\s+/g, ' ').slice(0, 200) });
+        recentErrors.length = Math.min(recentErrors.length, 30);
         response = send(500, { error: 'server_error' });
       }
     }

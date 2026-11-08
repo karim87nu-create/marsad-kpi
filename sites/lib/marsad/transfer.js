@@ -579,7 +579,7 @@ function setup(app) {
     let updated = 0;
     for (const x of rows) {
       const source = x.source === 'talabat' || x.source === 'site' ? x.source : null, ref = String(x.ref || '');
-      if (!source || !/^\\d{1,20}$/.test(ref)) continue;
+      if (!source || !/^\d{1,20}$/.test(ref)) continue;
       const profile = await db.prepare('SELECT data FROM match_profiles WHERE source = ? AND ref = ?').get(source, ref);
       if (!profile || profilePhone(source, parseJson(profile.data, {})) !== deliveryPhone(x.phone)) continue;
       const orderTable = source === 'talabat' ? 'talabat_orders' : 'site_orders', pk = source === 'talabat' ? 'id' : 'id';

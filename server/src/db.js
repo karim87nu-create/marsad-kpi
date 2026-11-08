@@ -209,6 +209,8 @@ CREATE INDEX IF NOT EXISTS audit_time ON audit(occurred_at);
 const EXTRA_SCHEMA = `
 CREATE TABLE IF NOT EXISTS telegram_config (id INTEGER PRIMARY KEY CHECK (id = 1), bot_token TEXT, bot_name TEXT, chat_id TEXT, chat_title TEXT, enabled INTEGER NOT NULL DEFAULT 0, rules TEXT, updated_at INTEGER);
 CREATE TABLE IF NOT EXISTS transfer_cache (day TEXT PRIMARY KEY, at INTEGER NOT NULL, data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS apex_customer_notes (source TEXT NOT NULL, ref TEXT NOT NULL, day TEXT NOT NULL, phone_last4 TEXT, phone_hash TEXT, cust_no TEXT, note TEXT, checked_at INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'none', PRIMARY KEY(source,ref));
+CREATE INDEX IF NOT EXISTS apex_customer_notes_day ON apex_customer_notes(day);
 CREATE TABLE IF NOT EXISTS translations (src TEXT PRIMARY KEY, ar TEXT NOT NULL, how TEXT NOT NULL, at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS talabat_closures (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, outlet TEXT NOT NULL, name TEXT, branch TEXT, state TEXT NOT NULL, reason TEXT, until_text TEXT, raw TEXT, started_at INTEGER NOT NULL, ended_at INTEGER, alert_key TEXT);
 CREATE INDEX IF NOT EXISTS talabat_closures_day ON talabat_closures(day);
@@ -244,6 +246,38 @@ CREATE INDEX IF NOT EXISTS transfer_jobs_day ON transfer_jobs(day);
 // Statements one by one (D1 runs one statement per call); comments removed.
 const statements = sql => sql.replace(/--[^\n]*/g, '').split(';').map(x => x.replace(/\s+/g, ' ').trim()).filter(Boolean);
 const SCHEMA_STATEMENTS = [...statements(SCHEMA), ...statements(EXTRA_SCHEMA)];
+
+// D1 workers may be started concurrently. Running all ~60 CREATE TABLE / INDEX commands
+// on each cold isolate creates unnecessary write transactions and occasional 500 errors.
+// A single read-only schema inspection safely skips migrations on already-ready databases.
+// Missing tables, indexes or any legacy-added column still use the existing migrate() path.
+const EXPECTED_SCHEMA = SCHEMA_STATEMENTS.map(sql => {
+  const m = /^CREATE\s+(?:UNIQUE\s+)?(TABLE|INDEX)\s+IF\s+NOT\s+EXISTS\s+([\w]+)/i.exec(sql);
+  return m ? { type: m[1].toLowerCase(), name: m[2].toLowerCase() } : null;
+}).filter(Boolean);
+const REQUIRED_ADDED_COLUMNS = {
+  events: ['extra'],
+  telegram_log: ['reply_to', 'message_id', 'target', 'branch'],
+  transfer_jobs: ['payload', 'result'],
+  talabat_orders: ['code', 'milestones'],
+  site_orders: ['transfers', 'total'],
+  wa_messages: ['sending_at'],
+  telegram_config: ['branch_chat_id', 'branch_chat_title'],
+};
+async function schemaReady(db) {
+  try {
+    const rows = await db.prepare("SELECT type, name, sql FROM sqlite_master WHERE type IN ('table','index')").all();
+    const found = new Map(rows.map(r => [String(r.type).toLowerCase() + ':' + String(r.name).toLowerCase(), String(r.sql || '')]));
+    if (!EXPECTED_SCHEMA.every(e => found.has(e.type + ':' + e.name))) return false;
+    for (const [table, cols] of Object.entries(REQUIRED_ADDED_COLUMNS)) {
+      const ddl = found.get('table:' + table) || '';
+      if (!cols.every(col => new RegExp('\\b' + col + '\\b', 'i').test(ddl))) return false;
+    }
+    return true;
+  } catch {
+    return false; // schema absence or read error must not falsely mark the database ready
+  }
+}
 
 const norm = p => p.map(v => (v === undefined ? null : typeof v === 'boolean' ? (v ? 1 : 0) : v));
 
@@ -283,4 +317,4 @@ function d1Adapter(d1) {
   };
 }
 
-export { SCHEMA, SCHEMA_STATEMENTS, migrate, d1Adapter, norm };
+export { SCHEMA, SCHEMA_STATEMENTS, schemaReady, migrate, d1Adapter, norm };

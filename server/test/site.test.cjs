@@ -78,7 +78,8 @@ test('site: key, sync of orders and notes, the day rows, alerts', async () => {
     site.notes[102].push({ date_created_gmt: g(site.m(33)), note: 'تم إرسال الطلب إلى فرع التجمع من لوحة التشغيل' });
     t.advance(61000);
     await admin('POST', '/api/site', { action: 'sync' });
-    const rep = t.app.db.raw.prepare("SELECT text, reply_to FROM telegram_log WHERE key = 'resolved:site:transfer:102'").get();
+    // The reply is written in the background after the request (waitUntil): wait for it, up to a second.
+    let rep; for (let i = 0; i < 50 && !rep; i++) { rep = t.app.db.raw.prepare("SELECT text, reply_to FROM telegram_log WHERE key = 'resolved:site:transfer:102'").get(); if (!rep) await new Promise(r => setTimeout(r, 20)); }
     assert.equal(rep.reply_to, 'site:transfer:102'); assert.match(rep.text, /اتحوّل لـ التجمع/);
   } finally { await t.close(); }
 });

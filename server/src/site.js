@@ -59,10 +59,18 @@ function setup(app) {
   }
 
   // ---- one sync: orders changed since the last run, then notes for changed and still-open orders ----
-  let running = false;
-  async function sync(now) {
-    if (running) return { skipped: true };
+  let running = false, current = null;
+  // A manual sync (admin's button) waits for a background run in progress, then runs itself, so it is never skipped.
+  async function syncNow(now) {
+    for (let i = 0; i < 3 && current; i++) await current.catch(() => {});
+    return sync(now);
+  }
+  function sync(now) {
+    if (running) return Promise.resolve({ skipped: true });
     running = true;
+    return (current = syncRun(now).finally(() => { running = false; current = null; }));
+  }
+  async function syncRun(now) {
     try {
       const c = await creds();
       if (!c) return { skipped: true };
@@ -134,7 +142,7 @@ function setup(app) {
     } catch (e) {
       await put('site_error', String(e.message).slice(0, 300)); await put('site_error_at', now);
       return { error: e.message };
-    } finally { running = false; }
+    }
   }
 
   // ---- alerts: prep over 30 min to the branches, transfer over 5 min to the call center's online group ----
@@ -195,9 +203,9 @@ function setup(app) {
       try { await wc(c, 'orders', { per_page: 1, _fields: 'id' }); } catch (e) { fail(400, 'المفتاح مش شغال: ' + e.message); }
       await put('site_wc', await seal(JSON.stringify(c))); await put('site_sync_at', null); await put('site_error', null);
       await app.audit('site_key_set', null, { actor: who.name, keyEnd: key.slice(-4) });
-      return { ok: true, sync: await sync(ctx.now) };
+      return { ok: true, sync: await syncNow(ctx.now) };
     }
-    if (b.action === 'sync') return { ok: true, sync: await sync(ctx.now) };
+    if (b.action === 'sync') return { ok: true, sync: await syncNow(ctx.now) };
     if (b.action === 'unlink') { await put('site_wc', null); await app.audit('site_key_removed', null, { actor: who.name }); return { ok: true }; }
     fail(400, 'invalid_action');
   });
