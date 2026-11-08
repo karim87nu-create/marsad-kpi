@@ -3,7 +3,7 @@ import { createSigner, createLimiter, hashPassword, randomToken } from './securi
 import { createLegacy } from './legacy.js';
 import { migrate, schemaReady } from './db.js';
 // Raised with each change worth checking after a publish (shown by /api/health).
-const BUILD = '2026-11-08.1';
+const BUILD = '2026-11-08.2';
 
 class HttpError extends Error {
   constructor(status, code, extra) {
@@ -68,6 +68,7 @@ function createApp({ db, config: input = {}, now = () => Date.now() }) {
 
   // Schema, and the server's own secret when none is configured (kept in the database).
   const recentErrors = [], startedAt = new Date().toISOString();
+  app.recentErrors = recentErrors;   // read by system-watch.js (errors of this instance)
   let ready = null, initialized = false;
   app.init = () => {
     if (initialized) return Promise.resolve();

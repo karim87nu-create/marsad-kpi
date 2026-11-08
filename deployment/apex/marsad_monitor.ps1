@@ -48,6 +48,14 @@ if (-not $OrdersKey) { L 'warning: orders_key.dat missing - nothing will be sent
 # ===== DB (SELECT only) =====
 $servers = @('196.218.94.154','192.168.1.15')
 $script:conn = $null
+# The server hears how the night copy went (Telegram alert when it stops; the 10 AM report shows it).
+function Send-CopyStatus($body) {
+  try {
+    $drive = (Get-Item $here).PSDrive
+    if ($drive -and $drive.Free) { $body.freeGb = [math]::Round($drive.Free / 1GB, 1) }
+    Invoke-RestMethod -Method Post -Uri "$ServerUrl/api/archive/status" -Headers @{ 'x-orders-token' = $OrdersKey } -Body ([Text.Encoding]::UTF8.GetBytes(($body | ConvertTo-Json -Compress -Depth 4))) -ContentType 'application/json; charset=utf-8' -TimeoutSec 20 | Out-Null
+  } catch { L "copy status: $($_.Exception.Message)" }
+}
 function Connect-Db {
   foreach($s in $servers){
     try {
@@ -1113,8 +1121,9 @@ while ($true) {
       Set-Content -Path (Join-Path $bdir 'done.txt') -Value (Get-Date).ToString('s')
       Get-ChildItem (Join-Path $here 'backups') -Directory | Where-Object { $_.Name -match '^\d{4}-\d{2}-\d{2}$' -and $_.CreationTime -lt (Get-Date).AddDays(-14) } | Remove-Item -Recurse -Force
       L "backup saved: $bdir ($($tabs.Count) tables)"
+      Send-CopyStatus @{ backup = @{ ok = $true; tables = @($tabs).Count } }
     }
-  } catch { L "backup: $($_.Exception.Message)" }
+  } catch { L "backup: $($_.Exception.Message)"; Send-CopyStatus @{ backup = @{ ok = $false; error = [string]$_.Exception.Message } } }
   # Archive (Karim 07-11): rows the server is about to make small or remove (event bodies older than 60 days, Telegram
   # messages older than 45 days, the change log older than 90 days) are written here first, by month, into
   # backups\archive\<kind>\<yyyy-MM>.jsonl — and only then does the server remove them. At most 20 pages a cycle.
@@ -1138,8 +1147,9 @@ while ($true) {
         }
       }
       if ($pages -lt 20) { $script:archiveDone = $true; L "archive: up to date" } else { L "archive: 20 pages this cycle, more next cycle" }
+      Send-CopyStatus @{ archive = @{ pages = $pages; upToDate = [bool]$script:archiveDone } }
     }
     if ((Get-Date).Hour -lt 4) { $script:archiveDone = $false }
-  } catch { L "archive: $($_.Exception.Message)" }
+  } catch { L "archive: $($_.Exception.Message)"; Send-CopyStatus @{ archive = @{ pages = 0; upToDate = $false; error = [string]$_.Exception.Message } } }
   if ($script:cycleSqlMs -ge 3000) { L "Apex slow (SQL sum=$($script:cycleSqlMs) ms) - next read in 3 minutes"; Start-Sleep -Seconds 180 } else { Start-Sleep -Seconds $PollSeconds }
 }

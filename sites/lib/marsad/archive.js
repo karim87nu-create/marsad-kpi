@@ -64,6 +64,26 @@ function setup(app) {
     return { changed: r.changes || 0 };
   });
 
+  // The cashier PC says how its nightly copy went, so a copy that stops is heard on Telegram (system-watch.js).
+  app.route('POST', '/api/archive/status', async ctx => {
+    await auth(ctx);
+    const b = ctx.body || {}, out = {};
+    const put = (k, v) => db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(k, JSON.stringify(v));
+    const freeGb = Number.isFinite(Number(b.freeGb)) ? Math.round(Number(b.freeGb) * 10) / 10 : null;
+    if (b.backup && typeof b.backup === 'object') {
+      const old = JSON.parse(await setting('backup_status') || '{}') || {};
+      const ok = b.backup.ok === true;
+      out.backup = { at: ctx.now, ok, okAt: ok ? ctx.now : old.okAt || null, error: ok ? null : String(b.backup.error || 'غير معروف').slice(0, 300),
+        tables: Number(b.backup.tables) || null, freeGb };
+      await put('backup_status', out.backup);
+    }
+    if (b.archive && typeof b.archive === 'object') {
+      out.archive = { at: ctx.now, pages: Number(b.archive.pages) || 0, upToDate: b.archive.upToDate === true, error: b.archive.error ? String(b.archive.error).slice(0, 300) : null, freeGb };
+      await put('archive_status', out.archive);
+    }
+    return { ok: true, ...out };
+  });
+
   // Pure caches: the transfer page's saved day builds older than three days are not needed by anyone.
   app.afterRequest(now => {
     if (now - (app._cacheSweep || 0) < 6 * 3600000) return;

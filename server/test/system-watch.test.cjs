@@ -11,7 +11,7 @@ test('system watch: a part that stops gives one Telegram message, and one «رج
     const { token } = (await admin('POST', '/api/talabat/token')).body;
     const push = () => t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { codes: [] } });
     await push();
-    const log = () => t.app.db.raw.prepare("SELECT key, kind, text, reply_to FROM telegram_log WHERE kind LIKE 'system%' ORDER BY id").all();
+    const log = () => t.app.db.raw.prepare("SELECT key, kind, text, reply_to FROM telegram_log WHERE kind LIKE 'system%' AND key NOT LIKE 'system:morning:%' ORDER BY id").all();
     t.advance(15 * 60000); await t.call('GET', '/health'); await admin('GET', '/api/system/watch');
     t.advance(3 * 60000); await admin('GET', '/api/system/watch');
     let l = log().filter(x => /شاشة طلبات الأساسية/.test(x.text));
