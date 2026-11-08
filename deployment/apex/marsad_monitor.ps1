@@ -886,7 +886,7 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
   # monitor needs updating. Unique per-day/per-branch alert keys prevent duplicate messages.
   foreach($summary in $branchesOut){
     $bn = [int]$summary.no
-    $key = "dayend:$bn"
+    $key = "dayend2:$bn"   # new format (08-11): a new key so tonight's report is sent again in it
     if ($alerted.Contains($key) -or @($pending | Where-Object { $_.day -eq $dayKey -and $_.key -eq $key }).Count) { continue }
     $bo = @($list | Where-Object { $_.Branch -eq $bn })
     $lastAction = $null; $lastOut = $null; $lastCancel = $null
