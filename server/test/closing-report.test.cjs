@@ -13,7 +13,8 @@ test('closing report: cancellations on the restaurant come from what the server 
     const at = (h, m) => new Date(cairoToUtc(2026, 11, 7, h, m, 0)).toISOString();
     const text = '📊 التقرير الختامي — التجمع | 2026-11-07\n📦 الأوردرات: 100 (منها 4 ملغي)\n🛵 خرج مع الطيار: 90\n\nℹ️ إلغاء من العميل أو خارج المطعم: 4\n• بناء على طلب العميل: 4\n\n🔚 آخر خروج: 77 الساعة 01:40 ص';
     const cancels = [
-      { no: 501, sn: 11, reasonNo: 6, amount: 300, entry: at(20, 0), out: null, at: at(21, 0) },      // waited an hour in the branch
+      { no: 501, sn: 11, reasonNo: 6, amount: 300, entry: at(20, 0), out: at(21, 0), at: at(21, 10) },  // left the branch after an hour
+      { no: 505, sn: 15, reasonNo: 6, amount: 80, entry: at(20, 0), out: null, at: at(21, 30) },      // cancelled before a pilot took it: never a delay
       { no: 502, sn: 12, reasonNo: 6, amount: 200, entry: at(20, 0), out: null, at: at(20, 10) },     // the customer, early
       { no: 503, sn: 13, reasonNo: 183, amount: 150, entry: at(19, 0), out: null, at: at(19, 20) },   // Apex says quality
       { no: 504, sn: 14, reasonNo: 6, amount: 100, entry: at(18, 0), out: null, at: at(18, 5) },      // a supervisor said: the employee
@@ -24,10 +25,10 @@ test('closing report: cancellations on the restaurant come from what the server 
     const sent = t.app.db.raw.prepare("SELECT text, target FROM telegram_log WHERE key = 'orders:2026-11-07:dayend2:2'").get();
     assert.equal(sent.target, 'branches');
     assert.match(sent.text, /❌ على الفرع: 2 — 2%/);
-    assert.match(sent.text, /• 11 — اتلغى بعد 60 دقيقة ولسه ماخرجش من الفرع \| 300 ج/);
+    assert.match(sent.text, /• 11 — خرج من الفرع بعد 60 دقيقة \| 300 ج/);
     assert.match(sent.text, /• 13 \| 150 ج/);
-    assert.match(sent.text, /ℹ️ من العميل: 1 — 1% \| 200 ج/);
-    assert.doesNotMatch(sent.text, /• 12/, 'customer cancellations: count only');
+    assert.match(sent.text, /ℹ️ من العميل: 2 — 2% \| 280 ج/);
+    assert.doesNotMatch(sent.text, /• 12|• 15|ماخرجش/, 'customer cancellations: count only; none before a pilot is a delay');
     assert.doesNotMatch(sent.text, /الكول سنتر|مش محدد|سبب تاني|على الطيار|المنصة/, 'only what is on the branch');
     assert.match(sent.text, /^📊 التقرير الختامي — التجمع/); assert.match(sent.text, /🔚 آخر خروج: 77/);
     // What is on the call center goes to the call center's group, on its own.

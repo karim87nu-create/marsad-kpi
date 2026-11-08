@@ -112,9 +112,9 @@ function setup(app) {
       if (x) { owner = x.final; why = x.confirmed ? 'اتأكد من ' + (x.confirmed.by || 'المشرف') : x.source === 'talabat' ? (x.why[0] || x.reason) : (x.why.find(w => !/اتلغى بعد خروجه/.test(w)) || x.reason); }
       else if (conf) { owner = conf.owner; why = 'اتأكد من ' + (conf.by_name || 'المشرف'); }
       else {
-        const waited = mins(c.entry, c.out || c.at);
-        if (!c.out && waited != null && waited >= LATE_OUT_MIN) { owner = 'branch'; why = 'اتلغى بعد ' + waited + ' دقيقة ولسه ماخرجش من الفرع'; }
-        else if (c.out && waited != null && waited >= LATE_OUT_MIN) { owner = 'branch'; why = 'خرج من الفرع بعد ' + waited + ' دقيقة'; }
+        // Karim 08-11: a cancellation before the order was given to a pilot is never counted as a delay.
+        const waited = c.out ? mins(c.entry, c.out) : null;
+        if (waited != null && waited >= LATE_OUT_MIN) { owner = 'branch'; why = 'خرج من الفرع بعد ' + waited + ' دقيقة'; }
         else { owner = CODE_OWNER[Number(c.reasonNo)] || null; why = null; }
       }
       items.push({ owner: owner || null, why, who, no: c.sn ?? c.no, amount: Number(c.amount) || 0, kind: c.kind });
