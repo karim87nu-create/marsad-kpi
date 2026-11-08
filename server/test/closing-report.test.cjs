@@ -21,15 +21,23 @@ test('closing report: cancellations on the restaurant come from what the server 
     const r = await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': token }, body: { v: 1, day: '2026-11-07',
       alerts: [{ key: 'dayend2:2', kind: 'ordersLate', text, branch: 'التجمع', cancels, orders: 100 }] } });
     assert.equal(r.status, 200, JSON.stringify(r.body));
-    const sent = t.app.db.raw.prepare("SELECT text FROM telegram_log WHERE key LIKE 'orders:2026-11-07:dayend2:%'").get().text;
-    assert.match(sent, /❌ على الفرع: 2 — 2%/);
-    assert.match(sent, /• 11 — اتلغى بعد 60 دقيقة ولسه ماخرجش من الفرع \| 300 ج/);
-    assert.match(sent, /• 13 \| 150 ج/);
-    assert.match(sent, /☎️ على الكول سنتر.*: 1/);
-    assert.match(sent, /• 14 — اتأكد من كريم/);
-    assert.match(sent, /ℹ️ من العميل: 1 — 1% \| 200 ج/);
-    assert.doesNotMatch(sent, /• 12/, 'customer cancellations: count only');
-    assert.doesNotMatch(sent, /مش محدد|سبب تاني|على الطيار|المنصة/, 'empty sections are not written');
-    assert.match(sent, /^📊 التقرير الختامي — التجمع/); assert.match(sent, /🔚 آخر خروج: 77/);
+    const sent = t.app.db.raw.prepare("SELECT text, target FROM telegram_log WHERE key = 'orders:2026-11-07:dayend2:2'").get();
+    assert.equal(sent.target, 'branches');
+    assert.match(sent.text, /❌ على الفرع: 2 — 2%/);
+    assert.match(sent.text, /• 11 — اتلغى بعد 60 دقيقة ولسه ماخرجش من الفرع \| 300 ج/);
+    assert.match(sent.text, /• 13 \| 150 ج/);
+    assert.match(sent.text, /ℹ️ من العميل: 1 — 1% \| 200 ج/);
+    assert.doesNotMatch(sent.text, /• 12/, 'customer cancellations: count only');
+    assert.doesNotMatch(sent.text, /الكول سنتر|مش محدد|سبب تاني|على الطيار|المنصة/, 'only what is on the branch');
+    assert.match(sent.text, /^📊 التقرير الختامي — التجمع/); assert.match(sent.text, /🔚 آخر خروج: 77/);
+    // What is on the call center goes to the call center's group, on its own.
+    const cc = t.app.db.raw.prepare("SELECT text, target FROM telegram_log WHERE key = 'orders:2026-11-07:dayend2:2:center'").get();
+    assert.equal(cc.target, 'online');
+    assert.match(cc.text, /^📋 إلغاءات تخص الكول سنتر — التجمع \| 2026-11-07/);
+    assert.match(cc.text, /☎️ على الكول سنتر.*: 1/); assert.match(cc.text, /• 14 — اتأكد من كريم/);
+    // The monitor repeats it until acknowledged: nothing more is sent.
+    await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': token }, body: { v: 1, day: '2026-11-07',
+      alerts: [{ key: 'dayend2:2', kind: 'ordersLate', text, branch: 'التجمع', cancels, orders: 100 }] } });
+    assert.equal(t.app.db.raw.prepare("SELECT COUNT(*) n FROM telegram_log WHERE key LIKE 'orders:2026-11-07:dayend2:2%' OR reply_to LIKE 'orders:2026-11-07:dayend2:2%'").get().n, 2);
   } finally { await t.close(); }
 });

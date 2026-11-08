@@ -151,8 +151,16 @@ function setup(app) {
       if (!a || !KINDS.includes(a.kind) || ['ordersStale', 'ordersComment'].includes(a.kind) || !a.key || !a.text) continue;
       if (a.follow && String(a.status || 'active') === 'active') continue;
       // The branch's closing report: its cancellations are rebuilt from what the server knows about each one.
+      // A closing report is sent once; the monitor repeating it until acknowledged changes nothing.
+      if (/^dayend\d*:/.test(String(a.key)) && states['orders:' + b.day + ':' + String(a.key).slice(0, 80)]) continue;
       if (/^dayend\d*:/.test(String(a.key)) && Array.isArray(a.cancels) && app.closingCancels) {
-        try { a.text = await app.closingCancels(b.day, a.branch, String(a.text), a.cancels, a.orders); } catch {}
+        try {
+          const r = await app.closingCancels(b.day, a.branch, String(a.text), a.cancels, a.orders);
+          a.text = r.text;
+          const ck = 'orders:' + b.day + ':' + String(a.key).slice(0, 70) + ':center';
+          // Sent once: the Telegram log keeps one row per key.
+          if (r.center) alerts.push({ key: ck, kind: a.kind, text: r.center, target: 'online', branch: a.branch || null });
+        } catch {}
       }
       const key = 'orders:' + b.day + ':' + String(a.key).slice(0, 80);
       const old = states[key], no = orderNo(a), branch = a.branch || branchOfNo(no);
