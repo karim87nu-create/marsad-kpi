@@ -527,14 +527,31 @@ function EndOfDayReady([datetime]$day, [datetime]$now, [int]$openDelivery, $last
 # Attribution is intentionally conservative. Only a clearly documented restaurant cause
 # is counted in its KPI. Customer/platform/external causes appear separately; a missing,
 # contradictory or vague reason is marked for review rather than blamed on the branch.
-function CancelResponsibility([string]$reason, [string]$note) {
-  $msg = ($reason + ' ' + $note).Trim()
-  $external = $msg -match '(?i)بناء\s*على\s*طلب\s*العميل|بناء\s*علي\s*طلب\s*العميل|طلب\s*العميل|العميل\s*(?:طلب\s*)?الغا|الغاء\s*من\s*العميل|إلغاء\s*من\s*العميل|العميل\s*غير\s*رايه|تغيير\s*رأي\s*العميل|تغيير\s*راي\s*العميل|رفض\s*العميل|العميل\s*رفض|العميل\s*مش\s*بيرد|العميل\s*لا\s*يرد|عدم\s*رد\s*العميل|عنوان\s*العميل\s*خطا|عنوان\s*العميل\s*غلط|خارج\s*نطاق\s*التوصيل|خارج\s*منطقة\s*التوصيل|طلب\s*مكرر\s*من\s*العميل|customer\s*(?:request|cancel)|customer\s*(?:changed|refused)|out\s*of\s*(?:delivery\s*)?(?:area|zone)'
-  $restaurant = $msg -match '(?i)تأخير\s*(?:من\s*)?(?:المطعم|الفرع|التجهيز|التحضير|الاوردر|الأوردر|الطلب)|الاوردر\s*اتأخر|الأوردر\s*اتأخر|تأخر\s*(?:الاوردر|الأوردر|الطلب)|نفاد\s*(?:الصنف|الاصناف|الأصناف)|الصنف\s*مش\s*متوفر|الصنف\s*غير\s*متوفر|غير\s*متوفر\s*بالفرع|عدم\s*توفر\s*(?:الصنف|الاصناف|الأصناف)|خطأ\s*(?:المطعم|الفرع|المطبخ|في\s*الطلب)|غلط\s*(?:المطعم|الفرع|المطبخ|في\s*الطلب)|سوء\s*(?:الجوده|الجودة|التجهيز)|مشكلة\s*(?:بالفرع|في\s*الفرع|في\s*المطبخ)|restaurant\s*(?:delay|error|fault)|out\s*of\s*stock|kitchen\s*(?:delay|error)'
+# Apex's own cancel reasons (Reasons, group Void) — who each one is on (Karim 08-11: «مش بتقرا كل الأسباب»).
+$CancelByCode = @{
+  6 = 'external'; 185 = 'external'; 188 = 'external'                                     # طلب العميل، خارج نطاق التوصيل، عدم رد
+  182 = 'restaurant'; 183 = 'restaurant'; 184 = 'restaurant'; 186 = 'restaurant'; 187 = 'restaurant'   # تأخير، جودة، صنف خاطئ، عدم توافر منتج، الفرع مشغول
+  2 = 'restaurant'; 3 = 'restaurant'; 7 = 'restaurant'; 8 = 'restaurant'; 11 = 'restaurant'; 12 = 'restaurant'
+  13 = 'restaurant'; 14 = 'restaurant'; 15 = 'restaurant'; 16 = 'restaurant'; 21 = 'restaurant'          # لعدم وجود صنف، تأخير وبارد
+}
+function CancelByText([string]$msg) {
+  $external = $msg -match '(?i)طلب\s*العميل|العميل\s*(?:طلب\s*)?(?:ال)?[اإ]?لغ[اى]|[اإ]لغاء\s*من\s*العميل|العميل\s*غير\s*ر[اأ]يه|تغيير\s*ر[اأ]ي\s*العميل|رفض\s*العميل|العميل\s*رفض|العميل\s*(?:مش\s*بيرد|لا\s*يرد|مبيردش)|عدم\s*(?:ال)?رد|مبيردش|مغلق|عنوان\s*(?:العميل\s*)?(?:خط[أا]|غلط)|خارج\s*(?:نطاق|منطقة)\s*التوصيل|مكرر|customer\s*(?:request|cancel|changed|refused)|no\s*answer|out\s*of\s*(?:delivery\s*)?(?:area|zone)'
+  $restaurant = $msg -match '(?i)ت[أا]خ(?:ي)?ر|اتأخر|اتاخر|متأخر|متاخر|بارد|جود[هة]|كوال?يتي|صنف\s*(?:خاطئ|غلط)|(?:اوردر|أوردر|الطلب)\s*(?:خاطئ|غلط)|غلط|ناقص|نفاد|(?:عدم|لعدم)\s*(?:تو[ا]?فر|وجود)|مش\s*متوفر|غير\s*متوفر|الفرع\s*مشغول|مشغول|خط[أا]\s*(?:المطعم|الفرع|المطبخ)|سي[ئء]|محروق|مش\s*مستوي|out\s*of\s*stock|busy|late|delay|quality|wrong'
   if ($external -and $restaurant) { return 'review' }
   if ($external) { return 'external' }
   if ($restaurant) { return 'restaurant' }
   return 'review'
+}
+# Apex's reason code decides; a note that clearly says the opposite sends it to review, never silently to the branch.
+function CancelResponsibility([string]$reason, [string]$note, [int]$code = 0) {
+  $byName = CancelByText $reason
+  $base = $(if ($code -gt 0 -and $CancelByCode.ContainsKey($code)) { $CancelByCode[$code] } else { $byName })
+  $n = (S $note).Trim()
+  if (-not $n -or $n -eq $reason.Trim()) { return $base }
+  $byNote = CancelByText $n
+  if ($base -eq 'review') { return $byNote }
+  if ($byNote -ne 'review' -and $byNote -ne $base) { return 'review' }
+  return $base
 }
 
 # ===== one reading of Apex -> one summary =====
@@ -899,7 +916,7 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
         if ($reasonName.Length -gt 70) { $reasonName = $reasonName.Substring(0,70) + '…' }
       }
       $reasonKey = $(if ($reasonNo -gt 0) { "code:$reasonNo" } else { "text:$reasonName" })
-      $responsibility = CancelResponsibility $reasonName (S $del.Remarks)
+      $responsibility = CancelResponsibility $reasonName (S $del.Remarks) $reasonNo
       # Split mixed classifications sharing the same Apex reason code, so a clear
       # customer-request order never silently changes the rate for other orders.
       $reasonKey = $reasonKey + ':' + $responsibility
@@ -922,59 +939,31 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
     $count = [int]$summary.delayRateCount
     $late = [int]$summary.delayRateLate
     $pct = $(if ($count -gt 0) { [math]::Round(100.0 * $late / $count, 1) } else { $null })
-    $lastExitText = $(if ($lastOut) { "$($lastOut.Disp) الساعة $(Tm $lastOut.Out)" } else { 'لا يوجد' })
-    $lastCancelText = $(if ($lastCancelledAt) { "$lastCancelledNo الساعة $(Tm $lastCancelledAt)" } elseif ($allCancelled) { 'يوجد إلغاء بدون وقت مؤكد' } else { 'لا يوجد' })
-    $pctText = $(if ($null -ne $pct) { "$pct%" } else { 'غير متاحة (لا توجد عمليات لها توقيت مؤكد)' })
-    $restaurantLines = @(); $externalLines = @(); $reviewLines = @()
-    $restaurantCount = 0; $restaurantAmount = 0.0
-    $externalCount = 0; $externalAmount = 0.0
-    $reviewCount = 0; $reviewAmount = 0.0
+    $groups = @{ restaurant = @(); external = @(); review = @() }
+    $sum = @{ restaurant = @(0, 0.0); external = @(0, 0.0); review = @(0, 0.0) }
     foreach($g in @($cancelByReason.Values | Sort-Object @{Expression={$_['count']};Descending=$true}, @{Expression={$_['name']};Descending=$false})){
-      $name = $g['name']; $n = [int]$g['count']; $amt = [double]$g['amount']
-      $line = "• $($name): $n أوردر | $([math]::Round($amt,2)) ج"
-      switch ($g['responsibility']) {
-        'restaurant' {
-          $restaurantCount += $n; $restaurantAmount += $amt
-          $reasonPercent = $(if ($allOrders -gt 0) { [math]::Round(100.0 * $n / $allOrders,1) } else { 0 })
-          $restaurantLines += "$line | $reasonPercent% من إجمالي الأوردرات"
-        }
-        'external' {
-          $externalCount += $n; $externalAmount += $amt
-          $externalLines += $line
-        }
-        default {
-          $reviewCount += $n; $reviewAmount += $amt
-          $reviewLines += $line
-        }
-      }
+      $r = $g['responsibility']; if (-not $groups.ContainsKey($r)) { $r = 'review' }
+      $groups[$r] += "• $($g['name']): $([int]$g['count'])" + $(if ([double]$g['amount'] -gt 0) { " | $([math]::Round([double]$g['amount'],0)) ج" } else { '' })
+      $sum[$r] = @(($sum[$r][0] + [int]$g['count']), ($sum[$r][1] + [double]$g['amount']))
     }
-    $restaurantPercent = $(if ($allOrders -gt 0) { [math]::Round(100.0 * $restaurantCount / $allOrders,1) } else { 0 })
-    $restaurantText = $(if ($restaurantLines.Count) { $restaurantLines -join "`n" } else { 'لا توجد إلغاءات مؤكدة بسبب المطعم' })
-    $externalText = $(if ($externalLines.Count) { $externalLines -join "`n" } else { 'لا توجد إلغاءات خارج مسؤولية المطعم موثقة' })
-    $reviewText = $(if ($reviewLines.Count) { $reviewLines -join "`n" } else { 'لا توجد أسباب غير محسومة' })
-    $report = "📊 مرصد الدهان | التقرير الختامي للفرع" +
-      "`n📍 الفرع: $($summary.name) | يوم APEX: $dayKey" +
-      "`n✅ لا توجد أوردرات دليفري مفتوحة وقت إعداد التقرير" +
-      "`n📦 إجمالي الأوردرات: $allOrders (منها $($summary.orders) غير ملغي)" +
-      "`n🛵 خرج مع الطيار: $($summary.outCount)" +
-      "`n📉 نسبة التأخير: $pctText ($late متأخر من $count عملية مكتملة التوقيت)" +
-      "`n❌ إلغاءات بسبب المطعم (تدخل في التقييم):" +
-      "`n$restaurantText" +
-      "`n📊 نسبة إلغاءات المطعم: $restaurantPercent% ($restaurantCount من $allOrders أوردر)" +
-      "`n💰 قيمة إلغاءات المطعم: $([math]::Round($restaurantAmount,2)) ج" +
-      "`n──────────" +
-      "`nℹ️ إلغاءات بطلب العميل أو لأسباب خارج مسؤولية المطعم (مستبعدة من نسبة إلغاءات المطعم):" +
-      "`n$externalText" +
-      "`nالإجمالي المستبعد: $externalCount أوردر | $([math]::Round($externalAmount,2)) ج" +
-      "`n──────────" +
-      "`n⚠️ أسباب غير واضحة أو متعارضة (مستبعدة مؤقتًا لحين المراجعة):" +
-      "`n$reviewText" +
-      "`nالإجمالي قيد المراجعة: $reviewCount أوردر | $([math]::Round($reviewAmount,2)) ج" +
-      "`n──────────" +
-      "`n📦 كل الإلغاءات للعلم: $allCancelled أوردر | $([math]::Round($totalCancelledAmount,2)) ج" +
-      "`n🔚 آخر خروج: $lastExitText" +
-      "`n🗑️ آخر إلغاء: $lastCancelText" +
-      "`n✅ أساس نسبة الإلغاء المنسوبة للمطعم = إلغاءات المطعم المؤكدة ÷ إجمالي أوردرات الفرع ($allOrders). لا يدخل فيها طلب العميل أو الأسباب الخارجية أو غير المحسومة."
+    $restaurantCount = $sum.restaurant[0]; $externalCount = $sum.external[0]; $reviewCount = $sum.review[0]
+    $lines = @("📊 التقرير الختامي — $($summary.name) | $dayKey")
+    $lines += "📦 الأوردرات: $allOrders" + $(if ($allCancelled) { " (منها $allCancelled ملغي)" } else { '' })
+    if ([int]$summary.outCount) { $lines += "🛵 خرج مع الطيار: $($summary.outCount)" }
+    if ($count -gt 0) { $lines += "📉 التأخير: $pct% ($late من $count)" }
+    $part = { param($icon, $title, $key)
+      $n = $sum[$key][0]; if (-not $n) { return @() }
+      $pc = $(if ($allOrders -gt 0) { " — $([math]::Round(100.0 * $n / $allOrders,1))%" } else { '' })
+      $amt = $(if ($sum[$key][1] -gt 0) { " | $([math]::Round($sum[$key][1],0)) ج" } else { '' })
+      return @('', "$icon $($title): $n$pc$amt") + $groups[$key] }
+    $lines += & $part '❌' 'إلغاء على المطعم' 'restaurant'
+    $lines += & $part 'ℹ️' 'إلغاء من العميل أو خارج المطعم' 'external'
+    $lines += & $part '⚠️' 'محتاج مراجعة' 'review'
+    $tail = @()
+    if ($lastOut) { $tail += "🔚 آخر خروج: $($lastOut.Disp) الساعة $(Tm $lastOut.Out)" }
+    if ($lastCancelledAt) { $tail += "🗑️ آخر إلغاء: $lastCancelledNo الساعة $(Tm $lastCancelledAt)" }
+    if ($tail.Count) { $lines += ''; $lines += $tail }
+    $report = $lines -join "`n"
     Raise $key 'ordersLate' $report $false $summary.name $null
     L "end-of-day report queued: day=$dayKey branch=$bn orders=$allOrders cancellations=$allCancelled restaurant=$restaurantCount external=$externalCount review=$reviewCount late=$late/$count"
   }
