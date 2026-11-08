@@ -6,6 +6,7 @@
 // A supervisor confirms it or picks another from the admin page; each answer teaches which owner that reason usually
 // means, so the next cancellation with the same reason is suggested from what was answered (2 answers and up).
 import { businessDay, iso, validDate } from './time.js';
+import { sameBranch } from './talabat.js';
 
 const OWNERS = { employee: 'الموظف اللي ضربه', branch: 'الفرع', pilot: 'الطيار', customer: 'العميل', platform: 'طلبات / المنصة', other: 'سبب تاني' };
 const LATE_ENTRY_MIN = 10, LATE_OUT_MIN = 45;
@@ -88,6 +89,55 @@ function setup(app) {
     return out.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
   }
   app.cancelOwners = dayList;
+
+  // التقرير الختامي للفرع (Karim 08-11: «في أسباب على المطعم مش مكتوبة»). On Apex nearly every cancellation is coded
+  // «بناء على طلب العميل», so the monitor's sections are rebuilt here from what is known about each one: a supervisor's
+  // answer, Talabat's own owner and reason, how long it sat in the branch, then Apex's code.
+  const CODE_OWNER = { 6: 'customer', 185: 'customer', 188: 'customer', 182: 'branch', 183: 'branch', 184: 'branch', 186: 'branch', 187: 'branch',
+    2: 'branch', 3: 'branch', 7: 'branch', 8: 'branch', 11: 'branch', 12: 'branch', 13: 'branch', 14: 'branch', 15: 'branch', 16: 'branch', 21: 'branch' };
+  const GROUPS = [['branch', '❌ على الفرع'], ['employee', '☎️ على الكول سنتر (اللي ضرب الأوردر)'], ['pilot', '🛵 على الطيار'],
+    ['platform', '📱 من طلبات / المنصة'], ['customer', 'ℹ️ من العميل'], ['other', '❔ سبب تاني'], [null, '⚠️ مش محدد — محتاج مراجعة']];
+  const mins = (a, b) => (a && b ? Math.round((Date.parse(b) - Date.parse(a)) / 60000) : null);
+  app.closingCancels = async function closingCancels(day, branch, text, cancels, orders) {
+    if (!Array.isArray(cancels)) return text;
+    const known = await dayList(day);
+    const byApex = new Map(known.filter(x => x.apexNo != null).map(x => [String(x.apexNo), x]));
+    const confirmed = new Map((await db.prepare('SELECT * FROM cancel_owners WHERE day = ?').all(day)).map(x => [x.key, x]));
+    const items = [];
+    for (const c of cancels.slice(0, 300)) {
+      const x = byApex.get(String(c.no)), conf = confirmed.get('apex:' + c.no);
+      let owner, why;
+      if (x) { owner = x.final; why = x.confirmed ? 'اتأكد من ' + (x.confirmed.by || 'المشرف') : x.source === 'talabat' ? (x.why[0] || x.reason) : (x.why.find(w => !/اتلغى بعد خروجه/.test(w)) || x.reason); }
+      else if (conf) { owner = conf.owner; why = 'اتأكد من ' + (conf.by_name || 'المشرف'); }
+      else {
+        const waited = mins(c.entry, c.out || c.at);
+        if (!c.out && waited != null && waited >= LATE_OUT_MIN) { owner = 'branch'; why = 'اتلغى بعد ' + waited + ' دقيقة ولسه ماخرجش من الفرع'; }
+        else if (c.out && waited != null && waited >= LATE_OUT_MIN) { owner = 'branch'; why = 'خرج من الفرع بعد ' + waited + ' دقيقة'; }
+        else { owner = CODE_OWNER[Number(c.reasonNo)] || null; why = null; }
+      }
+      items.push({ owner: owner || null, why, no: c.sn ?? c.no, amount: Number(c.amount) || 0, kind: c.kind });
+    }
+    // Talabat cancellations of this branch that never reached Apex.
+    for (const x of known) if (x.source === 'talabat' && x.apexNo == null && sameBranch(x.store, branch))
+      items.push({ owner: x.final || null, why: (x.why[0] || x.reason || '') + ' (مش على Apex)', no: 'طلبات ' + (x.code || x.ref), amount: Number(x.amount) || 0 });
+    const lines = String(text).split('\n');
+    const cut = lines.indexOf(''), head = cut < 0 ? lines : lines.slice(0, cut);
+    const tail = lines.filter(l => /^(🔚|🗑️)/.test(l));
+    const all = Number(orders) || items.length, out = [...head];
+    if (!items.length) out.push('', '✅ مفيش إلغاءات');
+    for (const [key, title] of GROUPS) {
+      const g = items.filter(i => (i.owner || null) === key || (key === 'other' && i.owner === 'other'));
+      if (!g.length) continue;
+      const amt = g.reduce((a, i) => a + i.amount, 0);
+      out.push('', title + ': ' + g.length + (all ? ' — ' + Math.round(1000 * g.length / all) / 10 + '%' : '') + (amt > 0 ? ' | ' + Math.round(amt) + ' ج' : ''));
+      // Customer cancellations: only how many; every other kind: each order with why.
+      if (key === 'customer' && g.every(i => !i.why)) continue;
+      for (const i of g.slice(0, 12)) out.push('• ' + i.no + (i.why ? ' — ' + i.why : '') + (i.amount > 0 ? ' | ' + Math.round(i.amount) + ' ج' : ''));
+      if (g.length > 12) out.push('• و' + (g.length - 12) + ' كمان');
+    }
+    if (tail.length) out.push('', ...tail);
+    return out.join('\n');
+  };
 
   app.route('GET', '/api/cancels/owners', async ctx => {
     await app.requireAdmin(ctx);

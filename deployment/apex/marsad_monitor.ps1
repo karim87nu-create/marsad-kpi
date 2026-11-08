@@ -405,6 +405,9 @@ function SaveOutbox {
       elseif ($null -ne $value) { $value = [string]$value }
       $item.Add($field, $value)
     }
+    # The closing report's cancellations and order count travel with it (kept across a restart).
+    if ($entry.cancels) { $item.Add('cancels', (ConvertTo-JsonPlain -value @($entry.cancels))) }
+    if ($entry.orders) { $item.Add('orders', [int]$entry.orders) }
     [void]$wire.Add($item)
   }
   $json = $serializer.Serialize($wire)
@@ -902,9 +905,15 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
     $allCancelled = 0; $lastCancelledAt = $null; $lastCancelledNo = $null
     $cancelByReason = @{}
     $totalCancelledAmount = 0.0
+    $branchCancels = New-Object System.Collections.ArrayList
     foreach($del in $dels.Rows){
       if ([int](N $del.BranchNo) -ne $bn) { continue }
       $allCancelled++
+      # Each cancellation goes to the server too: there Talabat's own owner and reason, the time it waited in the
+      # branch and the supervisors' answers decide whom it is on (Apex's reason is nearly always «بناء على طلب العميل»).
+      [void]$branchCancels.Add([ordered]@{ no = [int64](N $del.OrderNo); sn = $(if ($delSn -and (S $del.SnX)) { SnOf $del.SnX } else { $null })
+        reasonNo = [int](N $del.ReasonNo); kind = KindOf (S $del.OnlineType); amount = R2 (AmtOf $del)
+        entry = IsoT (ParseT $del.TimeIn $day); out = $(if ((N $del.WaiterNo) -gt 0) { IsoT (ParseT $del.OrderTime $day) } else { $null }); at = IsoT (ParseT $del.DeleteTime $day) })
       # Each deleted order contributes exactly once: group by Apex ReasonNo when available.
       # No usable reason code: fall back to the stored reason note, never invent a reason.
       $reasonNo = [int](N $del.ReasonNo)
@@ -965,6 +974,8 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
     if ($tail.Count) { $lines += ''; $lines += $tail }
     $report = $lines -join "`n"
     Raise $key 'ordersLate' $report $false $summary.name $null
+    foreach($pa in @($pending | Where-Object { $_.key -eq $key })){ $pa['cancels'] = @($branchCancels); $pa['orders'] = $allOrders }
+    SaveOutbox
     L "end-of-day report queued: day=$dayKey branch=$bn orders=$allOrders cancellations=$allCancelled restaurant=$restaurantCount external=$externalCount review=$reviewCount late=$late/$count"
   }
   return [ordered]@{

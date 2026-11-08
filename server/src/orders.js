@@ -150,6 +150,10 @@ function setup(app) {
     for (const a of (Array.isArray(b.alerts) ? b.alerts : []).slice(0, 400).sort((x, y) => !!x?.follow - !!y?.follow)) {
       if (!a || !KINDS.includes(a.kind) || ['ordersStale', 'ordersComment'].includes(a.kind) || !a.key || !a.text) continue;
       if (a.follow && String(a.status || 'active') === 'active') continue;
+      // The branch's closing report: its cancellations are rebuilt from what the server knows about each one.
+      if (/^dayend\d*:/.test(String(a.key)) && Array.isArray(a.cancels) && app.closingCancels) {
+        try { a.text = await app.closingCancels(b.day, a.branch, String(a.text), a.cancels, a.orders); } catch {}
+      }
       const key = 'orders:' + b.day + ':' + String(a.key).slice(0, 80);
       const old = states[key], no = orderNo(a), branch = a.branch || branchOfNo(no);
       const text = withOrderContext(apexAlertText(String(a.text).slice(0, 3500), findNo(no) || { no, sn: a.sn }), no, a.kind);
