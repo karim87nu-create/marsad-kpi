@@ -4,8 +4,8 @@ const assert = require('node:assert/strict');
 const { start } = require('./helpers.cjs');
 const { cairoToUtc } = require('../src/time.js');
 
-const morning = t => t.app.db.raw.prepare("SELECT text FROM telegram_log WHERE key LIKE 'system:morning:%'").all();
-const log = t => t.app.db.raw.prepare("SELECT key, kind, text, target, reply_to FROM telegram_log WHERE kind LIKE 'system%' AND key NOT LIKE 'system:morning:%' ORDER BY id").all();
+const morning = t => { const r = t.app.db.raw.prepare("SELECT value FROM settings WHERE key = 'system_log'").get(); return (r ? JSON.parse(r.value) : []).filter(x => /^system:morning:/.test(x.key)); };
+const log = t => (() => { const r = t.app.db.raw.prepare("SELECT value FROM settings WHERE key = 'system_log'").get(); return (r ? JSON.parse(r.value) : []).slice().reverse().filter(x => !/^system:morning:/.test(x.key)).map(x => ({ key: x.key, kind: 'system', text: x.text, target: null, reply_to: /^resolved:/.test(x.key) ? x.key.slice(9) : null })); })();
 
 test('watch: server errors, a stuck automatic transfer and the night copy are heard on Telegram, then «رجع»', async () => {
   const t = await start({ at: cairoToUtc(2026, 11, 1, 13, 0, 0) });
@@ -15,7 +15,7 @@ test('watch: server errors, a stuck automatic transfer and the night copy are he
     for (let i = 0; i < 6; i++) t.app.recentErrors.unshift({ at: new Date(t.clock.now).toISOString(), path: 'POST /api/apex-writer/next', error: 'D1_ERROR: overloaded' });
     t.advance(3 * 60000); await admin('GET', '/api/system/watch');
     let l = log(t).filter(x => /السيرفر/.test(x.text));
-    assert.equal(l.length, 1); assert.match(l[0].text, /6 خطأ/); assert.match(l[0].text, /apex-writer\/next/); assert.equal(l[0].target, 'online');
+    assert.equal(l.length, 1); assert.match(l[0].text, /6 خطأ/); assert.match(l[0].text, /apex-writer\/next/); assert.equal(t.app.db.raw.prepare("SELECT COUNT(*) n FROM telegram_log WHERE kind LIKE 'system%'").get().n, 0, 'not on Telegram');
     t.advance(3 * 60000); await admin('GET', '/api/system/watch');
     assert.equal(log(t).filter(x => /السيرفر/.test(x.text)).length, 1, 'not repeated');
     t.advance(10 * 60000); await admin('GET', '/api/system/watch');

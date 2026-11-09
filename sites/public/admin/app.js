@@ -703,6 +703,12 @@
     const ago = m => m == null ? 'أبدًا' : m < 2 ? 'دلوقتي' : m < 90 ? 'من ' + m + ' دقيقة' : m < 2880 ? 'من ' + Math.round(m / 60) + ' ساعة' : 'من ' + Math.round(m / 1440) + ' يوم';
     table(box, [{ title: 'الجزء', get: p => p.name }, { title: 'الحالة', get: p => p.ok ? 1 : 0, show: p => pill(p.ok ? 'شغال' : p.last ? 'واقف' : 'ماشتغلش لسه', p.ok ? 'ok' : 'bad') },
       { title: 'آخر شغل', get: p => p.minutes, show: p => ago(p.minutes), type: 'number' }, { title: 'لو واقف', get: p => p.ok ? '' : (p.error ? p.error + ' — ' : '') + p.fix }], w.parts);
+    // سجل الأخطاء (Karim 09-11: in the Marsad only, not on Telegram) — newest first.
+    const log = w.log || [];
+    const when = t => new Date(t).toLocaleString('ar-EG', { timeZone: 'Africa/Cairo', day: 'numeric', month: 'numeric', hour: 'numeric', minute: '2-digit' });
+    $(box).append(h('h4', { textContent: 'سجل الأخطاء' }), log.length
+      ? h('ul', { className: 'syslog' }, ...log.map(x => h('li', { className: x.resolved ? 'ok' : '' }, h('span', { className: 'muted', textContent: when(x.at) + ' — ' }), h('span', { textContent: x.text, style: 'white-space:pre-line' }))))
+      : h('p', { className: 'muted', textContent: 'مفيش أخطاء متسجلة' }));
   }
   const btn = (text, fn, cls = 'ghost small') => { const b = h('button', { type: 'button', className: cls === 'danger' ? 'danger small' : cls, textContent: text }); b.onclick = e => { e.stopPropagation(); fn(); }; return b; };
   async function act(note, fn, done) { try { await fn(); say(note, done); renderManage(); } catch (e) { say(note, ERR[e.message] || e.message); } }

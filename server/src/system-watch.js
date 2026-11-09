@@ -70,7 +70,7 @@ function setup(app) {
     const a = parseJson(await setting('archive_status'), null), b = parseJson(await setting('backup_status'), null);
     if (b?.freeGb != null) lines.push('💾 المساحة الفاضية على جهاز الكاشير: ' + b.freeGb + ' جيجا' + (b.freeGb < 5 ? ' — قليلة' : ''));
     if (a) lines.push(a.error ? '⚠️ الأرشيف: ' + a.error : a.upToDate ? '✅ الأرشيف متحدث' : '⏳ الأرشيف لسه بيكمل (' + a.pages + ' صفحة امبارح)');
-    send('system:morning:' + day, '🌅 تقرير السيستم — ' + day + '\n' + lines.join('\n'), null);
+    send('system:morning:' + day, '🌅 تقرير السيستم — ' + day + '\n' + lines.join('\n'));
     await db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run('system_morning', day);
   }
 
@@ -80,21 +80,23 @@ function setup(app) {
     if (now - lastCheck < CHECK_MS) return;
     lastCheck = now;
     const state = parseJson(await setting('system_watch'), {});
-    const writes = [];
+    const writes = [], logged = [];
+    // Karim 09-11: system errors are not sent on Telegram — they are written in the Marsad (الإدارة ← التشغيل التلقائي).
+    const note = (key, text) => logged.push({ key, at: now, text });
     const send = (key, text, target, replyTo) => writes.push(db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, reply_to, sent_at, target, branch) VALUES (?,?,?,?,?,?,?,?,?)')
       .bind(key, replyTo ? 'system:resolved' : 'system', null, text, now, replyTo || null, null, target, null));
     for (const p of await parts(now)) {
       const down = state[p.id], bad = isBad(p, now);
       if (!down && bad && (p.always || isOperating(now))) {
         const since = p.text ? p.since : p.last, key = 'system:' + p.id + ':' + since;
-        send(key, (p.text ? p.text() : '🛠️ ' + p.name + ' واقف من ' + clock(p.last) + ' (' + Math.round((now - p.last) / 60000) + ' دقيقة)' + (p.error ? '\nالخطأ: ' + p.error : '')) + '\n' + p.fix, p.target);
+        note(key, (p.text ? p.text() : '🛠️ ' + p.name + ' واقف من ' + clock(p.last) + ' (' + Math.round((now - p.last) / 60000) + ' دقيقة)' + (p.error ? '\nالخطأ: ' + p.error : '')) + '\n' + p.fix, p.target);
         state[p.id] = { key, since };
       } else if (down && !bad) {
-        send('resolved:' + down.key, '✅ ' + (p.back ? p.back + ' الساعة ' + clock(now) : p.name + ' رجع اشتغل الساعة ' + clock(p.last)), p.target, down.key);
+        note('resolved:' + down.key, '✅ ' + (p.back ? p.back + ' الساعة ' + clock(now) : p.name + ' رجع اشتغل الساعة ' + clock(p.last)));
         delete state[p.id];
       }
     }
-    await morning(now, send);
+    await morning(now, note);
     // A shift open 12+ hours (Karim 01-11: علاء 18 ساعة) is a forgotten logout: its hours, breaks and gaps get counted
     // into the next day. One message per session, to the call center group.
     const LONG_MS = 12 * 3600000;
@@ -105,7 +107,12 @@ function setup(app) {
       if (await db.prepare('SELECT 1 FROM telegram_log WHERE key = ?').get(key)) continue;
       send(key, '⏱️ ' + (x.name || 'موظف') + ' فاتح الشيفت من ' + clock(x.issued_at) + ' (' + Math.round((now - x.issued_at) / 3600000) + ' ساعة) — غالبًا نسي يقفل. اقفل الشيفت من «نهاية الشيفت» في الإدارة.', null);
     }
-    if (writes.length) {
+    if (logged.length) {
+      const old = parseJson(await setting('system_log'), []), seen = new Set(old.map(x => x.key));
+      const log = [...logged.filter(x => !seen.has(x.key)).reverse(), ...old].slice(0, 200);
+      writes.push(db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').bind('system_log', JSON.stringify(log)));
+    }
+    if (writes.length || logged.length) {
       writes.push(db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').bind('system_watch', JSON.stringify(state)));
       await db.batch(writes);
     }
@@ -115,7 +122,7 @@ function setup(app) {
   app.route('GET', '/api/system/watch', async ctx => {
     await app.requireAdmin(ctx);
     const state = parseJson(await setting('system_watch'), {});
-    return { parts: (await parts(ctx.now)).map(p => ({ id: p.id, name: p.name, last: iso(p.last), minutes: p.last ? Math.round((ctx.now - p.last) / 60000) : null, ok: 'bad' in p ? !p.bad : !!p.last && (ctx.now - p.last) / 60000 <= p.after, down: !!state[p.id], error: p.error || null, fix: p.fix })) };
+    return { log: parseJson(await setting('system_log'), []).slice(0, 100).map(x => ({ at: iso(x.at), text: x.text, resolved: /^resolved:/.test(x.key) })), parts: (await parts(ctx.now)).map(p => ({ id: p.id, name: p.name, last: iso(p.last), minutes: p.last ? Math.round((ctx.now - p.last) / 60000) : null, ok: 'bad' in p ? !p.bad : !!p.last && (ctx.now - p.last) / 60000 <= p.after, down: !!state[p.id], error: p.error || null, fix: p.fix })) };
   });
 }
 
