@@ -9,7 +9,11 @@ const MINUTES = [15, 30, 45, 60];
 function setup(app) {
   const { db, fail } = app;
 
-  const expireRequests = now => db.batch([
+  // Every employee screen asks for its requests every few seconds; tidying the old ones once in 20 seconds is enough
+  // (Karim 09-11: «D1 DB is overloaded» — this ran four updates, one joining the events, on every ask).
+  let tidiedAt = 0;
+  const expireRequests = now => { if (now - tidiedAt < 20000) return Promise.resolve(); tidiedAt = now; return tidy(now); };
+  const tidy = now => db.batch([
     db.prepare(`UPDATE break_requests SET status = 'completed' WHERE status = 'starting' AND EXISTS
       (SELECT 1 FROM break_permissions p WHERE p.id = break_requests.permission_id AND p.used_at IS NOT NULL AND EXISTS
         (SELECT 1 FROM events b JOIN events e ON e.session_id = b.session_id AND e.id > b.id
@@ -17,11 +21,22 @@ function setup(app) {
           AND e.event_type IN ('break_end','break_end_unknown') AND e.occurred_at >= b.occurred_at))`).bind(),
     db.prepare("UPDATE break_requests SET status = 'expired' WHERE status = 'pending' AND created_at < ?").bind(now - PENDING_MS),
     db.prepare("UPDATE break_requests SET status = 'expired' WHERE status = 'approved' AND decided_at < ?").bind(now - APPROVED_MS),
-    db.prepare(`UPDATE break_requests SET status = 'cancelled' WHERE status IN ('pending','approved','starting') AND session_id IN
-      (SELECT id FROM employee_sessions WHERE revoked_at IS NOT NULL OR expires_at <= ?)`).bind(now),
+    db.prepare(`UPDATE break_requests SET status = 'cancelled' WHERE status IN ('pending','approved','starting') AND EXISTS
+      (SELECT 1 FROM employee_sessions s WHERE s.id = break_requests.session_id AND (s.revoked_at IS NOT NULL OR s.expires_at <= ?))`).bind(now),
   ]);
 
   const policy = (employeeId, now) => app.breakPolicy(employeeId, now);   // engine.js
+  // An employee screen asks every 5 seconds; its break balance is worked out at most every 15 seconds (any action
+  // the employee takes — a request, a start — works it out fresh).
+  const recent = new Map();
+  const cachedPolicy = async (employeeId, now) => {
+    const c = recent.get(employeeId);
+    if (c && now - c.at < 15000) return c.value;
+    const value = await policy(employeeId, now);
+    if (recent.size > 500) recent.clear();
+    recent.set(employeeId, { at: now, value });
+    return value;
+  };
 
   const shapeForEmployee = r => ({ id: r.id, status: r.status, reasonId: r.reason_id, reason: r.reason, requestKind: r.request_kind, requestedMinutes: r.requested_minutes, createdAt: iso(r.created_at), decidedAt: iso(r.decided_at) });
 
@@ -45,7 +60,7 @@ function setup(app) {
       const { session } = await app.requireSession(ctx);
       const w = dayWindow(businessDay(ctx.now));
       const requests = await db.prepare('SELECT * FROM break_requests WHERE employee_id = ? AND created_at >= ? ORDER BY created_at DESC').all(session.employee_id, w.start);
-      return { breakPolicy: await policy(session.employee_id, ctx.now), requests: requests.map(shapeForEmployee) };
+      return { breakPolicy: await cachedPolicy(session.employee_id, ctx.now), requests: requests.map(shapeForEmployee) };
     }
     const who = await app.requireAdmin(ctx);
     const w = dayWindow(businessDay(ctx.now));
@@ -59,7 +74,7 @@ function setup(app) {
   });
 
   app.route('POST', '/api/break-requests', async ctx => {
-    await expireRequests(ctx.now);
+    await tidy(ctx.now);   // a new request or a decision always sees the current state
     const b = ctx.body;
     if (['approve', 'reject'].includes(b.action)) {
       const who = await app.requireAdmin(ctx, 'write');

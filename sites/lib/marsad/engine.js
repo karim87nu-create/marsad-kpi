@@ -378,7 +378,10 @@ function setup(app) {
   app.breakPolicy = async function breakPolicy(employeeId, now = app.now()) {
     const w = dayWindow(businessDay(now)), until = Math.min(now, w.operatingEnd);
     const [events, perms] = await Promise.all([
-      db.prepare(`SELECT * FROM events WHERE employee_id = ? AND occurred_at >= ? AND occurred_at <= ? ORDER BY occurred_at, id`).all(employeeId, w.start, until),
+      // Only what is used (Karim 09-11, D1 overloaded): the bodies are read for break starts alone.
+      db.prepare(`SELECT id, event_type, occurred_at, state, CASE WHEN event_type IN ('break_start','break_observed') THEN extra END AS extra,
+        CASE WHEN event_type IN ('break_start','break_observed') THEN payload END AS payload
+        FROM events WHERE employee_id = ? AND occurred_at >= ? AND occurred_at <= ? ORDER BY occurred_at, id`).all(employeeId, w.start, until),
       db.prepare('SELECT id FROM break_permissions WHERE employee_id = ? AND request_id IS NOT NULL AND created_at >= ?').all(employeeId, w.start - 3600000)]);
     const approved = new Set(perms.map(p => p.id));
     const periods = [];

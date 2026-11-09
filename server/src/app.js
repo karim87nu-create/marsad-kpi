@@ -3,7 +3,7 @@ import { createSigner, createLimiter, hashPassword, randomToken } from './securi
 import { createLegacy } from './legacy.js';
 import { migrate, schemaReady } from './db.js';
 // Raised with each change worth checking after a publish (shown by /api/health).
-const BUILD = '2026-11-09.1';
+const BUILD = '2026-11-09.2';
 
 class HttpError extends Error {
   constructor(status, code, extra) {
@@ -108,7 +108,7 @@ function createApp({ db, config: input = {}, now = () => Date.now() }) {
     try { url = new URL(request.url); } catch { return send(400, { error: 'bad_url' }); }
     // build: which code is deployed (checked from outside after each publish; no secrets).
     if (url.pathname === '/health' || url.pathname === '/api/health') return send(200, { ok: true, build: BUILD });
-    if (url.pathname === '/api/health/errors') return send(200, { build: BUILD, since: startedAt, errors: recentErrors });
+    if (url.pathname === '/api/health/errors') return send(200, { build: BUILD, since: startedAt, errors: recentErrors, heaviest: db.heaviest ? db.heaviest() : null });
     const route = routes.get(request.method + ' ' + url.pathname);
     if (!route) return send(404, { error: 'not_found' });
     let response;

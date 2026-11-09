@@ -104,6 +104,9 @@ CREATE TABLE IF NOT EXISTS break_requests (
   decided_by TEXT,
   permission_id TEXT
 );
+CREATE INDEX IF NOT EXISTS break_requests_employee_time ON break_requests(employee_id, created_at);
+CREATE INDEX IF NOT EXISTS break_requests_time ON break_requests(created_at);
+CREATE INDEX IF NOT EXISTS break_requests_status ON break_requests(status);
 
 CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY,
@@ -305,15 +308,30 @@ async function migrate(db) {
 
 function d1Adapter(d1) {
   const st = (sql, p) => d1.prepare(sql).bind(...norm(p));
+  // Karim 09-11, «D1 DB is overloaded»: how many rows each statement reads in this copy of the server (D1's own count),
+  // so the heaviest are known from /api/health/errors. Only the statement's text is kept, never its values.
+  const stats = new Map();
+  const note = (sql, meta) => {
+    const k = String(sql).replace(/\s+/g, ' ').trim().slice(0, 140);
+    const x = stats.get(k) || { sql: k, n: 0, rows: 0, ms: 0 };
+    x.n++; x.rows += Number(meta?.rows_read) || 0; x.ms += Number(meta?.duration) || 0;
+    if (!stats.has(k) && stats.size < 400) stats.set(k, x);
+  };
   return {
     kind: 'd1',
     prepare: sql => ({
-      all: async (...p) => (await st(sql, p).all()).results,
-      get: async (...p) => (await st(sql, p).first()) ?? undefined,
-      run: async (...p) => { const r = await st(sql, p).run(); return { changes: r.meta?.changes ?? 0, lastInsertRowid: Number(r.meta?.last_row_id ?? 0) }; },
+      all: async (...p) => { const r = await st(sql, p).all(); note(sql, r.meta); return r.results; },
+      get: async (...p) => { note(sql, null); return (await st(sql, p).first()) ?? undefined; },   // first() gives no row count
+      run: async (...p) => { const r = await st(sql, p).run(); note(sql, r.meta); return { changes: r.meta?.changes ?? 0, lastInsertRowid: Number(r.meta?.last_row_id ?? 0) }; },
       bind: (...p) => ({ sql, params: norm(p) }),
     }),
-    batch: async list => list.length ? (await d1.batch(list.map(b => st(b.sql, b.params)))).map(r => ({ rows: r.results, changes: r.meta?.changes ?? 0, lastInsertRowid: Number(r.meta?.last_row_id ?? 0) })) : [],
+    batch: async list => {
+      if (!list.length) return [];
+      const out = await d1.batch(list.map(b => st(b.sql, b.params)));
+      out.forEach((r, i) => note(list[i].sql, r.meta));
+      return out.map(r => ({ rows: r.results, changes: r.meta?.changes ?? 0, lastInsertRowid: Number(r.meta?.last_row_id ?? 0) }));
+    },
+    heaviest: (n = 15) => [...stats.values()].sort((a, b) => b.rows - a.rows).slice(0, n).map(x => ({ ...x, ms: Math.round(x.ms) })),
   };
 }
 
