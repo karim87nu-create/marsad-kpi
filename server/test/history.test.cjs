@@ -40,6 +40,11 @@ test('collector: token lifecycle and day report import', async () => {
     // Refresh rotates, revoke ends it.
     const r = (await t.call('POST', '/api/history', { body: { action: 'refresh', refreshToken: tok.refreshToken } })).body;
     assert.ok(r.token && r.refreshToken);
+    // Karim 09-11: an answer lost on the way does not burn the link — the same refresh works again for a few minutes.
+    const again = await t.call('POST', '/api/history', { body: { action: 'refresh', refreshToken: tok.refreshToken } });
+    assert.equal(again.status, 200); assert.ok(again.body.token && again.body.token !== r.token);
+    t.advance(11 * 60000);
+    assert.equal((await t.call('POST', '/api/history', { body: { action: 'refresh', refreshToken: tok.refreshToken } })).status, 401, 'not after 10 minutes');
     assert.equal((await post({ action: 'live', rows: [], capture: {} })).status, 401);
     await t.call('POST', '/api/history', { body: { action: 'revoke', refreshToken: r.refreshToken } });
     assert.equal((await t.call('POST', '/api/history', { body: { action: 'refresh', refreshToken: r.refreshToken } })).status, 401);

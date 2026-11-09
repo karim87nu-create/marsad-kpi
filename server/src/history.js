@@ -118,10 +118,17 @@ function setup(app) {
     }
     if (b.action === 'refresh') {
       const row = await db.prepare('SELECT * FROM collector_tokens WHERE refresh_hash = ?').get(sha256(String(b.refreshToken || '')));
-      if (!row || row.revoked_at || row.refresh_expires_at <= ctx.now) fail(401, 'collector_refresh_invalid');
-      const u = await db.prepare('UPDATE collector_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL').run(ctx.now, row.id);
-      if (!u.changes) fail(401, 'collector_refresh_invalid');
-      return issueCollector(ctx.now);
+      // Karim 09-11 («انتظار العملاء مش قاري»): a refresh whose answer was lost (a server error, a dropped connection)
+      // used to burn the link for good, and the live queue stopped until someone re-linked the connector. The same
+      // refresh is accepted again for 10 minutes, and the old one is closed and the new one opened together.
+      if (!row || row.refresh_expires_at <= ctx.now || (row.revoked_at && ctx.now - row.revoked_at > 10 * 60000)) fail(401, 'collector_refresh_invalid');
+      const token = (ctx.now + TOKEN_MS) + '.' + randomToken(24), refresh = (ctx.now + REFRESH_MS) + '.' + randomToken(24);
+      await db.batch([
+        db.prepare('UPDATE collector_tokens SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?').bind(ctx.now, row.id),
+        db.prepare('INSERT INTO collector_tokens (token_hash, refresh_hash, created_at, token_expires_at, refresh_expires_at) VALUES (?,?,?,?,?)')
+          .bind(sha256(token), sha256(refresh), ctx.now, ctx.now + TOKEN_MS, ctx.now + REFRESH_MS),
+      ]);
+      return { token, refreshToken: refresh };
     }
     if (b.action === 'upgrade') {
       const row = await requireCollector(ctx);
@@ -129,7 +136,8 @@ function setup(app) {
       return issueCollector(ctx.now);
     }
     if (b.action === 'revoke') {
-      await db.prepare('UPDATE collector_tokens SET revoked_at = ? WHERE refresh_hash = ? AND revoked_at IS NULL').run(ctx.now, sha256(String(b.refreshToken || '')));
+      // An explicit unlink is final (the refresh is also expired, so the 10-minute grace above never applies).
+      await db.prepare('UPDATE collector_tokens SET revoked_at = COALESCE(revoked_at, ?), refresh_expires_at = ? WHERE refresh_hash = ?').run(ctx.now, ctx.now, sha256(String(b.refreshToken || '')));
       return { ok: true };
     }
     await requireCollector(ctx);
