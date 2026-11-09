@@ -468,28 +468,41 @@ function setup(app) {
       }
       const verifiedCardNote = parseApexCustomerNote(noteRecord.note);
       const clientCard = b.apexNote && typeof b.apexNote === 'object' ? b.apexNote : {};
-      const isAcknowledged = clientCard.approved === true &&
-        String(clientCard.note || '') === verifiedCardNote.text &&
-        String(clientCard.custNo || '') === String(noteRecord.cust_no || '');
-      if (verifiedCardNote.unrecognized) fail(409, 'في بطاقة العميل تعليمات مالية غير واضحة — راجعها يدويًا، ولا تحذفها');
+      // Karim 09-11: a card-note discount never stops the transfer, and never passes unhandled. Staff answer it:
+      // cash → the discount is taken on Apex; paid (the customer already paid Talabat) → a gift item worth about the
+      // discount, or «تواصلت مع العميل»; unclear or more than one discount → «تواصلت مع العميل».
+      const resolution = clientCard.resolution === 'gift' || clientCard.resolution === 'contacted' ? clientCard.resolution : null;
+      const sameCard = String(clientCard.note || '') === verifiedCardNote.text && String(clientCard.custNo || '') === String(noteRecord.cust_no || '');
+      const isAcknowledged = sameCard && (clientCard.approved === true || resolution === 'contacted');
+      const money = verifiedCardNote.directives.filter(x => x.kind === 'percent' || x.kind === 'amount');
+      const unclear = verifiedCardNote.unrecognized || money.length > 1;
+      if (unclear && !(sameCard && resolution === 'contacted')) fail(409, 'تعليمات بطاقة العميل مش واضحة — اتواصل مع العميل واختار «تواصلت مع العميل»');
       if (verifiedCardNote.requiresReview && !isAcknowledged) fail(409, 'لازم تأكيد خصم وأصناف بطاقة العميل قبل تنفيذ الأوردر');
-      if (verifiedCardNote.directives.filter(x => x.kind === 'percent' || x.kind === 'amount').length > 1)
-        fail(409, 'بطاقة العميل فيها أكتر من خصم؛ راجعها يدويًا حتى لا يتم الخصم مرتين');
-      const notePercent = verifiedCardNote.directives.find(x => x.kind === 'percent')?.value || 0;
-      const noteAmount = verifiedCardNote.directives.find(x => x.kind === 'amount')?.value || 0;
-      if ((notePercent || noteAmount) && payment === 'paid')
-        fail(409, 'الطلب مدفوع مسبقًا؛ خصم بطاقة العميل يحتاج تأكيد فرق التحصيل أو استرداد قبل تسجيله');
+      const itemsBase = clean.reduce((sum, x) => sum + (Number(APEX_PRICES[x.itemNo]) || 0) * x.qty, 0);
+      const discountWorth = money.length === 1 ? Math.round((money[0].kind === 'percent' ? itemsBase * money[0].value / 100 : money[0].value) * 100) / 100 : 0;
+      const paidDiscount = payment === 'paid' && money.length > 0;
+      if (paidDiscount && !unclear && !resolution) fail(409, 'الأوردر مدفوع: اختار صنف هدية بدل الخصم، أو «تواصلت مع العميل»');
+      // The discount is taken on Apex only for a cash order with one clear discount.
+      const takeDiscount = !unclear && !paidDiscount && resolution !== 'contacted';
+      const notePercent = takeDiscount ? money.find(x => x.kind === 'percent')?.value || 0 : 0;
+      const noteAmount = takeDiscount ? money.find(x => x.kind === 'amount')?.value || 0 : 0;
       const benefitDirectives = verifiedCardNote.directives.filter(x => x.kind === 'item');
       const benefitItems = Array.isArray(clientCard.items) ? clientCard.items : [];
-      if (benefitDirectives.length !== benefitItems.length) fail(409, 'اختار كل الأصناف المستحقة وكمياتها');
-      const noteItems = benefitItems.map(x => ({ itemNo: String(x?.itemNo || '').trim(), qty: Number(x?.qty), note: 'مستحق من ملاحظة العميل', free: true }));
+      if (resolution !== 'contacted' && benefitDirectives.length !== benefitItems.length) fail(409, 'اختار كل الأصناف المستحقة وكمياتها');
+      const noteItems = (resolution === 'contacted' ? [] : benefitItems).map(x => ({ itemNo: String(x?.itemNo || '').trim(), qty: Number(x?.qty), note: 'مستحق من ملاحظة العميل', free: true }));
+      if (paidDiscount && resolution === 'gift') {
+        const g = String(clientCard.gift?.itemNo || '').trim(), price = Number(APEX_PRICES[g]);
+        if (!APEX_NAMES[g] || !(price > 0)) fail(409, 'اختار صنف الهدية من القائمة');
+        if (price > discountWorth * 1.25 + 5) fail(409, 'سعر صنف الهدية (' + price + ' ج) أكبر من قيمة الخصم (' + discountWorth + ' ج)');
+        noteItems.push({ itemNo: g, qty: 1, note: 'هدية بدل خصم بطاقة العميل', free: true });
+      }
       if (noteItems.some(x => !APEX_NAMES[x.itemNo] || !Number.isInteger(x.qty) || x.qty <= 0 || x.qty > 50))
         fail(409, 'كود الصنف المستحق أو كميته غير صحيح');
       if (clean.length + noteItems.length > 40) fail(409, 'إجمالي أصناف الأوردر أكبر من الحد');
       // Exact note snapshot + customer ID will be checked AGAIN inside the Apex transaction before clearing.
       const noteBenefit = verifiedCardNote.text ? {
         custNo: String(noteRecord.cust_no || ''), original: String(noteRecord.note || ''),
-        oneTime: verifiedCardNote.oneTime && isAcknowledged, percent: notePercent,
+        oneTime: verifiedCardNote.oneTime && isAcknowledged && resolution !== 'contacted', percent: notePercent, resolution, worth: discountWorth,
         amount: noteAmount, items: noteItems
       } : null;
       const safeRemarks = [String(b.note || '').trim(), verifiedCardNote.text ? 'ملاحظة بطاقة العميل: ' + verifiedCardNote.text : ''].filter(Boolean).join(' | ');
