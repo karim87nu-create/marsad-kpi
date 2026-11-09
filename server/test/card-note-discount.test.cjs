@@ -67,3 +67,37 @@ test('card note discount: cash takes it on Apex; paid needs a gift item worth ab
     assert.equal(p.percent, 0); assert.equal(p.amount, 0);
   } finally { await t.close(); }
 });
+
+test('card note split over orders: this order gets its share, the card then says what is left for the next one', async () => {
+  const t0 = cairoToUtc(2026, 10, 22, 20, 0, 0), at = m => new Date(t0 + m * 60000).toISOString();
+  const t = await start({ at: t0 + 10 * 60000 });
+  try {
+    const admin = await t.admin();
+    await t.employee(admin, { name: 'سارة', code: 'E1', pin: '1111' });
+    const sara = (await t.call('POST', '/api/transfer/login', { body: { pin: '1111' } })).body.token;
+    const as = (method, path, body) => t.call(method, path, { body, headers: { 'x-transfer-session': sara } });
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const ref = '3977900011', store = 'الدهان، التجمع الخامس - البنفسج';
+    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: [{ id: ref, store, status: 'ACCEPTED', placedAt: at(0), total: 300,
+      detail: { customer: { name: 'عميل', phone: '01000000011' }, items: [], bill: [] } }] } });
+    const okey = (await admin('POST', '/api/orders/token')).body.token;
+    await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': okey }, body: { v: 1, day: '2026-10-22', online: [], locations: [{ no: 218, name: 'التجمع الخامس', branch: 1, service: 20 }] } });
+    assert.equal((await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'live', confirm: 'LIVE' })).status, 200);
+    t.advance(9000); await as('GET', '/api/transfer/queue?day=2026-10-22');
+    const wt = (await admin('POST', '/api/apex-writer', { action: 'token' })).body.token;
+    const w = (path, body) => t.call('POST', path, { body: body || {}, headers: { 'x-apex-writer': wt } });
+    const note = 'رأي العميل: كويس | .خصم 30 %يتقسمو ع اوردرين والكومنت يتمسح.';
+    const pend = (await w('/api/apex-writer/customer-notes/pending')).body.pending;
+    await w('/api/apex-writer/customer-notes/result', { results: pend.map(x => ({ ...x, status: 'found', custNo: '77', note })) });
+    const r = await as('POST', '/api/transfer/job', { source: 'talabat', ref, action: 'auto', payment: 'cash', branchNo: 1, locationNo: 218, items: [{ itemNo: '0108004', qty: 2 }],
+      expectedTotal: 300, code: '11', label: 'x', apexNote: { note: note.trim(), custNo: '77', approved: true } });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const job = (await w('/api/apex-writer/next')).body.job;
+    assert.equal(job.apexCustomerBenefit.percent, 15, 'half of the 30% now');
+    assert.equal(job.apexCustomerBenefit.oneTime, true);
+    assert.equal(job.apexCustomerBenefit.next, 'رأي العميل: كويس | خصم 15% ع الاوردر القادم والكومنت يتمسح.', 'the rest of the note is kept');
+    assert.equal((await w('/api/apex-writer/result', { source: 'talabat', ref, ok: true, db: 'live', orderNo: 1, cardDiscount: 30, cardNoteCleared: true })).status, 200);
+    const card = t.app.db.raw.prepare('SELECT note, status FROM apex_customer_notes WHERE ref = ?').get(ref);
+    assert.equal(card.status, 'found'); assert.match(card.note, /خصم 15% ع الاوردر القادم/);
+  } finally { await t.close(); }
+});

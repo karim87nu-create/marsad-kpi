@@ -271,9 +271,10 @@ BEGIN TRY
   IF NOT EXISTS (SELECT 1 FROM dbo.Orders_M_Daily m JOIN dbo.Orders_Serials s ON s.OrderNo = m.OrderNo AND s.ShiftSerial = m.ShiftSerial
                  JOIN dbo.Orders_Checks c ON c.OrderNo = m.OrderNo AND c.CheckNo = m.CheckNo WHERE m.OrderNo = @OrderNo)
     THROW 51014, 'saved order failed its consistency check', 1;
-  -- Atomic: clear ONLY the explicitly one-time note after saved lines and print copy.
+  -- Atomic: clear ONLY the explicitly one-time note after saved lines and print copy. A discount split over several
+  -- orders (Karim 09-11) is not cleared: the note is replaced by the one for the next order, until the last.
   IF @ConsumeCardNote = 1 BEGIN
-    UPDATE dbo.Customers SET Note = '.' WHERE CustNo = @CardCustNo
+    UPDATE dbo.Customers SET Note = CASE WHEN LEN(@NextCardNote) > 0 THEN @NextCardNote ELSE '.' END WHERE CustNo = @CardCustNo
       AND CONVERT(nvarchar(1000), Note) COLLATE Latin1_General_BIN2 = @ExpectedCardNote COLLATE Latin1_General_BIN2;
     IF @@ROWCOUNT <> 1 THROW 51034, 'customer note not cleared; order rolled back', 1;
     IF HAS_PERMS_BY_NAME('dbo.Customers_Log', 'OBJECT', 'INSERT') = 1
@@ -317,6 +318,7 @@ function Write-Order($c, $job, [string]$mode){
           '@ConsumeCardNote' = $(if ($mode -eq 'live' -and $job.apexCustomerBenefit.oneTime) { 1 } else { 0 })
           '@CardCustNo' = $(if ([string]$job.apexCustomerBenefit.custNo -match '^\d{1,18}$') { [decimal]$job.apexCustomerBenefit.custNo } else { [decimal]0 })
           '@ExpectedCardNote' = [string]$job.apexCustomerBenefit.original
+          '@NextCardNote' = [string]$job.apexCustomerBenefit.next
           '@TimeText' = (Get-Date).ToString('hh:mm:ss tt', [Globalization.CultureInfo]::GetCultureInfo('ar-EG')) }
   foreach($k in $p.Keys){ [void]$cmd.Parameters.AddWithValue($k, $p[$k]) }
   # Amounts as money (Karim 01-11, «Arithmetic overflow»): a parameter takes its size from its value, so a restaurant
@@ -328,6 +330,8 @@ function Write-Order($c, $job, [string]$mode){
   $cmd.Parameters['@CardCustNo'].Precision = 18; $cmd.Parameters['@CardCustNo'].Scale = 0
   $cmd.Parameters['@ExpectedCardNote'].SqlDbType = [System.Data.SqlDbType]::NVarChar
   $cmd.Parameters['@ExpectedCardNote'].Size = 1000
+  $cmd.Parameters['@NextCardNote'].SqlDbType = [System.Data.SqlDbType]::NVarChar
+  $cmd.Parameters['@NextCardNote'].Size = 1000
   $cmd.Parameters['@Phone'].SqlDbType = [System.Data.SqlDbType]::VarChar   # digits only; varchar so the customer search can use Apex's index
   $t = New-Object System.Data.DataTable; $t.Load($cmd.ExecuteReader()); return $t.Rows[0]
 }

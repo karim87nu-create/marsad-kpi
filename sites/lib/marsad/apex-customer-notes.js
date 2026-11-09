@@ -11,6 +11,10 @@ export function parseApexCustomerNote(raw) {
   // «يتقسمو ع اوردرين» (split over two orders) is not something to guess.
   const nextOrder = /قادم|جاي\b|جاى|يتمسح|تتمسح|(?:^|[\s.])(?:ع|على|علي|عى)\s*(?:ا*ل)?[اأ]?(?:وردر|ورر|ورد)|عال[اأ]?وردر/i.test(text);
   const split = /(?:يتقسم|تتقسم|مقسم|مقسوم)|(?:[اأ]وردرين|طلبين|اوردارين)|(?:على|ع)\s*(?:2|٢|اتنين)\s*(?:[اأ]وردر|طلب)/i.test(text);
+  // Over how many orders (Karim 09-11: the first gets its share, the card then says what is left for the next).
+  const WORDS = { اتنين: 2, اثنين: 2, تلات: 3, تلاته: 3, تلاتة: 3, ثلاث: 3, ثلاثة: 3, اربع: 4, اربعة: 4, أربع: 4, خمس: 5 };
+  const orders = !split ? 1 : /[اأ]وردرين|طلبين|اوردارين/.test(text) ? 2
+    : (m => m ? Number(m[1]) || WORDS[m[1]] || 0 : 0)(/(\d+|اتنين|اثنين|تلاته?|تلاتة|ثلاثة?|اربعة?|أربع|خمس)\s*(?:[اأ]وردرات|[اأ]وردر|طلبات|طلب)/.exec(text));
   const oneTime = nextOrder || /(?:مرة\s*واحدة|مره\s*واحده|للطلب\s*(?:الواحد|القادم|الجاي|الحالي|ده|دا)|للاوردر\s*(?:الحالي|ده|دا)|للأوردر\s*(?:الحالي|ده|دا)|(?:ال)?طلب\s*واحد|المره\s*دي\s*فقط|المرة\s*دي\s*فقط|اوردر\s*(?:واحد|واحده|القادم)|order\s*only|next\s*order|one[ -]?time)/i.test(text);
   const permanent = /(?:دائم|دايم|كل\s*(?:مرة|مره|طلب|اوردر)|permanent|every\s*order|always)/i.test(text);
   const sections = text.split(/[\n؛;|]+/).map(s => s.trim()).filter(Boolean);
@@ -33,6 +37,16 @@ export function parseApexCustomerNote(raw) {
       directives.push({ kind: 'item', text: section, status: 'review', reason: 'اختار كود الصنف والكمية من APEX قبل إضافته' });
     } else other.push(section);
   }
+  let next = null;
+  const share = directives.filter(d => d.kind === 'percent' || d.kind === 'amount');
+  if (split && orders >= 2 && orders <= 10 && share.length === 1) {
+    const d = share[0], total = d.value, each = Math.round(total / orders * 100) / 100, left = orders - 1;
+    d.split = { total, orders }; d.value = each;
+    const unit = d.kind === 'percent' ? '%' : ' جنيه';
+    const sentence = left === 1 ? 'خصم ' + each + unit + ' ع الاوردر القادم والكومنت يتمسح.'
+      : 'خصم ' + Math.round((total - each) * 100) / 100 + unit + ' يتقسمو ع ' + (left === 2 ? 'اوردرين' : left + ' اوردرات') + ' والكومنت يتمسح.';
+    next = { sentence, section: d.text };
+  }
   const financeUnrecognized = /(?:خصم|discount|هدية|هديه|مجاني|مجانا|يستحق|صنف|اصناف|أصناف|كوبون|(?:له|ليها|ليه)\s+\d+|(?:إضافة|اضافه)\s+(?:طبق|صنف|وجبة|وجبه))/i.test(other.join(' '));
-  return { text, directives, other, oneTime: oneTime && !permanent && !split && other.length === 0, permanent, requiresReview: directives.length > 0 || oneTime || financeUnrecognized, unrecognized: financeUnrecognized || split || (oneTime && permanent) };
+  return { text, directives, other, oneTime: next ? !permanent : oneTime && !permanent && !split && other.length === 0, permanent, requiresReview: directives.length > 0 || oneTime || financeUnrecognized, unrecognized: financeUnrecognized || (split && !next) || (oneTime && permanent), next };
 }

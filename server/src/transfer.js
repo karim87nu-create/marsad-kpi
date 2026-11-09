@@ -503,6 +503,12 @@ function setup(app) {
       const noteBenefit = verifiedCardNote.text ? {
         custNo: String(noteRecord.cust_no || ''), original: String(noteRecord.note || ''),
         oneTime: verifiedCardNote.oneTime && isAcknowledged && resolution !== 'contacted', percent: notePercent, resolution, worth: discountWorth,
+        // A discount split over orders (Karim 09-11): after this one, the card says what is left for the next order.
+        next: verifiedCardNote.next && resolution !== 'contacted' ? (() => {
+          const raw = String(noteRecord.note || ''), section = verifiedCardNote.next.section;
+          const full = raw.includes(section) ? raw.replace(section, verifiedCardNote.next.sentence) : verifiedCardNote.next.sentence;
+          return full.slice(0, 1000);
+        })() : null,
         amount: noteAmount, items: noteItems
       } : null;
       const safeRemarks = [String(b.note || '').trim(), verifiedCardNote.text ? 'ملاحظة بطاقة العميل: ' + verifiedCardNote.text : ''].filter(Boolean).join(' | ');
@@ -677,8 +683,10 @@ function setup(app) {
     if (state === 'auto_done' && result.db === 'live' && result.cardNoteCleared) {
       // The APEX transaction already cleared the exact one-off note; remove it from
       // the current transfer card, retaining the frozen job payload for order audit.
-      await db.prepare("UPDATE apex_customer_notes SET note = '', status = 'consumed', checked_at = ? WHERE source = ? AND ref = ?")
-        .run(ctx.now, source, ref);
+      const job = await db.prepare('SELECT payload FROM transfer_jobs WHERE source = ? AND ref = ?').get(source, ref);
+      const next = parseJson(job?.payload, {})?.apexCustomerBenefit?.next || '';
+      await db.prepare("UPDATE apex_customer_notes SET note = ?, status = ?, checked_at = ? WHERE source = ? AND ref = ?")
+        .run(next, next ? 'found' : 'consumed', ctx.now, source, ref);
     }
     await app.audit('apex_writer_result', null, { source, ref, ...result });
     // Karim 01-11 (#53 stayed «ماتسجلش» for 3 hours): a failed automatic transfer is told to the call center at once.
