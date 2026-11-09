@@ -232,6 +232,9 @@ CREATE TABLE IF NOT EXISTS match_profiles (source TEXT NOT NULL, ref TEXT NOT NU
 CREATE TABLE IF NOT EXISTS site_links (site_id INTEGER PRIMARY KEY, day TEXT NOT NULL, apex_no TEXT, set_by TEXT, set_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS talabat_links (talabat_id TEXT PRIMARY KEY, day TEXT NOT NULL, apex_no TEXT, set_by TEXT, set_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS learning_evidence (source TEXT NOT NULL, ref TEXT NOT NULL, facts TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(source, ref));
+-- Karim 09-11 («D1 DB is overloaded»): the learned facts are matched to their evidence by ref; without this index every
+-- learned row read the whole evidence table (16 million rows per reading).
+CREATE INDEX IF NOT EXISTS learning_evidence_ref ON learning_evidence(ref);
 CREATE TABLE IF NOT EXISTS learned (kind TEXT NOT NULL, a TEXT NOT NULL, b TEXT NOT NULL, ref TEXT NOT NULL, value REAL, at INTEGER NOT NULL, PRIMARY KEY (kind, a, b, ref));
 CREATE TABLE IF NOT EXISTS exception_reviews (key TEXT PRIMARY KEY, source TEXT, ref TEXT, day TEXT NOT NULL, verdict TEXT NOT NULL, reason TEXT, note TEXT, signature TEXT, by_name TEXT, at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS exception_reviews_day ON exception_reviews(day);

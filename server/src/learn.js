@@ -7,7 +7,18 @@
 
 function setup(app) {
   const { db } = app;
+  // The same facts are read again and again while orders are matched: kept for a minute per copy of the server,
+  // and dropped the moment anything new is learned here.
+  const cache = new Map();
+  const forget = () => cache.clear();
   async function currentRows(kind) {
+    const k = kind || '*', c = cache.get(k);
+    if (c && app.now() - c.at < 60000) return c.rows.slice();
+    const rows = await readRows(kind);
+    cache.set(k, { at: app.now(), rows });
+    return rows.slice();
+  }
+  async function readRows(kind) {
     const scope = kind?.startsWith('match-v2:') ? kind.split(':').at(-1) : null;
     const legacy = await db.prepare("SELECT * FROM learned WHERE (? IS NULL OR kind = ?) AND NOT EXISTS (SELECT 1 FROM learning_evidence e WHERE e.ref = learned.ref AND learned.kind LIKE 'match-v2:%:' || e.source)").all(kind || null, kind || null);
     const active = await db.prepare('SELECT * FROM learning_evidence WHERE ? IS NULL OR source = ?').all(scope, scope);
@@ -16,6 +27,7 @@ function setup(app) {
   }
   const learn = app.learn = {
     async replace(source, ref, facts) {
+      forget();
       const data = JSON.stringify(facts), now = app.now();
       await db.batch([
         ...facts.map(f => db.prepare('INSERT INTO learned (kind,a,b,ref,value,at) VALUES (?,?,?,?,?,?) ON CONFLICT(kind,a,b,ref) DO NOTHING').bind(f.kind,f.a,f.b,String(ref),f.value ?? null,now)),
@@ -24,6 +36,7 @@ function setup(app) {
     },
     async record(kind, a, b, ref, value = null, now = app.now()) {
       if (!a || !b || !ref) return;
+      forget();
       await db.prepare('INSERT INTO learned (kind, a, b, ref, value, at) VALUES (?,?,?,?,?,?) ON CONFLICT(kind, a, b, ref) DO UPDATE SET value = excluded.value, at = excluded.at')
         .run(kind, String(a).slice(0, 160), String(b).slice(0, 160), String(ref).slice(0, 60), value, now);
     },
@@ -59,6 +72,7 @@ function setup(app) {
   });
   app.route('POST', '/api/learned', async ctx => {
     const who = await app.requireAdmin(ctx, 'admin');
+    forget();
     // Apply an explicit forgotten pair to current evidence as well as the legacy view.
     const before = [];
     for (const row of await db.prepare('SELECT * FROM learning_evidence').all()) {
