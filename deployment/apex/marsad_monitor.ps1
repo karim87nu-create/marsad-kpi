@@ -56,6 +56,44 @@ function Send-CopyStatus($body) {
     Invoke-RestMethod -Method Post -Uri "$ServerUrl/api/archive/status" -Headers @{ 'x-orders-token' = $OrdersKey } -Body ([Text.Encoding]::UTF8.GetBytes(($body | ConvertTo-Json -Compress -Depth 4))) -ContentType 'application/json; charset=utf-8' -TimeoutSec 20 | Out-Null
   } catch { L "copy status: $($_.Exception.Message)" }
 }
+# Disk (Karim 09-11: «مساحة جهاز الكاشير مش مستحملة»). Every copy on this PC is gzip-compressed (JSON shrinks ~10x),
+# the old uncompressed copies are compressed in place (checked before the original goes), and nothing is copied
+# when the drive has less than $MinFreeGb left — the server then hears it and Telegram says so.
+$MinFreeGb = 3
+function FreeGb { try { $d = (Get-Item $here).PSDrive; return [math]::Round($d.Free / 1GB, 1) } catch { return $null } }
+function Write-Gz([string]$path, [string]$text) {
+  $tmp = $path + '.part'
+  $fs = [IO.File]::Create($tmp)
+  try { $gz = New-Object IO.Compression.GZipStream($fs, [IO.Compression.CompressionLevel]::Optimal)
+    try { $b = (New-Object Text.UTF8Encoding($false)).GetBytes($text); $gz.Write($b, 0, $b.Length) } finally { $gz.Dispose() }
+  } finally { $fs.Dispose() }
+  Move-Item $tmp $path -Force
+}
+# One old file per call: compress, read the compressed copy back, and remove the original only if every byte matches in length.
+function Compress-OldCopy {
+  $f = Get-ChildItem (Join-Path $here 'backups') -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.json', '.jsonl' -and $_.Name -ne 'cursor.json' -and $_.LastWriteTime -lt (Get-Date).AddMinutes(-10) } | Sort-Object Length -Descending | Select-Object -First 1
+  if (-not $f) { return $false }
+  $gzPath = $f.FullName + '.gz'; $tmp = $gzPath + '.part'
+  $in = [IO.File]::OpenRead($f.FullName); $out = [IO.File]::Create($tmp)
+  try { $gz = New-Object IO.Compression.GZipStream($out, [IO.Compression.CompressionLevel]::Optimal); try { $in.CopyTo($gz) } finally { $gz.Dispose() } } finally { $in.Dispose(); $out.Dispose() }
+  $chk = [IO.File]::OpenRead($tmp); $n = 0
+  try { $gz = New-Object IO.Compression.GZipStream($chk, [IO.Compression.CompressionMode]::Decompress); $buf = New-Object byte[] 1048576
+    try { while (($k = $gz.Read($buf, 0, $buf.Length)) -gt 0) { $n += $k } } finally { $gz.Dispose() } } finally { $chk.Dispose() }
+  if ($n -ne $f.Length) { Remove-Item $tmp -Force; L "compress: check failed for $($f.Name) ($n of $($f.Length) bytes) - original kept"; return $false }
+  Move-Item $tmp $gzPath -Force; $was = $f.Length; Remove-Item $f.FullName -Force
+  L ("compress: " + $f.FullName.Substring($here.Length + 1) + " " + [math]::Round($was / 1MB, 1) + " MB -> " + [math]::Round((Get-Item $gzPath).Length / 1MB, 1) + " MB")
+  return $true
+}
+function Write-DiskStatus {
+  try {
+    $lines = @((Get-Date -Format 'yyyy-MM-dd HH:mm') + '  المساحة الفاضية')
+    foreach($d in (Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Used -or $_.Free })){ $lines += ('{0}:  فاضي {1} جيجا من {2} جيجا' -f $d.Name, [math]::Round($d.Free / 1GB, 1), [math]::Round(($d.Used + $d.Free) / 1GB, 1)) }
+    $b = Join-Path $here 'backups'
+    if (Test-Path $b) { $lines += ('النسخ الاحتياطية: ' + [math]::Round(((Get-ChildItem $b -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum) / 1MB, 1) + ' ميجا') }
+    Set-Content (Join-Path $here 'disk.txt') ($lines -join "`r`n") -Encoding UTF8
+  } catch {}
+}
+
 function Connect-Db {
   foreach($s in $servers){
     try {
@@ -1093,6 +1131,8 @@ while ($true) {
     $bdir = Join-Path $here ('backups\' + (Get-Date).ToString('yyyy-MM-dd'))
     if ((Get-Date).Hour -ge 4 -and (Get-Date).Hour -lt 8 -and -not (Test-Path (Join-Path $bdir 'done.txt')) -and ((-not $script:backupTried) -or ((Get-Date) - $script:backupTried).TotalMinutes -ge 30)) {
       $script:backupTried = Get-Date
+      $free = FreeGb
+      if ($free -ne $null -and $free -lt $MinFreeGb) { throw "المساحة الفاضية على الجهاز $free جيجا بس (أقل من $MinFreeGb) — النسخة اتأجلت" }
       [void](New-Item -ItemType Directory -Force -Path $bdir)
       $hdr = @{ 'x-orders-token' = $OrdersKey }
       $grow = @('events', 'history_calls', 'audit', 'telegram_log', 'live_snapshots', 'employee_sessions', 'learning_evidence', 'order_ingest')
@@ -1111,12 +1151,12 @@ while ($true) {
           # Big tables: written every 50,000 rows so memory stays small; the cursor moves only after a write.
           if ($isGrow -and ($all.Count -ge 50000 -or -not $after) -and $all.Count) {
             $idir = Join-Path $here ('backups\inc\' + $tb); [void](New-Item -ItemType Directory -Force -Path $idir)
-            ($all | ConvertTo-Json -Depth 6 -Compress) | Set-Content -Path (Join-Path $idir ((Get-Date).ToString('yyyy-MM-dd') + '-' + $last + '.json')) -Encoding UTF8
+            Write-Gz (Join-Path $idir ((Get-Date).ToString('yyyy-MM-dd') + '-' + $last + '.json.gz')) ($all | ConvertTo-Json -Depth 6 -Compress)
             $cursor[$tb] = $last; ($cursor | ConvertTo-Json -Compress) | Set-Content -Path $curFile -Encoding UTF8
             $all = New-Object System.Collections.ArrayList
           }
         } while ($after)
-        if (-not $isGrow) { ($all | ConvertTo-Json -Depth 6 -Compress) | Set-Content -Path (Join-Path $bdir ($tb + '.json')) -Encoding UTF8 }
+        if (-not $isGrow) { Write-Gz (Join-Path $bdir ($tb + '.json.gz')) (@($all) | ConvertTo-Json -Depth 6 -Compress) }
       }
       Set-Content -Path (Join-Path $bdir 'done.txt') -Value (Get-Date).ToString('s')
       Get-ChildItem (Join-Path $here 'backups') -Directory | Where-Object { $_.Name -match '^\d{4}-\d{2}-\d{2}$' -and $_.CreationTime -lt (Get-Date).AddDays(-14) } | Remove-Item -Recurse -Force
@@ -1126,9 +1166,11 @@ while ($true) {
   } catch { L "backup: $($_.Exception.Message)"; Send-CopyStatus @{ backup = @{ ok = $false; error = [string]$_.Exception.Message } } }
   # Archive (Karim 07-11): rows the server is about to make small or remove (event bodies older than 60 days, Telegram
   # messages older than 45 days, the change log older than 90 days) are written here first, by month, into
-  # backups\archive\<kind>\<yyyy-MM>.jsonl — and only then does the server remove them. At most 20 pages a cycle.
+  # backups\archive\<kind>\<yyyy-MM>\<first id>.jsonl.gz — and only then does the server remove them. At most 20 pages a cycle.
   try {
     if ((Get-Date).Hour -ge 4 -and (Get-Date).Hour -lt 9 -and (Test-Path (Join-Path $bdir 'done.txt')) -and -not $script:archiveDone) {
+      $free = FreeGb
+      if ($free -ne $null -and $free -lt $MinFreeGb) { throw "المساحة الفاضية على الجهاز $free جيجا بس — الأرشيف اتأجل والسيرفر ماتمسحش منه حاجة" }
       $hdr = @{ 'x-orders-token' = $OrdersKey }; $pages = 0
       foreach($kind in @('events', 'telegram_log', 'audit')){
         $after = 0
@@ -1137,8 +1179,9 @@ while ($true) {
           $rows = @($r.rows); if (-not $rows.Count) { break }
           $adir = Join-Path $here ('backups\archive\' + $kind); [void](New-Item -ItemType Directory -Force -Path $adir)
           foreach($g in ($rows | Group-Object { $t = $(if ($_.occurred_at) { $_.occurred_at } else { $_.created_at }); ([DateTimeOffset]::FromUnixTimeMilliseconds([int64]$t)).ToString('yyyy-MM') })){
+            $mdir = Join-Path $adir $g.Name; [void](New-Item -ItemType Directory -Force -Path $mdir)
             $lines = @($g.Group | ForEach-Object { $_ | ConvertTo-Json -Depth 6 -Compress })
-            [System.IO.File]::AppendAllLines((Join-Path $adir ($g.Name + '.jsonl')), [string[]]$lines, (New-Object System.Text.UTF8Encoding($false)))
+            Write-Gz (Join-Path $mdir ('' + [int64]@($g.Group)[0].id + '.jsonl.gz')) ($lines -join "`n")
           }
           $ids = @($rows | ForEach-Object { [int64]$_.id })
           $d = Invoke-RestMethod -Method Post -Uri "$ServerUrl/api/archive/done" -Headers $hdr -Body ((@{ kind = $kind; ids = $ids }) | ConvertTo-Json -Compress) -ContentType 'application/json' -TimeoutSec 60
@@ -1151,5 +1194,10 @@ while ($true) {
     }
     if ((Get-Date).Hour -lt 4) { $script:archiveDone = $false }
   } catch { L "archive: $($_.Exception.Message)"; Send-CopyStatus @{ archive = @{ pages = 0; upToDate = $false; error = [string]$_.Exception.Message } } }
+  # Closed hours (2-9 AM): compress the old uncompressed copies, a file at a time; the disk report every hour.
+  try { if ((Get-Date).Hour -ge 2 -and (Get-Date).Hour -lt 9 -and -not $script:compressDone) { if (-not (Compress-OldCopy)) { $script:compressDone = $true } } } catch { L "compress: $($_.Exception.Message)" }
+  if ((Get-Date).Hour -ge 9) { $script:compressDone = $false }
+  if (-not $script:diskAt -or ((Get-Date) - $script:diskAt).TotalMinutes -ge 60) { $script:diskAt = Get-Date; Write-DiskStatus }
+  try { $pt = Join-Path $here 'print_trace.txt'; if ((Test-Path $pt) -and (Get-Item $pt).Length -gt 5MB) { Move-Item $pt ($pt + '.old') -Force } } catch {}
   if ($script:cycleSqlMs -ge 3000) { L "Apex slow (SQL sum=$($script:cycleSqlMs) ms) - next read in 3 minutes"; Start-Sleep -Seconds 180 } else { Start-Sleep -Seconds $PollSeconds }
 }
