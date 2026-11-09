@@ -94,6 +94,26 @@ function Write-DiskStatus {
   } catch {}
 }
 
+# When the server answers an error: what it said (its own JSON, or the hosting's page — e.g. «exceeded resource limits»)
+# goes in the log, and the server's own last errors (/api/health/errors of the copy this PC reaches) into
+# health_errors.txt, at most every 5 minutes. No keys or data are in either.
+function Note-ServerError($err, [string]$what) {
+  try {
+    $body = ''
+    $resp = $err.Exception.Response
+    if ($resp) { $sr = New-Object IO.StreamReader($resp.GetResponseStream()); $body = $sr.ReadToEnd(); $sr.Dispose() }
+    $body = ($body -replace '<[^>]+>', ' ' -replace '\s+', ' ').Trim()
+    if ($body.Length -gt 300) { $body = $body.Substring(0, 300) }
+    L "$what server said: $body"
+  } catch {}
+  if ($script:healthAt -and ((Get-Date) - $script:healthAt).TotalMinutes -lt 5) { return }
+  $script:healthAt = Get-Date
+  try {
+    $h = Invoke-WebRequest -UseBasicParsing -Uri "$ServerUrl/api/health/errors" -TimeoutSec 15
+    Set-Content (Join-Path $here 'health_errors.txt') ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + "`r`n" + $h.Content) -Encoding UTF8
+  } catch {}
+}
+
 function Connect-Db {
   foreach($s in $servers){
     try {
@@ -525,6 +545,7 @@ function Probe-Payload($payload){
       if ($tracePush) { L "push response received: $($requestTimer.ElapsedMilliseconds) ms" }
     } catch {
       if ($tracePush -and $requestTimer) { L "push request failed after $($requestTimer.ElapsedMilliseconds) ms" }
+      Note-ServerError $_ 'push'
       # Server error: try once more at once with a lighter day (online orders without their item lines), and say so in the log.
       if ("$($_.Exception.Message)" -notmatch '\(500\)' -or -not $payload.online) { throw }
       $light = [ordered]@{}; foreach($k in $payload.Keys){ $light[$k] = $payload[$k] }
