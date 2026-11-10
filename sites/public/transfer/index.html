@@ -382,7 +382,7 @@ function card(o) {
     const all = areaList();
     // Karim 10-11: the Apex area chosen before for the same Talabat area comes first.
     if (!p.loc && !p.locTried && o.areaGuess && all.some(l => String(l.no) === String(o.areaGuess.no))) {
-      p.locTried = true; pickArea(p, String(o.areaGuess.no)); p.locGuess = 'learned';
+      p.locTried = true; pickArea(p, String(o.areaGuess.no)); p.locGuess = o.areaGuess.how === 'pickup' ? 'pickup' : 'learned';
     }
     if (!p.loc && !p.locTried && (cu.address || cu.area || cu.talabatArea)) {
       p.locTried = true;
@@ -395,7 +395,7 @@ function card(o) {
     branchSel = '<select data-pick="branch" aria-label="الفرع على Apex"><option value="">اختار الفرع…</option>' + (data.branches || []).map(b => '<option value="' + b.no + '"' + (String(p.branch) === String(b.no) ? ' selected' : '') + '>' + esc(b.name) + '</option>').join('') + '</select>';
     const areas = all.filter(l => !p.branch || !l.branches.length || l.branches.some(b => String(b) === String(p.branch)));
     areaSel = '<select data-pick="loc" aria-label="المنطقة على Apex"><option value="">اختار المنطقة…</option>' + areas.map(l => '<option value="' + l.no + '"' + (String(p.loc) === String(l.no) ? ' selected' : '') + '>' + esc(l.name) + '</option>').join('') + '</select>';
-    areaNote = p.moved ? '<div class="warn">الفرع اتغير لـ ' + esc(bname(p.branch)) + ' عشان المنطقة تبعه</div>' : p.locGuess === 'learned' ? '<div class="muted">اتختارت من الأوردرات اللي فاتت لنفس منطقة طلبات' + (cu.talabatArea ? ' («' + esc(cu.talabatArea) + '»)' : '') + ' — اتأكد منها</div>' : p.locGuess ? '<div class="muted">اتختارت من العنوان — اتأكد منها</div>' : '';
+    areaNote = o.fulfillment === 'pickup' ? '<div class="warn">استلام من الفرع — بيتسجل على «استلام فرع» بتاع الفرع اللي تختاره، من غير عنوان ولا دور ولا شقة</div>' : p.moved ? '<div class="warn">الفرع اتغير لـ ' + esc(bname(p.branch)) + ' عشان المنطقة تبعه</div>' : p.locGuess === 'learned' ? '<div class="muted">اتختارت من الأوردرات اللي فاتت لنفس منطقة طلبات' + (cu.talabatArea ? ' («' + esc(cu.talabatArea) + '»)' : '') + ' — اتأكد منها</div>' : p.locGuess ? '<div class="muted">اتختارت من العنوان — اتأكد منها</div>' : '';
   }
   const label = fullLabel(o, pay);
   const actLabel = mode === 'shadow' ? 'جرّب التسجيل (مش هيتسجل)' : mode === 'test' ? 'سجّل على نسخة التجربة' : 'سجّل على Apex';

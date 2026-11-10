@@ -96,13 +96,53 @@ test('website central panel, real orders 11-11: payment from the panel\'s words,
     assert.notEqual(k29.choiceKey, k28.choiceKey, 'a half-kilo choice is never offered for a quarter kilo');
     assert.ok(k29.freeOptions.some(x => /سلطة بلدي/.test(x)), 'free salads go to the note');
     for (const o of q) for (const i of o.items) for (const a of i.apex) if (i.size) assert.ok(new RegExp(i.size === 'نص كيلو' ? 'نص|1/2|0\\.5|500' : 'ربع|1/4|250').test(a.name), i.name + ' ' + i.sizeOption + ' → ' + a.name);
-    console.log(JSON.stringify(q.map(o => [o.ref, o.items.map(i => [i.name, i.sizeOption, i.apex.map(a => a.no + ' ' + a.name), i.apexPick || null])])));
+    // The website → Apex table picks the item; the weight picks the size.
+    const pick = (ref, n = 0) => by(ref).items[n].apexPick || null;
+    assert.equal(pick(30829), '0108002', 'الكفته نص كيلو → 1/2كيلو كفتة');
+    assert.equal(pick(30828, 0), '0108004', 'الكفته ربع كيلو → 1/4كيلو كفتة');
+    assert.equal(pick(30828, 1), '0107002', 'نص فرخة شيش');
+    assert.equal(pick(30831, 0), '0115014', 'عرض ميكس جريل وفر 96 جنيه → عرض ميكس جريل صغير موقعنا');
+    assert.equal(pick(30831, 1), '0103002', 'ورق عنب');
+    assert.equal(pick(30830), '0117068', 'عروض حواوشي الدهان → عرض وجبة حواوشي موقعنا');
+    // A pickup: the branch's «استلام فرع» area is offered.
+    assert.deepEqual([by(30900).fulfillment, by(30900).areaGuess?.no], ['pickup', 268]);
     // The safety checks on the automatic transfer.
     const auto = (ref, extra) => t.call('POST', '/api/transfer/job', { headers: { 'x-transfer-session': sara }, body: { action: 'auto', source: 'site', ref: String(ref), branchNo: 2, locationNo: 1, items: [{ itemNo: '111', qty: 1 }], customer: {}, ...extra } });
     const msg = r => r.body?.error || r.body?.message || JSON.stringify(r.body);
     assert.match(msg(await auto(30830, { payment: 'paid', branchNo: 1 })), /الدفع الأونلاين لسه ما اكتملش/);
-    assert.match(msg(await auto(30900, { payment: 'paid' })), /استلام من الفرع/);
     assert.match(msg(await auto(30831, { payment: 'paid' })), /كاش عند الاستلام/);
     assert.match(msg(await auto(30831, { payment: 'cash', branchNo: 1 })), /متحوّل لفرع مدينة نصر/);
+  } finally { await t.close(); }
+});
+
+test('website pickup (Karim 11-11): written on the branch\'s «استلام فرع» area, no address, floor or flat, no delivery charge', async () => {
+  const t0 = cairoToUtc(2026, 11, 11, 20, 0, 0), s = m => Math.floor((t0 + m * 60000) / 1000);
+  const t = await start({ at: t0 + 10 * 60000 });
+  try {
+    const admin = await t.admin();
+    await t.employee(admin, { name: 'سارة', code: 'E1', pin: '1111' });
+    const sara = (await t.call('POST', '/api/transfer/login', { body: { pin: '1111' } })).body.token;
+    const as = (method, path, body) => t.call(method, path, { body, headers: { 'x-transfer-session': sara } });
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const order = { id: 30950, number: '30950', status: 'app-preparing', stage: 0, fulfillment: 'pickup', createdAt: s(0), branchId: 'nasr-city', branchName: 'مدينة نصر',
+      paymentMethod: 'كاش عند الاستلام', total: 105, customer: { name: 'عميل', phone: '01011112222', address: '5 شارع مكرم عبيد، الدور 3، شقة 9' },
+      financial: { due: 105, dueLabel: 'المطلوب تحصيله', onlinePaid: 0, rows: [{ amount: 105, label: 'الأصناف' }] }, items: [{ name: 'ورق عنب', quantity: 1, total: '105.00 EGP', details: [] }] };
+    await t.call('POST', '/api/site/panel', { headers: { 'x-talabat-token': token }, body: { board: 'central', orders: [order] } });
+    const okey = (await admin('POST', '/api/orders/token')).body.token;
+    await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': okey }, body: { v: 1, day: '2026-11-11', online: [], locations: [{ no: 19, name: 'مكرم عبيد', branch: 2, service: 34.5 }, { no: 268, name: 'استلام مدينة نصر.', branch: 2, service: 0 }] } });
+    const wt = (await admin('POST', '/api/apex-writer', { action: 'token' })).body.token;
+    const w = (path, body) => t.call('POST', path, { body: body || {}, headers: { 'x-apex-writer': wt } });
+    const pend = (await w('/api/apex-writer/customer-notes/pending')).body.pending;
+    assert.equal(pend.length, 1);
+    await w('/api/apex-writer/customer-notes/result', { results: pend.map(x => ({ ...x, status: 'none' })) });
+    t.advance(9000); await as('GET', '/api/transfer/queue?day=2026-11-11');
+    const r = await as('POST', '/api/transfer/job', { source: 'site', ref: '30950', action: 'auto', payment: 'cash', branchNo: 2, locationNo: 19, items: [{ itemNo: '0103002', qty: 1 }],
+      code: '30950', customer: { name: 'عميل', phone: '01011112222', address: '5 شارع مكرم عبيد، الدور 3، شقة 9' } });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const p = JSON.parse(t.app.db.raw.prepare("SELECT payload FROM transfer_jobs WHERE ref = '30950'").get().payload);
+    assert.equal(p.locationNo, 268, 'the branch\'s pickup area, whatever area was sent');
+    assert.equal(p.pickup, true); assert.equal(p.areaService, 0);
+    assert.deepEqual([p.customer.address, p.customer.floor, p.customer.flat], ['', '', '']);
+    assert.match(p.label, /موقع\/كاش #30950$/);
   } finally { await t.close(); }
 });

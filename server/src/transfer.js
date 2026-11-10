@@ -14,6 +14,7 @@ import { parseApexCustomerNote, normArabic, guessApexItem } from './apex-custome
 import { knownNos, itemKey } from './items.js';
 import { APEX_NAMES, APEX_PRICES } from './menu-seed.js';
 import { APEX_SECTIONS } from './apex-sections.js';
+import { siteApexItems } from './site-items.js';
 import { canonicalStore } from './store-names.js';
 const APEX_ITEM_LIST = Object.entries(APEX_NAMES).map(([no, name]) => ({ no, name, price: APEX_PRICES[no] ?? null }));
 import { sha256, randomToken } from './security.js';
@@ -95,6 +96,8 @@ const WEIGHTS = [
 
 // Apex branches (Branches table, read 2026-10-31): number → name, for the employee's branch choice.
 const APEX_BRANCHES = [{ no: 1, name: 'التجمع' }, { no: 2, name: 'مدينة نصر' }, { no: 3, name: 'مدينتى' }];
+// Pickup at the branch («استلام فرع …»): the Apex area of each branch (LocationServices, read 11-11), delivery 0.
+const PICKUP_AREAS = { 1: { no: 353, name: 'استلام فرع التجمع' }, 2: { no: 268, name: 'استلام مدينة نصر' }, 3: { no: 372, name: 'استلام فرع مدينتي' } };
 
 // The Apex branch a Talabat store / website branch name points to (null when unclear: the employee picks).
 function apexBranchOf(name) {
@@ -338,7 +341,24 @@ function setup(app) {
           const all = top ? top.reduce((t, c) => t + c[1], 0) : 0;
           if (top?.length && top[0][1] >= 2 && top[0][1] >= all * 0.7) apexPick = top[0][0];
         }
-        if (withApex && !apex.length) {
+        // Website dishes (11-11): the website's menu → Apex table (site-items.js), the weight and the order's words pick one.
+        let inTable = false;
+        if (isSite) {
+          const nameSize = size || WEIGHTS.find(w => w[0].test(wName(x.name))) || null;
+          const unit = Number(x.price) > 0 && Number(x.qty) > 0 ? Number(x.price) / Number(x.qty) : null;
+          const m = siteApexItems(x.name, { size: nameSize, text: (x.modifiers || []).filter(t => !/سلط|ضمن الوجبة/.test(t)).join(' '), apexName });
+          if (m) {
+            inTable = true;
+            let nos = m.nos;
+            // Still several (a weight dish with no weight shown): the one whose price is the website's (Apex + 14%, 3%).
+            if (m.weighed && nos.length > 1 && unit) { const p = nos.filter(no => Number(APEX_PRICES[no]) > 0 && Math.abs(APEX_PRICES[no] * 1.14 - unit) <= unit * 0.03); if (p.length === 1) nos = p; }
+            // A price far from the website's (over 20%) means the table may be wrong for this dish: nothing is filled in.
+            if (unit && nos.length === 1 && Number(APEX_PRICES[nos[0]]) > 0 && Math.abs(APEX_PRICES[nos[0]] * 1.14 - unit) > unit * 0.2) nos = [];
+            apex = nos.map(no => ({ no, name: apexName.get(no) || null }));
+            apexPick = nos.length === 1 ? nos[0] : null;
+          }
+        }
+        if (withApex && !apex.length && !inTable) {
           const g = guessApexItem([x.nameShown, x.name].find(n => /[\u0600-\u06ff]/.test(n || '')) || '', 2);
           // A guessed item must be the dish's size when a size was chosen (11-11: «الكفته / نص كيلو» never guessed as a quarter).
           if (g[0] && g[0].score >= 0.85 && !(g[1] && g[1].score >= g[0].score - 0.05) && (!size || size[1].test(g[0].name || ''))) { apex = [{ no: g[0].itemNo, name: g[0].name }]; apexPick = g[0].itemNo; }
@@ -408,7 +428,7 @@ function setup(app) {
         list.push({ source: 'site', ref: String(o.id), code: String(p.panel?.number || o.id).replace(/\D/g, '') || String(o.id), at: iso(o.created_at), status: o.status, out: !!o.out_at || !!o.delivered_at || o.status === 'completed', branch: o.branch || null, apexBranch: apexBranchOf(o.branch), scheduled: !!o.scheduled,
           customer: { name: p.customer?.name || null, phone: phoneOut(p.customer?.phoneDisplay || p.customer?.phone || p.customer?.mobileDisplay || p.customer?.mobile), address: p.customer?.address || null },
           target: o.total ?? null, payment: sitePayment(pay), paymentTitle: pay?.title || null, note: pay?.note || null, discounts, fees: pay?.fees || [], shipping: pay?.shipping ?? null, total: o.total ?? null,
-          fulfillment: o.fulfillment || null, items: (p.items || []).map(x => itemOut(x, 'site')), detailRead: !!p.items?.length,
+          fulfillment: o.fulfillment || null, ...(o.fulfillment === 'pickup' && PICKUP_AREAS[apexBranchOf(o.branch)] ? { areaGuess: { ...PICKUP_AREAS[apexBranchOf(o.branch)], how: 'pickup' } } : {}), items: (p.items || []).map(x => itemOut(x, 'site')), detailRead: !!p.items?.length,
           apex: a ? { no: a.no, sn: a.sn ?? null, user: a.user || null, how: a.how || null } : null, matching: sm.states?.get(o.id) || null, job: null });
       }
       // Explicit staff choices are separate from inferred matches and scoped to source,
@@ -553,7 +573,6 @@ function setup(app) {
       // Website orders (11-11): only what the panel says for sure is written by itself.
       if (source === 'site') {
         const sp = parseJson((await db.prepare("SELECT data FROM match_profiles WHERE source = 'site' AND ref = ?").get(ref))?.data, {}), m = sp.payment?.method, so = await db.prepare('SELECT fulfillment, branch FROM site_orders WHERE id = ?').get(Number(ref));
-        if ((sp.panel?.fulfillment || so?.fulfillment) === 'pickup') fail(409, 'أوردر استلام من الفرع — سجّله على Apex بإيدك');
         if (m === 'mixed') fail(409, 'جزء مدفوع أونلاين والباقي كاش — سجّله على Apex بإيدك');
         if (m === 'online-unpaid') fail(409, 'الدفع الأونلاين لسه ما اكتملش على الموقع — استنى لحد ما يتدفع أو سجّله بإيدك');
         if (m === 'cod' && payment !== 'cash') fail(409, 'الموقع بيقول كاش عند الاستلام');
@@ -625,7 +644,11 @@ function setup(app) {
       // lines named «هدية بدل خصم بطاقة العميل» / «مستحق من ملاحظة العميل».
       const safeRemarks = String(b.note || '').trim();
       if (safeRemarks.length > 200) fail(409, 'ملاحظات الأوردر مع بطاقة العميل أطول من مساحة APEX — راجعها قبل التسجيل');
-      const locationNo = Number(b.locationNo);
+      // Karim 11-11: a website pickup goes to the branch's «استلام فرع» area, with no address, floor or flat.
+      let pickup = false;
+      if (source === 'site') { const so = await db.prepare('SELECT fulfillment FROM site_orders WHERE id = ?').get(Number(ref)); pickup = so?.fulfillment === 'pickup'; }
+      if (pickup && !PICKUP_AREAS[Number(b.branchNo)]) fail(400, 'اختار فرع Apex');
+      const locationNo = pickup ? PICKUP_AREAS[Number(b.branchNo)].no : Number(b.locationNo);
       if (!Number.isInteger(locationNo) || locationNo < 1) fail(400, 'اختار منطقة العميل على Apex');
       // The area's own delivery charge on Apex (as the read-only monitor sent it), for an area nobody ordered to today.
       const daySnap = parseJson((await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(row.day))?.data, {});
@@ -637,7 +660,7 @@ function setup(app) {
         fail(400, 'المنطقة دي تبع ' + owners.map(n => names.get(n) || ('فرع ' + n)).join(' / ') + ' — غيّر الفرع');
       }
       const area = areas.find(l => l.branch === branchNo) || areas.find(l => l.branch == null) || areas[0];
-      const areaService = Number.isFinite(Number(area?.service)) && area?.service !== null ? Number(area.service) : null;
+      const areaService = pickup ? 0 : Number.isFinite(Number(area?.service)) && area?.service !== null ? Number(area.service) : null;
       // The source's platform discount is a separate fact from any Apex price adjustment.
       // A stale browser or an empty sign must never erase a known Talabat discount.
       const sourceOrder = (await baseFor(row.day, ctx.now)).list.find(o => o.source === source && String(o.ref) === ref) || null;
@@ -672,10 +695,10 @@ function setup(app) {
       const translatedAddress = arabic.get(b.customer?.address) || b.customer?.address;
       const translatedNote = arabic.get(safeRemarks) || safeRemarks;
       if (translatedNote.length > 200) fail(400, 'الملاحظات بعد الترجمة أطول من مساحة Apex — اختصرها');
-      const address = deliveryAddress(translatedAddress, area?.name || '');
+      const address = pickup ? { street: '', floor: '', flat: '' } : deliveryAddress(translatedAddress, area?.name || '');
       const deliveryFields = { address: [address.street, address.floor ? 'الدور: ' + address.floor : '', address.flat ? 'الشقة: ' + address.flat : ''].filter(Boolean).join(' — '), floor: address.floor, flat: address.flat };
       const payload = { v: 1, source, ref, code: String(b.code || '').replace(/[^\d]/g, '').slice(0, 10) || null, db: mode, branchNo, locationNo, payment,
-        label: deliveryLabel(translatedName, source, payment, b.code), customer: { name: String(translatedName || '').slice(0, 80), phone: deliveryPhone(b.customer?.phone), address: String(b.customer?.address || '').slice(0, 360), ...deliveryFields },
+        label: deliveryLabel(translatedName, source, payment, b.code), customer: { name: String(translatedName || '').slice(0, 80), phone: deliveryPhone(b.customer?.phone), address: pickup ? '' : String(b.customer?.address || '').slice(0, 360), ...deliveryFields }, ...(pickup ? { pickup: true } : {}),
         sign, platformDiscount, note: translatedNote, items: [...clean, ...noteItems], apexCustomerBenefit: noteBenefit,
         restaurantDiscount, expectedTotal, targetTotal, areaService, by: me.name, at: ctx.now };
       await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at, payload, result) VALUES (?,?,?,'auto_pending',?,?,?,?,?,?,NULL)

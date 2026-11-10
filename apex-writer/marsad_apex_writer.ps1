@@ -226,7 +226,7 @@ BEGIN TRY
     UPDATE dbo.Customers SET Phone = CASE WHEN ISNULL(RTRIM(Phone), '') = '' THEN @Phone ELSE Phone END, CType = ISNULL(CType, N'أفراد'), Note = ISNULL(Note, '.'),
       Name = CASE WHEN @Label <> '' THEN LEFT(@Label, 50) ELSE Name END,
       Address = CASE WHEN @Address <> '' THEN LEFT(@Address, 100) ELSE Address END,
-      LocationNo = ISNULL(@LocationNo, LocationNo), UBranchNo = @Branch,
+      LocationNo = CASE WHEN @Pickup = 1 THEN LocationNo ELSE ISNULL(@LocationNo, LocationNo) END, UBranchNo = @Branch,   -- Karim 11-11: a pickup («استلام فرع») never replaces the customer's own area
       FloorNo = CASE WHEN @Floor <> '' THEN LEFT(@Floor, 20) ELSE FloorNo END, FlatNo = CASE WHEN @Flat <> '' THEN LEFT(@Flat, 20) ELSE FlatNo END,   -- none in the order: the saved ones stay
       Sign = @NewSign
     WHERE CustNo = @Cust;
@@ -332,7 +332,7 @@ function Write-Order($c, $job, [string]$mode){
   $p = @{ '@Exec' = $(if ($mode -eq 'shadow') { 0 } else { 1 }); '@IsTest' = $(if ($mode -eq 'test') { 1 } else { 0 }); '@PayWay' = $(if ($job.payment -eq 'paid') { 'Ledge' } else { 'Cash' }); '@Floor' = $(if ($null -ne $job.customer.floor) { [string]$job.customer.floor } elseif ([string]$job.customer.address -match '(?:الدور|الطابق)\s*[:：]\s*([^،,—\-]+)') { $Matches[1].Trim() } else { '' }); '@Flat' = $(if ($null -ne $job.customer.flat) { [string]$job.customer.flat } elseif ([string]$job.customer.address -match 'الشقة\s*[:：]\s*([^،,—\-]+)') { $Matches[1].Trim() } else { '' }); '@Pos' = $WriterPos; '@LocationNo' = [int]$job.locationNo; '@ServiceItem' = [string]$TalabatServiceItem; '@RefPos' = $(if ($mode -eq 'test') { $RefPosTest } else { $RefPos }); '@Branch' = [int]$job.branchNo
           '@Marker' = ('M' + $(if ($job.source -eq 'site') { 'S' } else { 'T' }) + ':' + $job.ref); '@Kind' = [string]$job.source; '@Phone' = [string]$job.customer.phone
           '@Label' = [string]$job.label; '@Address' = ((([string]$job.customer.address) -replace '\s*—\s*(?:الدور|الطابق|الشقة)\s*[:：]\s*[^—]*', '') -replace '\s*[،,]\s*(?:القاهرة|Cairo|Egypt|مصر)\s*(?=—|$)', '').Trim(); '@Sign' = [string]$job.sign; '@Remarks' = [string]$job.note
-          '@NoTpl' = $(if ($mode -eq 'test' -and $job.noTemplate) { 1 } else { 0 }); '@AreaService' = $(if ($job.areaService -ne $null -and "$($job.areaService)" -ne '') { [decimal]$job.areaService } else { [decimal]-1 }); '@RestDiscount' = [decimal]$job.restaurantDiscount; '@Target' = $(if ($job.targetTotal) { [decimal]$job.targetTotal } else { [decimal]0 }); '@AddPrinted' = $(if ($AddPrintedOrders) { 1 } else { 0 }); '@PrintedFlag' = $PrintedFlag; '@UserNo' = $WriterUserNo
+          '@NoTpl' = $(if ($mode -eq 'test' -and $job.noTemplate) { 1 } else { 0 }); '@AreaService' = $(if ($job.areaService -ne $null -and "$($job.areaService)" -ne '') { [decimal]$job.areaService } else { [decimal]-1 }); '@RestDiscount' = [decimal]$job.restaurantDiscount; '@Target' = $(if ($job.targetTotal) { [decimal]$job.targetTotal } else { [decimal]0 }); '@AddPrinted' = $(if ($AddPrintedOrders) { 1 } else { 0 }); '@PrintedFlag' = $PrintedFlag; '@UserNo' = $WriterUserNo; '@Pickup' = $(if ($job.pickup) { 1 } else { 0 })
           '@NotePercent' = $(if ($job.apexCustomerBenefit) { [decimal]$job.apexCustomerBenefit.percent } else { [decimal]0 })
           '@NoteAmount' = $(if ($job.apexCustomerBenefit) { [decimal]$job.apexCustomerBenefit.amount } else { [decimal]0 })
           '@CheckCardNote' = $(if ($mode -eq 'live' -and [string]$job.apexCustomerBenefit.original) { 1 } else { 0 })
