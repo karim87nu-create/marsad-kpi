@@ -183,9 +183,137 @@ function CustomerOf($r){
     specialMark = FirstText $r @('o_Sign')
   }
 }
-# An order for a set time: the time written next to the customer's name ("9:30", "9.30 م", "9 م", "الساعة 9", "ميعاد 9").
+# An order for a set time: the time written next to the customer's name. Karim 10-11 («نفس الكلام بالنسبه لمواعيد
+# الاوردرات»): however staff write it — seen in 90 days of Apex orders: «الساعه 3 ونص», «س5», «س 4.30», «4.30س»,
+# «يوصل6ونص», «استلام 3 ونص», «4 الا ربع», «12 الاتلت», «س7مساء», «2 ضهرا», «س4عصرا», «12باليل», «الاعه 4ونص»;
+# and also «الساعه تسعه», «بعد ساعة», «بعد نص ساعه», «بكره 2», «الاربعاء الساعه 7».
 # Customer fields are sent only with online orders for reconciliation; never put in alerts. Returns the appointment as a datetime, or $null.
+$script:SchedNum = @{ 'واحده'=1; 'واحد'=1; 'اتنين'=2; 'اثنين'=2; 'تلاته'=3; 'ثلاثه'=3; 'تلات'=3; 'اربعه'=4; 'اربع'=4; 'خمسه'=5; 'خمس'=5; 'سته'=6; 'ست'=6;
+  'سبعه'=7; 'سبع'=7; 'تمانيه'=8; 'ثمانيه'=8; 'تمنيه'=8; 'تسعه'=9; 'تسع'=9; 'عشره'=10; 'عشر'=10; 'حداشر'=11; 'احداشر'=11; 'اتناشر'=12; 'اثناشر'=12 }
+$script:SchedNumP = (@($script:SchedNum.Keys) | Sort-Object { -$_.Length }) -join '|'
+$script:SchedDay = @{ 'سبت'=6; 'احد'=0; 'حد'=0; 'اتنين'=1; 'اثنين'=1; 'تلاتاء'=2; 'ثلاثاء'=2; 'تلات'=2; 'ثلاث'=2; 'اربعاء'=3; 'اربع'=3; 'خميس'=4; 'جمعه'=5 }
+function SchedText([string]$txt){
+  $t = ' ' + $txt + ' '
+  for($i=0; $i -lt 10; $i++){ $t = $t.Replace([string][char](0x0660 + $i), "$i").Replace([string][char](0x06F0 + $i), "$i") }
+  $t = [regex]::Replace($t, '#\s*\d+', ' ')
+  $t = [regex]::Replace($t, '\d{5,}', ' ')                                   # phone numbers
+  $t = [regex]::Replace($t, '[ً-ْـ]', '')                     # tashkeel, tatweel
+  $t = $t.Replace('أ', 'ا').Replace('إ', 'ا').Replace('آ', 'ا').Replace('ة', 'ه').Replace('ى', 'ي')
+  $L = '(?<![ء-ي])'; $R = '(?![ء-ي])'
+  $key = "(?:(?:ال|ل|الا)?ساعه|$L(?:الا|ل)?اعه|$L(?:ال)?(?:ميعاد|معاد|موعد)|$L(?:ال)?(?:يوصل|توصيل|استلام)|$L" + 'س(?=\s*\d))'
+  # Numbers in words, next to a time word or before «ونص/وربع/الا/مساء…».
+  $t = [regex]::Replace($t, "($key[\s.:/\\-]*)($script:SchedNumP)$R", { param($m) $m.Groups[1].Value + $script:SchedNum[$m.Groups[2].Value] })
+  $t = [regex]::Replace($t, "$L($script:SchedNumP)(?=\s*(?:و\s*(?:نص|ربع|تلت|ثلث)|الا|مساء|مسا|بالليل|باليل|بليل|الصبح|صباحا|ضهرا|ظهرا|عصرا|العصر)$R)", { param($m) [string]$script:SchedNum[$m.Groups[1].Value] })
+  # In a while: «بعد ساعة», «بعد نص ساعه», «بعد 40 دقيقه» → {R minutes}.
+  $t = [regex]::Replace($t, 'بعد\s*(?:نص|نصف)\s*ساعه', ' {R30} ')
+  $t = [regex]::Replace($t, 'بعد\s*ربع\s*ساعه', ' {R15} ')
+  $t = [regex]::Replace($t, 'بعد\s*(?:تلت|ثلث)\s*ساعه', ' {R20} ')
+  $t = [regex]::Replace($t, 'بعد\s*ساعتين\s*و\s*نص', ' {R150} ')
+  $t = [regex]::Replace($t, 'بعد\s*ساعتين', ' {R120} ')
+  $t = [regex]::Replace($t, 'بعد\s*ساعه\s*و\s*نص', ' {R90} ')
+  $t = [regex]::Replace($t, 'بعد\s*ساعه\s*و\s*ربع', ' {R75} ')
+  $t = [regex]::Replace($t, 'بعد\s*ساعه\s*الا\s*ربع', ' {R45} ')
+  $t = [regex]::Replace($t, 'بعد\s*ساعه', ' {R60} ')
+  $t = [regex]::Replace($t, 'بعد\s*(\d{1,2})\s*ساع', { param($m) ' {R' + (60 * [int]$m.Groups[1].Value) + '} ' })
+  $t = [regex]::Replace($t, "بعد\s*(\d{1,3})\s*(?:دقيقه|دقايق|دقيقة|د)$R", { param($m) ' {R' + [int]$m.Groups[1].Value + '} ' })
+  # Another day: «بكره», «الاربعاء» → {D days} / {W weekday}.
+  $t = [regex]::Replace($t, "$L(?:بكره|بكرا|غدا)$R", ' {D1} ')
+  $t = [regex]::Replace($t, "$L(?:يوم\s*)?ال(سبت|احد|حد|اتنين|اثنين|تلاتاء|ثلاثاء|تلات|ثلاث|اربعاء|اربع|خميس|جمعه)$R", { param($m) ' {W' + $script:SchedDay[$m.Groups[1].Value] + '} ' })
+  # Halves and quarters: «3 ونص» → 3:30, «4 الا ربع» → 3:45.
+  $t = [regex]::Replace($t, "(\d{1,2})\s*و\s*(?:نص|نصف)$R", '$1:30')
+  $t = [regex]::Replace($t, "(\d{1,2})\s*و\s*ربع$R", '$1:15')
+  $t = [regex]::Replace($t, "(\d{1,2})\s*و\s*(?:تلت|ثلث)$R", '$1:20')
+  $t = [regex]::Replace($t, "(\d{1,2})\s*الا\s*(ربع|تلت|ثلث)$R", { param($m) $h = [int]$m.Groups[1].Value - 1; if ($h -le 0) { $h += 12 }; "${h}:" + $(if ($m.Groups[2].Value -eq 'ربع') { '45' } else { '40' }) })
+  # Morning / evening words after the number → ص / م (noon: 10–11 ظهرا is morning).
+  # «12 بالليل / 12 مساء» is midnight, «2 بالليل» after midnight.
+  $t = [regex]::Replace($t, "(\d{1,2})((?:\s*[:.]\s*\d{2})?)\s*(?:(بعد\s*ال(?:ضهر|ظهر)|مساءا|مساء|مسا|عصرا|العصر|عصر|المغرب|مغرب|العشا|عشاء)|(ضهرا|ظهرا|الضهر|الظهر|ضهر|ظهر|ظ)|(صباحا|الصباح|صباح|الصبح|صبحا)|(بالليل|باليل|بليل|الليل|ليلا))$R", {
+    param($m) $h = [int]$m.Groups[1].Value
+    $ap = $(if ($m.Groups[6].Success) { $(if ($h -eq 12 -or $h -le 5) { 'ص' } else { 'م' }) } elseif ($m.Groups[3].Success) { $(if ($h -eq 12) { 'ص' } else { 'م' }) } elseif ($m.Groups[5].Success) { 'ص' } elseif ($h -ge 10 -and $h -le 11) { 'ص' } else { 'م' })
+    $m.Groups[1].Value + $m.Groups[2].Value + ' ' + $ap + ' ' })
+  # Time words → «@»; a «س» after the number too («4.30س», «ال3 سا»).
+  $t = [regex]::Replace($t, $key, ' @ ')
+  $t = [regex]::Replace($t, "(?<=\d)\s*سا?$R", ' @ ')
+  return $t
+}
 function ScheduleOf([string]$txt, $entry){
+  if (-not $txt -or $entry -eq $null) { return $null }
+  try { $t = SchedText $txt } catch { return (ScheduleOfOld $txt $entry) }
+  $ar = '(?![ء-ي])'
+  $m = [regex]::Match($t, '(?<![\d])(\d{1,2})\s*[:.]\s*(\d{2})(?!\d)\s*(ص|م|am|pm)?' + $ar, 'IgnoreCase')
+  if (-not $m.Success) { $m = [regex]::Match($t, '@[\s.:/\\\-@]*(\d{1,2})(?:\s*[:.]\s*(\d{2}))?(?!\d)\s*(ص|م|am|pm)?' + $ar, 'IgnoreCase') }
+  if (-not $m.Success) { $m = [regex]::Match($t, '(?<![\d:.])(\d{1,2})(?:\s*[:.]\s*(\d{2}))?\s*@\s*(ص|م|am|pm)?' + $ar, 'IgnoreCase') }
+  if (-not $m.Success) { $m = [regex]::Match($t, '(?<![\d:.])(\d{1,2})()\s*(ص|م|am|pm)' + $ar, 'IgnoreCase') }
+  $days = $null; $dm = [regex]::Match($t, '\{D(\d)\}'); if ($dm.Success) { $days = [int]$dm.Groups[1].Value }
+  $wm = [regex]::Match($t, '\{W(\d)\}'); if ($wm.Success -and $days -eq $null) { $days = ([int]$wm.Groups[1].Value - [int]$entry.DayOfWeek + 7) % 7 }
+  if (-not $m.Success) {
+    # «بعد ساعة» with no clock time: from when it was entered.
+    $rm = [regex]::Match($t, '\{R(\d+)\}')
+    if ($rm.Success -and [int]$rm.Groups[1].Value -le 600) { $script:SchedHit = 'بعد ' + $rm.Groups[1].Value + ' دقيقة'; return $entry.AddMinutes([int]$rm.Groups[1].Value) }
+    return $null
+  }
+  $script:SchedHit = ($m.Value -replace '@', 'الساعة').Trim() + $(if ($days) { " (بعد $days يوم)" } else { '' })   # only digits and time words: never the name
+  $h = [int]$m.Groups[1].Value; $mi = $(if ($m.Groups[2].Value) { [int]$m.Groups[2].Value } else { 0 }); $ap = $m.Groups[3].Value.ToLower()
+  if ($h -gt 23 -or $mi -gt 59) { return $null }
+  $hours = @($h)
+  if ($ap -in @('ص','am')) { if ($h -gt 12) { return $null }; $hours = @($h % 12) }
+  elseif ($ap -in @('م','pm')) { if ($h -gt 12) { return $null }; $h0 = $h % 12; $hours = @($h0 + 12) }
+  elseif ($h -le 12) { $h0 = $h % 12; $hours = @($h0, ($h0 + 12)) }
+  if ($days) {
+    # Another day: the restaurant's hours decide «7» (evening) or «10» (morning).
+    $hh = $hours[0]; if ($hours.Count -gt 1) { $hh = $(if ($h -ge 9 -and $h -le 11) { $h } elseif ($h -eq 12) { 12 } else { ($h % 12) + 12 }) }
+    return $entry.Date.AddDays($days).AddHours($hh).AddMinutes($mi)
+  }
+  $best = $null
+  foreach($d in @(0, 1)){ foreach($hh in $hours){
+    $c = $entry.Date.AddDays($d).AddHours($hh).AddMinutes($mi)
+    if ($c -ge $entry.AddMinutes(-10) -and ($best -eq $null -or $c -lt $best)) { $best = $c } } }
+  if ($best -eq $null -or ($best - $entry).TotalHours -gt 18) { return $null }
+  return $best
+}
+# Self-check on the cashier PC, once per version of this file: the wordings above → sched_selftest.txt, and the
+# last 30 days of orders read the old way and the new way (times only, never names) → sched_compare.txt.
+function Test-Schedule {
+  try {
+    $stampFile = Join-Path $here 'sched_selftest.txt'
+    if ((Test-Path $stampFile) -and (Get-Item $stampFile).LastWriteTimeUtc -gt $selfStamp) { return }
+    $e = [datetime]'2026-11-10 13:00'   # a Tuesday
+    $cases = @(
+      @('احمد/الساعه 3 ونص', '15:30'), @('منى.س5.', '17:00'), @('ياسر/ س4.30.', '16:30'), @('القاضي.\ 4.30س.', '16:30'),
+      @('طفي// يوصل6ونص.', '18:30'), @('دهم / استلام 3 ونص.', '15:30'), @('سلوى.\س4 الا ربع.', '15:45'), @('محمد\12 الاتلت \\.', '23:40'),
+      @('بدران.س7مساء.', '19:00'), @('مينا\\الساعه 2 ضهرا.', '14:00'), @('صلاح.س4عصرا.', '16:00'), @('عمر / الساعه 12باليل', '00:00+1'),
+      @('احمد.الاعه 4ونص.', '16:30'), @('هدى الساعه تسعه', '21:00'), @('هدى الساعه تسعه ونص بالليل', '21:30'), @('رانيا بعد ساعة', '14:00'),
+      @('رانيا بعد نص ساعه', '13:30'), @('منال بكره الساعه 2', '14:00+1'), @('محروس\\الساعه7 الاربعاء', '19:00+1'), @('ولاء.// الساعه 10:30', '22:30'),
+      @('ندى / الساعه 12 ص.', '00:00+1'), @('منار / الساعه 1 ظهرا', '13:00'), @('فرحات.س10صباح', '-'), @('عمر 2 بالليل', '02:00+1'), @('بسام.12.30مساء.', '00:30+1'), @('ميرفت//الساعه 12 ونص', '00:30+1'),
+      @('صباح//اطلب//كاش#7690', '-'), @('الاء\اطلب\مدفوع#4555', '-'), @('عباس محمد', '-'), @('ست هدى', '-'), @('اللواء/صلاح المغربي/', '-'),
+      @('الساعه ٥', '17:00'), @('عمرو\ فيزاالساعه 3.', '15:00'), @('رانيا \فيزا الساعه.4', '16:00'), @('/فيزا/س 11 ونص', '23:30'), @('ح/اطلبس 5.30.\مد', '17:30')
+    )
+    $out = @("فحص قراءة الميعاد — $((Get-Date).ToString('yyyy-MM-dd HH:mm')) (الأوردر متضرب الثلاثاء 13:00)"); $bad = 0
+    foreach($c in $cases){
+      $script:SchedHit = ''; $v = ScheduleOf $c[0] $e
+      $got = $(if ($v -eq $null) { '-' } else { $v.ToString('HH:mm') + $(if ($v.Date -gt $e.Date) { '+' + ($v.Date - $e.Date).Days } else { '' }) })
+      $ok = $got -eq $c[1]; if (-not $ok) { $bad++ }
+      $out += "$(if ($ok) { 'OK ' } else { 'XX ' }) متوقع $($c[1]) | طلع $got | «$($script:SchedHit)» | $($c[0])"
+    }
+    $out = @($out[0], "غلط: $bad من $($cases.Count)") + $out[1..($out.Count - 1)]
+    # The last 30 days: what the old reading and the new one give, with when the order really left.
+    $cmp = @(); $n = 0; $changed = 0
+    $rows = Q "SELECT OrderDate, TimeIn, OrderTime, WaiterNo, ISNULL(o_CustName,'') AS N1 FROM Orders_M WITH (NOLOCK) WHERE OrderDate >= DATEADD(day, -30, GETDATE()) AND TransType = 'Delivery' AND (o_CustName LIKE N'%[0-9]%' OR o_CustName LIKE N'%ساع%')"
+    foreach($r in $rows.Rows){
+      $day = [datetime]$r.OrderDate; $en = ParseT $r.TimeIn $day; if ($en -eq $null) { continue }
+      $txt = S $r.N1; $n++
+      $script:SchedHit = ''; $a = ScheduleOfOld $txt $en; $ha = $script:SchedHit
+      $script:SchedHit = ''; $b = ScheduleOf $txt $en; $hb = $script:SchedHit
+      if ("$a" -eq "$b") { continue }
+      $changed++
+      $lo = ParseT $r.OrderTime $day
+      $cmp += "اتضرب $($en.ToString('MM-dd HH:mm')) | خرج $(if ($lo) { $lo.ToString('HH:mm') } else { '-' }) | قديم $(if ($a) { $a.ToString('HH:mm') } else { '-' }) «$ha» | جديد $(if ($b) { $b.ToString('MM-dd HH:mm') } else { '-' }) «$hb»"
+    }
+    Set-Content (Join-Path $here 'sched_compare.txt') (@("آخر 30 يوم: $n أوردر فيهم أرقام، $changed اتغيرت قرايتهم") + $cmp) -Encoding UTF8
+    Set-Content $stampFile $out -Encoding UTF8
+  } catch { try { Set-Content (Join-Path $here 'sched_selftest.txt') ("فشل الفحص: " + $_.Exception.Message + " @ " + $_.InvocationInfo.ScriptLineNumber) -Encoding UTF8 } catch {} }
+}
+# The reading before 10-11, kept for the self-check's comparison.
+function ScheduleOfOld([string]$txt, $entry){
   if (-not $txt -or $entry -eq $null) { return $null }
   $t = $txt; for($i=0; $i -lt 10; $i++){ $t = $t.Replace([string][char](0x0660 + $i), "$i").Replace([string][char](0x06F0 + $i), "$i") }
   $t = [regex]::Replace($t, '#\s*\d+', ' ')
@@ -1073,6 +1201,7 @@ function BackfillTags {
 
 # ===== main loop =====
 L 'monitor started (read-only)'
+Test-Schedule
 $cycleNo = 0
 while ($true) {
   # A newer copy of this script was put in the folder: start it and stop this one (updates need nobody at the PC).
