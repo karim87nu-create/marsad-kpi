@@ -34,6 +34,7 @@ function setup(app) {
         db.prepare('INSERT INTO learning_evidence (source,ref,facts,at) VALUES (?,?,?,?) ON CONFLICT(source,ref) DO UPDATE SET facts=excluded.facts,at=excluded.at WHERE learning_evidence.facts != excluded.facts').bind(source,String(ref),data,now),
       ]);
     },
+    forget,
     async record(kind, a, b, ref, value = null, now = app.now()) {
       if (!a || !b || !ref) return;
       forget();

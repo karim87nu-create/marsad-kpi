@@ -10,7 +10,7 @@
 import { businessDay, iso, validDate } from './time.js';
 import { parseJson } from './order-match.js';
 import { deliveryPhone, deliveryLabel, deliveryAddress } from './delivery-fields.js';
-import { parseApexCustomerNote } from './apex-customer-notes.js';
+import { parseApexCustomerNote, normArabic } from './apex-customer-notes.js';
 import { knownNos } from './items.js';
 import { APEX_NAMES, APEX_PRICES } from './menu-seed.js';
 import { APEX_SECTIONS } from './apex-sections.js';
@@ -179,6 +179,16 @@ function setup(app) {
         job: jobOf(o.source, o.source === 'site' ? String(o.ref) : o.ref),
         apexCustomerNote: linked ? { custNo: note.custNo, status: note.status, checkedAt: note.checkedAt, text: note.text, directives: note.directives, other: note.other, oneTime: note.oneTime, permanent: note.permanent, requiresReview: note.requiresReview, unrecognized: note.unrecognized } : { status: 'pending' } };
     });
+    // Karim 10-11: «طلبات بيكون فيها المنطقة ومع ذلك بيطلب تحديد المنطقة». Talabat names areas its own way
+    // («الرحاب 1», «دار مصر الاندلس»); the Apex area the staff chose for the same Talabat area before is picked.
+    const areaPairs = app.learn ? await areaLearned() : new Map();
+    for (let i = 0; i < list.length; i++) {
+      const o = list[i], k = !o.done && o.customer?.talabatArea && normArabic(o.customer.talabatArea).slice(0, 120);
+      const seen = k && areaPairs.get(k);
+      if (!seen?.size) continue;
+      const [no, n] = [...seen].sort((x, y) => y[1] - x[1])[0];
+      list[i] = { ...o, areaGuess: { no: Number(no), seen: n } };
+    }
     // English typed by the customer (address, name, comments) shown and sent in Arabic (Karim 01-11); the original is kept.
     if (app.toArabic) {
       const open = list.filter(o => !o.done), texts = [];
@@ -343,7 +353,7 @@ function setup(app) {
         const billDiscounts = talabatDiscounts(bill).filter(d => !(dishTotal > 0 && d.amount != null && Math.abs(d.amount - dishTotal) < 0.01 && !/(talabat|طلبات)/i.test(d.text)));
         const discounts = [...dishDiscounts, ...billDiscounts];
         list.push({ source: 'talabat', ref: o.id, code: o.code || null, at: iso(o.accepted_at || o.received_at || o.placed_at), status: o.status, out: TALABAT_OUT.has(String(o.status || '').toUpperCase()) || !!o.picked_up_at || !!o.delivered_at, branch: o.store, apexBranch: apexBranchOf(o.store), deliveryType: o.delivery_type || null,
-          customer: { name: /^(?:information|details|customer|العميل)$/i.test(p.name || '') ? null : p.name || null, phone: phoneOut(p.phoneDisplay || p.phone || p.mobileDisplay || p.mobile), address: p.address || null },
+          customer: { name: /^(?:information|details|customer|العميل)$/i.test(p.name || '') ? null : p.name || null, phone: phoneOut(p.phoneDisplay || p.phone || p.mobileDisplay || p.mobile), address: p.address || null, ...(p.area ? { talabatArea: p.area } : {}) },
           // What Apex must total (Karim 31-10): the bill's «مجموع» (what the customer pays) plus Talabat's share of the discounts
           // (not deducted on Apex). The writer discounts any amount Apex comes out above it.
           target: (() => { const t = bill.find(x => /^(?:مجموع|المجموع|الإجمالي|total|order total)$/i.test(String(x.k || '').trim())), v = t ? amountOf(String(t.text).split(' | ').slice(1).join(' ')) : o.total ?? null;
@@ -388,6 +398,21 @@ function setup(app) {
     }
   }
   // ---- claim / entered / release ----
+  // What staff chose before: from the jobs already done, once, then from every new job.
+  let areaFilled = false;
+  async function areaLearned() {
+    let pairs = await app.learn.pairs('transfer:area');
+    if (!pairs.size && !areaFilled) {
+      areaFilled = true;
+      const rows = await db.prepare(`SELECT j.ref, j.payload, p.data FROM transfer_jobs j JOIN match_profiles p ON p.source = 'talabat' AND p.ref = j.ref
+        WHERE j.source = 'talabat' AND j.payload IS NOT NULL ORDER BY j.at DESC LIMIT 3000`).all();
+      const facts = rows.map(r => [parseJson(r.payload, {})?.locationNo, normArabic(parseJson(r.data, {})?.area).slice(0, 120), r.ref]).filter(([loc, area]) => loc && area);
+      for (let i = 0; i < facts.length; i += 100)
+        await db.batch(facts.slice(i, i + 100).map(([loc, area, ref]) => db.prepare("INSERT INTO learned (kind, a, b, ref, value, at) VALUES ('transfer:area', ?, ?, ?, NULL, ?) ON CONFLICT(kind, a, b, ref) DO NOTHING").bind(area, String(loc), String(ref), app.now()))).catch(() => {});
+      if (facts.length) { app.learn.forget?.(); pairs = await app.learn.pairs('transfer:area'); }
+    }
+    return pairs;
+  }
   app.route('POST', '/api/transfer/selection', async ctx => {
     const me = await who(ctx), b = ctx.body;
     const source = ['talabat', 'site'].includes(b.source) ? b.source : null, ref = String(b.ref || '');
@@ -555,6 +580,11 @@ function setup(app) {
       await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at, payload, result) VALUES (?,?,?,'auto_pending',?,?,?,?,?,?,NULL)
         ON CONFLICT(source, ref) DO UPDATE SET state = 'auto_pending', employee_id = excluded.employee_id, employee_name = excluded.employee_name, payment = excluded.payment, note = excluded.note, at = excluded.at, payload = excluded.payload, result = NULL`)
         .run(source, ref, row.day, me.id, me.name, payment, note, ctx.now, JSON.stringify(payload));
+      // The Apex area chosen for this Talabat area teaches the next order of the same area (Karim 10-11).
+      if (source === 'talabat' && app.learn) {
+        const area = parseJson((await db.prepare("SELECT data FROM match_profiles WHERE source = 'talabat' AND ref = ?").get(ref))?.data, {})?.area;
+        if (area && normArabic(area)) await app.learn.record('transfer:area', normArabic(area).slice(0, 120), String(b.locationNo), ref).catch(() => {});
+      }
     } else fail(400, 'invalid_action');
     await app.audit('transfer_' + b.action, me.staff ? me.id : null, { actor: me.name, source, ref, payment, ...(b.action === 'auto' ? { branch: b.branchNo, location: b.locationNo, items: b.items, customerName: b.customer?.name, address: b.customer?.address, note: b.note } : {}) });
     return { ok: true };

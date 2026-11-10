@@ -20,4 +20,11 @@ test('card notes as staff write them: one order, split over orders, a gift in th
   const gift = p('خصم 15 % ع الاوردر القادم واضافه شوربه لسان عصور فرى.');
   assert.deepEqual(gift.directives.map(d => d.kind), ['percent', 'item']); assert.match(gift.directives[1].text, /شوربه لسان عصور/);
   assert.deepEqual(p('.خصم 20% الاوردر القادم وكادو مع الاوردر.').directives.map(d => d.kind), ['percent', 'item']);
+  // Karim 10-11: «العميل ليه صنف» however it is written — the dish is found on Apex's menu, with its count, once.
+  for (const [n, name, qty] of [['العميل ليه شوربه لسان عصفور فري ع الاوردر القادم', 'شوربة لسان عصفور', 1], ['له 2 ساندوتش كفته هديه', 'ساندوتش كفتة', 2],
+    ['يتضاف وجبه فراخ بانيه ع حساب المطعم', 'وجبة فراخ بانية', 1], ['ضيفو ليه اتنين بيبسي فري', 'بيبسى', 2], ['تعويض ليه كبده اسكندراني', 'كبده اسكندرانى', 1], ['ليه ممبار بلاش', 'ممبار', 1]]) {
+    const d = p(n).directives.find(x => x.kind === 'item');
+    assert.ok(d, n); assert.equal(d.suggest[0].name, name, n); assert.equal(d.qty, qty, n); assert.equal(p(n).oneTime, true, n);
+  }
+  assert.equal(p('كادو مع الاوردر').directives[0].suggest.length, 0, 'no dish named → the employee picks it');
 });
