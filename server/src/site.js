@@ -37,6 +37,57 @@ function setup(app) {
   const put = (k, v) => v == null ? db.prepare('DELETE FROM settings WHERE key = ?').run(k) : db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(k, String(v));
   const doFetch = app.config.siteFetch || ((...a) => fetch(...a));
 
+  // Karim 10-11: the website's central panel (eldahan.com.eg/eldahan-operations-central) read by the extension from the
+  // panel's own refresh — no request of ours ever reaches the website. Each push is what the panel showed: open orders
+  // with customer, items, money, branch, driver and stage. Times the reports need are kept from the first push that saw
+  // them (sent to a branch = the panel's own time; out / delivered = the first push at that stage).
+  const num = v => { const n = Number(String(v ?? '').replace(/[^\d.\-]/g, '')); return Number.isFinite(n) ? n : null; };
+  app.route('POST', '/api/site/panel', async ctx => {
+    await app.extensionAuth(ctx);
+    const list = (Array.isArray(ctx.body?.orders) ? ctx.body.orders : []).slice(0, 300), now = ctx.now, writes = [];
+    for (const o of list) {
+      const id = Number(o?.id); if (!Number.isInteger(id) || id <= 0) continue;
+      const created = Number(o.createdAt) > 1e9 ? Number(o.createdAt) * 1000 : null; if (!created) continue;
+      const stage = Number(o.stage) || 0, status = String(o.status || '').slice(0, 40), label = String(o.statusLabel || '');
+      const cancelled = /cancel|failed|refund/i.test(status) || /ملغ|اتلغ/.test(label);
+      const done = !cancelled && (stage >= 4 || /complete|deliver/i.test(status) || /تم التوصيل|تم التسليم/.test(label));
+      const old = await db.prepare('SELECT * FROM site_orders WHERE id = ?').get(id);
+      const assigned = Number(o.branchAssignedAt) > 1e9 ? Number(o.branchAssignedAt) * 1000 : null;
+      const outAt = old?.out_at || (stage >= 3 || o.driver ? now : null), deliveredAt = old?.delivered_at || (done ? now : null);
+      const f = o.financial || {}, rows = Array.isArray(f.rows) ? f.rows : [];
+      const onlinePaid = num(f.onlinePaid) || 0, due = num(f.due) ?? num(o.total) ?? 0;
+      const method = onlinePaid > 0.01 ? (due > 0.01 ? 'mixed' : 'online') : 'cod';
+      const shipping = rows.filter(r => /توصيل|delivery|shipping/i.test(r?.label || '')).reduce((a, r) => a + (num(r.amount) || 0), 0);
+      const minus = rows.filter(r => (num(r?.amount) || 0) < 0);
+      const pay = { method, title: String(o.paymentMethod || '').slice(0, 120) || null, paid: method === 'online', onlinePaid, due,
+        discount: minus.length ? Math.abs(minus.reduce((a, r) => a + num(r.amount), 0)) : 0, discountLines: minus.map(r => ({ text: String(r.label || '').slice(0, 80), amount: Math.abs(num(r.amount)) })),
+        shipping: shipping || null, total: num(o.total), coupons: [], fees: [], note: String(o.customer?.note || '').slice(0, 500) || null };
+      const items = (Array.isArray(o.items) ? o.items : []).slice(0, 80).map(x => ({ name: String(x?.name || '').slice(0, 160), qty: Number(x?.quantity) || 0, price: num(x?.total) ?? 0,
+        ...(x?.addon ? { parent: String(x.parent || '').slice(0, 160) } : {}),
+        modifiers: (Array.isArray(x?.details) ? x.details : []).slice(0, 20).map(d => (String(d?.label || '').slice(0, 60) + ': ' + String(d?.value || '').replace(/<[^>]*>/g, '').slice(0, 120)).trim()) }));
+      const c = o.customer || {}, customer = customerOf({ name: String(c.name || '').slice(0, 120), phone: String(c.phone || '').slice(0, 30), address: String(c.address || '').slice(0, 300) });
+      const profile = { customer, items, payment: pay, panel: { number: String(o.number || id), stage, status, label, branchId: String(o.branchId || '').slice(0, 40) || null, fulfillment: String(o.fulfillment || '').slice(0, 20) || null } };
+      writes.push(db.prepare("INSERT INTO match_profiles (source, ref, data) VALUES ('site', ?, ?) ON CONFLICT(source, ref) DO UPDATE SET data = excluded.data").bind(String(id), JSON.stringify(profile)));
+      writes.push(db.prepare(`INSERT INTO site_orders (id, day, status, fulfillment, total, created_at, modified_at, notes_at, received_at, transfer_at, branch, out_at, driver, delivered_at, scheduled, transfers)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?) ON CONFLICT(id) DO UPDATE SET status = excluded.status, fulfillment = excluded.fulfillment, total = excluded.total, modified_at = excluded.modified_at,
+        notes_at = excluded.notes_at, received_at = COALESCE(site_orders.received_at, excluded.received_at), transfer_at = COALESCE(site_orders.transfer_at, excluded.transfer_at),
+        branch = COALESCE(excluded.branch, site_orders.branch), out_at = COALESCE(site_orders.out_at, excluded.out_at), driver = COALESCE(excluded.driver, site_orders.driver),
+        delivered_at = COALESCE(site_orders.delivered_at, excluded.delivered_at), transfers = MAX(site_orders.transfers, excluded.transfers)`)
+        .bind(id, businessDay(created), cancelled ? 'cancelled' : done ? 'completed' : status || 'processing', String(o.fulfillment || '') || null, num(o.total), created,
+          (Number(o.lastActionAt) > 1e9 ? Number(o.lastActionAt) * 1000 : now), now, created, assigned, String(o.branchName || '').slice(0, 60) || null, outAt,
+          o.driver ? String(o.driver.name || o.driver).slice(0, 80) : null, deliveredAt, old?.branch && o.branchName && old.branch !== o.branchName ? (old.transfers || 1) + 1 : (assigned ? 1 : 0)));
+    }
+    // The central board lists every open order: one that was out with a driver and is gone from it was delivered.
+    if (ctx.body?.board === 'central' && list.length) {
+      const seen = new Set(list.map(o => Number(o?.id)));
+      for (const r of await db.prepare("SELECT id FROM site_orders WHERE created_at >= ? AND out_at IS NOT NULL AND delivered_at IS NULL AND status NOT IN ('cancelled','failed','wallet-failed')").all(now - 14 * 3600000))
+        if (!seen.has(r.id)) writes.push(db.prepare("UPDATE site_orders SET delivered_at = ?, status = 'completed' WHERE id = ? AND delivered_at IS NULL").bind(now, r.id));
+    }
+    if (writes.length) await db.batch(writes);
+    await put('site_panel_at', String(now));
+    return { ok: true, saved: list.length };
+  });
+
   // The key and secret are stored encrypted with the server secret (like the Telegram bot token).
   let aesKey = null;
   const aes = () => aesKey ??= crypto.subtle.importKey('raw', sha256Bytes('site:' + app.config.secret), 'AES-GCM', false, ['encrypt', 'decrypt']);
@@ -189,7 +240,8 @@ function setup(app) {
   app.route('GET', '/api/site', async ctx => {
     await app.requireAdmin(ctx);
     const c = await creds();
-    return { linked: !!c, url: c?.url || 'https://eldahan.com.eg', keyEnd: c ? c.key.slice(-4) : null, lastSync: iso(Number(await setting('site_sync_at')) || null),
+    const panelAt = Number(await setting('site_panel_at')) || null;
+    return { linked: !!c || (panelAt && ctx.now - panelAt < 6 * 3600000), panelAt: iso(panelAt), url: c?.url || 'https://eldahan.com.eg', keyEnd: c ? c.key.slice(-4) : null, lastSync: iso(Number(await setting('site_sync_at')) || null),
       error: await setting('site_error'), errorAt: iso(Number(await setting('site_error_at')) || null), serverNow: iso(ctx.now) };
   });
   app.route('POST', '/api/site', async ctx => {
@@ -264,7 +316,7 @@ function setup(app) {
     const day = validDate(String(ctx.query.day || '')) ? ctx.query.day : businessDay(ctx.now);
     const rows = await db.prepare('SELECT * FROM site_orders WHERE day = ? ORDER BY id').all(day);
     const m = await apexMatch(day, rows);
-    return { day, apex: { linked: m.hasList, count: m.apexCount, unmatched: m.unmatched || [] }, linked: !!await creds(), lastSync: iso(Number(await setting('site_sync_at')) || null), error: await setting('site_error'), live: day === businessDay(ctx.now),
+    return { day, apex: { linked: m.hasList, count: m.apexCount, unmatched: m.unmatched || [] }, linked: !!await creds() || (Number(await setting('site_panel_at')) || 0) > ctx.now - 6 * 3600000, lastSync: iso(Number(await setting('site_panel_at')) || Number(await setting('site_sync_at')) || null), error: await setting('site_error'), live: day === businessDay(ctx.now),
       orders: rows.map(o => ({ id: o.id, status: o.status, fulfillment: o.fulfillment, excluded: EXCLUDED.has(o.status), scheduled: !!o.scheduled, branch: o.branch, driver: o.driver,
         total: o.total, transfers: o.transfers || 0, apex: m.matches.get(o.id) || null, matching: m.states?.get(o.id) || null, createdAt: iso(o.created_at), receivedAt: iso(o.received_at), transferAt: iso(o.transfer_at), outAt: iso(o.out_at), deliveredAt: iso(o.delivered_at), notesRead: !!o.notes_at })),
       rules: { prep: PREP_MIN, delivery: DELIVERY_MIN, transfer: TRANSFER_MIN }, serverNow: iso(ctx.now) };

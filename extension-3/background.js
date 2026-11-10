@@ -130,6 +130,7 @@ browser.runtime.onMessage.addListener(async (m, sender) => {
     return nativeLive(m.html);
   }
   if (m?.type?.startsWith('TALABAT_')) return talabatMessage(m, sender);
+  if (m?.type === 'SITE_PANEL') return siteMessage(m, sender);
   if (!fromArabicss(sender)) throw Error('invalid_sender');
   const tabId = String(sender.tab.id);
   await startup;
@@ -179,6 +180,16 @@ const screenId = async () => { let v = await store.get('talabatScreenId', null);
 const adminSender = sender => { try { const u = new URL(sender.url); return globalThis.MARSAD.ADMIN_ORIGINS.includes(u.origin) && (u.hostname !== 'karim87nu-create.github.io' || u.pathname.startsWith('/marsad-kpi/')); } catch { return false; } };
 const talabatSender = sender => { try { return !!sender.tab && ['partner-app.talabat.com', 'web.whatsapp.com'].includes(new URL(sender.url).hostname); } catch { return false; } };
 const waSender = sender => { try { return new URL(sender.url).hostname === 'web.whatsapp.com'; } catch { return false; } };
+// The website's central panel / branch boards (site-panel.js): what the panel itself loaded, to the Marsad. Signed with
+// this PC's Talabat link when it has one, else the extension's device key. Nothing goes to the website.
+async function siteMessage(m, sender) {
+  let host = ''; try { host = new URL(sender.url).hostname; } catch {}
+  if (!sender.tab || host !== 'eldahan.com.eg') throw Error('invalid_sender');
+  const t = await store.get(TALABAT, null);
+  const r = await api('/api/site/panel', { method: 'POST', headers: { 'content-type': 'application/json', ...(t?.token ? { 'x-talabat-token': t.token } : { 'x-device-token': globalThis.MARSAD.DEVICE_TOKEN }) },
+    body: JSON.stringify({ board: m.board === 'central' ? 'central' : 'branch', orders: Array.isArray(m.orders) ? m.orders.slice(0, 300) : [], serverTime: m.serverTime || null }), timeout: 30000 });
+  return r.ok ? { ok: true } : { ok: false, status: r.status };
+}
 async function talabatMessage(m, sender) {
   if (m.type === 'TALABAT_LINK' && adminSender(sender)) {
     if (typeof m.token !== 'string' || !/^tal_[a-f0-9]{48}$/.test(m.token)) throw Error('invalid_link');

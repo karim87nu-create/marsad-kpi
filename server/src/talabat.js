@@ -65,6 +65,14 @@ function setup(app) {
   });
 
   // ---- the monitor pushes what it read ----
+  // The extension's own key (a linked Talabat screen) or its device key: also used by the website's central panel (site.js).
+  app.extensionAuth = async ctx => {
+    const hash = await setting('talabat_token_hash'), given = ctx.header('x-talabat-token'), extras = parseJson(await setting('talabat_token_extra'), []);
+    const main = !!hash && !!given && sha256(given) === hash;
+    const device = !given && app.config.deviceTokens.includes(ctx.header('x-device-token') || '');
+    if (!device && (!given || (!main && !extras.includes(sha256(given))))) fail(401, 'مفتاح شاشة طلبات غير صحيح');
+    return { main, device };
+  };
   app.route('POST', '/api/talabat/push', async ctx => {
     const hash = await setting('talabat_token_hash'), given = ctx.header('x-talabat-token'), extras = parseJson(await setting('talabat_token_extra'), []);
     const main = !!hash && !!given && sha256(given) === hash;
