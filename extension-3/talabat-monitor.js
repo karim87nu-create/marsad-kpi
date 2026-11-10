@@ -176,11 +176,30 @@
       const bill = [{ k: 'المجموع الفرعي', text: 'المجموع الفرعي | ' + money2(pay.itemsTotalPrice) }];
       for (const f of o.fees || []) bill.push({ k: String(f.name || ''), text: f.name + ' | ' + money2(f.value) });
       // Item discounts split by who funds them: «ممول من قبلك» (the restaurant, deducted on Apex), «ممول من قبل Talabat».
-      const share = { vendor: 0, platform: 0 };
-      for (const i of o.items || []) for (const d of i.discounts || []) for (const sp of d.sponsorships || []) share[/VENDOR|RESTAURANT|PARTNER/i.test(sp.sponsor || '') ? 'vendor' : 'platform'] += Math.abs(Number(sp.amount) || 0);
+      // Karim 10-11 (#655: 30% = 15% ours + 15% Talabat's, all of it read as Talabat's): a share is Talabat's only when its
+      // sponsor says so; a sponsor not known, or a dish discount with no sponsors, goes as «خصم على الأصناف» (the page asks who).
+      const share = { vendor: 0, platform: 0, unknown: 0 }, amt = x => Math.abs(Number(x?.amount ?? x?.value ?? x?.total) || 0);
+      let itemTotal = 0;
+      for (const i of o.items || []) for (const d of i.discounts || []) {
+        const sps = Array.isArray(d.sponsorships) ? d.sponsorships : [], whole = amt(d);
+        let seen = 0;
+        for (const sp of sps) {
+          const who = String(sp.sponsor || sp.type || sp.name || '');
+          const a = amt(sp); seen += a;
+          share[/VENDOR|RESTAURANT|PARTNER|MERCHANT|CHAIN|SHOP/i.test(who) ? 'vendor' : /PLATFORM|TALABAT|DELIVERY.?HERO|^DH$/i.test(who) ? 'platform' : 'unknown'] += a;
+        }
+        if (whole > seen + 0.05) share.unknown += whole - seen;
+        itemTotal += Math.max(whole, seen);
+      }
       if (share.vendor) bill.push({ k: 'خصم ممول من قبلك', text: 'خصم ممول من قبلك | -' + money2(share.vendor) });
       if (share.platform) bill.push({ k: 'خصم ممول من قبل Talabat', text: 'خصم ممول من قبل Talabat | -' + money2(share.platform) });
-      for (const d of o.discounts || []) if (!/^item discounts$/i.test(String(d.name || '').trim())) bill.push({ k: String(d.name || 'خصم'), text: (d.name || 'خصم') + ' | ' + money2(d.value) });
+      if (share.unknown > 0.05) bill.push({ k: 'خصم على الأصناف', text: 'خصم على الأصناف | -' + money2(share.unknown) });
+      // The order's own «Item discounts» line (by any name) is the same money as the dishes' discounts above.
+      for (const d of o.discounts || []) {
+        const v = amt(d);
+        if (/^item discounts$/i.test(String(d.name || '').trim()) || (itemTotal > 0 && Math.abs(v - itemTotal) < 0.05)) continue;
+        bill.push({ k: String(d.name || 'خصم'), text: (d.name || 'خصم') + ' | -' + money2(v) });
+      }
       bill.push({ k: 'مجموع', text: 'مجموع | ' + money2(pay.total) });
       bill.push({ k: 'التحصيل من العميل', text: 'التحصيل من العميل | ' + money2(pay.collectAtDropoff) });
       if (pay.paymentType) bill.push({ k: 'payment', text: String(pay.paymentType) });
