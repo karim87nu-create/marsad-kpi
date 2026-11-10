@@ -193,15 +193,31 @@ BEGIN TRY
   SELECT @BranchShift = ISNULL(MAX(ShiftSerial), 0) + 1 FROM dbo.Orders_Serials WITH (NOLOCK) WHERE OrderDate = @Date AND ShiftNo = @Shift;
   -- Customer: the newest one with this phone, else a new one (CustNo = MAX + 1, under the table lock).
   IF @CustFound IS NOT NULL AND EXISTS (SELECT 1 FROM dbo.Customers WHERE CustNo = @CustFound) SET @Cust = @CustFound;
+  -- The special mark (Karim 10-11: «خصم١٢٥ج.» from an old order stayed on the card of an order without a discount). A discount
+  -- written there belongs to one order: it is replaced, or cleared when this order has none. What staff wrote for the
+  -- customer (a landmark, «كلم العميل», «الاتصال عند الوصول») stays, after this order's Talabat discount when there is one.
+  DECLARE @SignRest nvarchar(100) = LTRIM(RTRIM(ISNULL((SELECT CONVERT(nvarchar(100), Sign) FROM dbo.Customers WHERE CustNo = @Cust), '')));
+  IF @SignRest LIKE N'خصم طلبات%' AND CHARINDEX(N' | ', @SignRest) > 0 SET @SignRest = LTRIM(SUBSTRING(@SignRest, CHARINDEX(N' | ', @SignRest) + 3, 100));
+  -- Staff's own discount marks («خصم43ج.», «خصم 43ج \.», «، الرحاب 1\\خصم41ج.»): each «خصم…ج» is cut out, the rest kept.
+  DECLARE @SignAt int = PATINDEX(N'%خصم%', @SignRest), @SignEnd int, @SignTurn int = 0;
+  WHILE @SignAt > 0 AND @SignTurn < 3 BEGIN
+    SET @SignEnd = CHARINDEX(N'ج', @SignRest, @SignAt);
+    IF @SignEnd = 0 BEGIN SET @SignRest = N''; BREAK; END;
+    SET @SignRest = LTRIM(RTRIM(STUFF(@SignRest, @SignAt, @SignEnd - @SignAt + 1, N'')));
+    SET @SignAt = PATINDEX(N'%خصم%', @SignRest); SET @SignTurn = @SignTurn + 1;
+  END;
+  IF PATINDEX(N'%[0-9ء-ي]%', @SignRest) = 0 OR @SignRest IN (N'0', N'0.') SET @SignRest = N'';   -- only dots, slashes or «0» left
+  DECLARE @NewSign nvarchar(100) = CASE WHEN @Sign <> '' AND @SignRest <> '' THEN LEFT(@Sign + N' | ' + @SignRest, 50) WHEN @Sign <> '' THEN LEFT(@Sign, 50)
+    WHEN @SignRest <> '' THEN LEFT(@SignRest, 50) ELSE N'.' END;
   IF @Cust IS NULL BEGIN
     SELECT @Cust = ISNULL(MAX(CustNo), 0) + 1 FROM dbo.Customers;
     -- The same fields Apex's own customer screen fills (Karim 01-11: our customers opened empty in Apex — it reads Phone,
     -- the area (LocationNo), CType and UBranchNo, not Mobile/BranchNo); and one Customers_Log row like every save there.
     INSERT INTO dbo.Customers (CustNo, Name, CType, Phone, Address, FlatNo, FloorNo, Sign, CLedge, LocationNo, Note, UBranchNo, StreetNo, ZoneNo, FirstOrder, LastOrder, LastOrderNo, ShiftOrderNo, LastOrderCash)
-    VALUES (@Cust, LEFT(@Label, 50), N'أفراد', @Phone, LEFT(@Address, 100), LEFT(@Flat, 20), LEFT(@Floor, 20), LEFT(@Sign, 50), '0', @LocationNo, '.', @Branch, 0, 0, @Date, @Date, 0, 0, 0);
+    VALUES (@Cust, LEFT(@Label, 50), N'أفراد', @Phone, LEFT(@Address, 100), LEFT(@Flat, 20), LEFT(@Floor, 20), @NewSign, '0', @LocationNo, '.', @Branch, 0, 0, @Date, @Date, 0, 0, 0);
     IF HAS_PERMS_BY_NAME('dbo.Customers_Log', 'OBJECT', 'INSERT') = 1
       INSERT INTO dbo.Customers_Log (CustNo, SNo, Name, CType, Phone, Address, FlatNo, FloorNo, Sign, CLedge, LocationNo, Note, UBranchNo, StreetNo, TransDate, ModifyUser)
-      VALUES (@Cust, 1, LEFT(@Label, 50), N'أفراد', @Phone, LEFT(@Address, 100), LEFT(@Flat, 20), LEFT(@Floor, 20), LEFT(@Sign, 50), '0', @LocationNo, '.', @Branch, 0, @Now, 'MARSAD');
+      VALUES (@Cust, 1, LEFT(@Label, 50), N'أفراد', @Phone, LEFT(@Address, 100), LEFT(@Flat, 20), LEFT(@Floor, 20), @NewSign, '0', @LocationNo, '.', @Branch, 0, @Now, 'MARSAD');
   END
   ELSE BEGIN
     -- A customer found by phone: this order's name, address, area, floor and flat replace the saved ones, as staff do on
@@ -212,7 +228,7 @@ BEGIN TRY
       Address = CASE WHEN @Address <> '' THEN LEFT(@Address, 100) ELSE Address END,
       LocationNo = ISNULL(@LocationNo, LocationNo), UBranchNo = @Branch,
       FloorNo = CASE WHEN @Floor <> '' THEN LEFT(@Floor, 20) ELSE FloorNo END, FlatNo = CASE WHEN @Flat <> '' THEN LEFT(@Flat, 20) ELSE FlatNo END,   -- none in the order: the saved ones stay
-      Sign = CASE WHEN @Sign <> '' THEN LEFT(@Sign, 50) ELSE Sign END
+      Sign = @NewSign
     WHERE CustNo = @Cust;
     IF HAS_PERMS_BY_NAME('dbo.Customers_Log', 'OBJECT', 'INSERT') = 1
       INSERT INTO dbo.Customers_Log (CustNo, SNo, Name, CType, Phone, Address, FlatNo, FloorNo, Sign, CLedge, LocationNo, Note, UBranchNo, StreetNo, TransDate, ModifyUser)
@@ -235,7 +251,7 @@ BEGIN TRY
     0, 0, @Shift, t.TransType, @Sub, @Service, 0, @Tax, 0, @Time, @RestDiscount, 0, 0, @PayWay, CASE WHEN @PayWay = 'Ledge' THEN 0 ELSE @Total END, 0,
     LEFT(@Remarks, 200), @Pos, CASE WHEN @RestDiscount > 0 THEN t.DiscountType ELSE NULL END, t.HallNo, 1, DATEPART(hour, @Now), '0', NULL, CASE WHEN @PayWay = 'Ledge' THEN 0 ELSE @Total END, '0', 0, 0, '', 0, 0, @Branch, @BranchOrderNo,
     0, @TaxRatio, 0, @PosSerial, @CheckNo, @Time, t.Otlob, '', @OnlineType, '', '', 0, t.DeliveryTrack, @Phone, LEFT(@Label, 50),
-    LEFT(@Address, 100), LEFT(@Sign, 100), '', @Phone, 0, 1, @LocationNo, LEFT(@Floor, 20), LEFT(@Flat, 20), 0, NEWID()
+    LEFT(@Address, 100), @NewSign, '', @Phone, 0, 1, @LocationNo, LEFT(@Floor, 20), LEFT(@Flat, 20), 0, NEWID()
   FROM (SELECT TOP 1 * FROM (
           SELECT 0 AS o, TakeAwayLoc, TableNo, GuestNo, TransType, DiscountType, HallNo, Otlob, DeliveryTrack FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderNo = @Tpl
           UNION ALL SELECT 0, TakeAwayLoc, TableNo, GuestNo, TransType, DiscountType, HallNo, Otlob, DeliveryTrack FROM dbo.Orders_M WITH (NOLOCK) WHERE OrderNo = @Tpl AND @TplArchive = 1
