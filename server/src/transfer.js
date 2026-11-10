@@ -790,6 +790,48 @@ function setup(app) {
     return { from, to, list };
   });
 
+  // Karim 10-11 («ياريت تبعت كشف»): Talabat's price of each dish next to the Apex item staff put for it, from the
+  // automatic transfers of the last days. Only orders with no discount at all (so the price is the menu price), each dish
+  // with its add-ons: Talabat's line ÷ count vs the Apex lines for it ×1.14 ÷ count.
+  app.route('GET', '/api/transfer/price-list', async ctx => {
+    await app.requireAdmin(ctx);
+    const days = Math.min(30, Math.max(1, Number(ctx.query.days) || 7)), to = businessDay(ctx.now);
+    const from = new Date(Date.parse(to + 'T12:00:00Z') - (days - 1) * 86400000).toISOString().slice(0, 10);
+    const rows = await db.prepare(`SELECT j.ref, j.day, j.payload, t.items, p.data FROM transfer_jobs j JOIN talabat_orders t ON t.id = j.ref
+      LEFT JOIN match_profiles p ON p.source = 'talabat' AND p.ref = j.ref
+      WHERE j.source = 'talabat' AND j.state = 'auto_done' AND j.day BETWEEN ? AND ? ORDER BY j.at DESC LIMIT 3000`).all(from, to);
+    const groups = new Map();
+    const isDisc = o => Number(o.price) < 0 || DISC_WORDS.test(o.name || '');
+    const isWeight = o => WEIGHTS.some(w => w[0].test(wName(o.name)));
+    for (const r of rows) {
+      const bill = parseJson(r.data, {})?.bill || [];
+      if (bill.some(x => DISC_WORDS.test((x.k || '') + ' ' + (x.text || '')))) continue;
+      const items = parseJson(r.items, []), chosen = (parseJson(r.payload, {})?.items || []).filter(x => !x.free);
+      if (items.some(x => (x.discountLines || []).length || (x.options || []).some(isDisc))) continue;
+      let at = 0, ok = true;
+      const lines = [];
+      for (const x of items) {
+        const addons = (x.options || []).filter(o => !isDisc(o) && !isWeight(o) && Number(o.price) > 0);
+        const mine = chosen.slice(at, at + 1 + addons.length); at += 1 + addons.length;
+        if (mine.length !== 1 + addons.length || x.price == null) { ok = false; break; }
+        const qty = Number(x.qty) || 1, apex = mine.reduce((sum, c) => sum + (Number(APEX_PRICES[c.itemNo]) || 0) * (Number(c.qty) || 1), 0) * 1.14;
+        const size = (x.options || []).find(isWeight)?.name;
+        lines.push({ name: x.name + (size ? ' — ' + size : '') + (addons.length ? ' + ' + addons.map(o => o.name).join(' + ') : ''), apexNos: mine.map(c => c.itemNo).join('+'),
+          talabat: Number(x.price) / qty, apex: apex / qty });
+      }
+      if (!ok || at !== chosen.length) continue;
+      for (const l of lines) {
+        const k = l.name + '|' + l.apexNos, g = groups.get(k) || { talabatName: l.name, apex: l.apexNos.split('+').map(no => APEX_NAMES[no] || no).join(' + '), apexNos: l.apexNos, talabat: [], apexPrice: [], days: new Set() };
+        g.talabat.push(l.talabat); g.apexPrice.push(l.apex); g.days.add(r.day); groups.set(k, g);
+      }
+    }
+    const mid = a => { const v = [...a].sort((x, y) => x - y); return Math.round(v[Math.floor(v.length / 2)] * 100) / 100; };
+    const list = [...groups.values()].map(g => ({ talabatName: g.talabatName, apex: g.apex, apexNos: g.apexNos, orders: g.talabat.length,
+      talabat: mid(g.talabat), apexPrice: mid(g.apexPrice), diff: Math.round((mid(g.apexPrice) - mid(g.talabat)) * 100) / 100 }))
+      .sort((a, b) => Math.abs(b.diff) * b.orders - Math.abs(a.diff) * a.orders);
+    return { from, to, orders: rows.length, list };
+  });
+
   app.route('POST', '/api/apex-writer/result', async ctx => {
     await writer(ctx);
     const b = ctx.body, source = b.source === 'talabat' || b.source === 'site' ? b.source : null, ref = String(b.ref || '');

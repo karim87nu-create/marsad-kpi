@@ -72,3 +72,30 @@ test('money to Apex: every kind of Talabat discount, cash and paid', async () =>
     assert.deepEqual([r.rest, r.sign, r.target], [30, '', 270]);
   } finally { await t.close(); }
 });
+
+test('price list: Talabat price of each dish next to the Apex item put for it (orders without discounts)', async () => {
+  const t0 = cairoToUtc(2026, 10, 22, 20, 0, 0), at = m => new Date(t0 + m * 60000).toISOString();
+  const t = await start({ at: t0 + 10 * 60000 });
+  try {
+    const admin = await t.admin();
+    await t.employee(admin, { name: 'سارة', code: 'E1', pin: '1111' });
+    const sara = (await t.call('POST', '/api/transfer/login', { body: { pin: '1111' } })).body.token;
+    const as = (m, p, b) => t.call(m, p, { body: b, headers: { 'x-transfer-session': sara } });
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const okey = (await admin('POST', '/api/orders/token')).body.token;
+    await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': okey }, body: { v: 1, day: '2026-10-22', online: [], locations: [{ no: 218, name: 'التجمع الخامس', branch: 1, service: 54.15 }] } });
+    await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'test' });
+    const wt = (await admin('POST', '/api/apex-writer', { action: 'token' })).body.token;
+    const w = (p, b) => t.call('POST', p, { body: b || {}, headers: { 'x-apex-writer': wt } });
+    const id = '3977800001';
+    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: [{ id, store: 'الدهان، التجمع الخامس - البنفسج', status: 'ACCEPTED', placedAt: at(0), total: 999,
+      detail: { customer: { name: 'P', phone: '01000002001', address: 'x' }, items: [{ qty: 2, name: 'Kofta', price: 400, modifierRead: true, modifierComplete: true, options: [{ qty: 2, name: 'Rice', price: 60 }] }], bill: [{ k: 'مجموع', text: 'مجموع | 460' }, { k: 'payment', text: 'Cash' }] } }] } });
+    t.advance(9000); await as('GET', '/api/transfer/queue?day=2026-10-22');
+    const pend = (await w('/api/apex-writer/customer-notes/pending')).body.pending || [];
+    await w('/api/apex-writer/customer-notes/result', { results: pend.map(x => ({ ...x, status: 'none' })) });
+    assert.equal((await as('POST', '/api/transfer/job', { source: 'talabat', ref: id, action: 'auto', payment: 'cash', branchNo: 1, locationNo: 218, items: [{ itemNo: '0108004', qty: 2 }, { itemNo: '0114006', qty: 2 }], customer: { name: 'P', address: 'x' }, code: '1' })).status, 200);
+    await w('/api/apex-writer/next'); await w('/api/apex-writer/result', { source: 'talabat', ref: id, ok: true, db: 'test', orderNo: 901, total: 1 });
+    const r = (await admin('GET', '/api/transfer/price-list?days=3')).body;
+    assert.equal(r.list.length, 1); assert.equal(r.list[0].talabat, 200, 'line ÷ count'); assert.equal(r.list[0].orders, 1); assert.match(r.list[0].talabatName, /Kofta \+ Rice/);
+  } finally { await t.close(); }
+});
