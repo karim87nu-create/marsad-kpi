@@ -215,7 +215,7 @@ function cardWorth(o, p, n) {
 }
 function giftChoices(worth) {
   if (!(worth > 0)) return [];
-  return (data.apexItems || []).filter(a => a.price > 0 && a.price <= worth * 1.25 + 5 && !/خدم/.test(a.name))
+  return (data.apexItems || []).filter(a => a.price > 0 && a.price <= worth * 1.25 + 5 && !/خدم|الموقع|طلبات/.test(a.name))
     .sort((a, b) => Math.abs(a.price - worth) - Math.abs(b.price - worth)).slice(0, 10);
 }
 // Karim 10-11: more than one gift item (and more than one of each) until the total is near the discount.
@@ -393,7 +393,9 @@ function card(o) {
           const details = d.kind === 'percent' ? 'خصم ' + d.value + '% من قيمة الأصناف قبل الضريبة'
             : d.kind === 'amount' ? 'خصم ' + money(d.value) + ' جنيه إضافي'
             : d.suggest?.length ? 'صنف مستحق مجانًا' + (d.qty > 1 ? ' × ' + d.qty : '') : 'صنف مستحق — اختاره من منيو APEX';
-          return '<div class="warn">' + esc(d.text) + ' — ' + esc(details) + '</div>' +
+          // A discount is said once, in the step below; a gift line says which dish.
+          if (d.kind !== 'item') return '';
+          return '<div class="warn">🎁 ' + esc(details) + ' — ' + esc(d.text) + '</div>' +
             (d.kind === 'item' ? (() => {
               // Karim 10-11: the dish named on the card is picked from Apex's menu already (any wording or spelling);
               // the employee only checks it, or takes another suggestion.
@@ -407,31 +409,39 @@ function card(o) {
                 (!d.suggest?.length ? '<div class="warn">مش لاقي الصنف في المنيو — اختاره بنفسك</div>' : '');
             })() : '');
         }).join('');
-        return '<div class="f"><span class="fl">ملاحظات بطاقة العميل على APEX</span><span class="fv"><b>' + esc(n.text) + '</b>' +
-          '<div>' + (n.oneTime ? '⚠️ ملاحظة للطلب الواحد؛ لا تُحذف إلا بعد تنفيذ الطلب وتأكيد الاستفادة' :
-            n.permanent ? 'ملاحظة دائمة؛ لا تُحذف بعد الطلب' : 'مدة سريان الملاحظة غير واضحة؛ لا تُحذف تلقائيًا') + '</div>' +
-          benefit + (n.other || []).map(x => '<div>تعليمات أخرى: ' + esc(x) + '</div>').join('') +
+        // Karim 10-11: said plainly, step by step, so anyone at the desk knows what to do.
+        const worth = cardWorth(o, p, n), money1 = cardMoney(n)[0], split = (n.directives || []).find(d => d.split)?.split;
+        const life = split ? 'متقسمة على ' + split.orders + ' أوردرات — الأوردر ده ياخد نصيبه، والباقي يتكتب على الكارت للأوردر الجاي'
+          : n.oneTime ? 'لمرة واحدة — بتتمسح من الكارت لوحدها بعد الأوردر' : n.permanent ? 'دايمة — بتفضل على الكارت' : 'مش مكتوب لمرة ولا دايمة — هتفضل على الكارت';
+        const worthText = money1 ? (money1.kind === 'percent' ? money1.value + '%' : money(money1.value) + ' ج') + (worth && money1.kind === 'percent' ? ' ≈ ' + money(worth) + ' ج' : '') : '';
+        return '<div class="f"><span class="fl">🎁 بطاقة العميل على Apex</span><span class="fv"><b>' + esc(n.text) + '</b>' +
+          '<div class="muted">' + life + '</div>' +
+          benefit + (n.other || []).map(x => '<div>كلام تاني على الكارت: ' + esc(x) + '</div>').join('') +
           (() => {
-            const contacted = '<label style="display:block;margin-top:6px"><input type="checkbox" data-card-contacted ' + (p.cardResolution === 'contacted' ? 'checked ' : '') + '> تواصلت مع العميل — الأوردر يتبعت من غير خصم البطاقة</label>';
-            if (cardUnclear(n)) return '<div class="warn">⚠️ تعليمات البطاقة مش واضحة أو فيها أكتر من خصم — اتواصل مع العميل، والأوردر يتبعت بعدها من غير خصم البطاقة.</div>' + contacted;
-            if (cardMoney(n).length && pay === 'paid') {
-              const worth = cardWorth(o, p, n), gifts = giftChoices(worth);
-              return '<div class="warn">الأوردر مدفوع، فالخصم مش هيتخصم. بدله اختار صنف هدية' + (worth ? ' قريب من ' + money(worth) + ' ج' : '') + '، أو اتواصل مع العميل:</div>' +
+            const later = text => '<label style="display:block;margin-top:6px"><input type="checkbox" style="display:inline;width:auto;margin:0 0 0 6px;vertical-align:middle" data-card-contacted ' + (p.cardResolution === 'contacted' ? 'checked ' : '') + '> ' + text + '</label>';
+            if (cardUnclear(n)) return '<div class="warn">⚠️ الملاحظة مش واضحة أو فيها أكتر من خصم، فمش هيتطبق منها حاجة لوحده. اقراها، ولو محتاج كلّم العميل.</div>' +
+              later('قريتها — ابعت الأوردر من غير خصم الكارت، والملاحظة تفضل على الكارت زي ما هي');
+            if (money1 && pay === 'paid') {
+              const gifts = giftChoices(worth);
+              return '<div class="warn">الأوردر مدفوع، فمش هينفع يتخصم. حق العميل (' + worthText + ') يتعوض بهدية:</div>' +
+                '<div>1️⃣ كلّم العميل وقوله إن ليه هدية' + (worth ? ' بحوالي ' + money(worth) + ' ج' : '') + '.</div>' +
+                '<div>2️⃣ علّم على اللي يختاره (ممكن أكتر من صنف):</div>' +
                 (() => {
                   const chosen = p.cardGifts || {}, list = [...gifts];
                   for (const no of Object.keys(chosen)) if (!list.some(g => g.no === no)) { const a = (data.apexItems || []).find(x => x.no === no); if (a) list.push(a); }
-                  if (!list.length) return '<div>مفيش صنف بسعر قريب' + (worth ? '' : ' — اختار أصناف الأوردر الأول') + '</div>';
+                  if (!list.length) return '<div>مفيش صنف بالسعر ده' + (worth ? '' : ' — اختار أصناف الأوردر الأول') + '</div>';
                   const total = giftTotal(p), over = total > GIFT_ROOM(worth);
-                  return list.map(g => '<label style="display:block"><input type="checkbox" data-card-gift="' + esc(g.no) + '" ' + (chosen[g.no] ? 'checked ' : '') + '> ' + esc(g.name) + ' — ' + money(g.price) + ' ج' +
+                  return list.map(g => '<label style="display:block"><input type="checkbox" style="display:inline;width:auto;margin:0 0 0 6px;vertical-align:middle" data-card-gift="' + esc(g.no) + '" ' + (chosen[g.no] ? 'checked ' : '') + '> ' + esc(g.name) + ' — ' + money(g.price) + ' ج' +
                       (chosen[g.no] ? ' × <input type="number" min="1" max="9" value="' + chosen[g.no] + '" data-card-gift-qty="' + esc(g.no) + '" style="width:3.5em">' : '') + '</label>').join('') +
-                    // Any other item that still fits next to what is chosen.
-                    (() => { const left = GIFT_ROOM(worth) - total, more = (data.apexItems || []).filter(a => a.price > 0 && a.price <= left && !chosen[a.no] && !list.some(g => g.no === a.no) && !/خدم/.test(a.name)).sort((a, b) => a.name.localeCompare(b.name, 'ar'));
-                      return more.length ? '<select data-card-gift-add style="margin-top:4px"><option value="">+ صنف تاني…</option>' + more.map(a => '<option value="' + esc(a.no) + '">' + esc(a.name) + ' — ' + money(a.price) + ' ج</option>').join('') + '</select>' : ''; })() +
-                    (total ? '<div style="font-weight:600;color:' + (over ? '#dc2626' : '#15803d') + '">مجموع الهدايا ' + money(total) + ' ج من ' + money(worth) + ' ج' + (over ? ' — أكتر من قيمة الخصم' : '') + '</div>' : '');
-                })() + contacted;
+                    (() => { const left = GIFT_ROOM(worth) - total, more = (data.apexItems || []).filter(a => a.price > 0 && a.price <= left && !chosen[a.no] && !list.some(g => g.no === a.no) && !/خدم|الموقع|طلبات/.test(a.name)).sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+                      return more.length ? '<select data-card-gift-add style="margin-top:4px"><option value="">+ صنف تاني طلبه العميل…</option>' + more.map(a => '<option value="' + esc(a.no) + '">' + esc(a.name) + ' — ' + money(a.price) + ' ج</option>').join('') + '</select>' : ''; })() +
+                    (total ? '<div style="font-weight:600;color:' + (over ? '#dc2626' : '#15803d') + '">الهدايا ' + money(total) + ' ج من ' + money(worth) + ' ج' + (over ? ' — أكتر من حقه، شيل صنف' : '') + '</div>' : '');
+                })() +
+                '<div style="margin-top:6px">لو العميل مردّش أو مش عايز هدية دلوقتي:</div>' + later('مفيش هدية المرة دي — الخصم يفضل على الكارت للأوردر الجاي');
             }
-            return n.requiresReview ? '<label><input type="checkbox" data-card-approved ' + (p.apexNoteApproved ? 'checked ' : '') +
-              '> راجعت بطاقة العميل: الخصم إضافي وغير مطبق في المصدر، والنسبة على الأصناف قبل الضريبة، والأصناف المستحقة مجانية، وتنفيذها مرة واحدة عند توضيح ذلك.</label>' : '';
+            if (!n.requiresReview) return '';
+            const what = [money1 ? 'يتخصم ' + worthText + ' على Apex' : '', (n.directives || []).some(d => d.kind === 'item') ? 'الهدية تتضاف بسعر صفر' : ''].filter(Boolean).join('، و');
+            return '<label style="display:block;margin-top:6px"><input type="checkbox" style="display:inline;width:auto;margin:0 0 0 6px;vertical-align:middle" data-card-approved ' + (p.apexNoteApproved ? 'checked ' : '') + '> تمام — ' + (what || 'نفّذ اللي على الكارت') + '</label>';
           })() +
           '</span>' + copyBtn(n.text) + '</div>';
       })() +
@@ -518,11 +528,11 @@ $('list').addEventListener('click', async e => {
     if (o.apexCustomerNote?.status !== 'none' && o.apexCustomerNote?.status !== 'found') { toast('استنى قراءة ملاحظات العميل من APEX قبل التسجيل'); return; }
     const cardNote = o.apexCustomerNote;
     const contacted = p.cardResolution === 'contacted';
-    if (cardUnclear(cardNote) && !contacted) { toast('تعليمات بطاقة العميل مش واضحة — اتواصل مع العميل واختار «تواصلت مع العميل»'); return; }
+    if (cardUnclear(cardNote) && !contacted) { toast('ملاحظة الكارت مش واضحة — اقراها وعلّم على «قريتها»'); return; }
     const giftsChosen = Object.keys(p.cardGifts || {}).length > 0;
-    if (!cardUnclear(cardNote) && pay === 'paid' && cardMoney(cardNote).length && !contacted && !giftsChosen) { toast('الأوردر مدفوع: اختار صنف هدية أو أكتر بدل الخصم، أو «تواصلت مع العميل»'); return; }
-    if (giftsChosen && !contacted && giftTotal(p) > GIFT_ROOM(cardWorth(o, p, cardNote))) { toast('مجموع الهدايا أكتر من قيمة الخصم'); return; }
-    if (cardNote?.requiresReview && !p.apexNoteApproved && !contacted && p.cardResolution !== 'gift') { toast('أكّد مراجعة الخصم والأصناف الخاصة ببطاقة العميل أولًا'); return; }
+    if (!cardUnclear(cardNote) && pay === 'paid' && cardMoney(cardNote).length && !contacted && !giftsChosen) { toast('الأوردر مدفوع: علّم على الهدية اللي العميل اختارها، أو «مفيش هدية المرة دي»'); return; }
+    if (giftsChosen && !contacted && giftTotal(p) > GIFT_ROOM(cardWorth(o, p, cardNote))) { toast('الهدايا أكتر من حق العميل — شيل صنف'); return; }
+    if (cardNote?.requiresReview && !p.apexNoteApproved && !contacted && p.cardResolution !== 'gift') { toast('علّم على «تمام» في بطاقة العميل الأول'); return; }
     const noteItems = [];
     for (const [i, d] of (cardNote?.directives || []).entries()) {
       if (d.kind !== 'item' || contacted) continue;

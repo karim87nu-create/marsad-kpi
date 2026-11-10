@@ -549,12 +549,12 @@ function setup(app) {
       const isAcknowledged = sameCard && (clientCard.approved === true || resolution === 'contacted');
       const money = verifiedCardNote.directives.filter(x => x.kind === 'percent' || x.kind === 'amount');
       const unclear = verifiedCardNote.unrecognized || money.length > 1;
-      if (unclear && !(sameCard && resolution === 'contacted')) fail(409, 'تعليمات بطاقة العميل مش واضحة — اتواصل مع العميل واختار «تواصلت مع العميل»');
+      if (unclear && !(sameCard && resolution === 'contacted')) fail(409, 'ملاحظة بطاقة العميل مش واضحة — اقراها وعلّم على «قريتها»');
       if (verifiedCardNote.requiresReview && !isAcknowledged) fail(409, 'لازم تأكيد خصم وأصناف بطاقة العميل قبل تنفيذ الأوردر');
       const itemsBase = clean.reduce((sum, x) => sum + (Number(APEX_PRICES[x.itemNo]) || 0) * x.qty, 0);
       const discountWorth = money.length === 1 ? Math.round((money[0].kind === 'percent' ? itemsBase * money[0].value / 100 : money[0].value) * 100) / 100 : 0;
       const paidDiscount = payment === 'paid' && money.length > 0;
-      if (paidDiscount && !unclear && !resolution) fail(409, 'الأوردر مدفوع: اختار صنف هدية بدل الخصم، أو «تواصلت مع العميل»');
+      if (paidDiscount && !unclear && !resolution) fail(409, 'الأوردر مدفوع: علّم على الهدية اللي العميل اختارها، أو «مفيش هدية المرة دي»');
       // The discount is taken on Apex only for a cash order with one clear discount.
       const takeDiscount = !unclear && !paidDiscount && resolution !== 'contacted';
       const notePercent = takeDiscount ? money.find(x => x.kind === 'percent')?.value || 0 : 0;

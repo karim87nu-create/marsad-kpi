@@ -42,7 +42,7 @@ test('card note discount: cash takes it on Apex; paid needs a gift item worth ab
 
     // Paid: no discount on Apex. Nothing chosen → it says what to do (not «register by hand»).
     r = await as('POST', '/api/transfer/job', job(orders[1], 'paid', { ...card(orders[1]), approved: true }));
-    assert.equal(r.status, 409); assert.match(r.body.error, /صنف هدية بدل الخصم|تواصلت مع العميل/);
+    assert.equal(r.status, 409); assert.match(r.body.error, /الهدية اللي العميل اختارها|مفيش هدية المرة دي/);
     const worth = Math.round(2 * 0.1 * 100 * Number(require('fs').readFileSync(require.resolve('../src/menu-seed.js'), 'utf8').match(/"0108004": ([\d.]+)/g).pop().split(': ')[1])) / 100;
     r = await as('POST', '/api/transfer/job', job(orders[1], 'paid', { ...card(orders[1]), approved: true, resolution: 'gift', gift: { itemNo: '0108001' } }));
     assert.equal(r.status, 409, 'a kilo of kofta is far more than the discount'); assert.match(r.body.error, /أكبر من قيمة الخصم/);
@@ -64,7 +64,7 @@ test('card note discount: cash takes it on Apex; paid needs a gift item worth ab
 
     // Two discounts on one card: not guessed — sent after «تواصلت مع العميل», with no discount taken.
     r = await as('POST', '/api/transfer/job', job(orders[3], 'cash', { ...card(orders[3]), approved: true }));
-    assert.equal(r.status, 409); assert.match(r.body.error, /تواصلت مع العميل/);
+    assert.equal(r.status, 409); assert.match(r.body.error, /قريتها/);
     r = await as('POST', '/api/transfer/job', job(orders[3], 'cash', { ...card(orders[3]), resolution: 'contacted' }));
     assert.equal(r.status, 200, JSON.stringify(r.body));
     p = (await payload(orders[3])).apexCustomerBenefit;
