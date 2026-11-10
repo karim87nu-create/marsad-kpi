@@ -51,6 +51,8 @@ function talabatPayment(bill, liveBadge) {
 function sitePayment(p) {
   if (!p?.method) return null;
   if (p.method === 'cod') return 'cash';
+  if (p.method === 'unknown') return null;
+  if (p.method === 'mixed') return 'mixed';
   return p.paid ? 'paid' : 'unpaid';
 }
 // Discounts: whose money it is, only when the source says it.
@@ -330,14 +332,16 @@ function setup(app) {
         // for this same Talabat dish and options before is picked (2+ times, 70%+ of the time; checked on 509 past lines:
         // every pick was what staff chose); with none, an Arabic name is matched to Apex's menu when the match is clear.
         let apexPick = null;
-        if (withApex && apex.length > 1) {
+        const isSite = withApex === 'site';
+        if (withApex && !isSite && apex.length > 1) {
           const seen = itemHistory.get(lineKey(x)), top = seen && [...seen].filter(([no]) => apex.some(a => a.no === no)).sort((u, v) => v[1] - u[1]);
           const all = top ? top.reduce((t, c) => t + c[1], 0) : 0;
           if (top?.length && top[0][1] >= 2 && top[0][1] >= all * 0.7) apexPick = top[0][0];
         }
         if (withApex && !apex.length) {
           const g = guessApexItem([x.nameShown, x.name].find(n => /[\u0600-\u06ff]/.test(n || '')) || '', 2);
-          if (g[0] && g[0].score >= 0.85 && !(g[1] && g[1].score >= g[0].score - 0.05)) { apex = [{ no: g[0].itemNo, name: g[0].name }]; apexPick = g[0].itemNo; }
+          // A guessed item must be the dish's size when a size was chosen (11-11: «الكفته / نص كيلو» never guessed as a quarter).
+          if (g[0] && g[0].score >= 0.85 && !(g[1] && g[1].score >= g[0].score - 0.05) && (!size || size[1].test(g[0].name || ''))) { apex = [{ no: g[0].itemNo, name: g[0].name }]; apexPick = g[0].itemNo; }
         }
         // Options: the size (weight) choice, add-ons that cost money (their own Apex line), and free choices (a note).
         // A discount under the dish (minus price, or discount words) is neither an add-on nor a comment: it goes to the discounts.
@@ -362,7 +366,7 @@ function setup(app) {
         const addons = opts.filter(o => o !== sizeOpt && !isWeight(o) && Number(o.price) > 0).map(o => ({ name: o.name, qty: Number(o.qty) > 0 ? Number(o.qty) : null, price: Number(o.price),   // the count shown is for all the dishes together
           apex: (withApex ? suggest(o.name) : []).map(no => ({ no, name: apexName.get(no) || null })) }));
         const free = opts.filter(o => o !== sizeOpt && !(Number(o.price) > 0)).map(o => (Number(o.qty) > 1 ? o.qty + '× ' : '') + o.name);
-        return { qty: x.qty, name: x.name, price: x.price ?? null, modifiers: x.modifiers || [], modifiersComplete: x.modifierComplete === true || !withApex, size: size ? size[2] : null, apex, ...(apexPick ? { apexPick } : {}),
+        return { qty: x.qty, name: x.name, price: x.price ?? null, modifiers: x.modifiers || [], modifiersComplete: x.modifierComplete === true || !withApex || isSite, size: size ? size[2] : null, apex, ...(apexPick ? { apexPick } : {}),
           // The size picks the Apex item itself (ربع كيلو نيفة): it is neither an add-on nor a comment.
           addons, sizeOption: sizeOpt ? sizeOpt.name : null, freeOptions: opts.length ? free : (x.modifiers || []).filter(m => !WEIGHTS.some(w => w[0].test(wName(m))) && !DISC_WORDS.test(m)), itemDiscounts };
       };
@@ -401,10 +405,10 @@ function setup(app) {
         const p = sProfiles.get(String(o.id)) || {}, pay = p.payment || null, a = sm.matches.get(o.id);
         const discounts = pay ? [...(pay.coupons || []).map(c => ({ text: 'كوبون ' + c.code, amount: c.amount, who: 'restaurant' })),
           ...(!pay.coupons?.length && pay.discount ? [{ text: 'خصم الموقع', amount: pay.discount, who: 'restaurant' }] : [])] : [];
-        list.push({ source: 'site', ref: String(o.id), code: String(o.id), at: iso(o.created_at), status: o.status, out: !!o.out_at || !!o.delivered_at || o.status === 'completed', branch: o.branch || null, apexBranch: apexBranchOf(o.branch), scheduled: !!o.scheduled,
+        list.push({ source: 'site', ref: String(o.id), code: String(p.panel?.number || o.id).replace(/\D/g, '') || String(o.id), at: iso(o.created_at), status: o.status, out: !!o.out_at || !!o.delivered_at || o.status === 'completed', branch: o.branch || null, apexBranch: apexBranchOf(o.branch), scheduled: !!o.scheduled,
           customer: { name: p.customer?.name || null, phone: phoneOut(p.customer?.phoneDisplay || p.customer?.phone || p.customer?.mobileDisplay || p.customer?.mobile), address: p.customer?.address || null },
           target: o.total ?? null, payment: sitePayment(pay), paymentTitle: pay?.title || null, note: pay?.note || null, discounts, fees: pay?.fees || [], shipping: pay?.shipping ?? null, total: o.total ?? null,
-          items: (p.items || []).map(x => itemOut(x, false)), detailRead: !!p.items?.length,
+          fulfillment: o.fulfillment || null, items: (p.items || []).map(x => itemOut(x, 'site')), detailRead: !!p.items?.length,
           apex: a ? { no: a.no, sn: a.sn ?? null, user: a.user || null, how: a.how || null } : null, matching: sm.states?.get(o.id) || null, job: null });
       }
       // Explicit staff choices are separate from inferred matches and scoped to source,
@@ -546,6 +550,17 @@ function setup(app) {
       if (!items.length || items.length > 40) fail(400, 'اختار أصناف Apex');
       const clean = items.map(x => ({ itemNo: String(x?.itemNo || '').trim(), qty: Number(x?.qty), note: x?.note ? String(x.note).slice(0, 60) : '' }));
       if (clean.some(x => !/^\d{1,10}$/.test(x.itemNo) || !(x.qty > 0 && x.qty <= 50))) fail(400, 'فيه صنف لسه مااتختارش أو عدده مش مظبوط');   // Apex offers have short numbers (111, 218, 315)
+      // Website orders (11-11): only what the panel says for sure is written by itself.
+      if (source === 'site') {
+        const sp = parseJson((await db.prepare("SELECT data FROM match_profiles WHERE source = 'site' AND ref = ?").get(ref))?.data, {}), m = sp.payment?.method, so = await db.prepare('SELECT fulfillment, branch FROM site_orders WHERE id = ?').get(Number(ref));
+        if ((sp.panel?.fulfillment || so?.fulfillment) === 'pickup') fail(409, 'أوردر استلام من الفرع — سجّله على Apex بإيدك');
+        if (m === 'mixed') fail(409, 'جزء مدفوع أونلاين والباقي كاش — سجّله على Apex بإيدك');
+        if (m === 'online-unpaid') fail(409, 'الدفع الأونلاين لسه ما اكتملش على الموقع — استنى لحد ما يتدفع أو سجّله بإيدك');
+        if (m === 'cod' && payment !== 'cash') fail(409, 'الموقع بيقول كاش عند الاستلام');
+        if (m === 'online' && payment !== 'paid') fail(409, 'الموقع بيقول مدفوع أونلاين');
+        const siteBranch = apexBranchOf(so?.branch);
+        if (so?.branch && siteBranch && siteBranch !== Number(b.branchNo)) fail(409, 'الأوردر على الموقع متحوّل لفرع ' + so.branch + ' — غيّر الفرع هنا أو على الموقع الأول');
+      }
       // Trust the on-premises APEX note snapshot, never client-submitted discount numbers.
       const noteRecord = await db.prepare('SELECT cust_no, note, status, phone_hash, checked_at FROM apex_customer_notes WHERE source = ? AND ref = ?').get(source, ref);
       const noteProfile = await db.prepare('SELECT data FROM match_profiles WHERE source = ? AND ref = ?').get(source, ref);

@@ -59,15 +59,30 @@ function setup(app) {
       const outAt = old?.out_at || (stage >= 3 || o.driver ? now : null), deliveredAt = old?.delivered_at || (done ? now : null);
       const f = o.financial || {}, rows = Array.isArray(f.rows) ? f.rows : [];
       const onlinePaid = num(f.onlinePaid) || 0, due = num(f.due) ?? num(o.total) ?? 0;
-      const method = onlinePaid > 0.01 ? (due > 0.01 ? 'mixed' : 'online') : 'cod';
+      // The panel's own payment words decide (11-11, live: «الدفع أون لاين - Visa / Card» with nothing paid yet and
+      // «متبقي للدفع أونلاين» is an online order whose payment is not complete — never cash). «المحفظة + الباقي كاش» = cash
+      // (the wallet is a discount line). Paid = online with nothing left to pay; part paid online = mixed (by hand).
+      const payText = String(o.paymentMethod || '') + ' ' + String(f.dueLabel || '');
+      const saysOnline = /أون\s*لاين|أونلاين|اونلاين|online|visa|card|فيزا|بطاقة|instapay|انستاباي|محفظة إلكترونية|vodafone|فودافون/i.test(String(o.paymentMethod || ''));
+      const saysCash = /كاش|نقد|cash|عند الاستلام/i.test(String(o.paymentMethod || ''));
+      const method = onlinePaid > 0.01 && due > 0.01 ? 'mixed'
+        : onlinePaid > 0.01 ? 'online'
+        : saysOnline && !saysCash ? (due <= 0.01 && !/متبقي/.test(payText) ? 'online' : 'online-unpaid')
+        : saysCash && !saysOnline ? 'cod' : 'unknown';
       const shipping = rows.filter(r => /توصيل|delivery|shipping/i.test(r?.label || '')).reduce((a, r) => a + (num(r.amount) || 0), 0);
       const minus = rows.filter(r => (num(r?.amount) || 0) < 0);
-      const pay = { method, title: String(o.paymentMethod || '').slice(0, 120) || null, paid: method === 'online', onlinePaid, due,
+      const pay = { method, title: String(o.paymentMethod || '').slice(0, 120) || null, dueLabel: String(f.dueLabel || '').slice(0, 60) || null, paid: method === 'online', onlinePaid, due,
         discount: minus.length ? Math.abs(minus.reduce((a, r) => a + num(r.amount), 0)) : 0, discountLines: minus.map(r => ({ text: String(r.label || '').slice(0, 80), amount: Math.abs(num(r.amount)) })),
         shipping: shipping || null, total: num(o.total), coupons: [], fees: [], note: String(o.customer?.note || '').slice(0, 500) || null };
       const items = (Array.isArray(o.items) ? o.items : []).slice(0, 80).map(x => ({ name: String(x?.name || '').slice(0, 160), qty: Number(x?.quantity) || 0, price: num(x?.total) ?? 0,
         ...(x?.addon ? { parent: String(x.parent || '').slice(0, 160) } : {}),
-        modifiers: (Array.isArray(x?.details) ? x.details : []).slice(0, 20).map(d => (String(d?.label || '').slice(0, 60) + ': ' + String(d?.value || '').replace(/<[^>]*>/g, '').slice(0, 120)).trim()) }));
+        modifiers: (Array.isArray(x?.details) ? x.details : []).slice(0, 20).map(d => (String(d?.label || '').slice(0, 60) + ': ' + String(d?.value || '').replace(/<[^>]*>/g, '').slice(0, 120)).trim()),
+        // The choices as options, like Talabat's: the weight («الوزن: نص كيلو») is the dish's size — it picks the Apex item and
+        // is part of what staff chose before (a quarter-kilo choice is never offered for a half kilo); the rest are free notes.
+        options: (Array.isArray(x?.details) ? x.details : []).slice(0, 20).map(d => {
+          const label = String(d?.label || '').trim(), value = String(d?.value || '').replace(/<[^>]*>/g, '').trim();
+          return { name: (/^(?:الوزن|الحجم|الكمية|weight|size)$/i.test(label) ? value : (label ? label + ': ' : '') + value).slice(0, 160), price: 0 };
+        }).filter(v => v.name) }));
       const c = o.customer || {}, customer = customerOf({ name: String(c.name || '').slice(0, 120), phone: String(c.phone || '').slice(0, 30), address: String(c.address || '').slice(0, 300) });
       const profile = { customer, items, payment: pay, panel: { number: String(o.number || id), stage, status, label, branchId: String(o.branchId || '').slice(0, 40) || null, fulfillment: String(o.fulfillment || '').slice(0, 20) || null } };
       writes.push(db.prepare("INSERT INTO match_profiles (source, ref, data) VALUES ('site', ?, ?) ON CONFLICT(source, ref) DO UPDATE SET data = excluded.data").bind(String(id), JSON.stringify(profile)));
@@ -83,6 +98,9 @@ function setup(app) {
     // The central board lists every open order: one that was out with a driver and is gone from it was delivered.
     if (ctx.body?.board === 'central' && list.length) {
       const seen = new Set(list.map(o => Number(o?.id)));
+      // A pickup order that was ready and is gone from the board was picked up.
+      for (const r of await db.prepare("SELECT id FROM site_orders WHERE created_at >= ? AND fulfillment = 'pickup' AND delivered_at IS NULL AND status NOT IN ('cancelled','failed','wallet-failed') AND id IN (SELECT CAST(ref AS INTEGER) FROM match_profiles WHERE source = 'site' AND json_extract(data, '$.panel.stage') >= 2)").all(now - 14 * 3600000))
+        if (!seen.has(r.id)) writes.push(db.prepare("UPDATE site_orders SET delivered_at = ?, status = 'completed' WHERE id = ? AND delivered_at IS NULL").bind(now, r.id));
       for (const r of await db.prepare("SELECT id FROM site_orders WHERE created_at >= ? AND out_at IS NOT NULL AND delivered_at IS NULL AND status NOT IN ('cancelled','failed','wallet-failed')").all(now - 14 * 3600000))
         if (!seen.has(r.id)) writes.push(db.prepare("UPDATE site_orders SET delivered_at = ?, status = 'completed' WHERE id = ? AND delivered_at IS NULL").bind(now, r.id));
     }
@@ -96,9 +114,10 @@ function setup(app) {
       const open = list.filter(o => Number.isInteger(Number(o?.id)) && !o.branchId && (Number(o.stage) || 0) < 3 && !/cancel|failed|refund/i.test(String(o.status || '')));
       if (open.length) {
         const ids = open.map(o => String(Number(o.id)));
-        const jobs = await db.prepare(`SELECT ref, payload FROM transfer_jobs WHERE source = 'site' AND state = 'auto_done' AND ref IN (${ids.map(() => '?').join(',')})`).all(...ids);
+        const jobs = await db.prepare(`SELECT ref, payload, result FROM transfer_jobs WHERE source = 'site' AND state = 'auto_done' AND ref IN (${ids.map(() => '?').join(',')})`).all(...ids);
         for (const j of jobs) {
-          let p = {}; try { p = JSON.parse(j.payload || '{}'); } catch {}
+          let p = {}, r = {}; try { p = JSON.parse(j.payload || '{}'); r = JSON.parse(j.result || '{}') || {}; } catch {}
+          if (p.db !== 'live' || (r.db && r.db !== 'live')) continue;   // written on Apex's test copy: the real order is not on Apex
           const branchId = SITE_BRANCH_OF_APEX[Number(p.branchNo)];
           if (branchId) assign.push({ orderId: Number(j.ref), branchId });
         }

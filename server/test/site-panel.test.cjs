@@ -47,10 +47,62 @@ test('website central panel: an order the Marsad wrote on Apex and still without
       customer: { name: 'عميل', phone: '01000000000', address: 'x' }, financial: { due: 300, onlinePaid: 0, rows: [] }, items: [], ...extra });
     assert.deepEqual((await push([o(40001), o(40002)])).body.assign, [], 'nothing written on Apex yet');
     const db = t.app.db.raw;
-    const job = (ref, state, branchNo) => db.prepare('INSERT INTO transfer_jobs (source, ref, day, state, at, payload) VALUES (?,?,?,?,?,?)').run('site', String(ref), '2026-11-11', state, t0, JSON.stringify({ branchNo }));
+    const job = (ref, state, branchNo) => db.prepare('INSERT INTO transfer_jobs (source, ref, day, state, at, payload) VALUES (?,?,?,?,?,?)').run('site', String(ref), '2026-11-11', state, t0, JSON.stringify({ branchNo, db: 'live' }));
     job(40001, 'auto_done', 2); job(40002, 'auto_pending', 1); job(40003, 'auto_done', 3);
     const r = (await push([o(40001), o(40002), o(40003, { branchId: 'nasr-city', branchName: 'مدينة نصر' })])).body.assign;
     assert.deepEqual(r, [{ orderId: 40001, branchId: 'nasr-city' }], 'only the written order without a branch');
     assert.deepEqual((await push([o(40001)], 'branch')).body.assign, [], 'never from a branch board');
+    db.prepare('INSERT INTO transfer_jobs (source, ref, day, state, at, payload) VALUES (?,?,?,?,?,?)').run('site', '40004', '2026-11-11', 'auto_done', t0, JSON.stringify({ branchNo: 1, db: 'test' }));
+    assert.deepEqual((await push([o(40004)])).body.assign, [], 'written on Apex\'s test copy: not sent to a branch');
+  } finally { await t.close(); }
+});
+
+// The four orders the live central panel showed on 11-11 (names and phones replaced).
+test('website central panel, real orders 11-11: payment from the panel\'s words, weight as the size, hashtag, safety checks', async () => {
+  const t0 = cairoToUtc(2026, 11, 11, 21, 0, 0), s = m => Math.floor((t0 + m * 60000) / 1000);
+  const t = await start({ at: t0 + 20 * 60000 });
+  try {
+    const admin = await t.admin();
+    await t.employee(admin, { name: 'سارة', code: 'E1', pin: '1111' });
+    const sara = (await t.call('POST', '/api/transfer/login', { body: { pin: '1111' } })).body.token;
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const base = (id, extra) => ({ id, number: String(id), status: 'app-preparing', statusLabel: 'جاري التنفيذ', stage: 0, fulfillment: 'delivery', createdAt: s(0), lastActionAt: s(1),
+      customer: { name: 'عميل ' + id, phone: '0100000' + id, address: 'شارع ' + id }, driver: null, ...extra });
+    const fin = (due, label, rows, onlinePaid = 0) => ({ currency: 'EGP', due, dueLabel: label, onlinePaid, rows, total: due });
+    const orders = [
+      base(30831, { branchId: 'nasr-city', branchName: 'مدينة نصر', paymentMethod: 'كاش عند الاستلام', total: 344, financial: fin(344, 'المطلوب تحصيله', [{ amount: 404, label: 'الأصناف والإضافات قبل الخصم' }, { amount: 40, label: 'رسوم التوصيل' }, { amount: -100, label: 'تسويات مسجلة في الطلب' }]),
+        items: [{ name: 'عرض ميكس جريل وفر 96 جنيه', quantity: 1, total: '299.00 EGP', parent: '', addon: false, details: [] }, { name: 'ورق عنب', quantity: 1, total: '105.00 EGP', parent: '', addon: false, details: [] }] }),
+      base(30830, { branchId: 'tagamoa-cloud', branchName: 'التجمع الخامس', paymentMethod: 'الدفع أون لاين - Visa / Card', total: 144, financial: fin(144, 'متبقي للدفع أونلاين', [{ amount: 104, label: 'الأصناف والإضافات قبل الخصم' }, { amount: 40, label: 'رسوم التوصيل' }]),
+        items: [{ name: 'عروض حواوشي الدهان', quantity: 1, total: '104.00 EGP', parent: '', addon: false, details: [] }] }),
+      base(30829, { stage: 1, branchId: 'madinaty-craft-zone', branchName: 'مدينتي', paymentMethod: 'المحفظة + الباقي كاش عند الاستلام', total: 356.5,
+        financial: fin(356.5, 'المطلوب تحصيله', [{ amount: 584.5, label: 'الأصناف والإضافات قبل الخصم' }, { amount: 40, label: 'رسوم التوصيل' }, { amount: -40, label: 'خصم نقاط المحفظة' }, { amount: -228, label: 'تسويات مسجلة في الطلب' }]),
+        items: [{ name: 'الكفته', quantity: 1, total: '584.50 EGP', parent: '', addon: false, details: [{ label: 'الوزن', value: 'نص كيلو' }, { label: 'اختيارات السلطة المجانية', value: 'سلطة بلدي (ضمن الوجبة)، بابا غنوج × 2 (ضمن الوجبة)' }] }] }),
+      base(30828, { stage: 2, status: 'app-ready-pickup', branchId: 'nasr-city', branchName: 'مدينة نصر', paymentMethod: 'كاش عند الاستلام', total: 370.25,
+        financial: fin(370.25, 'المطلوب تحصيله', [{ amount: 530.25, label: 'الأصناف والإضافات قبل الخصم' }, { amount: 40, label: 'رسوم التوصيل' }, { amount: -200, label: 'تسويات مسجلة في الطلب' }]),
+        items: [{ name: 'الكفته', quantity: 1, total: '304.25 EGP', parent: '', addon: false, details: [{ label: 'الوزن', value: 'ربع كيلو' }, { label: 'اختيارات السلطة المجانية', value: 'سلطة بلدي (ضمن الوجبة)' }] },
+          { name: 'نص فرخة شيش', quantity: 1, total: '226.00 EGP', parent: '', addon: false, details: [{ label: 'اختيارات السلطة المجانية', value: 'طحينة (ضمن الوجبة)' }] }] }),
+      base(30900, { fulfillment: 'pickup', branchId: 'nasr-city', branchName: 'مدينة نصر', paymentMethod: 'الدفع أون لاين - Visa / Card', total: 200, financial: fin(0, 'تم الدفع', [{ amount: 200, label: 'الأصناف' }], 200), items: [{ name: 'ورق عنب', quantity: 1, total: '200.00 EGP', details: [] }] }),
+    ];
+    assert.equal((await t.call('POST', '/api/site/panel', { headers: { 'x-talabat-token': token }, body: { board: 'central', orders } })).status, 200);
+    const q = (await t.call('GET', '/api/transfer/queue?day=2026-11-11', { headers: { 'x-transfer-session': sara } })).body.orders.filter(o => o.source === 'site');
+    const by = id => q.find(o => o.ref === String(id));
+    assert.equal(by(30831).payment, 'cash'); assert.equal(by(30831).code, '30831'); assert.equal(by(30831).apexBranch, 2); assert.equal(by(30831).target, 344);
+    assert.equal(by(30830).payment, 'unpaid', 'online, payment not complete: never cash'); assert.equal(by(30830).apexBranch, 1);
+    assert.equal(by(30829).payment, 'cash', 'wallet + rest cash'); assert.equal(by(30829).apexBranch, 3);
+    assert.deepEqual(by(30829).discounts.map(d => d.amount), [268]);
+    assert.equal(by(30900).payment, 'paid');
+    const k29 = by(30829).items[0], k28 = by(30828).items[0];
+    assert.equal(k29.sizeOption, 'نص كيلو'); assert.equal(k28.sizeOption, 'ربع كيلو');
+    assert.notEqual(k29.choiceKey, k28.choiceKey, 'a half-kilo choice is never offered for a quarter kilo');
+    assert.ok(k29.freeOptions.some(x => /سلطة بلدي/.test(x)), 'free salads go to the note');
+    for (const o of q) for (const i of o.items) for (const a of i.apex) if (i.size) assert.ok(new RegExp(i.size === 'نص كيلو' ? 'نص|1/2|0\\.5|500' : 'ربع|1/4|250').test(a.name), i.name + ' ' + i.sizeOption + ' → ' + a.name);
+    console.log(JSON.stringify(q.map(o => [o.ref, o.items.map(i => [i.name, i.sizeOption, i.apex.map(a => a.no + ' ' + a.name), i.apexPick || null])])));
+    // The safety checks on the automatic transfer.
+    const auto = (ref, extra) => t.call('POST', '/api/transfer/job', { headers: { 'x-transfer-session': sara }, body: { action: 'auto', source: 'site', ref: String(ref), branchNo: 2, locationNo: 1, items: [{ itemNo: '111', qty: 1 }], customer: {}, ...extra } });
+    const msg = r => r.body?.error || r.body?.message || JSON.stringify(r.body);
+    assert.match(msg(await auto(30830, { payment: 'paid', branchNo: 1 })), /الدفع الأونلاين لسه ما اكتملش/);
+    assert.match(msg(await auto(30900, { payment: 'paid' })), /استلام من الفرع/);
+    assert.match(msg(await auto(30831, { payment: 'paid' })), /كاش عند الاستلام/);
+    assert.match(msg(await auto(30831, { payment: 'cash', branchNo: 1 })), /متحوّل لفرع مدينة نصر/);
   } finally { await t.close(); }
 });
