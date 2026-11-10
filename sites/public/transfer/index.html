@@ -291,9 +291,11 @@ function ticketCalc(o, fl, p) {
   const gap = before == null || want == null ? null : r2(before - want);
   const back = gap != null && gap < 0 ? Math.min(-gap, off) : 0, left = gap != null && gap < 0 ? r2(-gap - back) : 0;
   const why = [];
+  // The differences that mean a wrong pick (Karim 10-11: asked about only for these, never for a discount).
+  const itemsDiff = !missing && tItems != null ? r2(T(items) - tItems) : null, delDiff = service != null && o.source === 'talabat' && tDel ? r2(T(service) + T(fee) - tDel) : null;
   if (!missing && tItems != null) { const d = r2(T(items) - tItems); if (Math.abs(d) > 1) why.push('أصناف Apex ' + (d > 0 ? 'أغلى' : 'أرخص') + ' من طلبات بـ ' + money(Math.abs(d)) + (Math.abs(d) > 0.1 * tItems ? '، غالبًا صنف أو حجم غلط' : '')); }
   if (service != null && o.source === 'talabat') { const d = r2(T(service) + T(fee) - tDel); if (Math.abs(d) > 1) why.push('توصيل Apex ' + money(T(service) + T(fee)) + ' وتوصيل طلبات ' + money(tDel)); }
-  return { pay, paid, rest, plat, sp, want, items, missing, fee, loc, service, gap, back, left, why, total: gap == null ? null : gap > 0.009 ? want : r2(before + back) };
+  return { itemsDiff, delDiff, tItems, pay, paid, rest, plat, sp, want, items, missing, fee, loc, service, gap, back, left, why, total: gap == null ? null : gap > 0.009 ? want : r2(before + back) };
 }
 
 function ticketHtml(o, p, fl, c, auto) {
@@ -351,7 +353,8 @@ function ticketHtml(o, p, fl, c, auto) {
   if (auto) {
     const v = c.missing ? '<span class="warn">فاضل ' + c.missing + ' صنف ماتختارش</span>' : c.service == null ? '<span class="warn">اختار المنطقة</span>'
       : c.left > 0.009 ? '<span class="warn">Apex أقل بـ ' + money(c.left) + ' — راجع الأصناف والأحجام</span>'
-      : c.gap > 0.1 * c.want + 15 ? '<span class="warn">فرق كبير ' + money(c.gap) + ' — راجع الأصناف والأحجام</span>'
+      : c.itemsDiff != null && Math.abs(c.itemsDiff) > 0.1 * c.tItems + 15 ? '<span class="warn">أصناف Apex ' + (c.itemsDiff > 0 ? 'أغلى' : 'أرخص') + ' من طلبات بـ ' + money(Math.abs(c.itemsDiff)) + ' — راجع الأصناف والأحجام</span>'
+      : c.delDiff != null && Math.abs(c.delDiff) > 20 ? '<span class="warn">التوصيل مختلف بـ ' + money(Math.abs(c.delDiff)) + ' — راجع المنطقة</span>'
       : '<span class="ok">✓ مظبوط</span>';
     h += '<div class="verdict">' + v + (c.why.length ? '<div class="muted">السبب: ' + c.why.map(esc).join('، ') + '</div>' : '') + '</div>';
   }
@@ -572,8 +575,12 @@ $('list').addEventListener('click', async e => {
     if (o.items.some(i => (i.addons || []).some(a => a.qty == null))) { toast('عدد إضافة مش واضح — سجله بإيدك'); return; }
     const cc = ticketCalc(o, flatLines(o), p);
     const rest = cc.rest, platSum = cc.plat;
-    // Karim 10-11 (#2087: Apex 2685 for an order paid 1225): a very large difference is almost always a wrong item or size.
-    if (cc.gap != null && cc.gap > 0.25 * cc.want + 30 && !confirm('الفرق بين Apex وطلبات كبير (' + money(cc.gap) + ') — غالبًا صنف أو حجم غلط. متأكد إن الأصناف صح؟')) return;
+    // Karim 10-11 (#2087: Apex 2685 for an order paid 1225): asked only when the items or the delivery differ — never because
+    // of a discount (the discount lines decide that part).
+    const bad = [];
+    if (cc.itemsDiff != null && Math.abs(cc.itemsDiff) > 0.1 * cc.tItems + 15) bad.push('أصناف Apex ' + (cc.itemsDiff > 0 ? 'أغلى' : 'أرخص') + ' من طلبات بـ ' + money(Math.abs(cc.itemsDiff)) + ' — غالبًا صنف أو حجم غلط');
+    if (cc.delDiff != null && Math.abs(cc.delDiff) > 20) bad.push('توصيل Apex مختلف عن طلبات بـ ' + money(Math.abs(cc.delDiff)) + ' — راجع المنطقة');
+    if (bad.length && !confirm(bad.join('\n') + '\n\nمتأكد إنه صح؟')) return;
     b.disabled = true;
     try {
       await api('POST', '/api/transfer/job', { source: o.source, ref: o.ref, action: 'auto', payment: pay, branchNo: Number(p.branch), locationNo: Number(p.loc), code: o.code,
