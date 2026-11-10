@@ -28,6 +28,7 @@ const similar = (a, b) => {
 const aggregate = (xs, apex) => {
   const m = new Map();
   for (const x of Array.isArray(xs) ? xs : []) {
+    if (!x || typeof x !== 'object') continue;   // Karim 10-11: an empty line in a day's Apex data stopped the whole day (09-11)
     const qty = Number(x.qty), price = Number(x.price);
     if (!(qty > 0) || !x.name) continue;
     const k = (apex && x.no ? String(x.no) : itemKey(x.name)) + '|' + (apex ? price : price / qty);

@@ -59,7 +59,8 @@ function wordScore(en, arName) {
 // talabat: [{ qty, name, price (line total with tax) }], apex: [{ no, name, qty, price (unit, before tax) }]
 // learned: Map(talabat name → Map(apex no → evidence)), ratio: Talabat/Apex price ratio (learned, about 1.13).
 function compareItems(talabat, apex, { learned = new Map(), ratio = 1.13 } = {}) {
-  const T = talabat.map((x, i) => ({ ...x, i, unit: x.price && x.qty ? x.price / x.qty : null })), A = apex.map((x, i) => ({ ...x, i }));
+  // An empty line (null) in either list is skipped, never a crash of the whole day.
+  const T = (talabat || []).filter(x => x && typeof x === 'object').map((x, i) => ({ ...x, i, unit: x.price && x.qty ? x.price / x.qty : null })), A = (apex || []).filter(x => x && typeof x === 'object').map((x, i) => ({ ...x, i }));
   const usedA = new Set(), pairs = [];
   const known = t => [...(learned.get(key(t.name))?.keys() || []), ...(SEED[key(t.name)] || []), ...(SEED_VARIANTS.get(variantKey(t.name)) || [])];
   // Names and quantities identify dishes; menu prices drift a little, so only a price far off
@@ -111,7 +112,7 @@ function compareItems(talabat, apex, { learned = new Map(), ratio = 1.13 } = {})
   const uncertain = modifierUncertain || missingOnApex.some(t => !known(t).length && !A.some(a => wordScore(t.name, a.name) >= 0.65));
   return { ok: !missingOnApex.length && !extraOnApex.length, uncertain, modifierUncertain, wrongSize: wrongSize.map(a => (a.qty || 1) + '× ' + a.name), pairs: pairs.map(p => ({ talabat: p.t.name, apex: p.a.name, apexNo: p.a.no, how: p.how, ratio: p.t.unit && p.a.price ? p.t.unit / p.a.price : null })),
     missingOnApex: missingOnApex.map(t => t.qty + '× ' + t.name), extraOnApex: extraOnApex.map(a => (a.qty || 1) + '× ' + a.name),
-    countTalabat: qty(talabat, 'qty'), countApex: qty(apex, 'qty'),
+    countTalabat: qty(T, 'qty'), countApex: qty(A, 'qty'),
     unmatched: { talabat: missingOnApex.map(({ qty, name, price }) => ({ qty, name, price })), apex: extraOnApex.map(({ no, name, qty, price }) => ({ no, name, qty, price })) } };
 }
 

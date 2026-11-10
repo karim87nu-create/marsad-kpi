@@ -85,3 +85,20 @@ test('add-ons: the count Talabat shows is for all the dishes together (Apex has 
   assert.equal(compareItems(T('1× Mombar'), A(1)).extraOnApex.length, 0, 'one mombar for the two dishes');
   assert.equal(compareItems(T('?× Mombar'), A(2)).extraOnApex.length, 1, 'unknown count: not confirmed');
 });
+
+test('a day with an empty line in its Apex or Talabat items still opens (Karim 10-11: 09-11 failed with «reading qty»)', async () => {
+  const t0 = cairoToUtc(2026, 11, 9, 20, 0, 0), at = m => new Date(t0 + m * 60000).toISOString();
+  const t = await start({ at: t0 + 40 * 60000 });
+  try {
+    const admin = await t.admin();
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const ot = (await admin('POST', '/api/orders/token')).body.token;
+    const store = 'الدهان، التجمع الخامس';
+    await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': ot }, body: { v: 1, day: '2026-11-09', online: [{ no: 9001, kind: 'طلبات', branch: 'التجمع', at: at(2), user: 'sara', amount: 247.78, tag: '#2701', items: [null, { no: '0107006', name: 'فرد حمام محشى', qty: 1, price: 212.92 }] }] } });
+    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { codes: [{ id: '3977100001', code: '2701', store }] } });
+    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: [{ id: '3977100001', store, status: 'ACCEPTED', placedAt: at(0), detail: { receivedAt: at(0), items: [{ qty: 1, name: 'Stuffed Pigeon with Rice - Piece', price: 242 }], subtotal: 242 } }] } });
+    await admin('POST', '/api/talabat/link', { talabatId: '3977100001', apexNo: 9001 });
+    const r = await admin('GET', '/api/talabat/day?day=2026-11-09');
+    assert.equal(r.status, 200); assert.equal(r.body.orders.length, 1);
+  } finally { await t.close(); }
+});
