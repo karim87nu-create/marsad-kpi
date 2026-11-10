@@ -228,7 +228,7 @@ function SchedText([string]$txt){
   # «12 بالليل / 12 مساء» is midnight, «2 بالليل» after midnight.
   $t = [regex]::Replace($t, "(\d{1,2})((?:\s*[:.]\s*\d{2})?)\s*(?:(بعد\s*ال(?:ضهر|ظهر)|مساءا|مساء|مسا|عصرا|العصر|عصر|المغرب|مغرب|العشا|عشاء)|(ضهرا|ظهرا|الضهر|الظهر|ضهر|ظهر|ظ)|(صباحا|الصباح|صباح|الصبح|صبحا)|(بالليل|باليل|بليل|الليل|ليلا))$R", {
     param($m) $h = [int]$m.Groups[1].Value
-    $ap = $(if ($m.Groups[6].Success) { $(if ($h -eq 12 -or $h -le 5) { 'ص' } else { 'م' }) } elseif ($m.Groups[3].Success) { $(if ($h -eq 12) { 'ص' } else { 'م' }) } elseif ($m.Groups[5].Success) { 'ص' } elseif ($h -ge 10 -and $h -le 11) { 'ص' } else { 'م' })
+    $ap = $(if ($m.Groups[6].Success) { $(if ($h -eq 12 -or $h -le 5) { 'ص' } else { 'م' }) } elseif ($m.Groups[3].Success) { $(if ($h -eq 12) { 'ص' } else { 'م' }) } elseif ($m.Groups[5].Success) { 'ص' } elseif ($h -eq 12) { 'ظ' } elseif ($h -ge 10 -and $h -le 11) { 'ص' } else { 'م' })
     $m.Groups[1].Value + $m.Groups[2].Value + ' ' + $ap + ' ' })
   # Time words → «@»; a «س» after the number too («4.30س», «ال3 سا»).
   $t = [regex]::Replace($t, $key, ' @ ')
@@ -239,10 +239,10 @@ function ScheduleOf([string]$txt, $entry){
   if (-not $txt -or $entry -eq $null) { return $null }
   try { $t = SchedText $txt } catch { return (ScheduleOfOld $txt $entry) }
   $ar = '(?![ء-ي])'
-  $m = [regex]::Match($t, '(?<![\d])(\d{1,2})\s*[:.]\s*(\d{2})(?!\d)\s*(ص|م|am|pm)?' + $ar, 'IgnoreCase')
-  if (-not $m.Success) { $m = [regex]::Match($t, '@[\s.:/\\\-@]*(\d{1,2})(?:\s*[:.]\s*(\d{2}))?(?!\d)\s*(ص|م|am|pm)?' + $ar, 'IgnoreCase') }
-  if (-not $m.Success) { $m = [regex]::Match($t, '(?<![\d:.])(\d{1,2})(?:\s*[:.]\s*(\d{2}))?\s*@\s*(ص|م|am|pm)?' + $ar, 'IgnoreCase') }
-  if (-not $m.Success) { $m = [regex]::Match($t, '(?<![\d:.])(\d{1,2})()\s*(ص|م|am|pm)' + $ar, 'IgnoreCase') }
+  $m = [regex]::Match($t, '(?<![\d])(\d{1,2})\s*[:.]\s*(\d{2})(?!\d)\s*(ص|م|ظ|am|pm)?' + $ar, 'IgnoreCase')
+  if (-not $m.Success) { $m = [regex]::Match($t, '@[\s.:/\\\-@]*(\d{1,2})(?:\s*[:.]\s*(\d{2}))?(?!\d)\s*(ص|م|ظ|am|pm)?' + $ar, 'IgnoreCase') }
+  if (-not $m.Success) { $m = [regex]::Match($t, '(?<![\d:.])(\d{1,2})(?:\s*[:.]\s*(\d{2}))?\s*@\s*(ص|م|ظ|am|pm)?' + $ar, 'IgnoreCase') }
+  if (-not $m.Success) { $m = [regex]::Match($t, '(?<![\d:.])(\d{1,2})()\s*(ص|م|ظ|am|pm)' + $ar, 'IgnoreCase') }
   $days = $null; $dm = [regex]::Match($t, '\{D(\d)\}'); if ($dm.Success) { $days = [int]$dm.Groups[1].Value }
   $wm = [regex]::Match($t, '\{W(\d)\}'); if ($wm.Success -and $days -eq $null) { $days = ([int]$wm.Groups[1].Value - [int]$entry.DayOfWeek + 7) % 7 }
   if (-not $m.Success) {
@@ -256,7 +256,8 @@ function ScheduleOf([string]$txt, $entry){
   if ($h -gt 23 -or $mi -gt 59) { return $null }
   $hours = @($h)
   if ($ap -in @('ص','am')) { if ($h -gt 12) { return $null }; $hours = @($h % 12) }
-  elseif ($ap -in @('م','pm')) { if ($h -gt 12) { return $null }; $h0 = $h % 12; $hours = @($h0 + 12) }
+  elseif ($ap -eq 'ظ') { if ($h -gt 12) { return $null }; $hours = @($(if ($h -eq 12) { 12 } else { $h + 12 })) }
+  elseif ($ap -in @('م','pm')) { if ($h -gt 12) { return $null }; $hours = @($(if ($h -eq 12) { 0 } else { $h + 12 })) }   # «12 م» = midnight; noon is «12 ضهرا»
   elseif ($h -le 12) { $h0 = $h % 12; $hours = @($h0, ($h0 + 12)) }
   if ($days) {
     # Another day: the restaurant's hours decide «7» (evening) or «10» (morning).
@@ -283,7 +284,7 @@ function Test-Schedule {
       @('بدران.س7مساء.', '19:00'), @('مينا\\الساعه 2 ضهرا.', '14:00'), @('صلاح.س4عصرا.', '16:00'), @('عمر / الساعه 12باليل', '00:00+1'),
       @('احمد.الاعه 4ونص.', '16:30'), @('هدى الساعه تسعه', '21:00'), @('هدى الساعه تسعه ونص بالليل', '21:30'), @('رانيا بعد ساعة', '14:00'),
       @('رانيا بعد نص ساعه', '13:30'), @('منال بكره الساعه 2', '14:00+1'), @('محروس\\الساعه7 الاربعاء', '19:00+1'), @('ولاء.// الساعه 10:30', '22:30'),
-      @('ندى / الساعه 12 ص.', '00:00+1'), @('منار / الساعه 1 ظهرا', '13:00'), @('فرحات.س10صباح', '-'), @('عمر 2 بالليل', '02:00+1'), @('بسام.12.30مساء.', '00:30+1'), @('ميرفت//الساعه 12 ونص', '00:30+1'),
+      @('ندى / الساعه 12 ص.', '00:00+1'), @('منار / الساعه 1 ظهرا', '13:00'), @('منار / الساعه 12 ظهرا', '-'), @('سيد الساعه 12 م', '00:00+1'), @('سيد س 12 ظ', '-'), @('فرحات.س10صباح', '-'), @('عمر 2 بالليل', '02:00+1'), @('بسام.12.30مساء.', '00:30+1'), @('ميرفت//الساعه 12 ونص', '00:30+1'),
       @('صباح//اطلب//كاش#7690', '-'), @('الاء\اطلب\مدفوع#4555', '-'), @('عباس محمد', '-'), @('ست هدى', '-'), @('اللواء/صلاح المغربي/', '-'),
       @('الساعه ٥', '17:00'), @('عمرو\ فيزاالساعه 3.', '15:00'), @('رانيا \فيزا الساعه.4', '16:00'), @('/فيزا/س 11 ونص', '23:30'), @('ح/اطلبس 5.30.\مد', '17:30')
     )
@@ -306,7 +307,8 @@ function Test-Schedule {
       if ("$a" -eq "$b") { continue }
       $changed++
       $lo = ParseT $r.OrderTime $day
-      $cmp += "اتضرب $($en.ToString('MM-dd HH:mm')) | خرج $(if ($lo) { $lo.ToString('HH:mm') } else { '-' }) | قديم $(if ($a) { $a.ToString('HH:mm') } else { '-' }) «$ha» | جديد $(if ($b) { $b.ToString('MM-dd HH:mm') } else { '-' }) «$hb»"
+      $mask = [regex]::Replace((SchedText $txt), '[\u0621-\u064A]+', { param($w) if ($w.Value -match '^(?:ال|ل|الا|و|ب)?(?:ساعه|ساعتين|اعه|ميعاد|معاد|موعد|يوصل|توصيل|استلام|نص|نصف|ربع|تلت|ثلث|الا|مساء|مساءا|مسا|ليل|ليلا|ليل|ضهر|ظهر|ضهرا|ظهرا|عصر|عصرا|صباح|صباحا|صبح|صبحا|مغرب|عشا|عشاء|بكره|بكرا|غدا|بعد|دقيقه|دقايق|س|م|ص|ظ|سا)$' -or $script:SchedNum.ContainsKey($w.Value)) { $w.Value } else { '…' } })
+      $cmp += "اتضرب $($en.ToString('MM-dd HH:mm')) | خرج $(if ($lo) { $lo.ToString('HH:mm') } else { '-' }) | قديم $(if ($a) { $a.ToString('HH:mm') } else { '-' }) «$ha» | جديد $(if ($b) { $b.ToString('MM-dd HH:mm') } else { '-' }) «$hb» | $($mask -replace '\s+', ' ')"
     }
     Set-Content (Join-Path $here 'sched_compare.txt') (@("آخر 30 يوم: $n أوردر فيهم أرقام، $changed اتغيرت قرايتهم") + $cmp) -Encoding UTF8
     Set-Content $stampFile $out -Encoding UTF8
