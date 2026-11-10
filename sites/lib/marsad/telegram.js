@@ -486,7 +486,10 @@ function setup(app) {
           } else await db.prepare('UPDATE telegram_log SET tries = 5, error = ? WHERE id = ? AND sent_at IS NULL').run('مفيش جروب للفرع' + (r.branch ? ' (' + r.branch + ')' : ''), r.id);
           continue;
         }
-        if (r.reply_to && (!parent?.message_id || parent.error)) continue;
+        // A reply waits for its parent to be sent. Karim 10-11 review: when Telegram's answer to the parent was lost
+        // («delivery_unconfirmed», no message id) the replies («✅ اتضرب على Apex») were never sent (46 in two days);
+        // they go on their own now — each says which order it is about.
+        if (r.reply_to && !(parent && (parent.message_id || parent.sent_at || parent.tries >= 5))) continue;
         const delivered = parent ? await db.prepare('SELECT value FROM settings WHERE key = ?').get('telegram_delivery:' + parent.key) : null;
         const chat = delivered?.value || (target?.startsWith('branch:') ? (groups || (groups = await branchGroups()))[target.slice(7)]?.id : target === 'branches' ? c.branch_chat_id : target === 'online' ? c.online_chat_id : c.chat_id);
         if (!chat) continue; // Never fall back to a different department's group.

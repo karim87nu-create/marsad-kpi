@@ -330,9 +330,12 @@ function setup(app) {
     }
     // A dish on Talabat that is not what was entered on Apex (only for orders tied by the #code or by hand: sure links).
     const sent = new Set((await db.prepare("SELECT key FROM telegram_log WHERE (key LIKE 'talabat:items:%' OR key LIKE 'resolved:talabat:items:%') AND created_at >= ?").all(now - 6 * 3600000)).map(x => x.key));
+    // Karim 10-11 review: 43 of 44 «صنف ممكن يكون متضرب غلط» on 10-11 were orders the Marsad wrote itself — the employee
+    // chose each Apex item (and its add-ons) on the transfer page, so «أرز أبيض» → «ارز سادة» is not a mistake. Those are not alerted.
+    const written = new Set((await db.prepare("SELECT ref FROM transfer_jobs WHERE source = 'talabat' AND state = 'auto_done' AND day = ?").all(day)).map(x => String(x.ref)));
     for (const o of m.rows) {
       const a = m.matches.get(o.id), c = a?.items, key = 'talabat:items:' + o.id;
-      if (!c || !['code','evidence','manual'].includes(a.how)) continue;
+      if (!c || !['code','evidence','manual'].includes(a.how) || written.has(String(o.id))) continue;
       if (!c.ok && !c.uncertain && !c.reviewedOk && !sent.has(key) && now - (o.accepted_at || o.placed_at || now) < 3 * 3600000)
         out.push({ key, kind: 'talabatItems', target: 'online', text: '🛵 طلبات | 🍽️ صنف ممكن يكون متضرب غلط على Apex\n' + talabatReference(o) + ' · ' + (a.branch || '') + (a.user ? '\nاللي ضرب الأوردر: ' + a.user : '') +
           (c.missingOnApex.length ? '\nعلى طلبات ومش على Apex: ' + c.missingOnApex.join('، ') : '') + (c.extraOnApex.length ? '\nعلى Apex ومش على طلبات: ' + c.extraOnApex.join('، ') : '') });
