@@ -579,7 +579,16 @@ function ReadOutbox {
 }
 if (Test-Path $outboxFile) {
   # A corrupt or unreadable queue must stop startup, never silently discard unacknowledged alerts.
-  foreach ($entry in (ReadOutbox)) { if ($entry) { [void]$pending.Add($entry) } }
+  # Karim 10-11 review: entries read back from the file are objects, not tables — `$entry['key']` on them was empty, so after a
+  # restart every waiting alert was saved back as nulls (25 found) and never sent. Read each field by name; drop the empty ones.
+  foreach ($entry in (ReadOutbox)) {
+    if (-not $entry -or -not $entry.key -or -not $entry.day) { continue }
+    $o = [ordered]@{}
+    foreach ($field in @('day','key','kind','text','branch','sn','status')) { $o[$field] = $entry.$field }
+    if ($entry.cancels) { $o['cancels'] = @($entry.cancels) }
+    if ($entry.orders) { $o['orders'] = [int]$entry.orders }
+    [void]$pending.Add($o)
+  }
 }
 function SaveOutbox {
   $tmp = $outboxFile + '.tmp'
@@ -588,9 +597,10 @@ function SaveOutbox {
   $serializer.MaxJsonLength = [int]::MaxValue
   $wire = New-Object 'System.Collections.Generic.List[object]'
   foreach ($entry in $pending) {
+    if (-not $entry.key -or -not $entry.day) { continue }
     $item = New-Object 'System.Collections.Generic.Dictionary[string,object]'
     foreach ($field in @('day','key','kind','text','branch','sn','status')) {
-      $value = $entry[$field]
+      $value = $entry.$field
       if ($field -eq 'sn' -and $null -ne $value) { $value = [long]$value }
       elseif ($null -ne $value) { $value = [string]$value }
       $item.Add($field, $value)
