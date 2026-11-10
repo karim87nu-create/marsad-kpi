@@ -10,8 +10,8 @@
 import { businessDay, iso, validDate } from './time.js';
 import { parseJson } from './order-match.js';
 import { deliveryPhone, deliveryLabel, deliveryAddress } from './delivery-fields.js';
-import { parseApexCustomerNote, normArabic } from './apex-customer-notes.js';
-import { knownNos } from './items.js';
+import { parseApexCustomerNote, normArabic, guessApexItem } from './apex-customer-notes.js';
+import { knownNos, itemKey } from './items.js';
 import { APEX_NAMES, APEX_PRICES } from './menu-seed.js';
 import { APEX_SECTIONS } from './apex-sections.js';
 import { canonicalStore } from './store-names.js';
@@ -293,6 +293,7 @@ function setup(app) {
       for (const a of [...(snap.online || []), ...(snap.orders || [])]) for (const i of a.items || []) if (i?.no && i?.name) apexName.set(String(i.no).trim(), i.name);
       const learned = new Map();
       if (app.learn) for (const [n, m] of await app.learn.pairs('match-v2:item:talabat')) { const ok = new Map([...m].filter(([, c]) => c >= 2)); if (ok.size) learned.set(n, ok); }
+      const itemHistory = app.learn ? await itemsLearned() : new Map();
       // Apex items for a Talabat name: the item map first; else (live orders name add-ons in Arabic, «ممبار») the Apex item
       // with exactly that name, or the only one whose name holds it.
       const arKey = v => String(v || '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/[ًٌٍَُِّْ]/g, '').replace(/\s+/g, ' ').trim();
@@ -312,6 +313,19 @@ function setup(app) {
         const size = WEIGHTS.find(w => (x.options || []).some(o => w[0].test(o.name)) || (x.modifiers || []).some(m => w[0].test(m)));
         const sized = size ? apex.filter(a => a.name && size[1].test(a.name)) : [];
         if (sized.length) apex = sized;
+        // Karim 10-11 «والأصناف برضو بتطلب اختيار»: with several candidates (sizes, offers), the one the staff chose
+        // for this same Talabat dish and options before is picked (2+ times, 70%+ of the time; checked on 509 past lines:
+        // every pick was what staff chose); with none, an Arabic name is matched to Apex's menu when the match is clear.
+        let apexPick = null;
+        if (withApex && apex.length > 1) {
+          const seen = itemHistory.get(lineKey(x)), top = seen && [...seen].filter(([no]) => apex.some(a => a.no === no)).sort((u, v) => v[1] - u[1]);
+          const all = top ? top.reduce((t, c) => t + c[1], 0) : 0;
+          if (top?.length && top[0][1] >= 2 && top[0][1] >= all * 0.7) apexPick = top[0][0];
+        }
+        if (withApex && !apex.length) {
+          const g = guessApexItem([x.nameShown, x.name].find(n => /[\u0600-\u06ff]/.test(n || '')) || '', 2);
+          if (g[0] && g[0].score >= 0.85 && !(g[1] && g[1].score >= g[0].score - 0.05)) { apex = [{ no: g[0].itemNo, name: g[0].name }]; apexPick = g[0].itemNo; }
+        }
         // Options: the size (weight) choice, add-ons that cost money (their own Apex line), and free choices (a note).
         // A discount under the dish (minus price, or discount words) is neither an add-on nor a comment: it goes to the discounts.
         const isDisc = o => Number(o.price) < 0 || DISC_WORDS.test(o.name);
@@ -333,7 +347,7 @@ function setup(app) {
         const addons = opts.filter(o => o !== sizeOpt && Number(o.price) > 0).map(o => ({ name: o.name, qty: Number(o.qty) > 0 ? Number(o.qty) : null, price: Number(o.price),   // the count shown is for all the dishes together
           apex: (withApex ? suggest(o.name) : []).map(no => ({ no, name: apexName.get(no) || null })) }));
         const free = opts.filter(o => o !== sizeOpt && !(Number(o.price) > 0)).map(o => (Number(o.qty) > 1 ? o.qty + '× ' : '') + o.name);
-        return { qty: x.qty, name: x.name, price: x.price ?? null, modifiers: x.modifiers || [], modifiersComplete: x.modifierComplete === true || !withApex, size: size ? size[2] : null, apex,
+        return { qty: x.qty, name: x.name, price: x.price ?? null, modifiers: x.modifiers || [], modifiersComplete: x.modifierComplete === true || !withApex, size: size ? size[2] : null, apex, ...(apexPick ? { apexPick } : {}),
           // The size picks the Apex item itself (ربع كيلو نيفة): it is neither an add-on nor a comment.
           addons, sizeOption: sizeOpt ? sizeOpt.name : null, freeOptions: opts.length ? free : (x.modifiers || []).filter(m => !WEIGHTS.some(w => w[0].test(m)) && !DISC_WORDS.test(m)), itemDiscounts };
       };
@@ -398,6 +412,40 @@ function setup(app) {
     }
   }
   // ---- claim / entered / release ----
+  // The Apex item staff chose for a Talabat dish (with its options), learned from every job (and once from the past ones).
+  const lineKey = x => (itemKey(x.name) + '|' + (Array.isArray(x.options) ? x.options : []).map(v => itemKey(v?.name || '')).filter(Boolean).sort().join(',')).slice(0, 160);
+  const talabatLearned = async () => {
+    const m = new Map();
+    for (const [n, c] of await app.learn.pairs('match-v2:item:talabat')) { const ok = new Map([...c].filter(([, k]) => k >= 2)); if (ok.size) m.set(n, ok); }
+    return m;
+  };
+  const itemFacts = (lines, chosen, learned) => {
+    const out = [];
+    for (const x of lines) {
+      const c = knownNos(x.name, learned);
+      const hit = [...new Set(c)].filter(no => chosen.has(no));
+      if (hit.length === 1) out.push([lineKey(x), hit[0]]);
+    }
+    return out;
+  };
+  let itemsFilled = false;
+  async function itemsLearned() {
+    let pairs = await app.learn.pairs('transfer:item');
+    if (!pairs.size && !itemsFilled) {
+      itemsFilled = true;
+      const rows = await db.prepare(`SELECT j.ref, j.payload, t.items FROM transfer_jobs j JOIN talabat_orders t ON t.id = j.ref
+        WHERE j.source = 'talabat' AND j.payload IS NOT NULL ORDER BY j.at DESC LIMIT 3000`).all();
+      const facts = [], learned = await talabatLearned();
+      for (const r of rows) {
+        const chosen = new Set((parseJson(r.payload, {})?.items || []).filter(x => !x.free).map(x => String(x.itemNo)));
+        for (const [k, no] of itemFacts(parseJson(r.items, []), chosen, learned)) facts.push([k, no, r.ref + ':' + facts.length]);
+      }
+      for (let i = 0; i < facts.length; i += 100)
+        await db.batch(facts.slice(i, i + 100).map(([k, no, ref]) => db.prepare("INSERT INTO learned (kind, a, b, ref, value, at) VALUES ('transfer:item', ?, ?, ?, NULL, ?) ON CONFLICT(kind, a, b, ref) DO NOTHING").bind(k, no, ref, app.now()))).catch(() => {});
+      if (facts.length) { app.learn.forget?.(); pairs = await app.learn.pairs('transfer:item'); }
+    }
+    return pairs;
+  }
   // What staff chose before: from the jobs already done, once, then from every new job.
   let areaFilled = false;
   async function areaLearned() {
@@ -580,6 +628,11 @@ function setup(app) {
       await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at, payload, result) VALUES (?,?,?,'auto_pending',?,?,?,?,?,?,NULL)
         ON CONFLICT(source, ref) DO UPDATE SET state = 'auto_pending', employee_id = excluded.employee_id, employee_name = excluded.employee_name, payment = excluded.payment, note = excluded.note, at = excluded.at, payload = excluded.payload, result = NULL`)
         .run(source, ref, row.day, me.id, me.name, payment, note, ctx.now, JSON.stringify(payload));
+      if (source === 'talabat' && app.learn) {
+        const t = await db.prepare('SELECT items FROM talabat_orders WHERE id = ?').get(ref), chosen = new Set(clean.map(x => String(x.itemNo)));
+        const facts = itemFacts(parseJson(t?.items, []), chosen, await talabatLearned());
+        for (let i = 0; i < facts.length; i++) await app.learn.record('transfer:item', facts[i][0], facts[i][1], ref + ':' + i).catch(() => {});
+      }
       // The Apex area chosen for this Talabat area teaches the next order of the same area (Karim 10-11).
       if (source === 'talabat' && app.learn) {
         const area = parseJson((await db.prepare("SELECT data FROM match_profiles WHERE source = 'talabat' AND ref = ?").get(ref))?.data, {})?.area;

@@ -221,10 +221,12 @@ function giftChoices(worth) {
 // Karim 10-11: more than one gift item (and more than one of each) until the total is near the discount.
 function giftTotal(p) { return Object.entries(p.cardGifts || {}).reduce((sum, [no, q]) => sum + (Number(apexPrices.get(no)) || 0) * q, 0); }
 const GIFT_ROOM = worth => worth * 1.25 + 5;
+// One candidate, or the one the orders already on Apex used most for this dish (Karim 10-11).
+const firstPick = i => i.apex?.length === 1 ? i.apex[0].no : i.apexPick && (i.apex || []).some(a => a.no === i.apexPick) ? i.apexPick : '';
 function flatLines(o) {
   const out = [];
   for (const i of o.items || []) {
-    out.push({ choiceKey: i.choiceKey, kind: 'item', qty: i.qty, name: i.name, label: i.name + (i.sizeOption ? ' — ' + i.sizeOption : '') + ((i.freeOptions || []).length ? ' (' + i.freeOptions.join('، ') + ')' : ''), apex: i.apex || [], note: (i.freeOptions || []).join('، ').slice(0, 60) });
+    out.push({ choiceKey: i.choiceKey, kind: 'item', apexPick: i.apexPick || null, qty: i.qty, name: i.name, label: i.name + (i.sizeOption ? ' — ' + i.sizeOption : '') + ((i.freeOptions || []).length ? ' (' + i.freeOptions.join('، ') + ')' : ''), apex: i.apex || [], note: (i.freeOptions || []).join('، ').slice(0, 60) });
     for (const a of i.addons || []) out.push({ choiceKey: a.choiceKey, kind: 'addon', qty: a.qty ?? '?', name: a.name, label: '+ ' + a.name + ' (' + money(a.price) + ') — إضافة بفلوس على ' + i.name, apex: a.apex || [], note: '' });
   }
   return out;
@@ -340,11 +342,11 @@ function card(o) {
   if (o.done) return '<div class="card done" data-k="' + esc(key(o)) + '"><div class="head"><span class="src ' + o.source + '">' + (o.source === 'talabat' ? 'طلبات' : 'الموقع') + '</span><span class="code">' + (o.code ? '#' + esc(o.code) : esc(o.ref)) + '</span><span class="when">' + time(o.at) + ' ' + esc(o.branch || '') + '</span><span class="state ' + st.cls + '">' + esc(st.text) + '</span></div></div>';
   const pay = payOf(o), fl = flatLines(o), k = key(o);
   const mode = data.autoTransfer, auto = !!mode && mode !== 'off' && !o.apex && !/^auto_(?:pending|sending|done|preview)$/.test(o.job?.state || '');
-  const p = picks[k] || (picks[k] = { branch: o.apexBranch || '', items: fl.map(i => i.apex?.length === 1 ? i.apex[0].no : '') });
+  const p = picks[k] || (picks[k] = { branch: o.apexBranch || '', items: fl.map(firstPick) });
   const signature = JSON.stringify(fl.map(i => [i.choiceKey, i.qty]));
-  if (p.signature && p.signature !== signature) { p.items = fl.map(i => i.apex?.length === 1 ? i.apex[0].no : ''); p.edit = {}; }
+  if (p.signature && p.signature !== signature) { p.items = fl.map(firstPick); p.edit = {}; }
   p.signature = signature;
-  fl.forEach((i, n) => { if (!p.items[n] && i.apex?.length === 1) p.items[n] = i.apex[0].no; });
+  fl.forEach((i, n) => { if (!p.items[n]) p.items[n] = firstPick(i); });
   const freeJob = !o.job || ['released', 'auto_failed', 'auto_preview'].includes(o.job.state), mineOrFree = freeJob || o.job.mine;
   const c = ticketCalc(o, fl, p);
   const ad = addressParts(o.customer?.address, (data.locations || []).find(l => String(l.no) === String(p.loc))?.name || ''), cu = o.customer || {};
