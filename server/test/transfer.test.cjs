@@ -406,3 +406,25 @@ test('worker queue does not await I/O owned by a different request', async () =>
     assert.equal((await pending).status, 200);
   } finally { release?.(); await t.close(); }
 });
+
+test('a weight under the dish is its size, never a paid add-on («1 كيلو» 1,509 under Veal Ribs)', async () => {
+  const t0 = cairoToUtc(2026, 10, 22, 20, 0, 0), at = m => new Date(t0 + m * 60000).toISOString();
+  const t = await start({ at: t0 + 10 * 60000 });
+  try {
+    const admin = await t.admin();
+    await t.employee(admin, { name: 'سارة', code: 'E1', pin: '1111' });
+    const sara = (await t.call('POST', '/api/transfer/login', { body: { pin: '1111' } })).body.token;
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const store = 'الدهان، التجمع الخامس - البنفسج';
+    const item = (name, options) => ({ qty: 1, name, price: 0, modifierRead: true, modifierComplete: true, options });
+    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: [{ id: '3977600009', store, status: 'ACCEPTED', placedAt: at(0), total: 1600,
+      detail: { customer: { name: 'K', phone: '01000000009' }, items: [
+        item('Veal Ribs', [{ qty: 1, name: '1 كيلو', price: 1509 }, { qty: 1, name: 'نص سوى', price: 0 }]),
+        item('Veal Ribs', [{ qty: 1, name: '‏١ کیلو', price: 1509 }]),
+        item('Kofta', [{ qty: 1, name: 'Quarter Kilo', price: 214 }, { qty: 2, name: 'Basmati Rice', price: 71 }])], bill: [] } }] } });
+    const o = (await t.call('GET', '/api/transfer/queue?day=2026-10-22', { headers: { 'x-transfer-session': sara } })).body.orders.find(x => x.ref === '3977600009');
+    assert.equal(o.items[0].size, 'كيلو'); assert.equal(o.items[0].sizeOption, '1 كيلو'); assert.deepEqual(o.items[0].addons, []);
+    assert.equal(o.items[1].size, 'كيلو', 'Persian letters, Arabic digit, direction mark'); assert.deepEqual(o.items[1].addons, []);
+    assert.equal(o.items[2].size, 'ربع كيلو'); assert.deepEqual(o.items[2].addons.map(a => a.name), ['Basmati Rice'], 'a real add-on stays one');
+  } finally { await t.close(); }
+});

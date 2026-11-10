@@ -79,11 +79,16 @@ function talabatDiscounts(bill) {
 const phoneOut = p => p ? (/^1\d{9}$/.test(String(p)) ? '0' + p : String(p)) : null;
 
 // Talabat option words for a weight → how Apex item names write it → how the page says it.
+// Talabat's own letters (Persian ی/ک, direction marks, Arabic digits) read like ours before the weight is looked for.
+const wName = t => String(t || '').replace(/[\u200e\u200f\u061c\u202a-\u202e]/g, '').replace(/ی/g, 'ي').replace(/ک/g, 'ك').replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d));
 const WEIGHTS = [
-  [/quarter|1\/4|ربع/i, /1\/4|ربع/, 'ربع كيلو'],
-  [/third|1\/3|ثلث|تلت/i, /1\/3|ثلث|تلت/, 'تلت كيلو'],
-  [/half|1\/2|نص|نصف/i, /1\/2|نص/, 'نص كيلو'],
-  [/^\s*(?:1\s*)?(?:kilo|kg|كيلو)(?:\s|$)/i, /^\s*(?:ك|كيلو)\s/, 'كيلو'],
+  // Karim 10-11: «نص سوى» (how it is cooked) is not «نص كيلو»: a part of a kilo is a weight only next to «كيلو», or alone.
+  [/quarter\s*(?:kilo|kg)|(?:1\/4|ربع)\s*(?:kilo|kg|كيلو|ك(?=$|\s)|كجم)|^\s*(?:quarter|1\/4|ربع)\s*$/i, /1\/4|ربع/, 'ربع كيلو'],
+  [/third\s*(?:kilo|kg)|(?:1\/3|ثلث|تلت)\s*(?:kilo|kg|كيلو|ك(?=$|\s)|كجم)|^\s*(?:third|1\/3|ثلث|تلت)\s*$/i, /1\/3|ثلث|تلت/, 'تلت كيلو'],
+  [/half\s*(?:kilo|kg)|(?:1\/2|نص|نصف)\s*(?:kilo|kg|كيلو|ك(?=$|\s)|كجم)|^\s*(?:half|1\/2|نص|نصف)\s*$/i, /1\/2|نص/, 'نص كيلو'],
+  // Karim 10-11: «1 كيلو» (1,509) under «Veal Ribs» came out as a paid add-on; the kilo is the size however it is written
+  // («1 كيلو», «١ كيلو», «+ 1 كيلو», «كيلو واحد», «1 كجم», «1kg», «1 Kilo»).
+  [/(?:^|[\s+(\-])(?:[1١]\s*|واحد\s*)?(?:kilo(?:gram)?s?|kgs?|كيلو(?:\s*جرام|جرام)?|كجم|ك\.?\s?ج)(?:\s*واحد)?(?=$|[\s)\-.,،])/i, /^\s*(?:ك|كيلو)\s/, 'كيلو'],
 ];
 
 // Apex branches (Branches table, read 2026-10-31): number → name, for the employee's branch choice.
@@ -315,7 +320,10 @@ function setup(app) {
       const itemOut = (x, withApex) => {
         let apex = (withApex ? suggest(x.name, x.nameShown) : []).map(no => ({ no, name: apexName.get(no) || null }));
         // A size/weight chosen on Talabat («Quarter Kilo») narrows the Apex choices to that size, when their names say it.
-        const size = WEIGHTS.find(w => (x.options || []).some(o => w[0].test(o.name)) || (x.modifiers || []).some(m => w[0].test(m)));
+        // The size: the priced weight option first (it carries the dish's price), else any weight written.
+        const wOf = t => WEIGHTS.find(w => w[0].test(wName(t)));
+        const wOpt = (x.options || []).find(o => wOf(o.name) && Number(o.price) > 0) || (x.options || []).find(o => wOf(o.name));
+        const size = wOpt ? wOf(wOpt.name) : (x.modifiers || []).map(wOf).find(Boolean);
         const sized = size ? apex.filter(a => a.name && size[1].test(a.name)) : [];
         if (sized.length) apex = sized;
         // Karim 10-11 «والأصناف برضو بتطلب اختيار»: with several candidates (sizes, offers), the one the staff chose
@@ -348,13 +356,15 @@ function setup(app) {
         const itemDiscounts = funded.length && !fundedOk ? [{ text: (top?.label || 'خصم') + ' — ' + x.name + ' (التقسيم مش واضح)', amount: top?.amount ?? null, who: null }] : funded.length ? [...new Map(funded.map(d => [discountWho(d.label) + d.amount, { text: d.label + ' — ' + x.name, amount: d.amount, who: discountWho(d.label) }])).values()]
           : top ? [{ text: top.label + ' — ' + x.name, amount: top.amount, who: 'restaurant' }] : found.length ? [{ text: found[0].label + ' — ' + x.name, amount: null, who: 'restaurant' }] : [];
         const opts = (Array.isArray(x.options) ? x.options : []).filter(o => !isDisc(o));
-        const sizeOpt = opts.find(o => WEIGHTS.some(w => w[0].test(o.name))) || null;
-        const addons = opts.filter(o => o !== sizeOpt && Number(o.price) > 0).map(o => ({ name: o.name, qty: Number(o.qty) > 0 ? Number(o.qty) : null, price: Number(o.price),   // the count shown is for all the dishes together
+        // The weight is the size, never an add-on, even when it carries the dish's price («1 كيلو» 1,509).
+        const isWeight = o => WEIGHTS.some(w => w[0].test(wName(o.name)));
+        const sizeOpt = opts.find(o => isWeight(o) && Number(o.price) > 0) || opts.find(isWeight) || null;
+        const addons = opts.filter(o => o !== sizeOpt && !isWeight(o) && Number(o.price) > 0).map(o => ({ name: o.name, qty: Number(o.qty) > 0 ? Number(o.qty) : null, price: Number(o.price),   // the count shown is for all the dishes together
           apex: (withApex ? suggest(o.name) : []).map(no => ({ no, name: apexName.get(no) || null })) }));
         const free = opts.filter(o => o !== sizeOpt && !(Number(o.price) > 0)).map(o => (Number(o.qty) > 1 ? o.qty + '× ' : '') + o.name);
         return { qty: x.qty, name: x.name, price: x.price ?? null, modifiers: x.modifiers || [], modifiersComplete: x.modifierComplete === true || !withApex, size: size ? size[2] : null, apex, ...(apexPick ? { apexPick } : {}),
           // The size picks the Apex item itself (ربع كيلو نيفة): it is neither an add-on nor a comment.
-          addons, sizeOption: sizeOpt ? sizeOpt.name : null, freeOptions: opts.length ? free : (x.modifiers || []).filter(m => !WEIGHTS.some(w => w[0].test(m)) && !DISC_WORDS.test(m)), itemDiscounts };
+          addons, sizeOption: sizeOpt ? sizeOpt.name : null, freeOptions: opts.length ? free : (x.modifiers || []).filter(m => !WEIGHTS.some(w => w[0].test(wName(m))) && !DISC_WORDS.test(m)), itemDiscounts };
       };
       const list = [];
 
