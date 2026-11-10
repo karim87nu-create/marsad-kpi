@@ -261,13 +261,27 @@ const addressParts = deliveryAddress;
 const copyBtn = text => text ? '<button class="cp" data-copytext="' + esc(text) + '" aria-label="نسخ">نسخ</button>' : '';
 const field = (label, value, copy, extra) => '<div class="f"><span class="fl">' + label + '</span><span class="fv">' + (value || '<span class="warn">مش ظاهر</span>') + (extra || '') + '</span>' + (copy ? copyBtn(copy) : '<span></span>') + '</div>';
 
+// Karim 10-11 (#655: «فيه جزء علي طلبات وجزء علينا»): a discount Talabat does not say who pays for is never guessed as
+// Talabat's. The employee looks at «ممول من قبلك / ممول من قبل Talabat» on Talabat and taps who pays (or types our part).
+// Paid orders: all of it comes off on Apex anyway, so nothing is asked.
+function splitOf(o, p, paid) {
+  let rest = 0, plat = 0, missing = 0;
+  (o.discounts || []).forEach((d, i) => {
+    if (d.who && !d.unclear) return;
+    const a = Number(d.amount) || 0, r = p?.split?.[i];
+    if (r == null || !(r >= 0 && r <= a + 0.001)) { if (paid) plat += a; else missing++; return; }
+    rest += r; plat += a - r;
+  });
+  return { rest: r2(rest), plat: r2(plat), missing };
+}
 // What Apex will record for this order, from the employee's picks (the writer does the same sum on Apex).
 function ticketCalc(o, fl, p) {
-  const pay = payOf(o), paid = pay === 'paid', rest = discountSum(o, 'restaurant'), plat = discountSum(o, 'platform');
+  const pay = payOf(o), paid = pay === 'paid', sp = splitOf(o, p, paid), rest = r2(discountSum(o, 'restaurant') + sp.rest), plat = r2(discountSum(o, 'platform') + sp.plat);
   const amt = t => { const m = String(t || '').split(' | ').slice(1).join(' ').replace(/,/g, '').match(/-?\d+(?:\.\d+)?/); return m ? Number(m[0]) : null; };
   const bill = k => { const b = (o.bill || []).find(x => new RegExp(k, 'i').test(x.k || '')); return b ? amt(b.text) : null; };
   const tItems = o.subtotal ?? bill('^(?:المجموع الفرعي|subtotal)$'), tDel = (bill('توصيل|delivery') || 0) + (bill('رسوم الخدمة|service') || 0);
-  const want = o.target == null ? null : paid ? r2(o.target - plat) : o.target;   // paid: what was paid; cash: before Talabat's discount
+  // o.target = what the customer pays + Talabat's known share. Paid: what was paid; cash: plus all of Talabat's share.
+  const want = o.target == null ? null : paid ? r2(o.target - discountSum(o, 'platform')) : r2(o.target + sp.plat);
   let items = 0, missing = 0;
   fl.forEach((i, n) => { const pr = apexPrices.get(p.items?.[n]); if (pr == null) missing++; else items += pr * (Number(i.qty) || 1); });
   const fee = o.source === 'talabat' ? (apexPrices.get('0114006') || 7.02) : 0;
@@ -279,7 +293,7 @@ function ticketCalc(o, fl, p) {
   const why = [];
   if (!missing && tItems != null) { const d = r2(T(items) - tItems); if (Math.abs(d) > 1) why.push('أصناف Apex ' + (d > 0 ? 'أغلى' : 'أرخص') + ' من طلبات بـ ' + money(Math.abs(d)) + (Math.abs(d) > 0.1 * tItems ? '، غالبًا صنف أو حجم غلط' : '')); }
   if (service != null && o.source === 'talabat') { const d = r2(T(service) + T(fee) - tDel); if (Math.abs(d) > 1) why.push('توصيل Apex ' + money(T(service) + T(fee)) + ' وتوصيل طلبات ' + money(tDel)); }
-  return { pay, paid, rest, plat, want, items, missing, fee, loc, service, gap, back, left, why, total: gap == null ? null : gap > 0.009 ? want : r2(before + back) };
+  return { pay, paid, rest, plat, sp, want, items, missing, fee, loc, service, gap, back, left, why, total: gap == null ? null : gap > 0.009 ? want : r2(before + back) };
 }
 
 function ticketHtml(o, p, fl, c, auto) {
@@ -312,11 +326,20 @@ function ticketHtml(o, p, fl, c, auto) {
     if (c.fee) h += row('خدمة طلبات', money(T(c.fee)));
     h += row('توصيل' + (c.loc ? ' ' + esc(c.loc.name) : ''), c.service == null ? '<span class="warn">اختار المنطقة</span>' : money(T(c.service)));
   }
-  for (const d of o.discounts || []) {
-    const onApex = d.who === 'restaurant' || (d.who === 'platform' && c.paid);
-    h += row(esc(d.text) + ' <span class="tag">' + (d.who === 'restaurant' ? 'على المطعم' : d.who === 'platform' ? 'على طلبات' + (c.paid ? '' : '، في العلامة المميزة') : 'مش واضح على حساب مين') + '</span>',
-      onApex ? '−' + money(d.amount) : '<span class="muted">' + money(d.amount) + '</span>', d.who ? '' : 'warnrow');
-  }
+  (o.discounts || []).forEach((d, i) => {
+    const known = d.who && !d.unclear, onApex = d.who === 'restaurant' || (d.who === 'platform' && c.paid);
+    if (!known && auto && !c.paid) {
+      const a = Number(d.amount) || 0, r = p?.split?.[i], half = r2(a / 2);
+      const btn = (v, label) => '<button class="' + (r != null && Math.abs(r - v) < 0.005 ? 'on' : 'ghost') + '" data-split="' + i + '" data-v="' + v + '">' + label + '</button>';
+      h += row(esc(d.text) + ' <span class="tag">بص على طلبات: ممول من قبلك كام؟</span>', money(a), r == null ? 'warnrow' : '');
+      h += '<div class="tr"><span class="seg">' + btn(a, 'كله علينا') + btn(half, 'نص ونص') + btn(0, 'كله على طلبات') +
+        ' <input class="split" type="number" step="0.01" min="0" max="' + a + '" data-split-in="' + i + '" placeholder="علينا كام" value="' + (r != null ? r : '') + '" style="width:90px"></span>' +
+        '<span class="num">' + (r == null ? '<span class="warn">حدد</span>' : 'علينا −' + money(r) + ' / طلبات ' + money(r2(a - r))) + '</span></div>';
+      return;
+    }
+    h += row(esc(d.text) + ' <span class="tag">' + (d.who === 'restaurant' ? 'على المطعم' : d.who === 'platform' || (!known && c.paid) ? 'على طلبات' + (c.paid ? '' : '، في العلامة المميزة') : 'مش واضح على حساب مين') + '</span>',
+      onApex || (!known && c.paid) ? '−' + money(d.amount) : '<span class="muted">' + money(d.amount) + '</span>', known || c.paid ? '' : 'warnrow');
+  });
   if (auto && c.gap > 0.009) h += row('فرق يتخصم', '−' + money(c.gap));
   if (auto && c.back > 0.009) h += row('يرجع من الخصم', '+' + money(c.back));
   // The total, and Talabat's next to it.
@@ -517,6 +540,7 @@ $('list').addEventListener('click', async e => {
     try { await navigator.clipboard.writeText(text); b.textContent = 'اتنسخ ✓'; setTimeout(() => b.textContent = 'نسخ', 1500); } catch { toast('انسخه بإيدك: ' + text); }
     return;
   }
+  if (b.dataset.split !== undefined) { const p = picks[key(o)] = picks[key(o)] || {}; (p.split = p.split || {})[b.dataset.split] = Number(b.dataset.v); render(true); return; }
   if (b.dataset.pay) { choice[key(o)] = b.dataset.pay; render(true); return; }
   if (b.dataset.act === 'auto') {
     const p = picks[key(o)] || {}, pay = choice[key(o)] || o.job?.payment || (o.payment === 'cash' || o.payment === 'paid' ? o.payment : null);
@@ -526,7 +550,7 @@ $('list').addEventListener('click', async e => {
     if (p.saving) { toast('استنى حفظ اختيار الصنف'); return; }
     const missingAt = flatLines(o).findIndex((i, n) => !/^\d{1,10}$/.test(String(p.items?.[n] || '')));
     if (missingAt >= 0) { toast('اختار الصنف على Apex لـ: ' + flatLines(o)[missingAt].name); return; }
-    if (o.discounts?.some(d => !d.who)) { toast('الخصم مش واضح على حساب مين — سجله بإيدك'); return; }
+    if (splitOf(o, p, pay === 'paid').missing) { toast('حدد الخصم على مين: بص على طلبات «ممول من قبلك» واختار'); return; }
     if (o.apexCustomerNote?.status !== 'none' && o.apexCustomerNote?.status !== 'found') { toast('استنى قراءة ملاحظات العميل من APEX قبل التسجيل'); return; }
     const cardNote = o.apexCustomerNote;
     const contacted = p.cardResolution === 'contacted';
@@ -546,9 +570,10 @@ $('list').addEventListener('click', async e => {
     }
     if (o.source === 'talabat' && o.items.some(i => !i.modifiersComplete)) { toast('الإضافات مش ظاهرة كاملة — سجله بإيدك'); return; }
     if (o.items.some(i => (i.addons || []).some(a => a.qty == null))) { toast('عدد إضافة مش واضح — سجله بإيدك'); return; }
-    const rest = (o.discounts || []).filter(d => d.who === 'restaurant').reduce((a, d) => a + (Number(d.amount) || 0), 0);
-    const plat = (o.discounts || []).filter(d => d.who === 'platform');
-    const platSum = plat.reduce((a, d) => a + (Number(d.amount) || 0), 0);
+    const cc = ticketCalc(o, flatLines(o), p);
+    const rest = cc.rest, platSum = cc.plat;
+    // Karim 10-11 (#2087: Apex 2685 for an order paid 1225): a very large difference is almost always a wrong item or size.
+    if (cc.gap != null && cc.gap > 0.25 * cc.want + 30 && !confirm('الفرق بين Apex وطلبات كبير (' + money(cc.gap) + ') — غالبًا صنف أو حجم غلط. متأكد إن الأصناف صح؟')) return;
     b.disabled = true;
     try {
       await api('POST', '/api/transfer/job', { source: o.source, ref: o.ref, action: 'auto', payment: pay, branchNo: Number(p.branch), locationNo: Number(p.loc), code: o.code,
@@ -560,8 +585,9 @@ $('list').addEventListener('click', async e => {
         // Paid (Karim 01-11): the whole discount comes off on Apex, so the Ledge equals what the customer paid.
         // Cash: the restaurant's comes off. Either way the special mark shows Talabat's discount only.
         label: fullLabel(o, pay), customer: { ...(o.customer || {}), ...(p.arabic?.name ? { name: p.arabic.name } : {}), ...(p.arabic?.address ? { address: p.arabic.address } : {}) },
-        sign: plat.map(d => 'خصم طلبات ' + money(d.amount)).join(' + '),   // Karim 01-11: the special mark shows Talabat's discount only
-        restaurantDiscount: pay === 'paid' ? rest + platSum : rest, expectedTotal: (o.subtotal ?? o.total ?? 0) - rest - (pay === 'paid' ? platSum : 0), targetTotal: o.target == null ? null : pay === 'paid' ? Math.round((o.target - platSum) * 100) / 100 : o.target });   // paid: what the customer paid (Talabat's discount off too)
+        sign: platSum > 0 ? 'خصم طلبات ' + money(platSum) : '',   // Karim 01-11: the special mark shows Talabat's discount only
+        discountSplit: (o.discounts || []).map((d, i) => (d.who && !d.unclear) || p.split?.[i] == null ? null : { text: d.text, amount: d.amount, restaurant: p.split[i] }),
+        restaurantDiscount: pay === 'paid' ? rest + platSum : rest, expectedTotal: (o.subtotal ?? o.total ?? 0) - rest - (pay === 'paid' ? platSum : 0), targetTotal: cc.want });   // paid: what the customer paid (Talabat's discount off too)
       delete picks[key(o)]; await load();
     } catch (err) { toast(err.message); b.disabled = false; }
     return;
@@ -576,6 +602,11 @@ $('list').addEventListener('click', async e => {
   }
 });
 $('list').addEventListener('change', async e => {
+  if (e.target.dataset.splitIn !== undefined) {
+    const k = e.target.closest('.card').dataset.k, p = picks[k] = picks[k] || {}, v = e.target.value === '' ? null : Number(e.target.value);
+    p.split = p.split || {}; if (v == null || !(v >= 0)) delete p.split[e.target.dataset.splitIn]; else p.split[e.target.dataset.splitIn] = Math.round(v * 100) / 100;
+    render(true); return;
+  }
   const cardInput = e.target.closest('[data-card-approved],[data-card-item],[data-card-qty],[data-card-gift],[data-card-gift-qty],[data-card-gift-add],[data-card-contacted]');
   if (cardInput) {
     const node = cardInput.closest('.card'), p = picks[node?.dataset.k];

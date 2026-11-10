@@ -56,18 +56,23 @@ function sitePayment(p) {
 // Discounts: whose money it is, only when the source says it.
 const AMOUNT = /(-?\s*(?:E£|EGP|£E|ج\.م)?\s*-?\d[\d,]*(?:\.\d+)?)/;
 const DISC_WORDS = /discount|voucher|promo|coupon|خصم|قسيمة|كوبون|ممول|funded/i;
-const discountWho = t => /(talabat|platform|طلبات)[\s-]*(funded|ممول)|funded by talabat|(?:ممول|مدعوم|على حساب)\s*(?:من\s*)?(?:قبل\s*)?(?:طلبات|talabat)/i.test(t) ? 'platform'
+const discountWho = t => /(talabat|platform|طلبات)[\s-]*(funded|ممول)|funded by talabat|(?:خصم|discount)\s*(?:من\s*)?(?:طلبات|talabat)|talabat\s*(?:discount|voucher)|(?:ممول|مدعوم|على حساب)\s*(?:من\s*)?(?:قبل\s*)?(?:طلبات|talabat)/i.test(t) ? 'platform'
   : /(vendor|restaurant|المطعم)[\s-]*(funded|ممول)|funded by (?:the )?(?:vendor|restaurant)|(?:ممول|مدعوم|على حساب)\s*(?:من\s*)?(?:المطعم|الشريك)|ممول\s*من\s*قبلك|funded by you/i.test(t) ? 'restaurant' : null;
 function talabatDiscounts(bill) {
   const out = [];
   for (const x of bill || []) {
     const t = x.k + ' ' + x.text;
     if (!/discount|voucher|promo|coupon|خصم|قسيمة|كوبون/i.test(t)) continue;
-    const m = String(x.text).match(AMOUNT), amount = m ? Math.abs(Number(m[1].replace(/[^\d.]/g, ''))) || null : null;
-    // Karim 31-10: a discount in the bill summary (not the ones under the dishes) is Talabat's, unless the line says otherwise.
-    out.push({ text: x.text, amount, who: discountWho(t) || 'platform' });
+    // The money is after «|» («خصم 30% على بعض المنتجات | -90.00» is 90, not the 30 of «30%»); a «%» is never money.
+    const val = String(x.text).includes('|') ? String(x.text).split('|').slice(1).join('|') : String(x.text).replace(/\d+(?:\.\d+)?\s*[%٪]/g, '');
+    const m = val.match(AMOUNT), amount = m ? Math.abs(Number(m[1].replace(/[^\d.]/g, ''))) || null : null;
+    // Karim 31-10 took a bill-summary discount as Talabat's; Karim 10-11 (#655, 30% = 15% ours + 15% Talabat's, all of it
+    // taken as Talabat's): a line that does not say who pays is asked (the employee reads «ممول من قبلك» on Talabat).
+    out.push({ text: x.text, amount, who: discountWho(t) });
   }
-  return out;
+  // The total line next to its funded parts («خصم 90.27» with «ممول من قبلك 45.14» + «ممول من قبل Talabat 45.13») is the same money.
+  const funded = out.filter(d => d.who && d.amount), sum = funded.reduce((a, d) => a + d.amount, 0);
+  return funded.length ? out.filter(d => d.who || d.amount == null || Math.abs(d.amount - sum) >= 0.05) : out;
 }
 
 // Phones are kept as their last 10 digits for matching; shown as the employee dials them.
@@ -364,7 +369,7 @@ function setup(app) {
         // Under the dishes = the restaurant's discount (deducted); in the bill summary = Talabat's (special mark).
         // A bill line that only repeats the dishes' discount total is the same money, not a second discount.
         const dishDiscounts = items.flatMap(i => i.itemDiscounts || []), dishTotal = dishDiscounts.reduce((a, d) => a + (Number(d.amount) || 0), 0);
-        const billDiscounts = talabatDiscounts(bill).filter(d => !(dishTotal > 0 && d.amount != null && Math.abs(d.amount - dishTotal) < 0.01 && !/(talabat|طلبات)/i.test(d.text)));
+        const billDiscounts = talabatDiscounts(bill).filter(d => !(dishTotal > 0 && d.amount != null && Math.abs(d.amount - dishTotal) < 0.05 && !/(talabat|طلبات)/i.test(d.text)));
         const discounts = [...dishDiscounts, ...billDiscounts];
         list.push({ source: 'talabat', ref: o.id, code: o.code || null, at: iso(o.accepted_at || o.received_at || o.placed_at), status: o.status, out: TALABAT_OUT.has(String(o.status || '').toUpperCase()) || !!o.picked_up_at || !!o.delivered_at, branch: o.store, apexBranch: apexBranchOf(o.store), deliveryType: o.delivery_type || null,
           customer: { name: /^(?:information|details|customer|العميل)$/i.test(p.name || '') ? null : p.name || null, phone: phoneOut(p.phoneDisplay || p.phone || p.mobileDisplay || p.mobile), address: p.address || null, ...(p.area ? { talabatArea: p.area } : {}) },
@@ -612,9 +617,19 @@ function setup(app) {
       // A stale browser or an empty sign must never erase a known Talabat discount.
       const sourceOrder = source === 'talabat' ? (await baseFor(row.day, ctx.now)).list.find(o => o.source === source && String(o.ref) === ref) : null;
       const sourceDiscounts = sourceOrder?.discounts || [];
-      if (sourceDiscounts.some(d => !d.who || d.unclear)) fail(400, 'تمويل الخصم مش واضح — راجع بيانات طلبات');
-      const platformDiscount = Math.round(sourceDiscounts.filter(d => d.who === 'platform').reduce((sum, d) => sum + (Number(d.amount) || 0), 0) * 100) / 100;
-      const sourceRestaurantDiscount = sourceDiscounts.filter(d => d.who === 'restaurant').reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
+      // A discount Talabat does not say who pays for: the employee's split (read on Talabat), never a guess. Paid: all of it
+      // comes off on Apex either way, so it counts as Talabat's for the special mark.
+      const split = Array.isArray(b.discountSplit) ? b.discountSplit : [];
+      let splitRest = 0, splitPlat = 0;
+      sourceDiscounts.forEach((d, i) => {
+        if (d.who && !d.unclear) return;
+        const a = Number(d.amount) || 0, x = split[i], r = x && String(x.text) === String(d.text) ? Number(x.restaurant) : NaN;
+        if (Number.isFinite(r) && r >= 0 && r <= a + 0.001) { splitRest += r; splitPlat += a - r; }
+        else if (payment === 'paid' && a > 0) splitPlat += a;
+        else fail(400, 'حدد الخصم على مين: «' + String(d.text || 'خصم').split('|')[0].trim() + '» — بص على طلبات «ممول من قبلك»');
+      });
+      const platformDiscount = Math.round((sourceDiscounts.filter(d => d.who === 'platform' && !d.unclear).reduce((sum, d) => sum + (Number(d.amount) || 0), 0) + splitPlat) * 100) / 100;
+      const sourceRestaurantDiscount = sourceDiscounts.filter(d => d.who === 'restaurant' && !d.unclear).reduce((sum, d) => sum + (Number(d.amount) || 0), 0) + splitRest;
       const sign = platformDiscount > 0 ? 'خصم طلبات ' + platformDiscount.toFixed(2) : String(b.sign || '').slice(0, 120);
       const restaurantDiscount = sourceDiscounts.length ? Math.round((sourceRestaurantDiscount + (payment === 'paid' ? platformDiscount : 0)) * 100) / 100 : Math.max(0, Number(b.restaurantDiscount) || 0);
       const expectedTotal = Number(b.expectedTotal) || null, targetTotal = Number(b.targetTotal) > 0 ? Math.round(Number(b.targetTotal) * 100) / 100 : null;

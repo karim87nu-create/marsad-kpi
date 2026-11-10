@@ -97,7 +97,11 @@ test('transfer page: payment and discounts only from the source words', () => {
     assert.equal(talabatPayment([{ k: 'Delivery type', text: 'Delivery type | Vendor delivery' }]), null, 'other lines never decide payment');
     assert.equal(talabatPayment([], 'Paid'), 'paid', 'live card badge');
     assert.equal(talabatPayment([], 'Cash Online'), null, 'conflicting → for review');
-    assert.deepEqual(talabatDiscounts([{ k: 'discount', text: 'Discount | -E£ 30' }]), [{ text: 'Discount | -E£ 30', amount: 30, who: 'platform' }], 'a bill-summary discount is Talabat funded unless it says otherwise');
+    // Karim 10-11 (#655): a discount that does not say who pays is asked, never guessed as Talabat's.
+    assert.deepEqual(talabatDiscounts([{ k: 'discount', text: 'Discount | -E£ 30' }]), [{ text: 'Discount | -E£ 30', amount: 30, who: null }], 'who pays is asked');
+    assert.equal(talabatDiscounts([{ k: 'خصم طلبات', text: 'خصم طلبات | -22.00' }])[0].who, 'platform');
+    // The total next to its funded parts is the same money (rounded to the piaster).
+    assert.deepEqual(talabatDiscounts([{ k: 'خصم', text: 'خصم | -90.27' }, { k: 'خصم ممول من قبلك', text: 'خصم ممول من قبلك | -45.14' }, { k: 'خصم ممول من قبل Talabat', text: 'خصم ممول من قبل Talabat | -45.14' }]).map(d => d.who + d.amount), ['restaurant45.14', 'platform45.14']);
     assert.equal(talabatDiscounts([{ k: 'discount', text: 'Vendor-funded discount | -E£ 15.50' }])[0].who, 'restaurant');
     assert.equal(sitePayment({ method: 'cod' }), 'cash');
     assert.equal(sitePayment({ method: 'paymob', paid: true }), 'paid');
@@ -167,6 +171,19 @@ test('automatic transfer: off by default, cash only, frozen order handed to the 
     assert.equal(savedDiscount.sign, 'خصم طلبات 22.00', 'a different returned price never erases the recorded platform discount');
     const pj = (await as('GET', '/api/transfer/queue?day=2026-10-22')).body.orders.find(o => o.ref === '3977600002').job;
     assert.equal(pj.state, 'auto_preview'); assert.equal(pj.result.preview, true); assert.equal(pj.result.detail, 'sub=105.7');
+
+    // Karim 10-11 (#655): a cash order's discount that does not say who pays — the employee's split, never a guess.
+    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: [{ id: '3977600003', store, status: 'ACCEPTED', placedAt: at(2), total: 250, detail: { customer: { name: 'Z', phone: '01000000003' }, bill: [{ k: 'خصم', text: 'خصم 30% على بعض المنتجات | -90.00' }, { k: 'مجموع', text: 'مجموع | 250.00' }] } }] } });
+    t.advance(9000); await as('GET', '/api/transfer/queue?day=2026-10-22'); await notesReady(t, admin, w);
+    const q3 = (await as('GET', '/api/transfer/queue?day=2026-10-22')).body.orders.find(o => o.ref === '3977600003');
+    assert.equal(q3.discounts[0].who, null); assert.equal(q3.discounts[0].amount, 90, 'the money after «|», not the 30 of «30%»'); assert.equal(q3.target, 250, 'no Talabat share known yet');
+    const j3 = { ...job, ref: '3977600003', payment: 'cash', sign: '', restaurantDiscount: 0, targetTotal: 295 };
+    const no = await as('POST', '/api/transfer/job', j3);
+    assert.equal(no.status, 400); assert.match(no.body.error, /حدد الخصم على مين/);
+    assert.equal((await as('POST', '/api/transfer/job', { ...j3, discountSplit: [{ text: 'غلط', amount: 90, restaurant: 45 }] })).status, 400, 'a split for another line is not taken');
+    const ok3 = await as('POST', '/api/transfer/job', { ...j3, discountSplit: [{ text: q3.discounts[0].text, amount: 90, restaurant: 45 }] }); assert.equal(ok3.status, 200, JSON.stringify(ok3.body));
+    n = (await w('/api/apex-writer/next')).body;
+    assert.equal(n.job.restaurantDiscount, 45, 'our half comes off on Apex'); assert.equal(n.job.sign, 'خصم طلبات 45.00', 'Talabat\'s half in the special mark');
   } finally { await t.close(); }
 });
 
