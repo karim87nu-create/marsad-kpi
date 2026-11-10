@@ -587,7 +587,10 @@ function setup(app) {
         })() : null,
         amount: noteAmount, items: noteItems
       } : null;
-      const safeRemarks = [String(b.note || '').trim(), verifiedCardNote.text ? 'ملاحظة بطاقة العميل: ' + verifiedCardNote.text : ''].filter(Boolean).join(' | ');
+      // Karim 10-11: the customer-card note is the call center's, not the kitchen's — it is not written in the order's
+      // comment (which prints in the branch). What it gave shows on Apex by itself: the discount field, or the gift
+      // lines named «هدية بدل خصم بطاقة العميل» / «مستحق من ملاحظة العميل».
+      const safeRemarks = String(b.note || '').trim();
       if (safeRemarks.length > 200) fail(409, 'ملاحظات الأوردر مع بطاقة العميل أطول من مساحة APEX — راجعها قبل التسجيل');
       const locationNo = Number(b.locationNo);
       if (!Number.isInteger(locationNo) || locationNo < 1) fail(400, 'اختار منطقة العميل على Apex');
