@@ -491,10 +491,13 @@ function setup(app) {
       if (resolution !== 'contacted' && benefitDirectives.length !== benefitItems.length) fail(409, 'اختار كل الأصناف المستحقة وكمياتها');
       const noteItems = (resolution === 'contacted' ? [] : benefitItems).map(x => ({ itemNo: String(x?.itemNo || '').trim(), qty: Number(x?.qty), note: 'مستحق من ملاحظة العميل', free: true }));
       if (paidDiscount && resolution === 'gift') {
-        const g = String(clientCard.gift?.itemNo || '').trim(), price = Number(APEX_PRICES[g]);
-        if (!APEX_NAMES[g] || !(price > 0)) fail(409, 'اختار صنف الهدية من القائمة');
-        if (price > discountWorth * 1.25 + 5) fail(409, 'سعر صنف الهدية (' + price + ' ج) أكبر من قيمة الخصم (' + discountWorth + ' ج)');
-        noteItems.push({ itemNo: g, qty: 1, note: 'هدية بدل خصم بطاقة العميل', free: true });
+        // One gift or several (Karim 10-11), each with its count, up to about the discount.
+        const asked = Array.isArray(clientCard.gifts) ? clientCard.gifts : clientCard.gift ? [{ itemNo: clientCard.gift.itemNo, qty: 1 }] : [];
+        const gifts = asked.slice(0, 10).map(x => ({ itemNo: String(x?.itemNo || '').trim(), qty: Math.round(Number(x?.qty) || 0) }));
+        if (!gifts.length || gifts.some(x => !APEX_NAMES[x.itemNo] || !(Number(APEX_PRICES[x.itemNo]) > 0) || x.qty < 1 || x.qty > 9)) fail(409, 'اختار أصناف الهدية من القائمة');
+        const total = Math.round(gifts.reduce((sum, x) => sum + Number(APEX_PRICES[x.itemNo]) * x.qty, 0) * 100) / 100;
+        if (total > discountWorth * 1.25 + 5) fail(409, 'مجموع الهدايا (' + total + ' ج) أكبر من قيمة الخصم (' + discountWorth + ' ج)');
+        for (const x of gifts) noteItems.push({ itemNo: x.itemNo, qty: x.qty, note: 'هدية بدل خصم بطاقة العميل', free: true });
       }
       if (noteItems.some(x => !APEX_NAMES[x.itemNo] || !Number.isInteger(x.qty) || x.qty <= 0 || x.qty > 50))
         fail(409, 'كود الصنف المستحق أو كميته غير صحيح');

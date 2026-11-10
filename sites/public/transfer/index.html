@@ -216,8 +216,11 @@ function cardWorth(o, p, n) {
 function giftChoices(worth) {
   if (!(worth > 0)) return [];
   return (data.apexItems || []).filter(a => a.price > 0 && a.price <= worth * 1.25 + 5 && !/خدم/.test(a.name))
-    .sort((a, b) => Math.abs(a.price - worth) - Math.abs(b.price - worth)).slice(0, 6);
+    .sort((a, b) => Math.abs(a.price - worth) - Math.abs(b.price - worth)).slice(0, 10);
 }
+// Karim 10-11: more than one gift item (and more than one of each) until the total is near the discount.
+function giftTotal(p) { return Object.entries(p.cardGifts || {}).reduce((sum, [no, q]) => sum + (Number(apexPrices.get(no)) || 0) * q, 0); }
+const GIFT_ROOM = worth => worth * 1.25 + 5;
 function flatLines(o) {
   const out = [];
   for (const i of o.items || []) {
@@ -398,8 +401,18 @@ function card(o) {
             if (cardMoney(n).length && pay === 'paid') {
               const worth = cardWorth(o, p, n), gifts = giftChoices(worth);
               return '<div class="warn">الأوردر مدفوع، فالخصم مش هيتخصم. بدله اختار صنف هدية' + (worth ? ' قريب من ' + money(worth) + ' ج' : '') + '، أو اتواصل مع العميل:</div>' +
-                (gifts.length ? gifts.map(g => '<label style="display:block"><input type="radio" name="gift-' + esc(key(o)) + '" data-card-gift="' + esc(g.no) + '" ' + (p.cardResolution === 'gift' && p.cardGift === g.no ? 'checked ' : '') + '> ' + esc(g.name) + ' — ' + money(g.price) + ' ج</label>').join('')
-                  : '<div>مفيش صنف بسعر قريب' + (worth ? '' : ' — اختار أصناف الأوردر الأول') + '</div>') + contacted;
+                (() => {
+                  const chosen = p.cardGifts || {}, list = [...gifts];
+                  for (const no of Object.keys(chosen)) if (!list.some(g => g.no === no)) { const a = (data.apexItems || []).find(x => x.no === no); if (a) list.push(a); }
+                  if (!list.length) return '<div>مفيش صنف بسعر قريب' + (worth ? '' : ' — اختار أصناف الأوردر الأول') + '</div>';
+                  const total = giftTotal(p), over = total > GIFT_ROOM(worth);
+                  return list.map(g => '<label style="display:block"><input type="checkbox" data-card-gift="' + esc(g.no) + '" ' + (chosen[g.no] ? 'checked ' : '') + '> ' + esc(g.name) + ' — ' + money(g.price) + ' ج' +
+                      (chosen[g.no] ? ' × <input type="number" min="1" max="9" value="' + chosen[g.no] + '" data-card-gift-qty="' + esc(g.no) + '" style="width:3.5em">' : '') + '</label>').join('') +
+                    // Any other item that still fits next to what is chosen.
+                    (() => { const left = GIFT_ROOM(worth) - total, more = (data.apexItems || []).filter(a => a.price > 0 && a.price <= left && !chosen[a.no] && !list.some(g => g.no === a.no) && !/خدم/.test(a.name)).sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+                      return more.length ? '<select data-card-gift-add style="margin-top:4px"><option value="">+ صنف تاني…</option>' + more.map(a => '<option value="' + esc(a.no) + '">' + esc(a.name) + ' — ' + money(a.price) + ' ج</option>').join('') + '</select>' : ''; })() +
+                    (total ? '<div style="font-weight:600;color:' + (over ? '#dc2626' : '#15803d') + '">مجموع الهدايا ' + money(total) + ' ج من ' + money(worth) + ' ج' + (over ? ' — أكتر من قيمة الخصم' : '') + '</div>' : '');
+                })() + contacted;
             }
             return n.requiresReview ? '<label><input type="checkbox" data-card-approved ' + (p.apexNoteApproved ? 'checked ' : '') +
               '> راجعت بطاقة العميل: الخصم إضافي وغير مطبق في المصدر، والنسبة على الأصناف قبل الضريبة، والأصناف المستحقة مجانية، وتنفيذها مرة واحدة عند توضيح ذلك.</label>' : '';
@@ -489,7 +502,9 @@ $('list').addEventListener('click', async e => {
     const cardNote = o.apexCustomerNote;
     const contacted = p.cardResolution === 'contacted';
     if (cardUnclear(cardNote) && !contacted) { toast('تعليمات بطاقة العميل مش واضحة — اتواصل مع العميل واختار «تواصلت مع العميل»'); return; }
-    if (!cardUnclear(cardNote) && pay === 'paid' && cardMoney(cardNote).length && !contacted && !(p.cardResolution === 'gift' && p.cardGift)) { toast('الأوردر مدفوع: اختار صنف هدية بدل الخصم، أو «تواصلت مع العميل»'); return; }
+    const giftsChosen = Object.keys(p.cardGifts || {}).length > 0;
+    if (!cardUnclear(cardNote) && pay === 'paid' && cardMoney(cardNote).length && !contacted && !giftsChosen) { toast('الأوردر مدفوع: اختار صنف هدية أو أكتر بدل الخصم، أو «تواصلت مع العميل»'); return; }
+    if (giftsChosen && !contacted && giftTotal(p) > GIFT_ROOM(cardWorth(o, p, cardNote))) { toast('مجموع الهدايا أكتر من قيمة الخصم'); return; }
     if (cardNote?.requiresReview && !p.apexNoteApproved && !contacted && p.cardResolution !== 'gift') { toast('أكّد مراجعة الخصم والأصناف الخاصة ببطاقة العميل أولًا'); return; }
     const noteItems = [];
     for (const [i, d] of (cardNote?.directives || []).entries()) {
@@ -509,8 +524,8 @@ $('list').addEventListener('click', async e => {
     try {
       await api('POST', '/api/transfer/job', { source: o.source, ref: o.ref, action: 'auto', payment: pay, branchNo: Number(p.branch), locationNo: Number(p.loc), code: o.code,
         items: flatLines(o).map((i, n) => ({ itemNo: p.items[n], qty: i.qty, note: '' })),
-        apexNote: cardNote?.status === 'found' ? { approved: !!p.apexNoteApproved || p.cardResolution === 'gift', note: cardNote.text, custNo: cardNote.custNo, items: noteItems,
-          resolution: p.cardResolution || null, gift: p.cardResolution === 'gift' ? { itemNo: p.cardGift } : null } : null,
+        apexNote: cardNote?.status === 'found' ? { approved: !!p.apexNoteApproved || (!contacted && giftsChosen), note: cardNote.text, custNo: cardNote.custNo, items: noteItems,
+          resolution: contacted ? 'contacted' : giftsChosen ? 'gift' : null, gifts: !contacted && giftsChosen ? Object.entries(p.cardGifts).map(([itemNo, qty]) => ({ itemNo, qty })) : null } : null,
         // Free choices and the customer's note go in the order comment on Apex (تعليقات الطلب), as the staff do.
         note: p.arabic?.note || deliveryComment(o),
         // Paid (Karim 01-11): the whole discount comes off on Apex, so the Ledge equals what the customer paid.
@@ -532,13 +547,19 @@ $('list').addEventListener('click', async e => {
   }
 });
 $('list').addEventListener('change', async e => {
-  const cardInput = e.target.closest('[data-card-approved],[data-card-item],[data-card-qty],[data-card-gift],[data-card-contacted]');
+  const cardInput = e.target.closest('[data-card-approved],[data-card-item],[data-card-qty],[data-card-gift],[data-card-gift-qty],[data-card-gift-add],[data-card-contacted]');
   if (cardInput) {
     const node = cardInput.closest('.card'), p = picks[node?.dataset.k];
     if (!p) return;
     if (cardInput.hasAttribute('data-card-approved')) p.apexNoteApproved = !!cardInput.checked;
-    else if (cardInput.hasAttribute('data-card-gift')) { p.cardResolution = 'gift'; p.cardGift = cardInput.dataset.cardGift; render(true); }
-    else if (cardInput.hasAttribute('data-card-contacted')) { p.cardResolution = cardInput.checked ? 'contacted' : null; if (!cardInput.checked) p.cardGift = null; render(true); }
+    else if (cardInput.hasAttribute('data-card-gift')) {
+      p.cardGifts = { ...(p.cardGifts || {}) };
+      if (cardInput.checked) p.cardGifts[cardInput.dataset.cardGift] = 1; else delete p.cardGifts[cardInput.dataset.cardGift];
+      render(true);
+    }
+    else if (cardInput.hasAttribute('data-card-gift-add')) { if (cardInput.value) { p.cardGifts = { ...(p.cardGifts || {}), [cardInput.value]: 1 }; render(true); } }
+    else if (cardInput.hasAttribute('data-card-gift-qty')) { p.cardGifts = { ...(p.cardGifts || {}), [cardInput.dataset.cardGiftQty]: Math.max(1, Math.min(9, Math.round(Number(cardInput.value) || 1))) }; render(true); }
+    else if (cardInput.hasAttribute('data-card-contacted')) { p.cardResolution = cardInput.checked ? 'contacted' : null; render(true); }
     else {
       const idx = Number(cardInput.dataset.cardItem ?? cardInput.dataset.cardQty);
       p.noteItems ||= {};

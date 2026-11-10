@@ -46,11 +46,15 @@ test('card note discount: cash takes it on Apex; paid needs a gift item worth ab
     const worth = Math.round(2 * 0.1 * 100 * Number(require('fs').readFileSync(require.resolve('../src/menu-seed.js'), 'utf8').match(/"0108004": ([\d.]+)/g).pop().split(': ')[1])) / 100;
     r = await as('POST', '/api/transfer/job', job(orders[1], 'paid', { ...card(orders[1]), approved: true, resolution: 'gift', gift: { itemNo: '0108001' } }));
     assert.equal(r.status, 409, 'a kilo of kofta is far more than the discount'); assert.match(r.body.error, /أكبر من قيمة الخصم/);
-    r = await as('POST', '/api/transfer/job', job(orders[1], 'paid', { ...card(orders[1]), approved: true, resolution: 'gift', gift: { itemNo: '0202001' } }));
+    // Several gifts (Karim 10-11): their total may not go past the discount; within it, all are added free.
+    r = await as('POST', '/api/transfer/job', job(orders[1], 'paid', { ...card(orders[1]), approved: true, resolution: 'gift', gifts: [{ itemNo: '0202001', qty: 9 }, { itemNo: '0202004', qty: 9 }] }));
+    assert.equal(r.status, 409); assert.match(r.body.error, /مجموع الهدايا/);
+    r = await as('POST', '/api/transfer/job', job(orders[1], 'paid', { ...card(orders[1]), approved: true, resolution: 'gift', gifts: [{ itemNo: '0202001', qty: 1 }, { itemNo: '0202004', qty: 1 }] }));
     assert.equal(r.status, 200, JSON.stringify(r.body) + ' worth ' + worth);
     p = (await payload(orders[1])).apexCustomerBenefit;
     assert.equal(p.percent, 0); assert.equal(p.amount, 0); assert.equal(p.resolution, 'gift');
-    assert.deepEqual(p.items.map(x => [x.itemNo, x.qty, x.free]), [['0202001', 1, true]]);
+
+    assert.deepEqual(p.items.map(x => [x.itemNo, x.qty, x.free]), [['0202001', 1, true], ['0202004', 1, true]]);
 
     // Paid, «تواصلت مع العميل»: sent without the discount, the note stays on the card.
     r = await as('POST', '/api/transfer/job', job(orders[2], 'paid', { ...card(orders[2]), resolution: 'contacted' }));
