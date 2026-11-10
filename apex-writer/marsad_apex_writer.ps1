@@ -82,7 +82,12 @@ DECLARE @Date datetime, @Shift numeric(18,0), @Now datetime = GETDATE(), @Time v
         @PosSerial numeric(18,0), @OrderNo numeric(18,0), @BranchOrderNo numeric(18,0), @TypeSerial numeric(18,0), @BranchShift numeric(18,0),
         @ShiftSerial numeric(18,0), @CheckNo numeric(18,0), @Sub money, @Tax money, @TaxRatio numeric(18,2), @Total money, @Existing numeric(18,0), @Err nvarchar(300);
 SET @Time = @TimeText;  -- Apex's own time text (hh:mm:ss ص/م)
+-- The open business day: the call-center POS's own row, or (Karim 10-11: POS 35 had not started its day while the
+-- others had, so every transfer stopped) the newest day any POS is on that already has orders in Orders_M_Daily.
 SELECT @Date = OrderDate, @Shift = ShiftNo FROM dbo.Counter WITH (NOLOCK) WHERE num = @RefPos;
+IF @IsTest = 0 AND NOT EXISTS (SELECT 1 FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderDate = @Date)
+  SELECT TOP 1 @Date = c.OrderDate, @Shift = c.ShiftNo FROM dbo.Counter c WITH (NOLOCK)
+  WHERE EXISTS (SELECT 1 FROM dbo.Orders_M_Daily o WITH (NOLOCK) WHERE o.OrderDate = c.OrderDate) ORDER BY c.OrderDate DESC, c.num;
 IF @Date IS NULL THROW 51001, 'reference POS has no open day', 1;
 IF @IsTest = 0 AND NOT EXISTS (SELECT 1 FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderDate = @Date) THROW 51002, 'the business day is not open on Apex yet', 1;
 IF EXISTS (SELECT 1 FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderDate > @Date) THROW 51003, 'a later day is open; reference POS is stale', 1;
