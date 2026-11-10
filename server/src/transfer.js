@@ -625,7 +625,7 @@ function setup(app) {
       const areaService = Number.isFinite(Number(area?.service)) && area?.service !== null ? Number(area.service) : null;
       // The source's platform discount is a separate fact from any Apex price adjustment.
       // A stale browser or an empty sign must never erase a known Talabat discount.
-      const sourceOrder = source === 'talabat' ? (await baseFor(row.day, ctx.now)).list.find(o => o.source === source && String(o.ref) === ref) : null;
+      const sourceOrder = (await baseFor(row.day, ctx.now)).list.find(o => o.source === source && String(o.ref) === ref) || null;
       const sourceDiscounts = sourceOrder?.discounts || [];
       // A discount Talabat does not say who pays for: the employee's split (read on Talabat), never a guess. Paid: all of it
       // comes off on Apex either way, so it counts as Talabat's for the special mark.
@@ -640,9 +640,16 @@ function setup(app) {
       });
       const platformDiscount = Math.round((sourceDiscounts.filter(d => d.who === 'platform' && !d.unclear).reduce((sum, d) => sum + (Number(d.amount) || 0), 0) + splitPlat) * 100) / 100;
       const sourceRestaurantDiscount = sourceDiscounts.filter(d => d.who === 'restaurant' && !d.unclear).reduce((sum, d) => sum + (Number(d.amount) || 0), 0) + splitRest;
-      const sign = platformDiscount > 0 ? 'خصم طلبات ' + platformDiscount.toFixed(2) : String(b.sign || '').slice(0, 120);
-      const restaurantDiscount = sourceDiscounts.length ? Math.round((sourceRestaurantDiscount + (payment === 'paid' ? platformDiscount : 0)) * 100) / 100 : Math.max(0, Number(b.restaurantDiscount) || 0);
-      const expectedTotal = Number(b.expectedTotal) || null, targetTotal = Number(b.targetTotal) > 0 ? Math.round(Number(b.targetTotal) * 100) / 100 : null;
+      // A Talabat order: the discounts are Talabat's bill on the server, even when it has none (never the browser's numbers).
+      const fromSource = !!sourceOrder;
+      const sign = platformDiscount > 0 ? 'خصم طلبات ' + platformDiscount.toFixed(2) : fromSource ? '' : String(b.sign || '').slice(0, 120);
+      const restaurantDiscount = fromSource || sourceDiscounts.length ? Math.round((sourceRestaurantDiscount + (payment === 'paid' ? platformDiscount : 0)) * 100) / 100 : Math.max(0, Number(b.restaurantDiscount) || 0);
+      // What Apex must total, from Talabat's own bill on the server (never the browser's sum): cash = what the customer pays
+      // + Talabat's whole share (known + the employee's split); paid = what the customer paid.
+      const knownPlat = sourceDiscounts.filter(d => d.who === 'platform' && !d.unclear).reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
+      const serverTarget = Number(sourceOrder?.target) > 0
+        ? Math.round((payment === 'paid' ? sourceOrder.target - knownPlat : sourceOrder.target + splitPlat) * 100) / 100 : null;
+      const expectedTotal = Number(b.expectedTotal) || null, targetTotal = serverTarget ?? (Number(b.targetTotal) > 0 ? Math.round(Number(b.targetTotal) * 100) / 100 : null);
       if (safeRemarks.length > 200) fail(400, 'الملاحظات أطول من مساحة Apex (٢٠٠ حرف) — اختصرها مع الاحتفاظ بالمقصود');
       const texts = [b.customer?.name, b.customer?.address, safeRemarks].filter(Boolean);
       const arabic = app.toArabic ? await app.toArabic(texts, { wait: true }) : new Map();
