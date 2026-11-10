@@ -351,7 +351,8 @@ function setup(app) {
             inTable = true;
             let nos = m.nos;
             // Still several (a weight dish with no weight shown): the one whose price is the website's (Apex + 14%, 3%).
-            if (m.weighed && nos.length > 1 && unit) { const p = nos.filter(no => Number(APEX_PRICES[no]) > 0 && Math.abs(APEX_PRICES[no] * 1.14 - unit) <= unit * 0.03); if (p.length === 1) nos = p; }
+            // (Apex is kept up to 5% above the website: Karim 11-11.)
+            if (m.weighed && nos.length > 1 && unit) { const p = nos.filter(no => { const g = Number(APEX_PRICES[no]) * 1.14; return g > 0 && unit >= g / 1.05 * 0.97 && unit <= g * 1.03; }); if (p.length === 1) nos = p; }
             // A price far from the website's (over 20%) means the table may be wrong for this dish: nothing is filled in.
             if (unit && nos.length === 1 && Number(APEX_PRICES[nos[0]]) > 0 && Math.abs(APEX_PRICES[nos[0]] * 1.14 - unit) > unit * 0.2) nos = [];
             apex = nos.map(no => ({ no, name: apexName.get(no) || null }));
@@ -820,7 +821,9 @@ function setup(app) {
     const list = rows.map(r => {
       const p = parseJson(r.payload, {}), x = parseJson(r.result, {}) || {};
       const delivery = x.service != null ? Math.round(x.service * 1.14 * 100) / 100 : 0;
-      const unexplained = Math.round(((x.gap || 0) - Math.min(x.gap || 0, delivery)) * 100) / 100;
+      // Karim 11-11: Apex prices are kept 5% above the website's on purpose — that part of a website order's gap is expected.
+      const siteMarkup = r.source === 'site' && x.before ? Math.round(Math.max(0, x.before - delivery) * 0.06 / 1.06 * 100) / 100 : 0;
+      const unexplained = Math.round(Math.max(0, (x.gap || 0) - Math.min(x.gap || 0, delivery) - siteMarkup) * 100) / 100;
       return { source: r.source, ref: r.ref, code: p.code || null, day: r.day, state: r.state, by: r.employee_name, at: iso(r.at), branchNo: p.branchNo, payment: r.payment,
         target: x.target ?? p.targetTotal ?? null, before: x.before, total: x.total, gap: x.gap || 0, short: x.short || 0, delivery, unexplained, error: x.error || null,
         apexNo: x.shiftSerial ?? null, items: (p.items || []).map(i => ({ no: i.itemNo, qty: i.qty, name: APEX_NAMES[i.itemNo] || null })) };

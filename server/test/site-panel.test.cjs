@@ -146,3 +146,16 @@ test('website pickup (Karim 11-11): written on the branch\'s «استلام فر
     assert.match(p.label, /موقع\/كاش #30950$/);
   } finally { await t.close(); }
 });
+
+test('price differences (Karim 11-11): Apex 5% above the website is expected on a website order; more is shown', async () => {
+  const t0 = cairoToUtc(2026, 11, 11, 20, 0, 0), t = await start({ at: t0 });
+  try {
+    const admin = await t.admin(), db = t.app.db.raw;
+    const job = (ref, before, gap) => db.prepare('INSERT INTO transfer_jobs (source, ref, day, state, at, payload, result) VALUES (?,?,?,?,?,?,?)')
+      .run('site', ref, '2026-11-11', 'auto_done', t0, JSON.stringify({ code: ref, items: [] }), JSON.stringify({ ok: true, before, gap, service: 0, total: before - gap }));
+    job('1', 420, 20);    // 300 on the website, Apex 5% above + tax-rounding
+    job('2', 420, 60);    // well over the 5%
+    const list = (await admin('GET', '/api/transfer/price-diffs?from=2026-11-11&to=2026-11-11')).body.list.map(x => x.ref);
+    assert.deepEqual(list, ['2']);
+  } finally { await t.close(); }
+});
