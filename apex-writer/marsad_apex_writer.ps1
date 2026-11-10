@@ -772,7 +772,9 @@ for (;;) {
     L "error: $($_.Exception.Message)"
     # What the failed job carried (numbers only, no customer details), so the cause can be found from this log.
     if ($job) { try { L ("  job " + $job.source + ':' + $job.ref + ' branch=' + $job.branchNo + ' loc=' + $job.locationNo + ' areaService=' + $job.areaService + ' pay=' + $job.payment + ' disc=' + $job.restaurantDiscount + ' target=' + $job.targetTotal + ' phoneLen=' + ([string]$job.customer.phone).Length + ' items=' + (($job.items | ForEach-Object { "$($_.itemNo)x$($_.qty)@$($_.price)" }) -join ',')) } catch {} }
-    if ($job -and $_.Exception.Message -notmatch 'Unable to connect|timed out|remote name') { try { [void](Api '/api/apex-writer/result' @{ source = $job.source; ref = $job.ref; ok = $false; error = $_.Exception.Message }) } catch {} }
+    # A closed business day is waited out like a lost connection: the job stays with the writer and goes in as soon as
+    # the day opens (Karim 10-11), instead of coming back to the employee as failed.
+    if ($job -and $_.Exception.Message -notmatch 'Unable to connect|timed out|remote name|business day is not open|has no open day') { try { [void](Api '/api/apex-writer/result' @{ source = $job.source; ref = $job.ref; ok = $false; error = $_.Exception.Message }) } catch {} }
   } finally { if ($c) { try { $c.Close() } catch {} }; $job = $null }
   Start-Sleep -Seconds ([math]::Min(120, $PollSeconds * [math]::Max(1, $failures)))
 }
