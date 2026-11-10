@@ -31,6 +31,9 @@ function readNotes(notes) {
   };
 }
 
+// Apex branch number (transfer page) → the website panel's branch key (its «الفرع المسؤول» list, 11-11).
+const SITE_BRANCH_OF_APEX = { 1: 'tagamoa-cloud', 2: 'nasr-city', 3: 'madinaty-craft-zone' };
+
 function setup(app) {
   const { db, fail } = app;
   const setting = async k => (await db.prepare('SELECT value FROM settings WHERE key = ?').get(k))?.value ?? null;
@@ -85,7 +88,23 @@ function setup(app) {
     }
     if (writes.length) await db.batch(writes);
     await put('site_panel_at', String(now));
-    return { ok: true, saved: list.length };
+    // Karim 11-11: «عايز الاوردر في الصفحه المركزيه برضو يتحول للفرع». An order the Marsad wrote on Apex and that is still
+    // without a branch on the central panel: the extension picks that branch in the panel and presses «إرسال للفرع» itself
+    // (the panel's own button, as an employee would). An order already sent to a branch is never changed.
+    const assign = [];
+    if (ctx.body?.board === 'central') {
+      const open = list.filter(o => Number.isInteger(Number(o?.id)) && !o.branchId && (Number(o.stage) || 0) < 3 && !/cancel|failed|refund/i.test(String(o.status || '')));
+      if (open.length) {
+        const ids = open.map(o => String(Number(o.id)));
+        const jobs = await db.prepare(`SELECT ref, payload FROM transfer_jobs WHERE source = 'site' AND state = 'auto_done' AND ref IN (${ids.map(() => '?').join(',')})`).all(...ids);
+        for (const j of jobs) {
+          let p = {}; try { p = JSON.parse(j.payload || '{}'); } catch {}
+          const branchId = SITE_BRANCH_OF_APEX[Number(p.branchNo)];
+          if (branchId) assign.push({ orderId: Number(j.ref), branchId });
+        }
+      }
+    }
+    return { ok: true, saved: list.length, assign };
   });
 
   // The key and secret are stored encrypted with the server secret (like the Telegram bot token).

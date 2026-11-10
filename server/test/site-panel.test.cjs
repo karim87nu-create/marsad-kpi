@@ -35,3 +35,22 @@ test('website central panel: orders, items, money, branch and times reach the tr
     assert.equal((await admin('GET', '/api/site')).body.linked, true, 'the website counts as linked while the panel reports');
   } finally { await t.close(); }
 });
+
+test('website central panel: an order the Marsad wrote on Apex and still without a branch is sent to that branch; one with a branch is left alone', async () => {
+  const t0 = cairoToUtc(2026, 11, 11, 21, 0, 0), s = m => Math.floor((t0 + m * 60000) / 1000);
+  const t = await start({ at: t0 + 10 * 60000 });
+  try {
+    const admin = await t.admin();
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const push = (orders, board = 'central') => t.call('POST', '/api/site/panel', { headers: { 'x-talabat-token': token }, body: { board, orders } });
+    const o = (id, extra = {}) => ({ id, number: String(id), status: 'app-new', stage: 0, fulfillment: 'delivery', createdAt: s(0), branchId: '', branchName: '', total: 300,
+      customer: { name: 'عميل', phone: '01000000000', address: 'x' }, financial: { due: 300, onlinePaid: 0, rows: [] }, items: [], ...extra });
+    assert.deepEqual((await push([o(40001), o(40002)])).body.assign, [], 'nothing written on Apex yet');
+    const db = t.app.db.raw;
+    const job = (ref, state, branchNo) => db.prepare('INSERT INTO transfer_jobs (source, ref, day, state, at, payload) VALUES (?,?,?,?,?,?)').run('site', String(ref), '2026-11-11', state, t0, JSON.stringify({ branchNo }));
+    job(40001, 'auto_done', 2); job(40002, 'auto_pending', 1); job(40003, 'auto_done', 3);
+    const r = (await push([o(40001), o(40002), o(40003, { branchId: 'nasr-city', branchName: 'مدينة نصر' })])).body.assign;
+    assert.deepEqual(r, [{ orderId: 40001, branchId: 'nasr-city' }], 'only the written order without a branch');
+    assert.deepEqual((await push([o(40001)], 'branch')).body.assign, [], 'never from a branch board');
+  } finally { await t.close(); }
+});
