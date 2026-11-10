@@ -119,6 +119,21 @@ function setup(app) {
       .run(b.day, data, ctx.now, existing?.data ?? null);
     if (!stored.changes) fail(409, 'snapshot_changed_retry');
     if (!replay) await put('orders_last_push', ctx.now);
+    // Karim 10-11: an order the Marsad put on Apex that someone changed by hand afterwards is written in the Marsad's
+    // log (الإدارة ← التشغيل التلقائي ← سجل الأخطاء) the moment the cashier PC sees it — once per change.
+    if (!replay && Array.isArray(b.fixes) && b.fixes.length) {
+      const seen = new Set((Array.isArray(before.fixes) ? before.fixes : []).map(f => String(f.no) + ':' + (f.what || []).length));
+      const fresh = b.fixes.filter(f => f && f.no && !seen.has(String(f.no) + ':' + (f.what || []).length)).slice(0, 30);
+      if (fresh.length) {
+        let log = []; try { log = JSON.parse(await setting('system_log') || '[]'); } catch {}
+        const keys = new Set(log.map(x => x.key));
+        const add = fresh.map(f => ({ key: 'fix:' + b.day + ':' + f.no + ':' + (f.what || []).length, at: ctx.now,
+          text: '✋ أوردر اتعدّل بإيد بعد المرصد — رقم ' + (f.sn ?? f.no) + (f.code ? ' (#' + f.code + ')' : '') + ' ' + (f.branch || '') + ' / ' + (f.pay || '') + '\n' +
+            'بواسطة ' + (f.by || '—') + ': ' + (f.what || []).join('، ') + '\n' +
+            'المرصد سجّله بـ ' + (f.wrote ?? '—') + (f.gap ? ' (فرق اتخصم ' + f.gap + ')' : '') + ' — دلوقتي ' + (f.now ?? '—') })).filter(x => !keys.has(x.key));
+        if (add.length) await put('system_log', JSON.stringify([...add.reverse(), ...log].slice(0, 200)));
+      }
+    }
     app.talabat?.invalidate?.(b.day);
     const alerts = [];
     // Persist each alert's last state per Apex day. A retry must not create a second reply.

@@ -70,3 +70,20 @@ test('watch: the morning report is sent once a day after 10 AM with yesterday\'s
     assert.equal(morning(t).length, 1, 'once a day');
   } finally { await t.close(); }
 });
+
+test('watch: an order the Marsad put on Apex and someone changed by hand is written in the log once per change', async () => {
+  const t = await start({ at: cairoToUtc(2026, 11, 10, 19, 0, 0) });
+  try {
+    const admin = await t.admin();
+    const { token } = (await admin('POST', '/api/orders/token')).body;
+    const push = (fixes, at) => t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': token }, body: { v: 1, day: '2026-11-10', generatedAt: at, online: [], fixes } });
+    const f = { no: '70966', sn: 222, code: '655', branch: 'مدينة نصر', pay: 'Cash', by: 'malak', what: ['05:24:01 م خصم 39.5925'], now: 300.64, wrote: 340.23, gap: 0 };
+    assert.equal((await push([f], '2026-11-10T19:00:00+02:00')).status, 200);
+    assert.equal((await push([f], '2026-11-10T19:01:00+02:00')).status, 200);
+    let log = (await admin('GET', '/api/system/watch')).body.log.filter(x => /اتعدّل بإيد/.test(x.text));
+    assert.equal(log.length, 1, 'once'); assert.match(log[0].text, /#655/); assert.match(log[0].text, /خصم 39.5925/); assert.match(log[0].text, /340.23/);
+    await push([{ ...f, what: [...f.what, '05:30:00 م شال صنف'] }], '2026-11-10T19:02:00+02:00');
+    log = (await admin('GET', '/api/system/watch')).body.log.filter(x => /اتعدّل بإيد/.test(x.text));
+    assert.equal(log.length, 2, 'a new change on the same order is written again');
+  } finally { await t.close(); }
+});

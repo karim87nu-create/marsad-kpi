@@ -759,6 +759,53 @@ function CancelResponsibility([string]$reason, [string]$note, [int]$code = 0) {
 }
 
 # ===== one reading of Apex -> one summary =====
+# Karim 10-11 («كل شويه هتقولي معاك حق؟»): every order the Marsad put on Apex that someone changed afterwards by hand —
+# a discount, a removed or added item, a cancel, a price — is listed the same day with what changed and the total the
+# writer had recorded, so each mistake is found by us, not by a complaint. Read only. Re-read every 5 minutes.
+$script:fixesAt = [datetime]::MinValue; $script:fixes = @()
+function Get-Fixes([datetime]$day, [datetime]$now) {
+  if (($now - $script:fixesAt).TotalMinutes -lt 5) { return $script:fixes }
+  $script:fixesAt = $now
+  try {
+    $sn = $(if ($SerialCol) { "o.[$SerialCol]" } else { 'NULL' })
+    $rows = Q @"
+SELECT d.OrderNo, d.SerialNo, d.ItemTime, RTRIM(ISNULL(d.Status,'')) AS st, RTRIM(ISNULL(d.Description,'')) AS ds, d.Qty, RTRIM(ISNULL(d.UserName,'')) AS un,
+  $sn AS sn, CONVERT(nvarchar(120), o.o_CustName) AS nm, o.BranchNo, RTRIM(ISNULL(o.PayWay,'')) AS pw, o.SubTotal, o.Discount, o.Tax, o.Service, o.Addition
+FROM OrderLog d WITH (NOLOCK) LEFT JOIN Orders_M_Daily o WITH (NOLOCK) ON o.OrderNo = d.OrderNo
+WHERE d.OrderDate = @d AND d.UserName <> 'MARSAD'
+  AND d.Status NOT LIKE 'Asign Order%' AND d.Status NOT LIKE 'Print Copy%' AND d.Status NOT LIKE 'Change Pilot%' AND RTRIM(d.Status) NOT IN ('Follow Order', 'Check Out')
+  AND NOT (RTRIM(d.Status) = 'New Order' AND ISNULL(d.Qty, 0) = 0)
+  AND EXISTS (SELECT 1 FROM OrderLog m WITH (NOLOCK) WHERE m.OrderNo = d.OrderNo AND m.UserName = 'MARSAD' AND m.Description LIKE 'MT:%')
+ORDER BY d.OrderNo, d.SerialNo
+"@ @{ '@d' = $day }
+    # What the writer recorded (its own log next door): total and the Talabat order.
+    $wrote = @{}
+    $wl = Join-Path $here 'apex-writer\writer_log.txt'
+    if (Test-Path $wl) {
+      foreach ($line in (Get-Content $wl -Tail 4000 -Encoding UTF8)) {
+        if ($line -match '"orderNo":(\d+)' ) { $no = $matches[1]; if ($line -match '"total":([\d.]+)') { $wrote[$no] = @{ total = [double]$matches[1]; gap = $(if ($line -match '"gap":([\d.]+)') { [double]$matches[1] } else { 0 }) } } }
+      }
+    }
+    $by = [ordered]@{}
+    foreach ($r in $rows.Rows) {
+      $no = [string][int64](N $r.OrderNo)
+      if (-not $by.Contains($no)) {
+        $code = $(if ((S $r.nm) -match '#\s*(\d+)') { $matches[1] } else { '' })
+        $by[$no] = [ordered]@{ no = $no; sn = SnOf $r.sn; code = $code; branch = BName $r.BranchNo; pay = S $r.pw; by = @(); what = @(); now = R2 (AmtOf $r); wrote = $(if ($wrote[$no]) { $wrote[$no].total } else { $null }); gap = $(if ($wrote[$no]) { $wrote[$no].gap } else { $null }) }
+      }
+      $x = $by[$no]; $st = S $r.st; $ds = S $r.ds
+      $w = $(if ($st -like 'Make Discount*') { 'خصم ' + ($st -replace '^Make Discount\s*', '') } elseif ($st -like 'Void*') { 'شال صنف' + $(if ($ds) { ': ' + $ds } else { '' }) } elseif ($st -eq 'New Order') { 'زوّد صنف' + $(if ($ds) { ': ' + $ds } else { '' }) } else { $st + $(if ($ds) { ': ' + $ds } else { '' }) })
+      $x.what += ((S $r.ItemTime) + ' ' + $w)
+      if ($x.by -notcontains (S $r.un)) { $x.by += (S $r.un) }
+    }
+    $script:fixes = @($by.Values | ForEach-Object { [ordered]@{ no = $_.no; sn = $_.sn; code = $_.code; branch = $_.branch; pay = $_.pay; by = ($_.by -join '، '); what = @($_.what); now = $_.now; wrote = $_.wrote; gap = $_.gap } })
+    $txt = @("تعديلات بإيد على أوردرات المرصد — $($day.ToString('yyyy-MM-dd')) (آخر قراءة $($now.ToString('HH:mm')))")
+    foreach ($f in $script:fixes) { $txt += "رقم $($f.sn) #$($f.code) [$($f.branch) / $($f.pay)] بواسطة $($f.by): $(@($f.what) -join ' ، ') | المرصد سجّل $($f.wrote) والفرق اللي اتخصم $($f.gap) → دلوقتي $($f.now)" }
+    Set-Content (Join-Path $here 'marsad_fixes.txt') $txt -Encoding UTF8
+  } catch { L "fixes: $($_.Exception.Message)" }
+  return $script:fixes
+}
+
 function Cycle {
   $now = [datetime](Q 'SELECT GETDATE() AS n').Rows[0].n
   $dayRow = (Q 'SELECT MAX(OrderDate) AS d FROM Orders_M_Daily').Rows[0].d
@@ -1191,7 +1238,7 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
       discounts = SumOf $list 'Disc'; issues = $issues.Count
     }
     branches = @($branchesOut); open = @($openList); staff = @($staff); hours = $hours
-    cancels = @($cancelList); issues = @($issues); lateOut = @($lateOut); online = @($onlineList); sales = @($salesList); officer = $officerOut; tagColumns = $script:tagCols; details = $details; branchStatus = $script:branchStatus; users = @($script:Users.Values | Where-Object { $_ } | Sort-Object -Unique); alerts = @(@($pending) + $(if ($script:ServerFollow) { @($script:follow) } else { @() }))
+    cancels = @($cancelList); issues = @($issues); lateOut = @($lateOut); online = @($onlineList); sales = @($salesList); officer = $officerOut; tagColumns = $script:tagCols; details = $details; fixes = @(Get-Fixes $day $now); branchStatus = $script:branchStatus; users = @($script:Users.Values | Where-Object { $_ } | Sort-Object -Unique); alerts = @(@($pending) + $(if ($script:ServerFollow) { @($script:follow) } else { @() }))
   }
 }
 
