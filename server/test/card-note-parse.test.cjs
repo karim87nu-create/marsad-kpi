@@ -28,3 +28,43 @@ test('card notes as staff write them: one order, split over orders, a gift in th
   }
   assert.equal(p('كادو مع الاوردر').directives[0].suggest.length, 0, 'no dish named → the employee picks it');
 });
+
+// Karim 10-11: «مش عايز اختلاف كتابه أو لهجه أو خطأ في السياق يبقي مش مفهوم».
+test('card notes in any wording: numbers in words, «على N اوردرات», «الجاية», and a dish is put in only when sure', async () => {
+  const { parseApexCustomerNote: p } = await import('../src/apex-customer-notes.js');
+  const same = (n, value, orders, sentence) => {
+    const r = p(n), d = r.directives[0];
+    assert.equal(r.unrecognized, false, n); assert.equal(r.oneTime, true, n); assert.equal(d.value, value, n);
+    if (orders) { assert.equal(d.split.orders, orders, n); assert.equal(r.next.sentence, sentence, n); }
+  };
+  same('خصم ستين في الميه على اوردرين', 30, 2, 'خصم 30% ع الاوردر القادم والكومنت يتمسح.');
+  same('خصم ٦٠٪ يتقسم على اوردرين', 30, 2, 'خصم 30% ع الاوردر القادم والكومنت يتمسح.');
+  same('خصم 60% علي طلبين', 30, 2, 'خصم 30% ع الاوردر القادم والكومنت يتمسح.');
+  same('خصم 90% على 3 اوردرات', 30, 3, 'خصم 60% يتقسمو ع اوردرين والكومنت يتمسح.');
+  same('خصم 90% يتقسم ع تلات اوردرات', 30, 3, 'خصم 60% يتقسمو ع اوردرين والكومنت يتمسح.');
+  same('خصم 100 جنيه يتقسمو ع اوردرين', 50, 2, 'خصم 50 جنيه ع الاوردر القادم والكومنت يتمسح.');
+  for (const n of ['الاوردر الجاي خصم 20%', 'خصم 20% المره الجايه', 'خصم 20% اول اوردر جاي', 'خصم 20 بالمية للاوردر الجاى', 'خصم عشرين في الميه ع الاوردر الجاي']) same(n, 20);
+  // Each rewritten note is read again the same way until the last share.
+  let note = 'خصم 90% على 3 اوردرات', shares = [];
+  while (note) { const r = p(note); shares.push(r.directives[0].value); note = r.next?.sentence && r.directives[0].split ? r.next.sentence : ''; }
+  assert.deepEqual(shares, [30, 30, 30]);
+
+  const item = n => p(n).directives.filter(d => d.kind === 'item').map(d => (d.suggest[0]?.sure ? '✔' : '✋') + (d.suggest[0]?.name || ''));
+  assert.deepEqual(item('العميل له ورق عنب وطحينة فري'), ['✔ورق عنب', '✔سلطة طحينة'], 'two dishes in one line');
+  assert.deepEqual(item('العميل يستحق طبق رز معمر مجانا'), ['✔ارز معمر سادة']);
+  assert.deepEqual(item('ليه حمام محشي هدية اعتذار'), ['✔فرد حمام محشى']);
+  assert.deepEqual(item('هديه بيبسي ٢'), ['✔بيبسى']);
+  // Which size / not on the menu → never put in by itself; the employee picks it from the suggestions.
+  for (const n of ['يضاف للعميل كفته فري', 'تعويض العميل بساندوتش شاورما', 'العميل ليه وجبة فراخ مشوية', 'ليه حلو مجاناً']) assert.match(item(n)[0], /^✋/, n);
+});
+
+test('after the order only the used sentence leaves the card; the rest of what staff wrote stays', async () => {
+  const { parseApexCustomerNote: p } = await import('../src/apex-customer-notes.js');
+  assert.equal(p('خصم 30% ع الاوردر القادم والكومنت يتمسح.').next, null, 'nothing else → the card is cleared');
+  assert.equal(p('خصم 15%. ع الاوردر القادم').next, null, '«ع الاوردر القادم» after a dot is still the same sentence');
+  assert.equal(p('خصم 30% ع الاوردر القادم. العميل بيحب الشطة').next.note, 'العميل بيحب الشطة');
+  assert.equal(p('العميل ليه بيبسي هديه. عنوانه جنب الجامع').next.note, 'عنوانه جنب الجامع');
+  assert.equal(p('خصم 60% يتقسمو ع اوردرين. العميل بيحب الشطة').next.note, 'خصم 30% ع الاوردر القادم والكومنت يتمسح. العميل بيحب الشطة');
+  assert.equal(p('العميل بيحب الشطة\nخصم 90% على 3 اوردرات والكومنت يتمسح').next.note, 'العميل بيحب الشطة\nخصم 60% يتقسمو ع اوردرين والكومنت يتمسح.');
+  assert.equal(p('عميل دايم خصم 10%').next, null, 'a lasting discount is never touched');
+});

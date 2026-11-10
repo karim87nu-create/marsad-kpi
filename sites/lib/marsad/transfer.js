@@ -177,7 +177,7 @@ function setup(app) {
       const linked = note && note.phone_hash === sha256(deliveryPhone(o.customer?.phone) || '');
       return { ...(o.apex || o.out ? slim(o) : o), ...(o.source === 'talabat' ? { onLive: onLive(o.ref) } : {}),
         job: jobOf(o.source, o.source === 'site' ? String(o.ref) : o.ref),
-        apexCustomerNote: linked ? { custNo: note.custNo, status: note.status, checkedAt: note.checkedAt, text: note.text, directives: note.directives, other: note.other, oneTime: note.oneTime, permanent: note.permanent, requiresReview: note.requiresReview, unrecognized: note.unrecognized } : { status: 'pending' } };
+        apexCustomerNote: linked ? { custNo: note.custNo, status: note.status, checkedAt: note.checkedAt, text: note.text, directives: note.directives, other: note.other, oneTime: note.oneTime, permanent: note.permanent, requiresReview: note.requiresReview, unrecognized: note.unrecognized, next: note.next || null } : { status: 'pending' } };
     });
     // Karim 10-11: «طلبات بيكون فيها المنطقة ومع ذلك بيطلب تحديد المنطقة». Talabat names areas its own way
     // («الرحاب 1», «دار مصر الاندلس»); the Apex area the staff chose for the same Talabat area before is picked.
@@ -581,9 +581,12 @@ function setup(app) {
         oneTime: verifiedCardNote.oneTime && isAcknowledged && resolution !== 'contacted', percent: notePercent, resolution, worth: discountWorth,
         // A discount split over orders (Karim 09-11): after this one, the card says what is left for the next order.
         next: verifiedCardNote.next && resolution !== 'contacted' ? (() => {
-          const raw = String(noteRecord.note || ''), section = verifiedCardNote.next.section;
-          const full = raw.includes(section) ? raw.replace(section, verifiedCardNote.next.sentence) : verifiedCardNote.next.sentence;
-          return full.slice(0, 1000);
+          // Apex keeps the card note in char(250) (checked on the PC 10-11): a longer text would stop the writer, so it is
+          // cut there — the discount sentence comes first when the card is rewritten for a split.
+          const full = String(verifiedCardNote.next.note ?? verifiedCardNote.next.sentence ?? '').trim();
+          if (full.length <= 250) return full;
+          const first = verifiedCardNote.next.sentence || '';
+          return (first + ' ' + full.replace(first, '')).replace(/\s+/g, ' ').trim().slice(0, 250);
         })() : null,
         amount: noteAmount, items: noteItems
       } : null;

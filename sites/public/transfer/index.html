@@ -400,18 +400,20 @@ function card(o) {
               // Karim 10-11: the dish named on the card is picked from Apex's menu already (any wording or spelling);
               // the employee only checks it, or takes another suggestion.
               p.noteItems ||= {};
-              if (!p.noteItems[i] && d.suggest?.length) p.noteItems[i] = { no: d.suggest[0].itemNo, qty: d.qty || 1, auto: true };
+              // Only a sure match is put in by itself; «كفتة» (which size?) or a dish not on the menu waits for the employee.
+              if (!p.noteItems[i] && d.suggest?.[0]?.sure) p.noteItems[i] = { no: d.suggest[0].itemNo, qty: d.qty || 1, auto: true };
               const chosen = p.noteItems[i], nameOf = no => (data.apexItems || []).find(a => a.no === no)?.name || no || '';
               return '<div class="pick"><input data-card-item="' + i + '" list="apexItems" placeholder="كود أو اسم الصنف في APEX" value="' + esc(nameOf(chosen?.no)) + '">' +
                 '<input data-card-qty="' + i + '" type="number" min="1" max="50" step="1" placeholder="الكمية" value="' + esc(chosen?.qty || d.qty || '1') + '"></div>' +
                 (chosen?.auto ? '<div class="muted">اتختار من الملاحظة — اتأكد منه</div>' : '') +
-                ((d.suggest || []).filter(x => x.itemNo !== chosen?.no).length ? '<div class="muted">أو: ' + d.suggest.filter(x => x.itemNo !== chosen?.no).map(x => '<button type="button" class="link" data-card-suggest="' + i + '" data-no="' + esc(x.itemNo) + '">' + esc(x.name) + '</button>').join(' · ') + '</div>' : '') +
+                ((d.suggest || []).filter(x => x.itemNo !== chosen?.no).length ? '<div class="' + (chosen ? 'muted' : 'warn') + '">' + (chosen ? 'أو: ' : 'الملاحظة تحتمل أكتر من صنف — اختار الصح: ') + d.suggest.filter(x => x.itemNo !== chosen?.no).map(x => '<button type="button" class="link" data-card-suggest="' + i + '" data-no="' + esc(x.itemNo) + '">' + esc(x.name) + '</button>').join(' · ') + '</div>' : '') +
                 (!d.suggest?.length ? '<div class="warn">مش لاقي الصنف في المنيو — اختاره بنفسك</div>' : '');
             })() : '');
         }).join('');
         // Karim 10-11: said plainly, step by step, so anyone at the desk knows what to do.
         const worth = cardWorth(o, p, n), money1 = cardMoney(n)[0], split = (n.directives || []).find(d => d.split)?.split;
         const life = split ? 'متقسمة على ' + split.orders + ' أوردرات — الأوردر ده ياخد نصيبه، والباقي يتكتب على الكارت للأوردر الجاي'
+          : n.oneTime && n.next?.note ? 'لمرة واحدة — الخصم/الهدية بيتمسحوا من الكارت لوحدهم بعد الأوردر، وباقي الملاحظة يفضل زي ما هو'
           : n.oneTime ? 'لمرة واحدة — بتتمسح من الكارت لوحدها بعد الأوردر' : n.permanent ? 'دايمة — بتفضل على الكارت' : 'مش مكتوب لمرة ولا دايمة — هتفضل على الكارت';
         const worthText = money1 ? (money1.kind === 'percent' ? money1.value + '%' : money(money1.value) + ' ج') + (worth && money1.kind === 'percent' ? ' ≈ ' + money(worth) + ' ج' : '') : '';
         return '<div class="f"><span class="fl">🎁 بطاقة العميل على Apex</span><span class="fv"><b>' + esc(n.text) + '</b>' +

@@ -7,38 +7,58 @@ import { APEX_NAMES } from './menu-seed.js';
 const money = n => Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
 export function parseApexCustomerNote(raw) {
   const text = numerals(raw).replace(/\r/g, '\n').trim().slice(0, 1000);
+  // Karim 10-11: numbers written in words and «في الميه» read like digits and «%»; the card's own words are kept for
+  // rewriting it (t is only for reading).
+  const t = sayNumbers(text);
   if (!text || /^\s*[.\-–ـ]*\s*$/.test(text)) return { text: '', directives: [], other: [], oneTime: false, permanent: false, requiresReview: false };
   // Karim 09-11, the notes staff really write: «خصم 15% ع الاوردر االقادم و الكومنت يتمسح» (typos included) is for one order;
   // «يتقسمو ع اوردرين» (split over two orders) is not something to guess.
-  const nextOrder = /قادم|جاي\b|جاى|يتمسح|تتمسح|(?:^|[\s.])(?:ع|على|علي|عى)\s*(?:ا*ل)?[اأ]?(?:وردر|ورر|ورد)|عال[اأ]?وردر/i.test(text);
-  const split = /(?:يتقسم|تتقسم|مقسم|مقسوم)|(?:[اأ]وردرين|طلبين|اوردارين)|(?:على|ع)\s*(?:2|٢|اتنين)\s*(?:[اأ]وردر|طلب)/i.test(text);
+  const nextOrder = /قادم|جا[يى][هة]?(?=$|[\s.,،])|يتمسح|تتمسح|اول\s*[اأ]وردر|(?:^|[\s.])(?:ع|على|علي|عى)\s*(?:ا*ل)?[اأ]?(?:وردر|ورر|ورد)|عال[اأ]?وردر/i.test(t);
+  const split = /(?:يتقسم|تتقسم|مقسم|مقسوم)|(?:[اأ]وردرين|طلبين|اوردارين)|(?:على|علي|ع)\s*(?:[2-9]|10)\s*(?:[اأ]وردرات|طلبات|[اأ]وردر|طلب)/i.test(t);
   // Over how many orders (Karim 09-11: the first gets its share, the card then says what is left for the next).
   const WORDS = { اتنين: 2, اثنين: 2, تلات: 3, تلاته: 3, تلاتة: 3, ثلاث: 3, ثلاثة: 3, اربع: 4, اربعة: 4, أربع: 4, خمس: 5 };
-  const orders = !split ? 1 : /[اأ]وردرين|طلبين|اوردارين/.test(text) ? 2
-    : (m => m ? Number(m[1]) || WORDS[m[1]] || 0 : 0)(/(\d+|اتنين|اثنين|تلاته?|تلاتة|ثلاثة?|اربعة?|أربع|خمس)\s*(?:[اأ]وردرات|[اأ]وردر|طلبات|طلب)/.exec(text));
+  const orders = !split ? 1 : /[اأ]وردرين|طلبين|اوردارين/.test(t) ? 2
+    : (m => m ? Number(m[1]) || WORDS[m[1]] || 0 : 0)(/(\d+|اتنين|اثنين|تلاته?|تلاتة|ثلاثة?|اربعة?|أربع|خمس)\s*(?:[اأ]وردرات|[اأ]وردر|طلبات|طلب)/.exec(t));
   const oneTime = nextOrder || /(?:مرة\s*واحدة|مره\s*واحده|للطلب\s*(?:الواحد|القادم|الجاي|الحالي|ده|دا)|للاوردر\s*(?:الحالي|ده|دا)|للأوردر\s*(?:الحالي|ده|دا)|(?:ال)?طلب\s*واحد|المره\s*دي\s*فقط|المرة\s*دي\s*فقط|اوردر\s*(?:واحد|واحده|القادم)|order\s*only|next\s*order|one[ -]?time)/i.test(text);
   const permanent = /(?:دائم|دايم|كل\s*(?:مرة|مره|طلب|اوردر)|permanent|every\s*order|always)/i.test(text);
-  const sections = text.split(/[\n؛;|]+/).map(s => s.trim()).filter(Boolean);
-  const directives = [], other = [];
-  for (const section of sections) {
+  // Lines, and sentences ended by «.» (Karim 10-11: «خصم 15% ع الاوردر القادم. العميل بيحب الشطة» — the second
+  // sentence is not part of the discount and stays on the card). A piece that only says «ع الاوردر القادم» or
+  // «والكومنت يتمسح» belongs to the sentence before it.
+  const rawSections = [], pieces = [];
+  for (const line of text.split(/[\n؛;|]+/))
+    for (const piece of line.split(/(?<!\d)\.+(?=\s*[^\s\d.])/).map(x => x.replace(/^[\s.]+/, '').trim()).filter(Boolean)) {
+      if (rawSections.length && !normArabic(sayNumbers(piece)).replace(FILLER, ' ').replace(/\s+/g, '').length) { rawSections[rawSections.length - 1] += '. ' + piece; pieces[pieces.length - 1].push(piece); }
+      else { rawSections.push(piece); pieces.push([piece]); }
+    }
+  const directives = [], other = [], kinds = [];
+  for (const own of rawSections) {
     let m;
+    const section = sayNumbers(own), before = directives.length;
     if ((m = /(?:خصم|discount)\s*(?:بنسبة|نسبة|قدرها|بقيمة|بمبلغ|of|:)?\s*(\d{1,3}(?:\.\d+)?)\s*(%|٪|في\s*المية|بالمية|percent)/i.exec(section))) {
       const n = money(Number(m[1]));
-      if (n > 0 && n <= 100) directives.push({ kind: 'percent', value: n, text: section, status: 'review', reason: 'أساس احتساب النسبة وتداخل الخصومات يحتاجان تأكيدًا' });
-      else other.push(section);
+      if (n > 0 && n <= 100) directives.push({ kind: 'percent', value: n, text: own, status: 'review', reason: 'أساس احتساب النسبة وتداخل الخصومات يحتاجان تأكيدًا' });
+      else other.push(own);
       // «خصم 15% ع الاوردر القادم واضافه شوربه لسان عصفور فرى» / «… وكادو مع الاوردر»: the gift in the same line too.
       const rest = section.slice(m.index + m[0].length);
       if (GIFT_WORDS.test(rest))
         directives.push({ kind: 'item', text: rest.replace(/^[\s.،,و]+/, '').trim(), status: 'review', reason: 'اختار كود الصنف والكمية من APEX قبل إضافته' });
     } else if ((m = /(?:خصم|discount)\s*(?:بمبلغ|بقيمة|قدرها|قيمة|مبلغ|:)?\s*(\d+(?:\.\d+)?)\s*(?:جنيه|ج|جم|egp|pounds)?\b/i.exec(section))) {
       const n = money(Number(m[1]));
-      if (n > 0 && n <= 100000) directives.push({ kind: 'amount', value: n, text: section, status: 'review', reason: 'يجب تأكيد أنه خصم إضافي وغير مطبق على سعر المصدر' });
-      else other.push(section);
+      if (n > 0 && n <= 100000) directives.push({ kind: 'amount', value: n, text: own, status: 'review', reason: 'يجب تأكيد أنه خصم إضافي وغير مطبق على سعر المصدر' });
+      else other.push(own);
     } else if (GIFT_WORDS.test(section)) {
-      directives.push({ kind: 'item', text: section, status: 'review', reason: 'اختار كود الصنف والكمية من APEX قبل إضافته' });
-    } else other.push(section);
+      directives.push({ kind: 'item', text: own, status: 'review', reason: 'اختار كود الصنف والكمية من APEX قبل إضافته' });
+    } else other.push(own);
+    kinds.push(directives.length > before);
   }
   for (const d of directives) if (d.kind === 'item') Object.assign(d, itemOf(d.text));
+  // «ورق عنب وطحينة» = two items, when each part alone is surely one menu item.
+  for (let i = directives.length - 1; i >= 0; i--) {
+    const d = directives[i];
+    if (d.kind !== 'item' || d.suggest[0]?.sure) continue;
+    const parts = sureParts(d.text);
+    if (parts && parts.length > 1) directives.splice(i, 1, ...parts.map(x => ({ ...d, text: x, ...itemOf(x), of: d.text })));
+  }
   let next = null;
   const share = directives.filter(d => d.kind === 'percent' || d.kind === 'amount');
   if (split && orders >= 2 && orders <= 10 && share.length === 1) {
@@ -50,6 +70,25 @@ export function parseApexCustomerNote(raw) {
     next = { sentence, section: d.text };
   }
   const financeUnrecognized = /(?:خصم|discount|هدية|هديه|مجاني|مجانا|يستحق|صنف|اصناف|أصناف|كوبون|(?:له|ليها|ليه)\s+\d+|(?:إضافة|اضافه)\s+(?:طبق|صنف|وجبة|وجبه))/i.test(other.join(' '));
+  // A one-order discount/gift written next to something else about the customer: after the order only the
+  // discount/gift sentence goes; the rest stays on the card as it was written.
+  if (!next && !split && !permanent && !financeUnrecognized && other.length && directives.length && (oneTime || directives.some(d => d.kind === 'item')))
+    next = { sentence: '', section: '' };
+  // The card's whole new text: the used sentence(s) taken out (a split one says what is left), the rest as written.
+  if (next) {
+    const used = share.length === 1 && split ? share[0].text : null;
+    // Taken out of the card's own text, so what stays keeps its words and separators («رأي العميل: كويس | …»).
+    let out = text;
+    rawSections.forEach((x, i) => {
+      if (!kinds[i]) return;
+      pieces[i].forEach((piece, k) => {
+        const at = out.indexOf(piece);
+        if (at >= 0) out = out.slice(0, at) + (x === used && k === 0 ? '\u0000' : '') + out.slice(at + piece.length);
+      });
+    });
+    out = out.replace(/(\s*[.|؛;\n]\s*)(?:[.|؛;\n]\s*)+/g, '$1').replace(/^[\s.|؛;]+|[\s|؛;]+$/g, '').replace(/\u0000\.*/, next.sentence).trim();
+    next.note = out;
+  }
   return { text, directives, other, oneTime: next ? !permanent : (oneTime || directives.some(d => d.kind === 'item')) && !permanent && !split && other.length === 0, permanent, requiresReview: directives.length > 0 || oneTime || financeUnrecognized, unrecognized: financeUnrecognized || (split && !next) || (oneTime && permanent), next };
 }
 
@@ -67,19 +106,54 @@ const dice = (a, b) => { const A = grams(a), B = grams(b); let both = 0, n = 0; 
 let MENU = null;
 const menu = () => MENU || (MENU = Object.entries(APEX_NAMES).map(([no, name]) => ({ no, name, key: normArabic(name).split(' ').map(stem).join(' ') })).filter(x => x.key));
 export function guessApexItem(text, limit = 3) {
-  const words = normArabic(text).replace(FILLER, ' ').split(' ').map(stem).filter(w => w && !/^\d+$/.test(w) && !QTY[w]);
+  const words = normArabic(text).replace(FILLER, ' ').split(' ').map(stem).map(w => SAME[w] || w).filter(w => w && !/^\d+$/.test(w) && !QTY[w]);
   const key = words.join(' ');
   if (key.length < 3) return [];
-  return menu().map(x => {
+  const all = menu().map(x => {
     // The letters of the whole name, and how many of the note's words are (nearly) in it — a wrong letter still counts.
     const xw = x.key.split(' '), hit = words.filter(w => xw.some(y => y === w || (w.length > 3 && dice(w, y) >= 0.67))).length;
     const score = 0.55 * dice(key, x.key) + 0.45 * hit / Math.max(words.length, xw.filter(y => !/^طلبات$|^عرض$/.test(y)).length) - (/طلبات|عرض/.test(x.name) ? 0.03 : 0);
-    return { itemNo: x.no, name: x.name, score: Math.round(score * 100) / 100 };
-  }).sort((a, b) => b.score - a.score).filter(x => x.score >= 0.35).slice(0, limit);
+    // «sure» = every word of the note is in the name and the name has nothing more (beyond «سادة/فرد/طبق/سلطة»):
+    // only then is it put in by itself; anything else (one word for many sizes, an item not on the menu) is chosen by staff.
+    const need = words.filter(w => !GENERIC.has(w));
+    const extra = xw.filter(y => !GENERIC.has(y) && !words.some(w => y === w || (w.length > 3 && dice(w, y) >= 0.67))).length;
+    return { itemNo: x.no, name: x.name, score: Math.round(score * 100) / 100, exact: need.length > 0 && need.every(w => xw.some(y => y === w || (w.length > 3 && dice(w, y) >= 0.67))) && extra === 0 };
+  }).sort((a, b) => b.exact - a.exact || b.score - a.score).filter(x => x.score >= 0.35);
+  const exact = all.filter(x => x.exact);
+  return all.slice(0, limit).map(({ exact: e, ...x }, i) => (i === 0 && e && exact.length === 1 ? { ...x, sure: true } : x));
+}
+const GENERIC = new Set(['ساده', 'فرد', 'طبق', 'سلطه']);
+const SAME = { رز: 'ارز', روز: 'ارز', عيش: 'رغيف', بيبسي: 'بيبسي' };
+// Cut at « و» / «،» / «+» only where every piece is surely one item («ورق عنب» is never cut at its own «و»).
+function sureParts(text, depth = 0) {
+  if (guessApexItem(text, 1)[0]?.sure) return [text];
+  if (depth > 3) return null;
+  const re = /\s+و\s*|\s*[+،,]\s*/g;
+  let m;
+  while ((m = re.exec(text))) {
+    const left = text.slice(0, m.index).trim(), right = text.slice(m.index + m[0].length).trim();
+    if (!left || !right || !guessApexItem(left, 1)[0]?.sure) continue;
+    const rest = sureParts(right, depth + 1);
+    if (rest) return [left, ...rest];
+  }
+  return null;
 }
 function itemOf(text) {
   const t = normArabic(text);
   const m = /(?:^|\s)(\d{1,2})(?=\s)/.exec(' ' + t + ' ') || new RegExp('(?:^|\\s)(' + Object.keys(QTY).join('|') + ')(?=\\s|$)').exec(t);
   const qty = m ? Number(m[1]) || QTY[m[1]] || 1 : 1;
   return { qty: Math.min(Math.max(qty, 1), 9), suggest: guessApexItem(text) };
+}
+
+// «ستين في الميه» → «60 %», «خمسة وعشرين» → «25», «مية جنيه» → «100 جنيه».
+const UNITS = { واحد: 1, واحده: 1, اتنين: 2, اثنين: 2, تلاته: 3, تلاتة: 3, ثلاثة: 3, تلات: 3, اربعه: 4, اربعة: 4, أربعة: 4, خمسه: 5, خمسة: 5, خمس: 5, سته: 6, ستة: 6, سبعه: 7, سبعة: 7, تمانيه: 8, ثمانية: 8, تسعه: 9, تسعة: 9,
+  عشره: 10, عشرة: 10, حداشر: 11, اتناشر: 12, تلتاشر: 13, اربعتاشر: 14, خمستاشر: 15, خمسطاشر: 15, ستاشر: 16, سبعتاشر: 17, تمنتاشر: 18, تسعتاشر: 19 };
+const TENS = { عشرين: 20, تلاتين: 30, ثلاثين: 30, اربعين: 40, أربعين: 40, خمسين: 50, ستين: 60, سبعين: 70, تمانين: 80, ثمانين: 80, تسعين: 90, ميه: 100, مية: 100, مائة: 100, مئة: 100, ميتين: 200 };
+const UW = Object.keys(UNITS).sort((a, b) => b.length - a.length).join('|'), TW = Object.keys(TENS).sort((a, b) => b.length - a.length).join('|');
+function sayNumbers(s) {
+  return String(s)
+    .replace(new RegExp('(^|[\\s.،,])(' + UW + ')\\s+و\\s*(' + TW + ')(?=$|[\\s.،,%])', 'g'), (m, pre, u, tn) => pre + (UNITS[u] + TENS[tn]))
+    .replace(new RegExp('(^|[\\s.،,])(' + TW + ')(?=$|[\\s.،,%])', 'g'), (m, pre, tn) => pre + TENS[tn])
+    .replace(new RegExp('(^|[\\s.،,])(' + UW + ')(?=\\s*(?:%|٪|في|بال|جنيه|ج\\b|[اأ]وردر|طلب))', 'g'), (m, pre, u) => pre + UNITS[u])
+    .replace(/(\d)\s*(?:(?:في|ف)\s*(?:ال)?(?:مي[هة]|مائ[هة]|مئ[هة])|بال(?:مي[هة]|مائ[هة]|مئ[هة]))/g, '$1%');
 }
