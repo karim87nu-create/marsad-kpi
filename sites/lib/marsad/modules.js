@@ -28,6 +28,7 @@ import * as archive from './archive.js';
 import * as kpi from './kpi.js';
 import * as branchClosures from './branch-closures.js';
 import * as translate from './translate.js';
+import * as branchBot from './branch-bot.js';
 
-const MODULES = [translate, admin, employees, sessions, dashboard, breaks, messages, shifts, history, engine, telegram, importRows, ops, range, orders, names, learn, reviews, site, talabat, cancels, whatsapp, transfer, talabatActions, systemWatch, backup, archive, kpi, branchClosures];
+const MODULES = [translate, admin, employees, sessions, dashboard, breaks, messages, shifts, history, engine, telegram, importRows, ops, range, orders, names, learn, reviews, site, talabat, cancels, whatsapp, transfer, talabatActions, systemWatch, backup, archive, kpi, branchClosures, branchBot];
 export { MODULES };

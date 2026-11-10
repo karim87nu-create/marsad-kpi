@@ -128,6 +128,7 @@
   const OR = window.MarsadOrders({ api, h, $, table, kpi, pill, C, exportRows, serverNow, cairoToday, state, hm: v => hm(v), showError, review: () => INS });
   const SITE = window.MarsadSite({ api, h, $, table, kpi, pill, serverNow, state, showError, exportRows, canWrite: () => canWrite(), extensionCall: (...a) => extensionCall(...a), review: () => INS });
   const setRange = (from, to) => { $('day').value = from; $('dayTo').value = to; $('applyRange').click(); };
+  const BOT = window.MarsadBot({ api, h, $, table, pill, state, canWrite: () => canWrite(), showError: x => showError(x) });
   const KPI = window.MarsadKpi({ api, h, $, table, kpi, pill, state, exportSheets: (...a) => exportSheets(...a), setRange, cairoToday });
   INS = window.MarsadInsights({ api, h, $, table, kpi, pill, C, state, exportRows, canWrite: () => canWrite(), isAdmin: () => isAdmin(), showError, rerender: () => rerender(), OR, SITE });
 
@@ -880,12 +881,12 @@
     branchesNow: ['الفروع الآن', null], transfer: ['تحويل الأوردرات: طلبات والموقع', () => Promise.all([renderPriceDiffs(), SITE.renderTalabat(), SITE.renderTransfer()])], entry: ['ضرب الأوردرات', () => OR.renderEntry()],
     sales: ['المبيعات', () => INS.renderSales()], branches: ['تقرير الفروع', () => Promise.all([renderClosures(), OR.renderBranches(), INS.renderBranch(), SITE.renderBranches()])],
     cancels: ['الإلغاءات', () => Promise.all([OR.renderCancels(), SITE.renderBranchTalabatCancels(), INS.renderCancelOwners()])],
-    kpi: ['مؤشرات الأداء: الموظفين والفروع', () => KPI.render()], followup: ['المتابعة والاستثناءات', renderFollowup],
+    kpi: ['مؤشرات الأداء: الموظفين والفروع', () => KPI.render()], followup: ['المتابعة والاستثناءات', renderFollowup], bot: ['بوت الفروع', () => BOT.render()],
     people: ['الموظفين والمستخدمين', renderManage], messages: ['رسايل للموظفين', renderManage], telegram: ['تنبيهات تليجرام', renderManage],
     auto: ['التشغيل الآلي', renderAuto], system: ['حالة النظام', renderSystem], guide: ['طريقة حساب الأرقام', async () => {}] };
   // Old page names (links, other parts of the page) open the page they are part of now.
   const ALIAS = { hours: 'day', requests: 'breaks', attendance: 'breaks', shifts: 'breaks', talabat: 'transfer', siteTransfer: 'transfer', siteBranches: 'branches', branchFile: 'branches', manage: 'people' };
-  const DAY_VIEWS = ['day', 'team', 'profile', 'breaks', 'calls', 'missed', 'followup', 'entry', 'transfer', 'sales', 'branches', 'cancels', 'kpi'];
+  const DAY_VIEWS = ['day', 'team', 'profile', 'breaks', 'calls', 'missed', 'followup', 'bot', 'entry', 'transfer', 'sales', 'branches', 'cancels', 'kpi'];
   const SECTION_OF = {};
   for (const t of document.querySelectorAll('#nav .tabset')) for (const b of t.querySelectorAll('[data-view]')) SECTION_OF[b.dataset.view] = t.dataset.sec;
   SECTION_OF.now = 'now';

@@ -210,6 +210,12 @@ CREATE INDEX IF NOT EXISTS audit_time ON audit(occurred_at);
 
 // Telegram tables live here too so a fresh database has everything.
 const EXTRA_SCHEMA = `
+CREATE TABLE IF NOT EXISTS bot_cases (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, branch TEXT, chat_id TEXT, kind TEXT NOT NULL, needs TEXT NOT NULL, state TEXT NOT NULL, source TEXT, ref TEXT, code TEXT, text TEXT, from_name TEXT, msg_id INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, claimed_by TEXT, claimed_at INTEGER, outcome TEXT, outcome_note TEXT, done_by TEXT, done_at INTEGER, escalated_at INTEGER, parent_id INTEGER);
+CREATE INDEX IF NOT EXISTS bot_cases_open ON bot_cases(state, needs);
+CREATE INDEX IF NOT EXISTS bot_cases_day ON bot_cases(day);
+CREATE TABLE IF NOT EXISTS bot_prompts (chat_id TEXT NOT NULL, message_id INTEGER NOT NULL, kind TEXT NOT NULL, case_id INTEGER, at INTEGER NOT NULL, PRIMARY KEY(chat_id, message_id));
+CREATE TABLE IF NOT EXISTS bot_log (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, at INTEGER NOT NULL, branch TEXT, kind TEXT NOT NULL, asked TEXT, answer TEXT, case_id INTEGER);
+CREATE INDEX IF NOT EXISTS bot_log_day ON bot_log(day);
 CREATE TABLE IF NOT EXISTS telegram_config (id INTEGER PRIMARY KEY CHECK (id = 1), bot_token TEXT, bot_name TEXT, chat_id TEXT, chat_title TEXT, enabled INTEGER NOT NULL DEFAULT 0, rules TEXT, updated_at INTEGER);
 CREATE TABLE IF NOT EXISTS transfer_cache (day TEXT PRIMARY KEY, at INTEGER NOT NULL, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS apex_customer_notes (source TEXT NOT NULL, ref TEXT NOT NULL, day TEXT NOT NULL, phone_last4 TEXT, phone_hash TEXT, cust_no TEXT, note TEXT, checked_at INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'none', PRIMARY KEY(source,ref));

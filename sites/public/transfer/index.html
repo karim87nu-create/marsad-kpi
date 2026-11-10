@@ -38,6 +38,13 @@ main{max-width:1100px;margin:0 auto;padding:16px}
 .label input{flex:1 1 100%;min-width:0;width:100%;font-weight:700;font-size:16px;text-overflow:clip}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px}
 .box{background:#0b1729;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+#calls{background:#2a1d05;border:1px solid var(--warn);border-radius:14px;padding:12px;margin-bottom:14px;display:grid;gap:10px}
+#calls h2{margin:0;font-size:16px;color:var(--warn)}
+.call{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:grid;gap:8px}
+.call .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.call .why{white-space:pre-wrap;background:#0b1729;border-radius:8px;padding:6px 10px}
+.call a.tel{color:var(--accent);font-weight:700;font-size:17px;direction:ltr;text-decoration:none}
+.call input{flex:1 1 220px;min-width:0}
 .box h3{margin:0 0 4px;font-size:13px;color:var(--muted);font-weight:400}
 .items{margin:0;padding:0;list-style:none;display:grid;gap:6px}
 .items li{background:#0b1729;border:1px solid var(--line);border-radius:10px;padding:6px 10px}
@@ -114,6 +121,7 @@ main{max-width:1100px;margin:0 auto;padding:16px}
       <span id="branchBar" class="bar" style="margin:0"></span>
       <span class="count" id="count"></span>
     </div>
+    <section id="calls" hidden aria-label="مكالمات مطلوبة من الفروع"></section>
     <p id="queueStatus" role="status">جاري تحميل الطلبات…</p>
     <div id="list"></div>
   </main>
@@ -682,9 +690,60 @@ async function loadQueue() {
     data = d; $('queueStatus').textContent = d.stale ? '⚠️ أحدث تحديث فشل — دي آخر بيانات محفوظة، والتحويل متوقف مؤقتًا لحد ما التحديث يرجع.' : ''; $('me').textContent = data.me.name; const a = $('auto'); a.textContent = { off: 'التحويل الآلي متوقف — سجّل على Apex بإيدك', shadow: 'التحويل الآلي: معاينة بس — سجّل بإيدك', test: 'التحويل الآلي: تجربة على قاعدة الاختبار — سجّل بإيدك', live: 'التحويل الآلي شغال' }[data.autoTransfer] || ''; a.className = 'pill' + (data.autoTransfer === 'live' ? '' : ' off'); render(); }
   catch (e) { if (token) { $('queueStatus').textContent = 'تعذّر تحديث الطلبات: ' + e.message + ' — جاري إعادة المحاولة'; if (!data) $('auto').textContent = 'حالة التحويل لم تصل بعد'; toast(e.message); } }
 }
-function boot() { $('login').hidden = true; $('app').hidden = false; load(); }
+// Calls the branches asked for through the bot (Karim 11-11): the call center makes the call and records what the
+// customer said; the bot tells the branch.
+let calls = [], callsKey = '', callsSeen = new Set(), callsBusy = false;
+async function loadCalls() {
+  if (callsBusy) return; callsBusy = true;
+  try {
+    const d = await api('GET', '/api/bot/calls');
+    calls = d.calls || []; renderCalls(d.outcomes || {});
+    const fresh = calls.filter(c => !callsSeen.has(c.id)); calls.forEach(c => callsSeen.add(c.id));
+    if (fresh.length && callsKey) beep();
+    callsKey = callsKey || 'loaded';
+  } catch {} finally { callsBusy = false; }
+}
+function beep() { try { const a = new AudioContext(), o = a.createOscillator(), g = a.createGain(); o.frequency.value = 880; o.connect(g); g.connect(a.destination); g.gain.value = .15; o.start(); setTimeout(() => { o.stop(); a.close(); }, 350); } catch {} }
+function renderCalls(outcomes) {
+  const box = $('calls');
+  if (box.contains(document.activeElement) && document.activeElement.tagName !== 'BUTTON') return;   // never under the employee's typing
+  const key = JSON.stringify(calls.map(c => [c.id, c.state, c.claimedBy, c.outcome, c.text]));
+  if (key === box.dataset.key) return; box.dataset.key = key;
+  box.hidden = !calls.length;
+  if (!calls.length) { box.innerHTML = ''; return; }
+  const mine = data?.me?.name;
+  box.innerHTML = '<h2>📞 مكالمات مطلوبة من الفروع (' + calls.length + ')</h2>' + calls.map(c => {
+    const o = c.order || {}, cu = o.customer || {}, phone = cu.phone || '';
+    const taken = c.state === 'claimed' && c.claimedBy && c.claimedBy !== mine;
+    return '<div class="call" data-call="' + c.id + '"><div class="row"><b>' + esc(c.kindLabel) + '</b><span class="pill">' + esc(c.branch || '') + '</span>' + (c.code ? '<span class="code">#' + esc(c.code) + '</span>' : '') +
+      '<span class="pill">من ' + time(c.createdAt) + '</span>' + (c.outcome === 'no_answer' ? '<span class="pill off">اتصلنا ومردش</span>' : '') + (c.claimedBy ? '<span class="state ' + (taken ? 'other' : 'mine') + '">مع ' + esc(c.claimedBy) + '</span>' : '') + '</div>' +
+      '<div class="why">' + esc(c.text || '') + '</div>' +
+      '<div class="row">' + (cu.name ? '<span>' + esc(cu.name) + '</span>' : '') + (phone ? '<a class="tel" href="tel:' + esc(phone) + '">' + esc(phone) + '</a>' : '<span class="muted">التليفون مش ظاهر</span>') +
+      (o.payment ? '<span class="pill">' + (o.payment === 'cash' ? 'كاش ' + money(o.target) : o.payment === 'paid' ? 'مدفوع' : esc(o.payment)) + '</span>' : '') + '</div>' +
+      (o.items?.length ? '<div class="muted">' + o.items.map(i => esc(i.qty + '× ' + i.name + (i.size ? ' (' + i.size + ')' : ''))).join('، ') + '</div>' : '') +
+      (taken ? '' : c.state !== 'claimed' ? '<div class="row"><button data-call-claim="' + c.id + '">هاتصل أنا</button></div>'
+        : '<div class="row"><select data-call-outcome="' + c.id + '"><option value="">نتيجة المكالمة…</option>' + Object.entries(outcomes).map(([k, v]) => '<option value="' + k + '">' + esc(v) + '</option>').join('') + '</select>' +
+          '<input data-call-note="' + c.id + '" placeholder="العميل قال إيه (هيوصل للفرع)" maxlength="400"><button data-call-save="' + c.id + '">سجّل وابعت للفرع</button></div>') + '</div>';
+  }).join('');
+}
+$('calls').addEventListener('click', async e => {
+  const claim = e.target.dataset.callClaim, save = e.target.dataset.callSave;
+  if (!claim && !save) return;
+  e.target.disabled = true;
+  try {
+    if (claim) await api('POST', '/api/bot/calls', { id: Number(claim), action: 'claim' });
+    else {
+      const outcome = document.querySelector('[data-call-outcome="' + save + '"]').value, note = document.querySelector('[data-call-note="' + save + '"]').value;
+      if (!outcome) { toast('اختار نتيجة المكالمة'); e.target.disabled = false; return; }
+      await api('POST', '/api/bot/calls', { id: Number(save), action: 'outcome', outcome, note });
+      toast('اتسجلت واتبعتت للفرع');
+    }
+    $('calls').dataset.key = ''; document.activeElement?.blur?.(); await loadCalls();
+  } catch (err) { toast(err.message); e.target.disabled = false; }
+});
+function boot() { $('login').hidden = true; $('app').hidden = false; load(); loadCalls(); }
 if (token) boot(); else logout();
-setInterval(() => { if (token && !document.hidden) load(); }, 5000);
+setInterval(() => { if (token && !document.hidden) { load(); loadCalls(); } }, 5000);
 </script>
 </body>
 </html>

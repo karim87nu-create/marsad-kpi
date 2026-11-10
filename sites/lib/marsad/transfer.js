@@ -7,7 +7,7 @@
 // The employee claims an order (so two people do not enter it twice) and marks it entered; the order then
 // turns «في Apex» only when the monitor actually sees it on Apex. Automatic transfer to Apex stays off until
 // the bridge is proven (numbering under live work and the branch delivery); this page never writes to Apex.
-import { businessDay, iso, validDate } from './time.js';
+import { businessDay, iso, validDate, addDays } from './time.js';
 import { parseJson } from './order-match.js';
 import { deliveryPhone, deliveryLabel, deliveryAddress } from './delivery-fields.js';
 import { parseApexCustomerNote, normArabic, guessApexItem } from './apex-customer-notes.js';
@@ -162,6 +162,24 @@ function setup(app) {
     if (ctx.header('x-admin-password')) { const a = await app.requireAdmin(ctx, 'write'); return { id: null, name: a.name, staff: false }; }
     fail(401, 'سجل دخول تاني');
   }
+
+  app.transferWho = who;
+  // The branch bot (11-11): today's (or yesterday's) order by the number the branch has — Talabat's short code, the
+  // website's order number, the order id or the Apex order number.
+  app.transferLookup = async (digits, now) => {
+    const want = String(digits || '').replace(/\D/g, '');
+    if (want.length < 2) return null;
+    const today = businessDay(now);
+    for (const day of [today, addDays(today, -1)]) {
+      let base; try { base = await baseFor(day, now, { allowStale: true }); } catch { continue; }
+      const hit = base.list.find(o => String(o.code || '') === want || String(o.ref || '') === want || (String(o.ref || '').length > 6 && String(o.ref).endsWith(want) && want.length >= 4) || String(o.apex?.no ?? '') === want);
+      if (hit) {
+        const job = await db.prepare('SELECT state, payload, result FROM transfer_jobs WHERE source = ? AND ref = ?').get(hit.source, String(hit.ref));
+        return { ...hit, day, job: job ? { state: job.state, payload: parseJson(job.payload, {}), result: parseJson(job.result, {}) } : null };
+      }
+    }
+    return null;
+  };
 
   // ---- the queue ----
   app.route('GET', '/api/transfer/queue', async ctx => {

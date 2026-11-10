@@ -79,6 +79,9 @@ function setup(app) {
     return d.result;
   }
 
+  // For the branch bot (branch-bot.js): the same bot, token and groups.
+  app.telegramCall = call; app.telegramConfig = config; app.telegramBranchGroups = () => branchGroups();
+
   // ---------- admin ----------
   app.route('GET', '/api/telegram', async ctx => {
     await app.requireAdmin(ctx, 'admin');
@@ -105,8 +108,10 @@ function setup(app) {
     }
     if (b.action === 'discover') {
       // Chats the bot has seen: add the bot to the group and send any message there first.
-      let updates; try { updates = await call('getUpdates', { allowed_updates: ['message', 'my_chat_member'] }); } catch (e) { fail(400, e.message); }
+      // The branch bot reads the updates itself once it is on; the chats it saw are kept for this list.
+      let updates = []; try { updates = await call('getUpdates', { allowed_updates: ['message', 'my_chat_member'] }); } catch (e) { if (!app.branchBot) fail(400, e.message); }
       const chats = new Map();
+      if (app.branchBot) for (const c of await app.branchBot.seenChats()) chats.set(String(c.id), c);
       for (const u of updates) { const c = u.message?.chat || u.my_chat_member?.chat; if (c && c.type !== 'private') chats.set(String(c.id), { id: String(c.id), title: c.title || c.username || String(c.id), type: c.type }); }
       return { chats: [...chats.values()] };
     }
@@ -509,6 +514,8 @@ function setup(app) {
         }
       }
       }
+      // The branch bot: what the branches wrote in their groups (read here, every tick).
+      if (app.branchBot) { try { await app.branchBot.poll(c, now); } catch (e) { app.logError?.('branch-bot', e); } }
     } finally { busy = false; }
     return sent;
   };
