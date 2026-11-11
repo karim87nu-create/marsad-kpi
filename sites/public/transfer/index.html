@@ -245,7 +245,7 @@ const firstPick = i => i.apex?.length === 1 ? i.apex[0].no : i.apexPick && (i.ap
 function flatLines(o) {
   const out = [];
   for (const i of o.items || []) {
-    out.push({ choiceKey: i.choiceKey, kind: 'item', apexPick: i.apexPick || null, qty: i.qty, name: i.name, label: i.name + (i.sizeOption ? ' — ' + i.sizeOption : '') + ((i.freeOptions || []).length ? ' (' + i.freeOptions.join('، ') + ')' : ''), apex: i.apex || [], note: (i.freeOptions || []).join('، ').slice(0, 60) });
+    out.push({ choiceKey: i.choiceKey, kind: 'item', apexPick: i.apexPick || null, qty: i.qty, name: i.name, label: i.name + (i.sizeOption ? ' — ' + i.sizeOption : '') + ((i.freeOptions || []).length ? ' (' + i.freeOptions.join('، ') + ')' : '') + (i.note ? ' ✎ ' + i.note : ''), apex: i.apex || [], note: (i.freeOptions || []).join('، ').slice(0, 60) });
     for (const a of i.addons || []) out.push({ choiceKey: a.choiceKey, kind: 'addon', qty: a.qty ?? '?', name: a.name, label: '+ ' + a.name + ' (' + money(a.price) + ') — إضافة بفلوس على ' + i.name, apex: a.apex || [], note: '' });
   }
   return out;

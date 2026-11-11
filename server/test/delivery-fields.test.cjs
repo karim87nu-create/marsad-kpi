@@ -58,3 +58,20 @@ test('Talabat Pro / free delivery lines never reach the order comment (Karim 11-
     ['من غير بصل', 'من غير بصل']]) assert.equal(stripPlatformNotes(inp), out, inp);
   assert.equal(deliveryComment({ note: 'طلبات برو توصيل مجاني', items: [{ name: 'x', freeOptions: ['سلطة بلدي'] }] }), 'سلطة بلدي');
 });
+
+test('a note under a Talabat dish reaches the transfer page and the order comment (Karim 11-11, #753)', async () => {
+  const now = cairoToUtc(2026, 11, 11, 11, 10, 0), t = await start({ at: now });
+  try {
+    const admin = await t.admin();
+    await t.employee(admin, { name: 'سارة', code: 'E1', pin: '1111' });
+    const token = (await admin('POST', '/api/talabat/token')).body.token;
+    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: [{
+      id: '4712756256', store: 'الدهان سيتي ستار مول، مكرم عبيد', status: 'ACCEPTED', placedAt: new Date(now - 60000).toISOString(), total: 256.63,
+      detail: { customer: { name: 'M & K', phone: '01204749876', address: 'صلاح سالم 10' }, items: [{ name: 'عرض وجبة نص دجاجة مشوية', qty: 1, price: 299, note: '** عايز سلطه زبادي بدل البطاطس ومخلل بدل طحينه', modifierRead: true, modifierComplete: true }], bill: [] }
+    }] } });
+    const sara = (await t.call('POST', '/api/transfer/login', { body: { pin: '1111' } })).body.token;
+    const o = (await t.call('GET', '/api/transfer/queue?day=2026-11-11', { headers: { 'x-transfer-session': sara } })).body.orders.find(x => x.ref === '4712756256');
+    assert.equal(o.items[0].note, 'عايز سلطه زبادي بدل البطاطس ومخلل بدل طحينه');
+    assert.equal(deliveryComment(o), 'عايز سلطه زبادي بدل البطاطس ومخلل بدل طحينه');
+  } finally { await t.close(); }
+});

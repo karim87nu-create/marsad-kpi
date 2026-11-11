@@ -205,7 +205,11 @@
       if (pay.paymentType) bill.push({ k: 'payment', text: String(pay.paymentType) });
       if (pay.paid && pay.paymentMethod) bill.push({ k: 'payment', text: 'تم الدفع بواسطة ' + pay.paymentMethod });
       if (o.comment) bill.push({ k: 'ملاحظة العميل', text: 'ملاحظة العميل | ' + String(o.comment).slice(0, 180) });
-      const items = (o.items || []).map(i => ({ qty: Number(i.amount) || 1, name: String(i.name || '').trim(), productId: i.productId ? String(i.productId) : undefined, price: money2(i.total),
+      // The customer's note under a dish (Karim 11-11, #753 lost «عايز سلطه زبادي بدل البطاطس…»): whatever the page calls it.
+      const itemNote = i => { for (const k of ['comment', 'specialInstructions', 'instructions', 'note', 'notes', 'remarks', 'customerComment', 'itemComment']) if (typeof i?.[k] === 'string' && i[k].trim()) return i[k].trim().slice(0, 200);
+        for (const [k, v] of Object.entries(i || {})) if (/comment|instruction|note|remark/i.test(k)) { const t = typeof v === 'string' ? v : typeof v?.text === 'string' ? v.text : typeof v?.value === 'string' ? v.value : ''; if (t.trim()) return t.trim().slice(0, 200); }
+        return undefined; };
+      const items = (o.items || []).map(i => ({ qty: Number(i.amount) || 1, name: String(i.name || '').trim(), productId: i.productId ? String(i.productId) : undefined, price: money2(i.total), note: itemNote(i),
         modifiers: (i.modifiers || []).map(m => (Number(m.amount) || 1) + '× ' + String(m.name || '').trim()), modifierRead: true, modifierComplete: true,
         options: (i.modifiers || []).map(m => ({ qty: Number(m.amount) || null, name: String(m.name || '').trim(), price: money2(m.total), productId: m.productId ? String(m.productId) : undefined })) }));
       return { id: String(o.externalId), store: o.vendorName || undefined,
