@@ -75,3 +75,12 @@ test('a note under a Talabat dish reaches the transfer page and the order commen
     assert.equal(deliveryComment(o), 'عايز سلطه زبادي بدل البطاطس ومخلل بدل طحينه');
   } finally { await t.close(); }
 });
+
+test('Talabat Pro note: «[tPro free delivery].» and its Arabic never reach the comment (Karim 11-11, Apex notes)', async () => {
+  const { stripPlatformNotes, deliveryComment } = await import('../src/delivery-fields.js');
+  const assert = require('node:assert/strict');
+  assert.equal(deliveryComment({ note: '[tPro free delivery].', items: [] }), '');
+  assert.equal(deliveryComment({ note: '[تبرو فري دليفري]. | طحينة', items: [] }), 'طحينة');
+  assert.equal(stripPlatformNotes('زود طحينة | [tPro free delivery].'), 'زود طحينة');
+  assert.equal(stripPlatformNotes('برونزي من غير بصل'), 'برونزي من غير بصل');
+});

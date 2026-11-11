@@ -24,9 +24,12 @@ export function deliveryAddress(value, zone = '') {
 }
 // Talabat's own lines about the customer's plan («طلبات برو»، «توصيل مجاني»، «Talabat Pro customer») are not instructions
 // for the kitchen: they never go into the order's comment (Karim 11-11), wherever they sit in the note.
-const PRO = /(?:عميل\s*)?(?:talabat\s*pro|طلبات\s*برو|talabat\s*plus|طلبات\s*بلس)(?:\s*(?:customer|member|subscriber|عميل|مشترك))?(?:\s*[-–:：|،,]?\s*(?:free\s*delivery|توصيل\s*مجاني|توصيل\s*مجانى))?|(?:free\s*delivery|توصيل\s*مجاني|توصيل\s*مجانى)(?:\s*(?:for|ل|لـ)\s*(?:talabat\s*pro|طلبات\s*برو)(?:\s*(?:customers?|عملاء))?)?/gi;
+// Karim 11-11 (Apex notes «[تبرو فري دليفري].»): Talabat writes «[tPro free delivery].», and the Arabic of it is caught too.
+const PLAN = String.raw`(?:talabat\s*pro|(?<![\p{L}])t\s*-?\s*pro(?![\p{L}])|طلبات\s*برو|(?<![\p{L}])(?:تي\s*)?برو(?![\p{L}])|(?<![\p{L}])تبرو(?![\p{L}])|talabat\s*plus|طلبات\s*بلس)`;
+const FREE = String.raw`(?:free\s*delivery|توصيل\s*مجان[يى]|فر[يى]\s*د[يى]?ل[يى]فر[يى]|د[يى]?ل[يى]فر[يى]\s*مجان[يى])`;
+const PRO = new RegExp(String.raw`(?:عميل\s*)?${PLAN}(?:\s*(?:customer|member|subscriber|عميل|مشترك))?(?:\s*[-–:：|،,]?\s*${FREE})?|${FREE}(?:\s*(?:for|ل|لـ)\s*${PLAN}(?:\s*(?:customers?|عملاء))?)?`, 'giu');
 export function stripPlatformNotes(s) {
-  return String(s || '').replace(PRO, ' ').replace(/\s*([|،,\-–:])\s*(?=[|،,]|$)/g, '').replace(/^[\s|،,\-–:]+|[\s|،,\-–:]+$/g, '').replace(/\s{2,}/g, ' ').trim();
+  return String(s || '').replace(PRO, ' ').replace(/[\[(]\s*[.\s]*[\])]\s*\.?/g, ' ').replace(/^[\s.]+$/, '').replace(/\s*([|،,\-–:])\s*(?=[|،,]|$)/g, '').replace(/^[\s|،,\-–:]+|[\s|،,\-–:]+$/g, '').replace(/\s{2,}/g, ' ').trim();
 }
 export function deliveryComment(order) {
   const clean = s => String(s || '').split(/\s*[|\n]\s*/).map(stripPlatformNotes).filter(Boolean).join('، ').trim();
