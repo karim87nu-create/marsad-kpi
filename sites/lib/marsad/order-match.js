@@ -88,9 +88,9 @@ export function resolveOrders(rows, apex, { manual = new Map(), branchOk = () =>
       const nameConflict = !identity && c.name && ac.name && name != null && name < .2;
       const addressConflict = false;
       const conflict = reference.conflict || (!identifier && ((phone === false && !tagExact) || nameConflict || addressConflict || branch === false || (item && !item.ok && !tagExact) || (money != null && money > .3 && !tagExact) || !withinTime));
-      // Explicit source order IDs never bypass contradictory customer or basket evidence.
-      // Sure: the #code itself in the right branch and time, or the same phone with the basket and the amount agreeing.
-      const fullEvidence = identifier || (withinTime && branch !== false && (tagExact || (identity && money != null && money < .15 && item?.ok !== false && (item?.ok === true || tagPart)));
+      // A full durable order identifier confirms the source order even if the cashier entered it late.
+      // Otherwise: the #code in the right branch and time, or the same phone with matching basket and amount.
+      const fullEvidence = identifier || (withinTime && branch !== false && (tagExact || (identity && money != null && money < .15 && item?.ok !== false && (item?.ok === true || tagPart))));
       const strong = !conflict && fullEvidence;
       const score = (exact ? 100 : 0) + (tagPart ? 30 : 0) + (phone === true ? 42 : phone === false ? -70 : 0) +
         (name ?? 0) * 16 + (address ?? 0) * 18 + (item ? item.ok ? 32 : -24 : 0) +
