@@ -146,3 +146,42 @@ test('website area: from the panel\'s area field or the address\'s last part', (
   assert.equal(panelArea({ customer: { address: '5 شارع مكرم عبيد، الدور 3، شقة 9' } }), '');
   assert.equal(panelArea({ customer: { address: 'شارع 9' } }), '');
 });
+
+// Karim 11-11: free delivery from Talabat is not a price difference.
+test('auto transfer: Talabat free delivery (Pro) is not a delivery difference', () => {
+  const svc = [{ k: 'رسوم الخدمة', text: 'رسوم الخدمة | 8' }];
+  assert.equal(decide(base({ bill: [...svc, { k: 'رسوم التوصيل', text: 'رسوم التوصيل | 0' }] }), X).ok, true, 'delivery 0');
+  assert.equal(decide(base({ bill: svc }), X).ok, true, 'no delivery line');
+  assert.equal(decide(base({ bill: [...svc, { k: 'رسوم التوصيل', text: 'رسوم التوصيل | 90' }, { k: 'ملاحظة', text: 'ملاحظة | Talabat Pro: توصيل مجاني' }] }), X).ok, true, 'Pro');
+  assert.match(decide(base({ bill: [...svc, { k: 'رسوم التوصيل', text: 'رسوم التوصيل | 90' }] }), X).why.join(), /توصيل Apex مختلف/);
+});
+
+// Karim 11-11: a hashtag missing from a branch's sequence → that branch's group and the online group.
+test('talabat: a hashtag missing from the branch sequence is told to the branch and online, once', async () => {
+  const t0 = cairoToUtc(2026, 10, 22, 20, 0, 0), at = m => new Date(t0 + m * 60000).toISOString();
+  const t = await start({ at: t0 });
+  try {
+    const admin = await t.admin();
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const store = 'الدهان، التجمع الخامس - البنفسج', other = 'الدهان، مدينة نصر - مكرم عبيد';
+    const push = list => t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: list, codes: list.filter(x => x.code).map(x => ({ id: x.id, code: x.code, store: x.store })) } });
+    const o = (id, code, s = store, m = 0) => ({ id, code: code == null ? null : String(code), store: s, status: 'ACCEPTED', placedAt: at(m), total: 100 });
+    await push([o('4800000001', 750), o('4800000002', 751), o('4800000004', 753), o('4800000005', 754), o('4800000006', 755),
+      o('4800000011', 120, other), o('4800000012', 340, other), o('4800000013', 900, other), o('4800000014', 1500, other)]);
+    const gaps = () => t.app.db.raw.prepare("SELECT key, target, branch, text FROM telegram_log WHERE kind = 'talabatGap' ORDER BY key").all();
+    await t.app.talabat.alerts(t.app.now());
+    assert.equal(gaps().length, 0, 'the next hashtag came less than 10 minutes ago');
+    t.advance(11 * 60000);
+    await t.app.talabat.alerts(t.app.now());
+    const g = gaps();
+    assert.deepEqual(g.map(x => [x.key.endsWith(':online') ? 'online' : 'branch', x.target]), [['branch', 'branches'], ['online', 'online']]);
+    assert.match(g[0].text, /#752/); assert.match(g[0].text, /#751 وبعدها #753/);
+    await t.app.talabat.alerts(t.app.now() + 60000);
+    assert.equal(gaps().length, 2, 'once; a branch whose hashtags do not run in order is never alerted');
+    // An order seen with no hashtag around the gap may be the missing one: not alerted.
+    const third = 'الدهان، مدينتي - كرافت زون';
+    await push([o('4800000021', 800, third, 1), o('4800000022', 801, third, 2), o('4800000023', null, third, 3), o('4800000024', 803, third, 4), o('4800000025', 804, third, 5), o('4800000026', 805, third, 6)]);
+    t.advance(11 * 60000); await t.app.talabat.alerts(t.app.now());
+    assert.equal(gaps().length, 2);
+  } finally { await t.close(); }
+});

@@ -303,7 +303,9 @@ function ticketCalc(o, fl, p) {
   const pay = payOf(o), paid = pay === 'paid', sp = splitOf(o, p, paid), rest = r2(discountSum(o, 'restaurant') + sp.rest), plat = r2(discountSum(o, 'platform') + sp.plat);
   const amt = t => { const m = String(t || '').split(' | ').slice(1).join(' ').replace(/,/g, '').match(/-?\d+(?:\.\d+)?/); return m ? Number(m[0]) : null; };
   const bill = k => { const b = (o.bill || []).find(x => new RegExp(k, 'i').test(x.k || '')); return b ? amt(b.text) : null; };
-  const tItems = o.subtotal ?? bill('^(?:المجموع الفرعي|subtotal)$'), tDel = (bill('توصيل|delivery') || 0) + (bill('رسوم الخدمة|service') || 0);
+  const tItems = o.subtotal ?? bill('^(?:المجموع الفرعي|subtotal)$'), delFee = bill('توصيل|delivery'), tDel = (delFee || 0) + (bill('رسوم الخدمة|service') || 0);
+  // Karim 11-11: free delivery from Talabat (Pro, offers: the delivery line 0 or missing) is not a price difference.
+  const freeDel = o.source === 'talabat' && (!(delFee > 0) || /توصيل\s*مجان|free\s*delivery|talabat\s*pro|طلبات\s*برو/i.test((o.bill || []).map(x => (x.k || '') + ' ' + (x.text || '')).join(' ') + ' ' + (o.note || '')));
   // o.target = what the customer pays + Talabat's known share. Paid: what was paid; cash: plus all of Talabat's share.
   const want = o.target == null ? null : paid ? r2(o.target - discountSum(o, 'platform')) : r2(o.target + sp.plat);
   let items = 0, missing = 0;
@@ -316,10 +318,11 @@ function ticketCalc(o, fl, p) {
   const back = gap != null && gap < 0 ? Math.min(-gap, off) : 0, left = gap != null && gap < 0 ? r2(-gap - back) : 0;
   const why = [];
   // The differences that mean a wrong pick (Karim 10-11: asked about only for these, never for a discount).
-  const itemsDiff = !missing && tItems != null ? r2(T(items) - tItems) : null, delDiff = service != null && o.source === 'talabat' && tDel ? r2(T(service) + T(fee) - tDel) : null;
+  const itemsDiff = !missing && tItems != null ? r2(T(items) - tItems) : null, delDiff = service != null && o.source === 'talabat' && tDel && !freeDel ? r2(T(service) + T(fee) - tDel) : null;
   if (!missing && tItems != null) { const d = r2(T(items) - tItems); if (Math.abs(d) > 1) why.push('أصناف Apex ' + (d > 0 ? 'أغلى' : 'أرخص') + ' من طلبات بـ ' + money(Math.abs(d)) + (Math.abs(d) > 0.1 * tItems ? '، غالبًا صنف أو حجم غلط' : '')); }
-  if (service != null && o.source === 'talabat') { const d = r2(T(service) + T(fee) - tDel); if (Math.abs(d) > 1) why.push('توصيل Apex ' + money(T(service) + T(fee)) + ' وتوصيل طلبات ' + money(tDel)); }
-  return { itemsDiff, delDiff, tItems, pay, paid, rest, plat, sp, want, items, missing, fee, loc, service, gap, back, left, why, total: gap == null ? null : gap > 0.009 ? want : r2(before + back) };
+  if (service != null && o.source === 'talabat' && !freeDel) { const d = r2(T(service) + T(fee) - tDel); if (Math.abs(d) > 1) why.push('توصيل Apex ' + money(T(service) + T(fee)) + ' وتوصيل طلبات ' + money(tDel)); }
+  if (freeDel && service) why.push('توصيل مجاني من طلبات — التوصيل بيتخصم على Apex (مش فرق سعر)');
+  return { freeDel, itemsDiff, delDiff, tItems, pay, paid, rest, plat, sp, want, items, missing, fee, loc, service, gap, back, left, why, total: gap == null ? null : gap > 0.009 ? want : r2(before + back) };
 }
 
 function ticketHtml(o, p, fl, c, auto) {
@@ -366,7 +369,7 @@ function ticketHtml(o, p, fl, c, auto) {
     h += row(esc(d.text) + ' <span class="tag">' + (d.who === 'restaurant' ? 'على المطعم' : d.who === 'platform' || (!known && c.paid) ? 'على طلبات' + (c.paid ? '' : '، في العلامة المميزة') : 'مش واضح على حساب مين') + '</span>',
       onApex || (!known && c.paid) ? '−' + money(d.amount) : '<span class="muted">' + money(d.amount) + '</span>', known || c.paid ? '' : 'warnrow');
   });
-  if (auto && c.gap > 0.009) h += row('فرق يتخصم', '−' + money(c.gap));
+  if (auto && c.gap > 0.009) h += row(c.freeDel && c.service && c.gap <= T(c.service) + 1 ? 'توصيل مجاني من طلبات (بيتخصم)' : 'فرق يتخصم', '−' + money(c.gap));
   if (auto && c.back > 0.009) h += row('يرجع من الخصم', '+' + money(c.back));
   // The total, and Talabat's next to it.
   const tal = o.total;

@@ -25,6 +25,7 @@ const r2 = v => Math.round(v * 100) / 100, T = v => r2(v * 1.14);
 const TALABAT_FEE_NO = '0114006', BRANCH_NAME = { 1: 'التجمع', 2: 'مدينة نصر', 3: 'مدينتي' };
 const amountIn = t => { const m = String(t || '').split(' | ').slice(1).join(' ').replace(/,/g, '').match(/-?\d+(?:\.\d+)?/); return m ? Number(m[0]) : null; };
 const billAmount = (o, re) => { const b = (o.bill || []).find(x => re.test(x.k || '')); return b ? amountIn(b.text) : null; };
+export const freeDelivery = o => /توصيل\s*مجان|free\s*delivery|talabat\s*pro|طلبات\s*برو/i.test((o.bill || []).map(x => (x.k || '') + ' ' + (x.text || '')).join(' ') + ' ' + (o.note || ''));
 const normAddress = t => normArabic(String(t || '')).replace(/[^\p{L}\p{N}]+/gu, ' ').trim().slice(0, 200);
 
 // The Apex item for one line: one candidate, or the one staff chose for it before (the page's own first pick).
@@ -101,8 +102,9 @@ export function decide(o, x) {
       const tItems = o.subtotal ?? billAmount(o, /^(?:المجموع الفرعي|subtotal)$/i);
       if (tItems == null) why.push('مجموع الأصناف على طلبات مش ظاهر');
       else if (Math.abs(T(apexItems) - tItems) > Math.max(8, tItems * 0.06)) why.push('أسعار Apex مختلفة عن طلبات بـ ' + Math.round(Math.abs(T(apexItems) - tItems)) + ' ج');
-      const tDel = (billAmount(o, /توصيل|delivery/i) || 0) + (billAmount(o, /رسوم الخدمة|service/i) || 0);
-      if (service != null && tDel && Math.abs(T(service) + T(Number(APEX_PRICES[TALABAT_FEE_NO]) || 7.02) - tDel) > 10) why.push('توصيل Apex مختلف عن طلبات');
+      // Free delivery from Talabat (Pro, offers: the delivery line 0 or missing) is not a price difference (Karim 11-11).
+      const delFee = billAmount(o, /توصيل|delivery/i), tDel = (delFee || 0) + (billAmount(o, /رسوم الخدمة|service/i) || 0);
+      if (service != null && delFee > 0 && !freeDelivery(o) && Math.abs(T(service) + T(Number(APEX_PRICES[TALABAT_FEE_NO]) || 7.02) - tDel) > 10) why.push('توصيل Apex مختلف عن طلبات');
     } else {
       const sItems = o.items.reduce((s, i) => s + (Number(i.price) || 0), 0);
       if (!(sItems > 0)) why.push('أسعار الموقع مش ظاهرة');

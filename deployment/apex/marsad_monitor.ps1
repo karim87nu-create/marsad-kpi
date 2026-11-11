@@ -9,6 +9,7 @@ Set-Location $here
 $PollSeconds     = 60
 $LateMinutes     = 30
 $VeryLateMinutes = 45
+$PickupLateMinutes = 90
 $DiscPctPlatform = 35
 $DiscPctHotline  = 20
 $DupWindowMin    = 3
@@ -864,6 +865,8 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
     $o | Add-Member -NotePropertyName Disp -NotePropertyValue $(if ($o.Sn -ne $null) { $o.Sn } else { $o.No })
     $o.WaitMin = $(if ($o.Out) { Mins $o.Entry $o.Out } else { Mins $o.Entry $now })
     $o.Open = ($o.Trans -eq 'Delivery' -and -not $o.Out)
+    # Karim 11-11: a branch pickup («استلام فرع ...» area) is late only after an hour and a half, not 30 minutes.
+    $o | Add-Member -NotePropertyName Pickup -NotePropertyValue ([bool]($o.Loc -and $o.Loc -match 'استلام'))
     # The set time, from the name fields one by one (which field and the matched bit are kept for the check file).
     foreach($f in @(@('o_CustName', $r.NameTxt), @('o_PersonName', $r.NameTxt2), @('PersonName', $r.NameTxt3))){
       $script:SchedHit = ''; $sv = ScheduleOf (S $f[1]) $entry
@@ -872,7 +875,7 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
     # Lateness: 30 minutes from entry; an order for a set time is late when it has not left 30 minutes before its time.
     # Over = minutes on that clock (late at 30, very late at 45), so both kinds follow the same limits.
     if ($o.Entry) {
-      $due = $o.Entry.AddMinutes($LateMinutes)
+      $due = $o.Entry.AddMinutes($(if ($o.Pickup) { $PickupLateMinutes } else { $LateMinutes }))
       if ($o.Sched -and $o.Sched.AddMinutes(-30) -gt $due) { $due = $o.Sched.AddMinutes(-30) }
       $o.Over = Mins ($due.AddMinutes(-$LateMinutes)) $(if ($o.Out) { $o.Out } else { $now })
     }
@@ -908,6 +911,7 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
     }
   }
 
+  $script:cancelledByNote = New-Object System.Collections.ArrayList
   # ---- comments on the items (e.g. «بدون بصل»), per order ----
   $itemNotes = @{}
   try {
@@ -930,9 +934,21 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
   } catch { if (-not $script:msgErr) { L "messages: $($_.Exception.Message)"; $script:msgErr = $true } }
   foreach($o in $list){ $o | Add-Member -NotePropertyName Msgs -NotePropertyValue ([string[]]@($itemNotes["m$($o.No)"] | Where-Object { $_ })) -Force }
   foreach($o in $list){ $o | Add-Member -NotePropertyName ItemNotes -NotePropertyValue ([string[]]@($itemNotes[$o.No] | Where-Object { $_ })) -Force }
+  # Karim 11-11: an order whose comment (the order's note or a message sent on it) says it is cancelled leaves the branch
+  # alerts: no new warning, out of the branch's counts, and a warning already sent is closed quietly.
+  $cancelWords = '(?i)ملغ[يىا]|اتلغ[يىا]|(?:^|[\s.،,])لغ[يى](?:$|[\s.،,])|اتكنسل|كنسل|cancel|(?:الغاء|إلغاء)\s*(?:ال)?(?:اوردر|أوردر|طلب)'
+  foreach($o in $list){
+    if (-not $o.Open) { continue }
+    $said = (@($o.Note) + @($o.Msgs)) -join ' '
+    if ($said -match $cancelWords) {
+      $o.Open = $false
+      foreach($wk in @("late:$($o.No)", "vlate:$($o.No)")) { if ($alerted.Contains($wk)) { [void]$script:cancelledByNote.Add([ordered]@{ key = $wk; kind = 'ordersLate'; follow = $true; status = 'deleted'; sn = $o.Sn; branch = (BName $o.Branch); text = "🖥️ Apex | أوردر $($o.Disp) اتكتب في تعليقه إنه ملغي" }) } }
+    }
+  }
 
   # ---- alerts ----
   $script:follow = New-Object System.Collections.ArrayList
+  foreach($x in $script:cancelledByNote) { [void]$script:follow.Add($x) }
   # The branch as it is now, written under every branch message.
   $bstat = @{}; $script:branchStatus = @{}
   foreach($g in ($list | Group-Object Branch)){
@@ -961,7 +977,7 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
       $w = Mins $o.Entry $now; $v = $o.Over
       $sch = ''
       if ($o.Sched) { $left = Mins $now $o.Sched; $sch = "`nالميعاد المطلوب: $((Tm $o.Sched)) — " + $(if ($left -gt 0) { "فاضل $left دقيقة" } else { "الميعاد عدّى بـ $(-$left) دقيقة" }) }
-      $head = $(if ($o.Sched) { 'أوردر بميعاد لسه ماخرجش من الفرع' } elseif ($v -ge $VeryLateMinutes) { 'أوردر عدّى 45 دقيقة ولسه ماخرجش من الفرع' } else { 'أوردر عدّى 30 دقيقة ولسه ماخرجش من الفرع' })
+      $head = $(if ($o.Sched) { 'أوردر بميعاد لسه ماخرجش من الفرع' } elseif ($o.Pickup) { $(if ($v -ge $VeryLateMinutes) { 'أوردر استلام من الفرع عدّى ساعة و45 دقيقة ولسه ماتسلمش' } else { 'أوردر استلام من الفرع عدّى ساعة ونص ولسه ماتسلمش' }) } elseif ($v -ge $VeryLateMinutes) { 'أوردر عدّى 45 دقيقة ولسه ماخرجش من الفرع' } else { 'أوردر عدّى 30 دقيقة ولسه ماخرجش من الفرع' })
       $body = "`nالفرع: $b`nرقم الأوردر: $($o.Disp) ($(KindAr $o.Kind))`nاتضرب الساعة $((Tm $o.Entry))، وبقاله $w دقيقة$sch`nقيمة الأوردر: $([math]::Round($o.Amt,0)) ج$(Extra $o)$($bstat[$o.Branch])"
       if ($v -ge $VeryLateMinutes) { Raise "vlate:$($o.No)" 'ordersLate' ("🖥️ Apex | 🔴 $head$body") $false $b $o.Sn }
       elseif ($v -ge $LateMinutes) { Raise "late:$($o.No)" 'ordersLate' ("🖥️ Apex | 🟠 $head$body") $false $b $o.Sn }

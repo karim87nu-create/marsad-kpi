@@ -311,6 +311,32 @@ function setup(app) {
     return { rows, matches: new Map([...matches].map(([k, a]) => [k, shape(a, how.get(k), k)])), states: decision.states, hasApex: Array.isArray(d?.online), unmatchedApex: apex.filter(a => !usedA.has(String(a.no))).map(a => shape(a)) };
   }
 
+  function talabatGaps(rows, now) {
+    const by = new Map();
+    // Orders seen with no hashtag (Order History only): one of them may be the «missing» one, so a gap around one is not alerted.
+    const bare = new Map();
+    const tOf = o => Number(o.placed_at || o.received_at || o.first_seen || 0);
+    for (const o of rows) {
+      if (!o.store) continue; const k = storeSpelling(o.store) || o.store, c = Number(o.code);
+      if (!Number.isInteger(c) || c <= 0) { (bare.get(k) || bare.set(k, []).get(k)).push(tOf(o)); continue; }
+      (by.get(k) || by.set(k, new Map()).get(k)).set(c, o);
+    }
+    const out = [];
+    for (const [store, m] of by) {
+      const codes = [...m.keys()].sort((a, b) => a - b); if (codes.length < 4) continue;
+      const steps = codes.slice(1).map((c, i) => c - codes[i]);
+      if (steps.filter(d => d === 1).length < steps.length * 0.6) continue;
+      for (let i = 1; i < codes.length; i++) {
+        const gap = codes[i] - codes[i - 1] - 1; if (gap < 1 || gap > 3) continue;
+        const next = m.get(codes[i]), seen = Number(next.first_seen || next.placed_at || 0);
+        const from = tOf(m.get(codes[i - 1])) - 2 * 60000, to = tOf(next) + 2 * 60000;
+        if ((bare.get(store) || []).some(x => x >= from && x <= to)) continue;
+        if (!seen || now - seen < 10 * 60000 || now - seen > 2 * 3600000) continue;
+        for (let c = codes[i - 1] + 1; c < codes[i]; c++) out.push({ store, code: c, before: codes[i - 1], after: codes[i] });
+      }
+    }
+    return out;
+  }
   // ---- alerts: accepted and still not on Apex after 10 minutes (online group); cancelled (branches group) ----
   async function alerts(now) {
     const day = businessDay(now), m = await matchDay(day, { teach: true });
@@ -373,6 +399,17 @@ function setup(app) {
           out.push({ key: 'resolved:' + key, kind: 'talabatEarly', target: 'online', replyTo: key, text: '🛵 طلبات | ✅ أوردر ' + ref + ' خرج فعلاً على Apex الساعة ' + clock(left) + ' — بعد «في الطريق» بـ ' + Math.round((left - picked) / 60000) + ' دقيقة' });
       }
     }
+    // Karim 11-11: a hashtag missing from a branch's sequence (#751, #753 seen, no #752) is an order the Talabat screens
+    // never showed — maybe never entered on Apex. Told to that branch's group and the online group, once per hashtag.
+    // Only for a branch whose hashtags really run one after another today (most steps are 1), a gap of up to 3, after
+    // the next hashtag has been here 10 minutes (the missing one may still come), in the last 2 hours.
+    for (const g of talabatGaps(m.rows, now)) {
+      const text = '🛵 طلبات | ⚠️ هاشتاج ناقص في الترتيب: #' + g.code + '\nالفرع: ' + (storeName(g.store) || g.store) +
+        '\nأوردرات طلبات للفرع ده جت #' + g.before + ' وبعدها #' + g.after + '، و#' + g.code + ' ماظهرش عندنا خالص' +
+        '\nاتأكدوا إنه اتسجل على Apex (أو إنه اتلغى على طلبات)';
+      out.push({ key: 'talabat:gap:' + g.store + ':' + g.code, kind: 'talabatGap', target: 'branches', branch: g.store, text });
+      out.push({ key: 'talabat:gap:' + g.store + ':' + g.code + ':online', kind: 'talabatGap', target: 'online', text });
+    }
     if (out.length) await db.batch(out.map(a => db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, sent_at, target, reply_to, branch) VALUES (?,?,?,?,?,?,?,?,?)').bind(a.key, a.kind, null, a.text, now, r[a.kind] === false && !a.replyTo ? now : null, a.target, a.replyTo || null, a.branch || null)));
   }
 
@@ -387,7 +424,7 @@ function setup(app) {
   }
 
   // ---- the admin page ----
-  app.talabat = { matchDay, invalidate: day => { matchRevision++; matchCache.delete(day); } };
+  app.talabat = { matchDay, alerts, invalidate: day => { matchRevision++; matchCache.delete(day); } };
   app.route('GET', '/api/talabat/day', async ctx => {
     await app.requireAdmin(ctx);
     const day = validDate(String(ctx.query.day || '')) ? ctx.query.day : businessDay(ctx.now);
