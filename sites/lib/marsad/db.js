@@ -237,7 +237,7 @@ CREATE INDEX IF NOT EXISTS telegram_log_unsent ON telegram_log(created_at) WHERE
 CREATE INDEX IF NOT EXISTS events_employee_time ON events(employee_id, occurred_at);
 CREATE TABLE IF NOT EXISTS call_assignments (call_key TEXT PRIMARY KEY, employee_id INTEGER NOT NULL, decided_at INTEGER NOT NULL, decided_by TEXT, note TEXT);
 CREATE TABLE IF NOT EXISTS orders_days (day TEXT PRIMARY KEY, data TEXT NOT NULL, received_at INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS site_orders (id INTEGER PRIMARY KEY, day TEXT NOT NULL, status TEXT, fulfillment TEXT, total REAL, created_at INTEGER NOT NULL, modified_at INTEGER, notes_at INTEGER, received_at INTEGER, transfer_at INTEGER, branch TEXT, out_at INTEGER, driver TEXT, delivered_at INTEGER, scheduled INTEGER NOT NULL DEFAULT 0, transfers INTEGER);
+CREATE TABLE IF NOT EXISTS site_orders (id INTEGER PRIMARY KEY, day TEXT NOT NULL, status TEXT, fulfillment TEXT, total REAL, created_at INTEGER NOT NULL, modified_at INTEGER, notes_at INTEGER, received_at INTEGER, transfer_at INTEGER, branch TEXT, out_at INTEGER, driver TEXT, delivered_at INTEGER, scheduled INTEGER NOT NULL DEFAULT 0, transfers INTEGER, gone_at INTEGER);
 CREATE INDEX IF NOT EXISTS site_orders_day ON site_orders(day);
 CREATE INDEX IF NOT EXISTS site_orders_created ON site_orders(created_at);
 CREATE TABLE IF NOT EXISTS talabat_orders (id TEXT PRIMARY KEY, day TEXT NOT NULL, vendor_id TEXT, store TEXT, status TEXT, billable TEXT, placed_at INTEGER, total REAL, received_at INTEGER, accept_seconds INTEGER, accepted_at INTEGER, picked_up_at INTEGER, delivered_at INTEGER, cancelled_at INTEGER, cancel_owner TEXT, cancel_reason TEXT, items TEXT, subtotal REAL, delivery_type TEXT, code TEXT, milestones TEXT, detail_at INTEGER, first_seen INTEGER NOT NULL, updated_at INTEGER NOT NULL);
@@ -315,6 +315,7 @@ async function migrate(db) {
   try { await db.prepare('SELECT code, milestones FROM talabat_orders LIMIT 0').all(); } catch { for (const c of ['code TEXT', 'milestones TEXT']) { try { await db.prepare('ALTER TABLE talabat_orders ADD COLUMN ' + c).run(); } catch {} } }
   try { await db.prepare('SELECT transfers FROM site_orders LIMIT 0').all(); } catch { try { await db.prepare('ALTER TABLE site_orders ADD COLUMN transfers INTEGER').run(); } catch {} }
   try { await db.prepare('SELECT total FROM site_orders LIMIT 0').all(); } catch { try { await db.prepare('ALTER TABLE site_orders ADD COLUMN total REAL').run(); } catch {} }
+  try { await db.prepare('SELECT gone_at FROM site_orders LIMIT 0').all(); } catch { try { await db.prepare('ALTER TABLE site_orders ADD COLUMN gone_at INTEGER').run(); } catch {} }
   // Two groups: the call center's (default) and the branch managers' (target = 'branches').
   try { await db.prepare('SELECT target FROM telegram_log LIMIT 0').all(); } catch { try { await db.prepare('ALTER TABLE telegram_log ADD COLUMN target TEXT').run(); } catch {} }
   try { await db.prepare('SELECT sending_at FROM wa_messages LIMIT 0').all(); } catch { try { await db.prepare('ALTER TABLE wa_messages ADD COLUMN sending_at INTEGER').run(); } catch {} }

@@ -167,3 +167,37 @@ test('price differences (Karim 11-11): Apex 5% above the website is expected on 
     assert.deepEqual(list, ['2']);
   } finally { await t.close(); }
 });
+
+// Karim 11-11 «بيتعامل ازاي مع اللاغي علي الموقع»: an order that leaves the central board before it went out is cancelled
+// (after 3 minutes): off the transfer page; one already on Apex is told to its branch and the online group to void.
+test('website central panel: an order gone from the board before going out is cancelled; on Apex → void message', async () => {
+  const t0 = cairoToUtc(2026, 11, 10, 21, 0, 0), s = m => Math.floor((t0 + m * 60000) / 1000);
+  const t = await start({ at: t0 + 30 * 60000 });
+  try {
+    const admin = await t.admin();
+    await t.employee(admin, { name: 'سارة', code: 'E1', pin: '1111' });
+    const sara = (await t.call('POST', '/api/transfer/login', { body: { pin: '1111' } })).body.token;
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const push = orders => t.call('POST', '/api/site/panel', { headers: { 'x-talabat-token': token }, body: { board: 'central', orders } });
+    const order = (id, extra = {}) => ({ id, number: String(id), status: 'app-preparing', statusLabel: 'جاري التنفيذ', stage: 1, fulfillment: 'delivery', createdAt: s(0), branchId: 'nasr-city', branchName: 'مدينة نصر',
+      paymentMethod: 'كاش عند الاستلام', total: 300, customer: { name: 'نوره', phone: '01097159082', address: 'شارع 9، النزهة الجديدة' }, financial: { due: 300, onlinePaid: 0, total: 300, rows: [] },
+      items: [{ name: 'طحينة', quantity: 1, total: '25.00 EGP', details: [] }], ...extra });
+    await push([order(40001), order(40002), order(40003, { stage: 3, driver: { name: 'علي' } })]);
+    t.app.db.raw.prepare("INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, at, result) VALUES ('site', '40002', '2026-11-10', 'auto_done', NULL, 'المرصد آلي', ?, ?)").run(t.app.now(), JSON.stringify({ orderNo: 777 }));
+    const status = id => t.app.db.raw.prepare('SELECT status FROM site_orders WHERE id = ?').get(id).status;
+    const keep = order(40099);
+    await push([keep]);
+    t.advance(60000); await push([keep]);
+    assert.notEqual(status(40001), 'cancelled', 'not yet: it may come back');
+    t.advance(3 * 60000); await push([keep]);
+    assert.equal(status(40001), 'cancelled'); assert.equal(status(40002), 'cancelled');
+    assert.equal(status(40003), 'completed', 'out with a driver and gone = delivered');
+    t.advance(9000);
+    const q = (await t.call('GET', '/api/transfer/queue?day=2026-11-10', { headers: { 'x-transfer-session': sara } })).body.orders.filter(o => o.source === 'site').map(o => o.ref);
+    assert.ok(!q.includes('40001'), 'off the transfer page');
+    const msgs = t.app.db.raw.prepare("SELECT key, target, text FROM telegram_log WHERE kind = 'siteCancelled' ORDER BY key").all();
+    assert.deepEqual(msgs.map(m => [m.key, m.target]), [['site:cancel:40002', 'branches'], ['site:cancel:40002:online', 'online']]);
+    assert.match(msgs[0].text, /Apex 777/);
+    await push([keep]); assert.equal(t.app.db.raw.prepare("SELECT COUNT(*) n FROM telegram_log WHERE kind = 'siteCancelled'").get().n, 2, 'once');
+  } finally { await t.close(); }
+});

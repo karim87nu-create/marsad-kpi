@@ -115,6 +115,23 @@ function setup(app) {
         if (!seen.has(r.id)) writes.push(db.prepare("UPDATE site_orders SET delivered_at = ?, status = 'completed' WHERE id = ? AND delivered_at IS NULL").bind(now, r.id));
       for (const r of await db.prepare("SELECT id FROM site_orders WHERE created_at >= ? AND out_at IS NOT NULL AND delivered_at IS NULL AND status NOT IN ('cancelled','failed','wallet-failed')").all(now - 14 * 3600000))
         if (!seen.has(r.id)) writes.push(db.prepare("UPDATE site_orders SET delivered_at = ?, status = 'completed' WHERE id = ? AND delivered_at IS NULL").bind(now, r.id));
+      // Karim 11-11 «بيتعامل ازاي مع اللاغي علي الموقع»: an order cancelled on the website mostly just leaves the central
+      // board. Gone before it went out (no driver) for 3 minutes → cancelled: off the transfer page; if it is already on
+      // Apex, the branch and the online group are told to void it there (once).
+      for (const r of await db.prepare("SELECT id, gone_at, branch, total FROM site_orders WHERE created_at >= ? AND scheduled = 0 AND out_at IS NULL AND delivered_at IS NULL AND status NOT IN ('cancelled','failed','wallet-failed','completed') AND id IN (SELECT CAST(ref AS INTEGER) FROM match_profiles WHERE source = 'site' AND json_extract(data, '$.panel.number') IS NOT NULL)").all(now - 14 * 3600000)) {
+        if (seen.has(r.id)) { if (r.gone_at) writes.push(db.prepare('UPDATE site_orders SET gone_at = NULL WHERE id = ?').bind(r.id)); continue; }
+        if (!r.gone_at) { writes.push(db.prepare('UPDATE site_orders SET gone_at = ? WHERE id = ?').bind(now, r.id)); continue; }
+        if (now - r.gone_at < 3 * 60000) continue;
+        writes.push(db.prepare("UPDATE site_orders SET status = 'cancelled' WHERE id = ?").bind(r.id));
+        await siteCancelledOnApex(r, now, writes);
+      }
+    }
+    // An order the panel itself shows as cancelled, already on Apex: the same message.
+    for (const o of list) {
+      const id = Number(o?.id); if (!Number.isInteger(id)) continue;
+      if (/cancel|failed|refund/i.test(String(o.status || '')) || /ملغ|اتلغ/.test(String(o.statusLabel || ''))) {
+        const r = await db.prepare('SELECT id, branch, total FROM site_orders WHERE id = ?').get(id); if (r) await siteCancelledOnApex(r, now, writes);
+      }
     }
     if (writes.length) await db.batch(writes);
     await put('site_panel_at', String(now));
@@ -216,7 +233,7 @@ function setup(app) {
         const profile = { customer: { ...(old.customer || {}) }, items: Array.isArray(o.line_items) ? items : old.items || [], payment: 'payment_method' in o || 'discount_total' in o ? pay : old.payment || null };
         for (const [k, v] of Object.entries(customer)) if (v) profile.customer[k] = v;
         upsert.push(db.prepare("INSERT INTO match_profiles (source, ref, data) SELECT 'site',?,? WHERE NOT EXISTS (SELECT 1 FROM site_orders WHERE id=? AND modified_at>?) ON CONFLICT(source, ref) DO UPDATE SET data = excluded.data").bind(String(o.id), JSON.stringify(profile),o.id,modified));
-        upsert.push(db.prepare('INSERT INTO site_orders (id, day, status, fulfillment, total, created_at, modified_at, notes_at) VALUES (?,?,?,?,?,?,?,NULL) ON CONFLICT(id) DO UPDATE SET status = excluded.status, fulfillment = excluded.fulfillment, total = excluded.total, modified_at = excluded.modified_at, notes_at = CASE WHEN excluded.modified_at > IFNULL(site_orders.modified_at, 0) THEN NULL ELSE site_orders.notes_at END WHERE COALESCE(site_orders.modified_at,0) <= excluded.modified_at')
+        upsert.push(db.prepare('INSERT INTO site_orders (id, day, status, fulfillment, total, created_at, modified_at, notes_at) VALUES (?,?,?,?,?,?,?,NULL) ON CONFLICT(id) DO UPDATE SET status = CASE WHEN site_orders.gone_at IS NOT NULL AND site_orders.status = \'cancelled\' THEN site_orders.status ELSE excluded.status END, fulfillment = excluded.fulfillment, total = excluded.total, modified_at = excluded.modified_at, notes_at = CASE WHEN excluded.modified_at > IFNULL(site_orders.modified_at, 0) THEN NULL ELSE site_orders.notes_at END WHERE COALESCE(site_orders.modified_at,0) <= excluded.modified_at')
           .bind(o.id, businessDay(created), String(o.status), ful ? String(ful) : null, Number(o.total) || null, created, Date.parse(String(o.date_modified_gmt) + 'Z') || created));
       }
       if (upsert.length) await db.batch(upsert);
@@ -285,6 +302,18 @@ function setup(app) {
     lastRun = now;
     await sync(now);
   });
+
+  async function siteCancelledOnApex(r, now, writes) {
+    const j = await db.prepare("SELECT state, result FROM transfer_jobs WHERE source = 'site' AND ref = ? AND state IN ('auto_done', 'entered', 'auto_pending', 'auto_sending')").get(String(r.id));
+    if (!j) return;
+    let res = {}; try { res = JSON.parse(j.result || '{}'); } catch {}
+    const p = await db.prepare("SELECT data FROM match_profiles WHERE source = 'site' AND ref = ?").get(String(r.id));
+    let num = r.id; try { num = JSON.parse(p?.data || '{}').panel?.number || r.id; } catch {}
+    const text = '🌐 الموقع | ❌ أوردر الموقع #' + num + ' اتلغى على الموقع وهو متسجل على Apex' + (res.orderNo ? ' (Apex ' + res.orderNo + ')' : '') +
+      (r.branch ? '\nالفرع: ' + r.branch : '') + '\nالغوه على Apex وماتطلعوهوش';
+    for (const [target, branch, suffix] of [['branches', r.branch || null, ''], ['online', null, ':online']])
+      writes.push(db.prepare("INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, sent_at, target, branch) VALUES (?, 'siteCancelled', NULL, ?, ?, NULL, ?, ?)").bind('site:cancel:' + r.id + suffix, text, now, target, branch));
+  }
 
   // ---- admin: the key, the status, a manual sync ----
   app.route('GET', '/api/site', async ctx => {
