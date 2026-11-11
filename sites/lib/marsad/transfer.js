@@ -9,7 +9,7 @@
 // the bridge is proven (numbering under live work and the branch delivery); this page never writes to Apex.
 import { businessDay, iso, validDate, addDays } from './time.js';
 import { parseJson } from './order-match.js';
-import { deliveryPhone, deliveryLabel, deliveryAddress, stripPlatformNotes } from './delivery-fields.js';
+import { deliveryPhone, deliveryLabel, deliveryAddress, splitDeliveryAddress, deliveryMark, stripPlatformNotes } from './delivery-fields.js';
 import { parseApexCustomerNote, normArabic, guessApexItem } from './apex-customer-notes.js';
 import { knownNos, itemKey } from './items.js';
 import { APEX_NAMES, APEX_PRICES } from './menu-seed.js';
@@ -704,7 +704,7 @@ function setup(app) {
       const sourceRestaurantDiscount = sourceDiscounts.filter(d => d.who === 'restaurant' && !d.unclear).reduce((sum, d) => sum + (Number(d.amount) || 0), 0) + splitRest;
       // A Talabat order: the discounts are Talabat's bill on the server, even when it has none (never the browser's numbers).
       const fromSource = !!sourceOrder;
-      const sign = platformDiscount > 0 ? 'خصم طلبات ' + platformDiscount.toFixed(2) : fromSource ? '' : String(b.sign || '').slice(0, 120);
+      const signBase = platformDiscount > 0 ? 'خصم طلبات ' + platformDiscount.toFixed(2) : fromSource ? '' : String(b.sign || '').slice(0, 120);
       const restaurantDiscount = fromSource || sourceDiscounts.length ? Math.round((sourceRestaurantDiscount + (payment === 'paid' ? platformDiscount : 0)) * 100) / 100 : Math.max(0, Number(b.restaurantDiscount) || 0);
       // What Apex must total, from Talabat's own bill on the server (never the browser's sum): cash = what the customer pays
       // + Talabat's whole share (known + the employee's split); paid = what the customer paid.
@@ -721,8 +721,10 @@ function setup(app) {
       const translatedAddress = arabic.get(b.customer?.address) || b.customer?.address;
       const translatedNote = arabic.get(safeRemarks) || safeRemarks;
       if (translatedNote.length > 200) fail(400, 'الملاحظات بعد الترجمة أطول من مساحة Apex — اختصرها');
-      const address = pickup ? { street: '', floor: '', flat: '' } : deliveryAddress(translatedAddress, area?.name || '');
-      const deliveryFields = { address: [address.street, address.floor ? 'الدور: ' + address.floor : '', address.flat ? 'الشقة: ' + address.flat : ''].filter(Boolean).join(' — '), floor: address.floor, flat: address.flat };
+      const address = pickup ? { street: '', floor: '', flat: '' } : deliveryAddress(translatedAddress, [area?.name, sourceOrder?.customer?.talabatArea, sourceOrder?.customer?.siteArea, b.customer?.area]);
+      const addressLine = splitDeliveryAddress(address.street), sign = deliveryMark(signBase, addressLine.extra);
+      if (sign == null) fail(409, 'تكملة العنوان أكبر من مساحة العلامة المميزة — اختصر العنوان قبل التسجيل');
+      const deliveryFields = { address: addressLine.main, floor: address.floor, flat: address.flat };
       const payload = { v: 1, source, ref, code: String(b.code || '').replace(/[^\d]/g, '').slice(0, 10) || null, db: mode, branchNo, locationNo, payment,
         label: deliveryLabel(translatedName, source, payment, b.code), customer: { name: String(translatedName || '').slice(0, 80), phone: deliveryPhone(b.customer?.phone), address: pickup ? '' : String(b.customer?.address || '').slice(0, 360), ...deliveryFields }, ...(pickup ? { pickup: true } : {}),
         sign, platformDiscount, note: translatedNote, items: [...clean, ...noteItems], apexCustomerBenefit: noteBenefit,
