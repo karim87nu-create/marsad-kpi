@@ -21,7 +21,7 @@ import { APEX_PRICES } from './menu-seed.js';
 
 export const MODES = ['off', 'trial', 'on'];
 const QUIET = new Set(['لسه واصل', 'أوردر مجدول', 'تفاصيل الأوردر لسه ماوصلتش', 'لسه ما اتقبلش على طلبات', 'أوردر قديم — غالباً اتسجل بإيد', 'اتحوّل للفرع على الموقع — غالباً اتسجل بإيد']);
-const TICK_MS = 30000, SETTLE_MS = 60000, MAX_AGE_MS = 20 * 60000, ALERT_MS = 2 * 60000;
+const TICK_MS = 60000, SETTLE_MS = 60000, MAX_AGE_MS = 20 * 60000, ALERT_MS = 2 * 60000;
 const r2 = v => Math.round(v * 100) / 100, T = v => r2(v * 1.14);
 const TALABAT_FEE_NO = '0114006', BRANCH_NAME = { 1: 'التجمع', 2: 'مدينة نصر', 3: 'مدينتي' };
 const amountIn = t => { const m = String(t || '').split(' | ').slice(1).join(' ').replace(/,/g, '').match(/-?\d+(?:\.\d+)?/); return m ? Number(m[0]) : null; };
@@ -132,7 +132,13 @@ function setup(app) {
   const mode = async () => { const v = (await db.prepare("SELECT value FROM settings WHERE key = 'auto_transfer'").get())?.value; return MODES.includes(v) ? v : 'off'; };
 
   // The area of this customer's last automatic orders to the same address (website delivery orders have no Talabat area).
+  // Read again at most every 10 minutes (11-11: D1 «overloaded»).
+  let areasAt = 0, areasDay = null, areasCache = new Map();
   async function customerAreas(day) {
+    if (areasDay === day && Date.now() - areasAt < 10 * 60000) return areasCache;
+    areasDay = day; areasAt = Date.now(); areasCache = await readAreas(day); return areasCache;
+  }
+  async function readAreas(day) {
     const rows = await db.prepare("SELECT payload FROM transfer_jobs WHERE payload IS NOT NULL AND state IN ('auto_done', 'auto_pending', 'auto_sending') AND day >= date(?, '-120 days') ORDER BY at DESC LIMIT 2000").all(day).catch(() => []);
     const m = new Map();
     for (const r of rows) {

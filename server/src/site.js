@@ -60,13 +60,22 @@ function setup(app) {
   app.route('POST', '/api/site/panel', async ctx => {
     await app.extensionAuth(ctx);
     const list = (Array.isArray(ctx.body?.orders) ? ctx.body.orders : []).slice(0, 300), now = ctx.now, writes = [];
+    // 11-11 (D1 «overloaded»): the whole board comes again every minute — one read for all its orders, and a profile is
+    // written only when it changed.
+    const ids = [...new Set(list.map(o => Number(o?.id)).filter(n => Number.isInteger(n) && n > 0))];
+    const olds = new Map(), profs = new Map();
+    for (let i = 0; i < ids.length; i += 90) {
+      const part = ids.slice(i, i + 90), qs = part.map(() => '?').join(',');
+      for (const r of await db.prepare(`SELECT * FROM site_orders WHERE id IN (${qs})`).all(...part)) olds.set(Number(r.id), r);
+      for (const r of await db.prepare(`SELECT ref, data FROM match_profiles WHERE source = 'site' AND ref IN (${qs})`).all(...part.map(String))) profs.set(String(r.ref), r.data);
+    }
     for (const o of list) {
       const id = Number(o?.id); if (!Number.isInteger(id) || id <= 0) continue;
       const created = Number(o.createdAt) > 1e9 ? Number(o.createdAt) * 1000 : null; if (!created) continue;
       const stage = Number(o.stage) || 0, status = String(o.status || '').slice(0, 40), label = String(o.statusLabel || '');
       const cancelled = /cancel|failed|refund/i.test(status) || /ملغ|اتلغ/.test(label);
       const done = !cancelled && (stage >= 4 || /complete|deliver/i.test(status) || /تم التوصيل|تم التسليم/.test(label));
-      const old = await db.prepare('SELECT * FROM site_orders WHERE id = ?').get(id);
+      const old = olds.get(id) || null;
       const assigned = Number(o.branchAssignedAt) > 1e9 ? Number(o.branchAssignedAt) * 1000 : null;
       const outAt = old?.out_at || (stage >= 3 || o.driver ? now : null), deliveredAt = old?.delivered_at || (done ? now : null);
       const f = o.financial || {}, rows = Array.isArray(f.rows) ? f.rows : [];
@@ -97,7 +106,8 @@ function setup(app) {
         }).filter(v => v.name) }));
       const c = o.customer || {}, customer = customerOf({ name: String(c.name || '').slice(0, 120), phone: String(c.phone || '').slice(0, 30), address: String(c.address || '').slice(0, 300), area: panelArea(o) });
       const profile = { customer, items, payment: pay, panel: { number: String(o.number || id), stage, status, label, branchId: String(o.branchId || '').slice(0, 40) || null, fulfillment: String(o.fulfillment || '').slice(0, 20) || null } };
-      writes.push(db.prepare("INSERT INTO match_profiles (source, ref, data) VALUES ('site', ?, ?) ON CONFLICT(source, ref) DO UPDATE SET data = excluded.data").bind(String(id), JSON.stringify(profile)));
+      const pj = JSON.stringify(profile);
+      if (profs.get(String(id)) !== pj) writes.push(db.prepare("INSERT INTO match_profiles (source, ref, data) VALUES ('site', ?, ?) ON CONFLICT(source, ref) DO UPDATE SET data = excluded.data").bind(String(id), pj));
       writes.push(db.prepare(`INSERT INTO site_orders (id, day, status, fulfillment, total, created_at, modified_at, notes_at, received_at, transfer_at, branch, out_at, driver, delivered_at, scheduled, transfers)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?) ON CONFLICT(id) DO UPDATE SET status = excluded.status, fulfillment = excluded.fulfillment, total = excluded.total, modified_at = excluded.modified_at,
         notes_at = excluded.notes_at, received_at = COALESCE(site_orders.received_at, excluded.received_at), transfer_at = COALESCE(site_orders.transfer_at, excluded.transfer_at),
@@ -153,7 +163,7 @@ function setup(app) {
       }
     }
     return { ok: true, saved: list.length, assign };
-  });
+  }, { limit: 2 * 1024 * 1024 });   // 11-11: the day's board passed 256 KB at 19:42 and every push was refused
 
   // The key and secret are stored encrypted with the server secret (like the Telegram bot token).
   let aesKey = null;

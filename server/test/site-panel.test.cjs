@@ -201,3 +201,23 @@ test('website central panel: an order gone from the board before going out is ca
     await push([keep]); assert.equal(t.app.db.raw.prepare("SELECT COUNT(*) n FROM telegram_log WHERE kind = 'siteCancelled'").get().n, 2, 'once');
   } finally { await t.close(); }
 });
+
+// 11-11: the day's central board passed 256 KB at 19:42 and every push after was refused (413).
+test('website central panel: a big board (over 256 KB) is accepted', async () => {
+  const t0 = cairoToUtc(2026, 11, 11, 21, 0, 0), s = m => Math.floor((t0 + m * 60000) / 1000);
+  const t = await start({ at: t0 + 30 * 60000 });
+  try {
+    const admin = await t.admin();
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const orders = Array.from({ length: 120 }, (_, i) => ({ id: 50000 + i, number: String(50000 + i), status: 'app-preparing', stage: 1, fulfillment: 'delivery', createdAt: s(i % 30), branchId: 'nasr-city', branchName: 'مدينة نصر',
+      paymentMethod: 'كاش عند الاستلام', total: 300, customer: { name: 'عميل ' + i, phone: '0109715' + String(9000 + i), address: 'شارع ' + i + '، النزهة الجديدة' }, financial: { due: 300, onlinePaid: 0, total: 300, rows: [] },
+      items: Array.from({ length: 8 }, (_, k) => ({ name: 'طاجن لحمة بالبصل ' + k, quantity: 1, total: '25.00 EGP', details: [{ label: 'اختيارات السلطة المجانية', value: 'خيار مخلل (ضمن الوجبة) '.repeat(12) }] })) }));
+    const body = { board: 'central', orders };
+    assert.ok(JSON.stringify(body).length > 300 * 1024);
+    const r = await t.call('POST', '/api/site/panel', { headers: { 'x-talabat-token': token }, body });
+    assert.equal(r.status, 200); assert.equal(r.body.saved, 120);
+    assert.equal(t.app.db.raw.prepare('SELECT COUNT(*) n FROM site_orders').get().n, 120);
+    const again = await t.call('POST', '/api/site/panel', { headers: { 'x-talabat-token': token }, body });
+    assert.equal(again.status, 200);
+  } finally { await t.close(); }
+});
