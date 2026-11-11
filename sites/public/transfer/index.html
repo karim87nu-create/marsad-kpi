@@ -228,6 +228,8 @@ function payText(o) {
 // Karim 09-11: a discount on the customer's Apex card never stops the transfer and never passes unhandled.
 function cardMoney(n) { return (n?.directives || []).filter(d => d.kind === 'percent' || d.kind === 'amount'); }
 function cardUnclear(n) { return !!n && (n.unrecognized || cardMoney(n).length > 1); }
+// Karim 11-11: cash + one clear discount on the card (no free items) is taken on Apex with no «تمام».
+function cardSelf(n, pay) { return !!n && pay === 'cash' && !cardUnclear(n) && cardMoney(n).length === 1 && !(n.directives || []).some(d => d.kind === 'item'); }
 function cardWorth(o, p, n) {
   const m = cardMoney(n);
   if (m.length !== 1) return 0;
@@ -490,6 +492,7 @@ function card(o) {
                 '<div style="margin-top:6px">لو العميل مردّش أو مش عايز هدية دلوقتي:</div>' + later('مفيش هدية المرة دي — الخصم يفضل على الكارت للأوردر الجاي');
             }
             if (!n.requiresReview) return '';
+            if (cardSelf(n, pay)) return '<div class="ok" style="margin-top:6px">✓ هيتخصم ' + worthText + ' على Apex لوحده</div>';
             const what = [money1 ? 'يتخصم ' + worthText + ' على Apex' : '', (n.directives || []).some(d => d.kind === 'item') ? 'الهدية تتضاف بسعر صفر' : ''].filter(Boolean).join('، و');
             return '<label style="display:block;margin-top:6px"><input type="checkbox" style="display:inline;width:auto;margin:0 0 0 6px;vertical-align:middle" data-card-approved ' + (p.apexNoteApproved ? 'checked ' : '') + '> تمام — ' + (what || 'نفّذ اللي على الكارت') + '</label>';
           })() +
@@ -584,7 +587,7 @@ $('list').addEventListener('click', async e => {
     if (!cardUnclear(cardNote) && pay === 'paid' && cardMoney(cardNote).length && !contacted && !giftsChosen) { toast('الأوردر مدفوع: علّم على الهدية اللي العميل اختارها، أو «مفيش هدية المرة دي»'); return; }
     if (giftsChosen && !contacted && giftTotal(p) > GIFT_ROOM(cardWorth(o, p, cardNote))) { toast('الهدايا أكتر من حق العميل — شيل صنف'); return; }
     // 11-11: a paid order's gift choice is its answer to the card — there is no «تمام» box for it.
-    if (cardNote?.requiresReview && !p.apexNoteApproved && !contacted && !giftsChosen) { toast('علّم على «تمام» في بطاقة العميل الأول'); return; }
+    if (cardNote?.requiresReview && !p.apexNoteApproved && !contacted && !giftsChosen && !cardSelf(cardNote, pay)) { toast('علّم على «تمام» في بطاقة العميل الأول'); return; }
     const noteItems = [];
     for (const [i, d] of (cardNote?.directives || []).entries()) {
       if (d.kind !== 'item' || contacted) continue;
@@ -608,7 +611,7 @@ $('list').addEventListener('click', async e => {
     try {
       await api('POST', '/api/transfer/job', { source: o.source, ref: o.ref, action: 'auto', payment: pay, branchNo: Number(p.branch), locationNo: Number(p.loc), code: o.code,
         items: flatLines(o).map((i, n) => ({ itemNo: p.items[n], qty: i.qty, note: '' })),
-        apexNote: cardNote?.status === 'found' ? { approved: !!p.apexNoteApproved || (!contacted && giftsChosen), note: cardNote.text, custNo: cardNote.custNo, items: noteItems,
+        apexNote: cardNote?.status === 'found' ? { approved: !!p.apexNoteApproved || (!contacted && giftsChosen) || cardSelf(cardNote, pay), note: cardNote.text, custNo: cardNote.custNo, items: noteItems,
           resolution: contacted ? 'contacted' : giftsChosen ? 'gift' : null, gifts: !contacted && giftsChosen ? Object.entries(p.cardGifts).map(([itemNo, qty]) => ({ itemNo, qty })) : null } : null,
         // Free choices and the customer's note go in the order comment on Apex (تعليقات الطلب), as the staff do.
         note: p.arabic?.note || deliveryComment(o),

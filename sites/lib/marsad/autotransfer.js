@@ -5,7 +5,8 @@
 //  - the branch is known, and the area: a branch pickup, the Apex area staff chose for this Talabat area before (2+ times),
 //    or the area of this customer's last automatic order to the same address; the area belongs to that branch;
 //  - cash or paid is clear, and who pays every discount (a paid order needs nothing more);
-//  - the customer's card on Apex was read in the last 5 minutes and asks for nothing (no discount, gift or item);
+//  - the customer's card on Apex was read in the last 5 minutes; a cash order with one clear discount on it is discounted
+//    by itself — a paid order's discount (the customer's gift or keeping it) and free items on the card wait for a person;
 //  - Apex's prices come to the order's within a small difference (the website: Apex is kept up to 5% above it),
 //    and Talabat's delivery to the area's delivery on Apex;
 //  - nobody has the order and it is not on Apex already.
@@ -84,7 +85,14 @@ export function decide(o, x) {
   const card = o.apexCustomerNote;
   const fresh = card && card.checkedAt && x.now - Date.parse(card.checkedAt) <= 5 * 60000;
   if (!card || !fresh || (card.status !== 'none' && card.status !== 'found')) why.push('مستني قراءة بطاقة العميل من Apex');
-  else if (card.status === 'found' && ((card.directives || []).length || card.requiresReview || card.unrecognized)) why.push('بطاقة العميل فيها خصم أو هدية — محتاجة موظف');
+  // Karim 11-11: a cash order with one clear discount on the card is discounted on Apex by itself. Only the customer's
+  // choice needs a person: a paid order's gift instead of the discount (or keeping it for the next order), free items.
+  else if (card.status === 'found') {
+    const dirs = card.directives || [], money = dirs.filter(d => d.kind === 'percent' || d.kind === 'amount');
+    if (card.unrecognized || money.length > 1) why.push('ملاحظة بطاقة العميل مش واضحة');
+    else if (dirs.some(d => d.kind === 'item')) why.push('بطاقة العميل فيها أصناف هدية — الموظف يختارها');
+    else if (money.length && pay === 'paid') why.push('مدفوع وعلى الكارت خصم — العميل يختار هدية أو يتأجل للأوردر الجاي');
+  }
   // Prices: Apex's items (+14%) against the order's, and Talabat's delivery against the area's.
   if (!unknown.length) {
     const apexItems = lines.reduce((s, l) => s + (Number(APEX_PRICES[l.no]) || 0) * (l.qty || 0), 0);
@@ -106,7 +114,7 @@ export function decide(o, x) {
   const { nameEn, addressEn, original, talabatArea, siteArea, ...customer } = o.customer || {};
   const body = { source: o.source, ref: String(o.ref), action: 'auto', payment: pay, branchNo: branch, locationNo: loc, code: o.code,
     items: lines.map(l => ({ itemNo: String(l.no), qty: l.qty, note: '' })),
-    apexNote: card.status === 'found' ? { approved: false, note: card.text, custNo: card.custNo, items: [], resolution: null, gifts: null } : null,
+    apexNote: card.status === 'found' ? { approved: true, note: card.text, custNo: card.custNo, items: [], resolution: null, gifts: null } : null,
     note: deliveryComment(o), customer, discountSplit: (o.discounts || []).map(() => null) };
   return { ok: true, why: [], body, locHow };
 }

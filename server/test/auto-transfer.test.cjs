@@ -36,7 +36,14 @@ test('auto transfer: decides only on certain orders and says why not', () => {
   assert.match(why({ areaGuess: { no: 300, seen: 4 } }), /فرع تاني/);
   assert.match(why({ discounts: [{ text: 'خصم', amount: 20, who: null }] }), /خصم مش واضح/);
   assert.equal(decide(base({ payment: 'paid', discounts: [{ text: 'خصم', amount: 20, who: null }] }), X).ok, true, 'paid: all of it comes off on Apex');
-  assert.match(why({ apexCustomerNote: { status: 'found', checkedAt: new Date(NOW - 60000).toISOString(), directives: [{ kind: 'percent', value: 10 }], text: 'خصم 10%' } }), /بطاقة العميل/);
+  // Karim 11-11: cash + one clear card discount goes by itself (taken on Apex); the customer's choices wait for a person.
+  const cardOf = (directives, extra = {}) => ({ apexCustomerNote: { status: 'found', checkedAt: new Date(NOW - 60000).toISOString(), directives, text: 'خصم', custNo: '9', requiresReview: true, ...extra } });
+  const cashDisc = decide(base(cardOf([{ kind: 'percent', value: 10 }])), X);
+  assert.equal(cashDisc.ok, true, cashDisc.why.join()); assert.equal(cashDisc.body.apexNote.approved, true);
+  assert.match(why({ payment: 'paid', ...cardOf([{ kind: 'percent', value: 10 }]) }), /يختار هدية أو يتأجل/);
+  assert.match(why(cardOf([{ kind: 'item', name: 'رز' }])), /أصناف هدية/);
+  assert.match(why(cardOf([{ kind: 'percent', value: 10 }, { kind: 'amount', value: 20 }])), /مش واضحة/);
+  assert.match(why(cardOf([], { unrecognized: true })), /مش واضحة/);
   assert.match(why({ apexCustomerNote: { status: 'none', checkedAt: new Date(NOW - 10 * 60000).toISOString() } }), /قراءة بطاقة العميل/);
   assert.equal(decide(base({ apexCustomerNote: { status: 'found', checkedAt: new Date(NOW - 60000).toISOString(), directives: [], text: 'عميل قديم', custNo: '7' } }), X).ok, true, 'a card with nothing to give');
   assert.match(why({ subtotal: P * 1.5 }), /أسعار Apex مختلفة/);
@@ -66,7 +73,7 @@ test('auto transfer: trial only records, on sends as «المرصد آلي», a 
     const as = (method, path, body) => t.call(method, path, { body, headers: { 'x-transfer-session': sara } });
     const { token } = (await admin('POST', '/api/talabat/token')).body;
     const store = 'الدهان، التجمع الخامس - البنفسج';
-    const ids = ['3977900051', '3977900052', '3977900053'], areas = ['البنفسج 5', 'البنفسج 5', 'الرحاب 2'];
+    const ids = ['3977900051', '3977900052', '3977900053', '3977900054'], areas = ['البنفسج 5', 'البنفسج 5', 'الرحاب 2', 'البنفسج 5'];
     await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: ids.map((id, i) => ({ id, code: '5' + i, store, status: 'ACCEPTED', placedAt: at(i), total: P,
       detail: { subtotal: P, customer: { name: 'عميل', phone: '0100000005' + i, area: areas[i], address: 'شارع 90، ' + areas[i] },
         items: [{ qty: 1, name: 'Kofta', price: P, modifierRead: true, modifierComplete: true, options: [] }], bill: [{ k: 'مجموع', text: 'مجموع | ' + P }, { k: 'payment', text: 'Cash' }] } })) } });
@@ -84,7 +91,7 @@ test('auto transfer: trial only records, on sends as «المرصد آلي», a 
     const wt = (await admin('POST', '/api/apex-writer', { action: 'token' })).body.token;
     const w = (path, body) => t.call('POST', path, { body: body || {}, headers: { 'x-apex-writer': wt } });
     const pend = (await w('/api/apex-writer/customer-notes/pending')).body.pending;
-    await w('/api/apex-writer/customer-notes/result', { results: pend.map(x => x.ref === ids[1] ? { ...x, status: 'found', custNo: '77', note: 'خصم 10%' } : { ...x, status: 'none' }) });
+    await w('/api/apex-writer/customer-notes/result', { results: pend.map(x => x.ref === ids[1] ? { ...x, status: 'found', custNo: '77', note: 'خصم 10% ; خصم 20 جنيه' } : x.ref === ids[3] ? { ...x, status: 'found', custNo: '78', note: 'خصم 10%' } : { ...x, status: 'none' }) });
     t.advance(61000);
 
     // Trial: nothing is sent; the page and the admin show what would have happened.
@@ -94,14 +101,15 @@ test('auto transfer: trial only records, on sends as «المرصد آلي», a 
     assert.equal(r.mode, 'trial');
     const log = () => Object.fromEntries(t.app.db.raw.prepare('SELECT ref, decision, reasons FROM auto_transfer_log').all().map(x => [x.ref, x]));
     assert.equal(log()[ids[0]].decision, 'would', JSON.stringify(log()));
-    assert.match(log()[ids[1]].reasons, /بطاقة العميل/);
+    assert.match(log()[ids[1]].reasons, /مش واضحة/);
+    assert.equal(log()[ids[3]].decision, 'would', 'cash + one clear card discount');
     assert.match(log()[ids[2]].reasons, /لسه ما اتعلمتش/);
     assert.equal(t.app.db.raw.prepare('SELECT COUNT(*) n FROM transfer_jobs WHERE state LIKE ?').get('auto_%').n, 0);
     t.advance(9000);
     q = (await as('GET', '/api/transfer/queue?day=2026-10-22')).body;
     assert.equal(q.orders.find(x => x.ref === ids[0]).auto.decision, 'would');
     const a = (await admin('GET', '/api/auto-transfer?day=2026-10-22')).body;
-    assert.deepEqual(a.totals, { sent: 0, would: 1, wait: 2 });
+    assert.deepEqual(a.totals, { sent: 0, would: 2, wait: 2 });
 
     // A claimed (by an employee) order is never taken.
     assert.equal((await as('POST', '/api/transfer/job', { source: 'talabat', ref: ids[2], action: 'claim' })).status, 200);
@@ -114,6 +122,8 @@ test('auto transfer: trial only records, on sends as «المرصد آلي», a 
     assert.deepEqual(p.items.map(x => [x.itemNo, x.qty]), [[KOFTA, 1]]);
     assert.equal(p.locationNo, 218); assert.equal(p.branchNo, 1); assert.equal(p.payment, 'cash'); assert.equal(p.by, 'المرصد آلي');
     assert.equal(log()[ids[0]].decision, 'sent');
+    const p3 = JSON.parse(t.app.db.raw.prepare('SELECT payload FROM transfer_jobs WHERE ref = ?').get(ids[3]).payload);
+    assert.equal(p3.apexCustomerBenefit.percent, 10, 'the card discount is taken on Apex by itself');
     assert.equal(t.app.db.raw.prepare('SELECT COUNT(*) n FROM transfer_jobs WHERE ref = ?').get(ids[1]).n, 0);
 
     // Still waiting after 2 minutes: once to the call center group, with the reason.
@@ -123,7 +133,7 @@ test('auto transfer: trial only records, on sends as «المرصد آلي», a 
     const alerts = t.app.db.raw.prepare("SELECT key, text, target FROM telegram_log WHERE kind = 'autoWaiting'").all();
     assert.equal(alerts.length, 1, JSON.stringify(alerts));
     assert.equal(alerts[0].key, 'autoWait:talabat:' + ids[1]); assert.equal(alerts[0].target, 'online');
-    assert.match(alerts[0].text, /بطاقة العميل/);
+    assert.match(alerts[0].text, /مش واضحة/);
     assert.equal(t.app.db.raw.prepare('SELECT COUNT(*) n FROM transfer_jobs WHERE ref = ? AND state = ?').get(ids[2], 'claimed').n, 1, 'the claim stays');
   } finally { await t.close(); }
 });
