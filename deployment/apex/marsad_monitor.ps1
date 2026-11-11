@@ -913,6 +913,7 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
 
   $script:cancelledByNote = New-Object System.Collections.ArrayList
   if (-not $script:cxSeen) { $script:cxSeen = @{} }
+  $script:cxNotes = New-Object System.Collections.ArrayList
   # ---- comments on the items (e.g. «بدون بصل»), per order ----
   $itemNotes = @{}
   try {
@@ -943,14 +944,11 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
     # «لا!!!!!غيييي»: letters only, a letter said many times once, then the words.
     $plain = [regex]::Replace([regex]::Replace($said, '[^\p{L}\s]', ''), '(\p{L})\1+', '$1')
     $isCx = ($said -match $cancelWords) -or ($plain -match $cancelWords) -or ($plain -match '(?<!\p{L})لاغ[يى](?!\p{L})')
-    # Karim 11-11: an order still on Apex 5 minutes after its comment said cancelled — the branch and online are told.
+    # Karim 11-11: an order whose comment says cancelled goes to the server with when it was first seen; 5 minutes after,
+    # the server has the Apex writer cancel it (or tells the branch and online) — apex-cancel.js.
     if ($isCx) {
       if (-not $script:cxSeen.ContainsKey($o.No)) { $script:cxSeen[$o.No] = $now }
-      if (($now - $script:cxSeen[$o.No]).TotalMinutes -ge 5) {
-        $cxText = "🖥️ Apex | ❌ أوردر $($o.Disp) مكتوب في تعليقه إنه ملغي من 5 دقايق ولسه موجود على Apex — $(BName $o.Branch)`nالتعليق: $(($said -replace '\s+', ' ').Trim())`nالغوه على Apex دلوقتي"
-        Raise "cxnote:$($o.No)" 'ordersCancel' $cxText $false (BName $o.Branch) $o.Sn
-        Raise "cxnote-online:$($o.No)" 'ordersComment' $cxText $false (BName $o.Branch) $o.Sn
-      }
+      [void]$script:cxNotes.Add([ordered]@{ no = $o.No; sn = $o.Sn; branch = (BName $o.Branch); seenAt = (IsoT $script:cxSeen[$o.No]); out = [bool]$o.Out; text = (($said -replace '\s+', ' ').Trim()) })
     }
     if (-not $o.Open) { continue }
     if ($isCx) {
@@ -1282,7 +1280,7 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
     # Kept small on purpose: the push must stay fast (11-11: a full list of every order made it time out).
     book = @($list | Where-Object { $_.Kind -eq 'Hotline' -and $_.Trans -eq 'Delivery' -and $_.Entry -and $_.Phone.Length -ge 7 } | ForEach-Object { ,@($_.No, [int64]([DateTimeOffset]$_.Entry).ToUnixTimeSeconds(), [int][math]::Round($_.Amt), (PhKey $_.Phone)) })
     branches = @($branchesOut); open = @($openList); staff = @($staff); hours = $hours
-    cancels = @($cancelList); issues = @($issues); lateOut = @($lateOut); online = @($onlineList); sales = @($salesList); officer = $officerOut; tagColumns = $script:tagCols; details = $details; fixes = @(Get-Fixes $day $now); branchStatus = $script:branchStatus; users = @($script:Users.Values | Where-Object { $_ } | Sort-Object -Unique); alerts = @(@($pending) + $(if ($script:ServerFollow) { @($script:follow) } else { @() }))
+    cancels = @($cancelList); cancelNotes = @($script:cxNotes); issues = @($issues); lateOut = @($lateOut); online = @($onlineList); sales = @($salesList); officer = $officerOut; tagColumns = $script:tagCols; details = $details; fixes = @(Get-Fixes $day $now); branchStatus = $script:branchStatus; users = @($script:Users.Values | Where-Object { $_ } | Sort-Object -Unique); alerts = @(@($pending) + $(if ($script:ServerFollow) { @($script:follow) } else { @() }))
   }
 }
 

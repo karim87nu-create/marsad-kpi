@@ -795,6 +795,8 @@ function setup(app) {
     const given = ctx.header('x-apex-writer'), hashes = [await setting('apex_writer_token_hash'), await setting('orders_token_hash')].filter(Boolean);
     if (!given || !hashes.includes(sha256(given))) fail(401, 'مفتاح كاتب Apex غير صحيح');
   };
+  app.apexWriterAuth = writer;
+
   // The on-premises read-only Apex login is the only source of customer-card notes.
   // Staff see these on the transfer page BEFORE they choose to submit an order.
   const profilePhone = (source, p) => deliveryPhone(source === 'talabat'

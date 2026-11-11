@@ -239,6 +239,8 @@ function setup(app) {
     }
     await queue(alerts, ctx.now);
     await put(stateKey, JSON.stringify(states));
+    // Orders whose comment says cancelled (Karim 11-11): the automatic cancel on Apex (apex-cancel.js).
+    if (!replay && app.apexCancelNotes) { try { await app.apexCancelNotes(ctx.body?.cancelNotes, ctx.now); } catch (e) { console.error('apex cancel', e); } }
     // Payment / service / platform values the admin marked as officer: the monitor keeps them out of every total.
     let officer = []; try { officer = JSON.parse(await setting('officer_values') || '[]'); } catch {}
     // follow: this server answers warnings from the monitor's follow-ups (status changes, reminders).

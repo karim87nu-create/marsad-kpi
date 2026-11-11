@@ -705,6 +705,58 @@ function Apply-Stock {
   L ("stock: " + ($done | ConvertTo-Json -Compress))
 }
 
+# Karim 11-11 «اي كومنت يتبعت فيه لاغي لازم الاوردر يتمسح بعد ٥د بالظبط من السيستم تلقائي»: the order is cancelled the
+# way Apex's own screen cancels (read from Apex 11-11, order 701607): its row and dishes move to DOrders_M / DOrders_D with
+# who, when and the reason (the reason replaces the remarks, as Apex does), and leave Orders_M_Daily, Orders_D_Daily and
+# Invoice. Never an order already with a pilot, one with combo parts or changes (Apex keeps those elsewhere), or one
+# already cancelled: those come back to the server for a person.
+$script:cancelNext = Get-Date
+function Apply-Cancels {
+  if ((Get-Date) -lt $script:cancelNext) { return }
+  $script:cancelNext = (Get-Date).AddSeconds(30)
+  $s = Api '/api/apex-writer/cancel-next' @{}
+  $todo = @($s.orders | Where-Object { $_ -and [int64]$_.orderNo -gt 0 })
+  if (-not $todo.Count) { return }
+  if (-not $AllowLive) { throw 'production writes are locked on this PC ($AllowLive)' }
+  $c = Open-Db 'live'; $done = @()
+  try {
+    foreach($t in $todo){
+      try {
+        $cmd = $c.CreateCommand(); $cmd.CommandTimeout = 20
+        $cmd.CommandText = @"
+SET XACT_ABORT ON;
+BEGIN TRAN;
+DECLARE @st int = 0;
+IF NOT EXISTS (SELECT 1 FROM dbo.Orders_M_Daily WITH (UPDLOCK, HOLDLOCK) WHERE OrderNo = @o) SET @st = 1;
+ELSE IF EXISTS (SELECT 1 FROM dbo.Orders_M_Daily WHERE OrderNo = @o AND ISNULL(WaiterNo, 0) > 0) SET @st = 2;
+ELSE IF EXISTS (SELECT 1 FROM dbo.DOrders_M WHERE OrderNo = @o) SET @st = 3;
+ELSE IF EXISTS (SELECT 1 FROM dbo.Orders_Components_daily WHERE OrderNo = @o) OR EXISTS (SELECT 1 FROM dbo.Orders_Modify_daily WHERE OrderNo = @o) SET @st = 4;
+IF @st = 0
+BEGIN
+  INSERT INTO dbo.DOrders_M ([OrderNo], [ShiftSerial], [TypeSerial], [TableNo], [HallNo], [GuestNo], [CustNo], [BankNo], [EmpNo], [TakeAwayLoc], [Remarks], [OrderDate], [TimeIn], [OrderTime], [UserNo], [PosNo], [WaiterNo], [ShiftNo], [TransType], [PayWay], [DiscountType], [MinCharge], [SubTotal], [Tips], [Service], [Tax], [Discount], [Addition], [MinChargeDifference], [CashPayment], [VisaPayment], [Closed], [SNo], [RecieveNo], [CheckNo], [BranchNo], [Trans_Serial], [HourNo], [DepositValue], [ReturnTime], [Otlob], [Otlob_OrderNo], [OnlineType], [operation_id], [o_Phone], [o_CustName], [o_Address], [o_FlatNo], [o_FloorNo], [o_Sign], [o_LocationNo], [o_BuildingNo], [o_StreetNo], [o_PersonName], [DelUserNo], [DeleteTime], [DeleteDate], [deletepoints], [ReasonNo])
+  SELECT [OrderNo], [ShiftSerial], [TypeSerial], [TableNo], [HallNo], [GuestNo], [CustNo], [BankNo], [EmpNo], [TakeAwayLoc], LEFT(@Reason, 100), [OrderDate], [TimeIn], [OrderTime], [UserNo], [PosNo], [WaiterNo], [ShiftNo], [TransType], [PayWay], [DiscountType], [MinCharge], [SubTotal], [Tips], [Service], [Tax], [Discount], [Addition], [MinChargeDifference], [CashPayment], [VisaPayment], [Closed], [SNo], [RecieveNo], [CheckNo], [BranchNo], [Trans_Serial], [HourNo], [DepositValue], [ReturnTime], [Otlob], [Otlob_OrderNo], [OnlineType], [operation_id], [o_Phone], [o_CustName], [o_Address], [o_FlatNo], [o_FloorNo], [o_Sign], [o_LocationNo], [o_BuildingNo], [o_StreetNo], [o_PersonName], @U, @TimeText, CAST(CAST(GETDATE() AS date) AS datetime), 0, @R FROM dbo.Orders_M_Daily WHERE OrderNo = @o;
+  INSERT INTO dbo.DOrders_D ([OrderNo], [ItemNo], [SerialNo], [Qty], [Price], [Description], [ItemTax], [ItemService], [ItemDiscount]) SELECT [OrderNo], [ItemNo], [SerialNo], [Qty], [Price], [Description], [ItemTax], [ItemService], [ItemDiscount] FROM dbo.Orders_D_Daily WHERE OrderNo = @o;
+  DELETE FROM dbo.Invoice WHERE OrderNo = @o;
+  DELETE FROM dbo.Orders_D_Daily WHERE OrderNo = @o;
+  DELETE FROM dbo.Orders_M_Daily WHERE OrderNo = @o;
+END
+COMMIT;
+SELECT @st AS st;
+"@
+        [void]$cmd.Parameters.AddWithValue('@o', [int64]$t.orderNo)
+        [void]$cmd.Parameters.AddWithValue('@U', [int]$WriterUserNo)
+        [void]$cmd.Parameters.AddWithValue('@R', [int]$t.reasonNo)
+        [void]$cmd.Parameters.AddWithValue('@Reason', [string]$t.reason)
+        [void]$cmd.Parameters.AddWithValue('@TimeText', (Get-Date).ToString('hh:mm:ss tt', [Globalization.CultureInfo]::GetCultureInfo('ar-EG')))
+        $st = [int]$cmd.ExecuteScalar()
+        $done += @{ orderNo = [int64]$t.orderNo; st = $st; ok = ($st -eq 0) }
+      } catch { $done += @{ orderNo = [int64]$t.orderNo; st = -1; ok = $false; note = $_.Exception.Message } }
+    }
+  } finally { try { $c.Close() } catch {} }
+  [void](Api '/api/apex-writer/cancel' @{ done = $done })
+  L ("cancel: " + ($done | ConvertTo-Json -Compress))
+}
+
 # Read customer-card notes only; never modify customer records during lookup.
 # Scoped by the server to existing Talabat/website orders and confirmed phone numbers.
 # Customers has no index on Phone/Mobile (checked 07-11: only PK_Customers on CustNo), so each lookup reads the whole
@@ -748,6 +800,7 @@ for (;;) {
   try { if ((Get-Item $self).LastWriteTimeUtc -ne $selfStamp) { L 'script updated - restarting'; $mutex.ReleaseMutex(); $mutex.Dispose(); Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $self + '"'); exit 0 } } catch {}
   try { Self-Test } catch { L "self-test: $($_.Exception.Message)" }
   try { Apply-Stock } catch { L "stock: $($_.Exception.Message)" }
+  try { Apply-Cancels } catch { L "cancel: $($_.Exception.Message)" }
   $c = $null
   try {
     $n = Api '/api/apex-writer/next' @{}
