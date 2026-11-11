@@ -210,6 +210,8 @@ CREATE INDEX IF NOT EXISTS audit_time ON audit(occurred_at);
 
 // Telegram tables live here too so a fresh database has everything.
 const EXTRA_SCHEMA = `
+CREATE TABLE IF NOT EXISTS auto_transfer_log (source TEXT NOT NULL, ref TEXT NOT NULL, day TEXT NOT NULL, code TEXT, decision TEXT NOT NULL, reasons TEXT, at INTEGER NOT NULL, first_at INTEGER NOT NULL, alerted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (source, ref));
+CREATE INDEX IF NOT EXISTS auto_transfer_log_day ON auto_transfer_log (day);
 CREATE TABLE IF NOT EXISTS qa_evals (id INTEGER PRIMARY KEY AUTOINCREMENT, week TEXT NOT NULL, day TEXT NOT NULL, call_key TEXT NOT NULL, employee_id INTEGER NOT NULL, call_at INTEGER, evaluator TEXT NOT NULL, marks TEXT, critical TEXT, total REAL, notes TEXT, created_at INTEGER NOT NULL, UNIQUE(call_key, evaluator));
 CREATE INDEX IF NOT EXISTS qa_evals_day ON qa_evals(day);
 CREATE INDEX IF NOT EXISTS qa_evals_week ON qa_evals(week);

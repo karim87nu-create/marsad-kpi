@@ -211,6 +211,9 @@ function stateOf(o) {
   if (o.job?.state === 'entered') return { cls: 'wait', text: (o.job.mine ? 'إنت سجلته' : o.job.by + ' سجله') + ' — مستني يظهر في Apex' };
   if (o.job?.state === 'claimed') return o.job.mine ? { cls: 'mine', text: 'معاك دلوقتي' } : { cls: 'other', text: 'مع ' + o.job.by };
   if (o.out) return { cls: 'in', text: 'خرج مع الطيار (اتسجل قبل كده)' };
+  // The automatic transfer (11-11): what it decided about this order — sent by itself, would be (trial), or why it left it.
+  if (o.auto?.decision === 'would') return { cls: 'wait', text: 'تجربة: المرصد كان هيحوّله لوحده' };
+  if (o.auto?.decision === 'wait' && o.auto.why && !/^(?:لسه واصل|أوردر مجدول|تفاصيل الأوردر لسه ماوصلتش|لسه ما اتقبلش على طلبات)$/.test(o.auto.why)) return { cls: '', text: 'جديد — مش هيتحوّل آلي: ' + o.auto.why };
   return { cls: '', text: 'جديد' };
 }
 function payText(o) {

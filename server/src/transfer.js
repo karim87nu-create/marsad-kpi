@@ -185,6 +185,11 @@ function setup(app) {
   app.route('GET', '/api/transfer/queue', async ctx => {
     const me = await who(ctx);
     const day = validDate(String(ctx.query.day || '')) ? ctx.query.day : businessDay(ctx.now);
+    return queueFor(day, { now: ctx.now, me, have: ctx.query.have, waitUntil: ctx.waitUntil });
+  });
+  // The page's list, also read by the automatic transfer (autotransfer.js) with no employee.
+  async function queueFor(day, ctx) {
+    const me = ctx.me || { id: null, name: 'المرصد آلي', staff: false };
     // The day's orders (heavy: Apex snapshot, matching) are built once every few seconds for everyone on the page;
     // only the claims (who has which order) are read fresh for each request.
     const base = await baseFor(day, ctx.now, { allowStale: true });
@@ -205,11 +210,14 @@ function setup(app) {
     const onLive = id => ctx.now - (liveNow[id] || 0) < 3 * 60000;
     // Orders already on Apex or out with the rider: a short line only (no items, bill or customer) — most of the day's orders.
     const slim = o => ({ source: o.source, ref: o.ref, code: o.code, at: o.at, status: o.status, out: o.out, branch: o.branch, apexBranch: o.apexBranch, total: o.total, apex: o.apex, done: true });
+    // The automatic transfer's word on each waiting order (autotransfer.js): sent by itself, would be (trial), or why not.
+    const autoNotes = app.autoTransferNotes && ctx.me ? await app.autoTransferNotes(day) : new Map();
     const list = base.list.map(o => {
       const note = customerNotes.get(o.source + ':' + o.ref);
       const linked = note && note.phone_hash === sha256(deliveryPhone(o.customer?.phone) || '');
       return { ...(o.apex || o.out ? slim(o) : o), ...(o.source === 'talabat' ? { onLive: onLive(o.ref) } : {}),
         job: jobOf(o.source, o.source === 'site' ? String(o.ref) : o.ref),
+        ...(!o.apex && !o.out && autoNotes.get(o.source + ':' + o.ref) ? { auto: autoNotes.get(o.source + ':' + o.ref) } : {}),
         apexCustomerNote: linked ? { custNo: note.custNo, status: note.status, checkedAt: note.checkedAt, text: note.text, directives: note.directives, other: note.other, oneTime: note.oneTime, permanent: note.permanent, requiresReview: note.requiresReview, unrecognized: note.unrecognized, next: note.next || null } : { status: 'pending' } };
     });
     // Karim 10-11: «طلبات بيكون فيها المنطقة ومع ذلك بيطلب تحديد المنطقة». Talabat names areas its own way
@@ -245,10 +253,11 @@ function setup(app) {
     const items = mode && mode !== 'off' ? APEX_ITEM_LIST : [];
     const sections = items.length ? APEX_SECTIONS.map(x => ({ name: x.name, items: x.items.filter(no => APEX_NAMES[no]) })).filter(x => x.items.length) : [];
     const staticKey = 's' + sections.length + ':' + items.length + ':' + locations.length + ':' + locations.reduce((a, l) => a + l.no * (l.branch || 1) + (Number(l.service) || 0), 0).toFixed(2);
-    const fresh = String(ctx.query.have || '') !== staticKey;
+    const fresh = String(ctx.have || '') !== staticKey;
     return { day, me: { name: me.name, staff: me.staff }, serverNow: iso(ctx.now), stale: base.stale === true, liveScreen: ctx.now - (liveNow._screen || 0) < 3 * 60000, autoTransfer: mode, branches: APEX_BRANCHES, staticKey,
       ...(fresh ? { locations, apexItems: items, sections } : {}), orders: list };
-  });
+  }
+  app.transferQueue = queueFor;
 
   // The day's orders (heavy: Apex snapshot, matching): built in the background after every push and kept in the
   // database too (Karim 01-11: the page was slow on first opening — a cold server rebuilt the whole day while the
@@ -544,38 +553,9 @@ function setup(app) {
     return { ok: true };
   });
 
-  app.route('POST', '/api/transfer/job', async ctx => {
-    const me = await who(ctx);
-    const b = ctx.body, source = b.source === 'talabat' || b.source === 'site' ? b.source : null, ref = String(b.ref || '').slice(0, 40);
-    if (!source || !/^\d{1,20}$/.test(ref)) fail(400, 'أوردر غير صحيح');
-    const row = source === 'talabat' ? await db.prepare('SELECT day FROM talabat_orders WHERE id = ?').get(ref) : await db.prepare('SELECT day FROM site_orders WHERE id = ?').get(Number(ref));
-    if (!row) fail(404, 'الأوردر مش موجود');
-    const payment = ['cash', 'paid'].includes(b.payment) ? b.payment : null, note = b.note ? String(b.note).slice(0, 300) : null;
-    const cur = await db.prepare('SELECT * FROM transfer_jobs WHERE source = ? AND ref = ?').get(source, ref);
-    // Whose order it is: the one who claimed it (10 minutes), entered it, or sent it to the writer. A failed or preview-only
-    // automatic transfer belongs to nobody (Karim 01-11: #53 failed under one name and nobody else could mark it entered).
-    const free = !cur || ['released', 'auto_failed', 'auto_preview'].includes(cur.state) || (cur.state === 'claimed' && ctx.now - cur.at > CLAIM_MS);
-    const othersClaim = !free && cur.employee_id !== me.id;
-    // Already on Apex or on its way there: nobody (the same employee included) sends or claims it again.
-    if (cur && (/^auto_(?:sending|done)$/.test(cur.state) || (cur.state === 'auto_pending' && b.action !== 'release'))) fail(409, cur.state === 'auto_done' ? 'الأوردر اتسجل على Apex بالفعل (آلي)' : 'الأوردر بيتسجل على Apex دلوقتي');
-    if (b.action === 'claim') {
-      if (othersClaim) fail(409, (cur.employee_name || 'حد تاني') + (cur.state === 'entered' ? ' سجله بالفعل' : ' شغال عليه دلوقتي'));
-      // Atomic: only one claim wins even if two employees press at the same moment.
-      const r = await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at) VALUES (?,?,?,'claimed',?,?,?,?,?)
-        ON CONFLICT(source, ref) DO UPDATE SET state = 'claimed', employee_id = excluded.employee_id, employee_name = excluded.employee_name, at = excluded.at
-        WHERE transfer_jobs.state IN ('released', 'auto_failed', 'auto_preview') OR (transfer_jobs.employee_id IS excluded.employee_id AND transfer_jobs.state = 'claimed') OR (transfer_jobs.state = 'claimed' AND transfer_jobs.at < ?)`)
-        .run(source, ref, row.day, me.id, me.name, payment, note, ctx.now, ctx.now - CLAIM_MS);
-      if (!r.changes) fail(409, 'حد تاني لسه ماسكه');
-    } else if (b.action === 'entered') {
-      if (othersClaim) fail(409, 'الأوردر مع ' + (cur.employee_name || 'حد تاني'));
-      if (!payment) fail(400, 'حدد: كاش ولا مدفوع');
-      await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at) VALUES (?,?,?,'entered',?,?,?,?,?)
-        ON CONFLICT(source, ref) DO UPDATE SET state = 'entered', employee_id = excluded.employee_id, employee_name = excluded.employee_name, payment = excluded.payment, note = excluded.note, at = excluded.at`)
-        .run(source, ref, row.day, me.id, me.name, payment, note, ctx.now);
-    } else if (b.action === 'release') {
-      if (othersClaim) fail(409, 'الأوردر مع ' + (cur.employee_name || 'حد تاني'));
-      await db.prepare("UPDATE transfer_jobs SET state = 'released', at = ? WHERE source = ? AND ref = ?").run(ctx.now, source, ref);
-    } else if (b.action === 'auto') {
+  // Automatic transfer: the employee (or the automatic transfer, autotransfer.js) confirms the Apex items, branch and payment;
+  // the order is frozen and handed to the Apex writer on the restaurant PC.
+  async function autoJob({ me, b, source, ref, row, cur, othersClaim, payment, note, now }) {
       // Automatic transfer: the employee confirms the Apex items, branch and payment; the order is frozen
       // and handed to the Apex writer on the restaurant PC. Off until an admin turns it on (test first).
       const mode = await setting('apex_bridge_mode') || 'shadow';
@@ -605,7 +585,7 @@ function setup(app) {
       const noteProfile = await db.prepare('SELECT data FROM match_profiles WHERE source = ? AND ref = ?').get(source, ref);
       const currentPhone = profilePhone(source, parseJson(noteProfile?.data, {}));
       if (!noteRecord || !currentPhone || noteRecord.phone_hash !== sha256(currentPhone)
-        || noteRecord.status === 'error' || ctx.now - noteRecord.checked_at > 5 * 60000) {
+        || noteRecord.status === 'error' || now - noteRecord.checked_at > 5 * 60000) {
         fail(409, 'ملاحظات بطاقة العميل على APEX لسه ما اتراجعتش — استنى القراءة من جهاز الكاشير');
       }
       const verifiedCardNote = parseApexCustomerNote(noteRecord.note);
@@ -683,7 +663,7 @@ function setup(app) {
       const areaService = pickup ? 0 : Number.isFinite(Number(area?.service)) && area?.service !== null ? Number(area.service) : null;
       // The source's platform discount is a separate fact from any Apex price adjustment.
       // A stale browser or an empty sign must never erase a known Talabat discount.
-      const sourceOrder = (await baseFor(row.day, ctx.now)).list.find(o => o.source === source && String(o.ref) === ref) || null;
+      const sourceOrder = (await baseFor(row.day, now)).list.find(o => o.source === source && String(o.ref) === ref) || null;
       const sourceDiscounts = sourceOrder?.discounts || [];
       // A discount Talabat does not say who pays for: the employee's split (read on Talabat), never a guess. Paid: all of it
       // comes off on Apex either way, so it counts as Talabat's for the special mark.
@@ -722,10 +702,10 @@ function setup(app) {
       const payload = { v: 1, source, ref, code: String(b.code || '').replace(/[^\d]/g, '').slice(0, 10) || null, db: mode, branchNo, locationNo, payment,
         label: deliveryLabel(translatedName, source, payment, b.code), customer: { name: String(translatedName || '').slice(0, 80), phone: deliveryPhone(b.customer?.phone), address: pickup ? '' : String(b.customer?.address || '').slice(0, 360), ...deliveryFields }, ...(pickup ? { pickup: true } : {}),
         sign, platformDiscount, note: translatedNote, items: [...clean, ...noteItems], apexCustomerBenefit: noteBenefit,
-        restaurantDiscount, expectedTotal, targetTotal, areaService, by: me.name, at: ctx.now };
+        restaurantDiscount, expectedTotal, targetTotal, areaService, by: me.name, at: now };
       await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at, payload, result) VALUES (?,?,?,'auto_pending',?,?,?,?,?,?,NULL)
         ON CONFLICT(source, ref) DO UPDATE SET state = 'auto_pending', employee_id = excluded.employee_id, employee_name = excluded.employee_name, payment = excluded.payment, note = excluded.note, at = excluded.at, payload = excluded.payload, result = NULL`)
-        .run(source, ref, row.day, me.id, me.name, payment, note, ctx.now, JSON.stringify(payload));
+        .run(source, ref, row.day, me.id, me.name, payment, note, now, JSON.stringify(payload));
       if (source === 'talabat' && app.learn) {
         const t = await db.prepare('SELECT items FROM talabat_orders WHERE id = ?').get(ref), chosen = new Set(clean.map(x => String(x.itemNo)));
         const facts = itemFacts(parseJson(t?.items, []), chosen, await talabatLearned());
@@ -736,6 +716,55 @@ function setup(app) {
         const area = parseJson((await db.prepare("SELECT data FROM match_profiles WHERE source = 'talabat' AND ref = ?").get(ref))?.data, {})?.area;
         if (area && normArabic(area)) await app.learn.record('transfer:area', normArabic(area).slice(0, 120), String(b.locationNo), ref).catch(() => {});
       }
+  }
+  // The automatic transfer (11-11): the same checks and job as the page's button, as «المرصد آلي». Never over a claim.
+  app.transferAutoJob = async (b, now) => {
+    const me = { id: null, name: 'المرصد آلي', staff: false };
+    const source = b.source, ref = String(b.ref);
+    const row = source === 'talabat' ? await db.prepare('SELECT day FROM talabat_orders WHERE id = ?').get(ref) : await db.prepare('SELECT day FROM site_orders WHERE id = ?').get(Number(ref));
+    if (!row) fail(404, 'الأوردر مش موجود');
+    const cur = await db.prepare('SELECT * FROM transfer_jobs WHERE source = ? AND ref = ?').get(source, ref);
+    if (cur && !(cur.state === 'claimed' && now - cur.at > CLAIM_MS)) fail(409, 'الأوردر مع ' + (cur.employee_name || 'حد'));
+    const payment = ['cash', 'paid'].includes(b.payment) ? b.payment : null, note = b.note ? String(b.note).slice(0, 300) : null;
+    await autoJob({ me, b, source, ref, row, cur, othersClaim: false, payment, note, now });
+    S(row.day).dirty = true; queueCache.delete(row.day);
+    await app.audit('transfer_auto', null, { actor: me.name, source, ref, payment, branch: b.branchNo, location: b.locationNo, items: b.items, automatic: true });
+    return { ok: true };
+  };
+
+  app.route('POST', '/api/transfer/job', async ctx => {
+    const me = await who(ctx);
+    const b = ctx.body, source = b.source === 'talabat' || b.source === 'site' ? b.source : null, ref = String(b.ref || '').slice(0, 40);
+    if (!source || !/^\d{1,20}$/.test(ref)) fail(400, 'أوردر غير صحيح');
+    const row = source === 'talabat' ? await db.prepare('SELECT day FROM talabat_orders WHERE id = ?').get(ref) : await db.prepare('SELECT day FROM site_orders WHERE id = ?').get(Number(ref));
+    if (!row) fail(404, 'الأوردر مش موجود');
+    const payment = ['cash', 'paid'].includes(b.payment) ? b.payment : null, note = b.note ? String(b.note).slice(0, 300) : null;
+    const cur = await db.prepare('SELECT * FROM transfer_jobs WHERE source = ? AND ref = ?').get(source, ref);
+    // Whose order it is: the one who claimed it (10 minutes), entered it, or sent it to the writer. A failed or preview-only
+    // automatic transfer belongs to nobody (Karim 01-11: #53 failed under one name and nobody else could mark it entered).
+    const free = !cur || ['released', 'auto_failed', 'auto_preview'].includes(cur.state) || (cur.state === 'claimed' && ctx.now - cur.at > CLAIM_MS);
+    const othersClaim = !free && cur.employee_id !== me.id;
+    // Already on Apex or on its way there: nobody (the same employee included) sends or claims it again.
+    if (cur && (/^auto_(?:sending|done)$/.test(cur.state) || (cur.state === 'auto_pending' && b.action !== 'release'))) fail(409, cur.state === 'auto_done' ? 'الأوردر اتسجل على Apex بالفعل (آلي)' : 'الأوردر بيتسجل على Apex دلوقتي');
+    if (b.action === 'claim') {
+      if (othersClaim) fail(409, (cur.employee_name || 'حد تاني') + (cur.state === 'entered' ? ' سجله بالفعل' : ' شغال عليه دلوقتي'));
+      // Atomic: only one claim wins even if two employees press at the same moment.
+      const r = await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at) VALUES (?,?,?,'claimed',?,?,?,?,?)
+        ON CONFLICT(source, ref) DO UPDATE SET state = 'claimed', employee_id = excluded.employee_id, employee_name = excluded.employee_name, at = excluded.at
+        WHERE transfer_jobs.state IN ('released', 'auto_failed', 'auto_preview') OR (transfer_jobs.employee_id IS excluded.employee_id AND transfer_jobs.state = 'claimed') OR (transfer_jobs.state = 'claimed' AND transfer_jobs.at < ?)`)
+        .run(source, ref, row.day, me.id, me.name, payment, note, ctx.now, ctx.now - CLAIM_MS);
+      if (!r.changes) fail(409, 'حد تاني لسه ماسكه');
+    } else if (b.action === 'entered') {
+      if (othersClaim) fail(409, 'الأوردر مع ' + (cur.employee_name || 'حد تاني'));
+      if (!payment) fail(400, 'حدد: كاش ولا مدفوع');
+      await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at) VALUES (?,?,?,'entered',?,?,?,?,?)
+        ON CONFLICT(source, ref) DO UPDATE SET state = 'entered', employee_id = excluded.employee_id, employee_name = excluded.employee_name, payment = excluded.payment, note = excluded.note, at = excluded.at`)
+        .run(source, ref, row.day, me.id, me.name, payment, note, ctx.now);
+    } else if (b.action === 'release') {
+      if (othersClaim) fail(409, 'الأوردر مع ' + (cur.employee_name || 'حد تاني'));
+      await db.prepare("UPDATE transfer_jobs SET state = 'released', at = ? WHERE source = ? AND ref = ?").run(ctx.now, source, ref);
+    } else if (b.action === 'auto') {
+      await autoJob({ me, b, source, ref, row, cur, othersClaim, payment, note, now: ctx.now });
     } else fail(400, 'invalid_action');
     await app.audit('transfer_' + b.action, me.staff ? me.id : null, { actor: me.name, source, ref, payment, ...(b.action === 'auto' ? { branch: b.branchNo, location: b.locationNo, items: b.items, customerName: b.customer?.name, address: b.customer?.address, note: b.note } : {}) });
     return { ok: true };

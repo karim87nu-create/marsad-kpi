@@ -334,6 +334,13 @@
         <p><button type="button" id="apexWriterKey" class="secondary">مفتاح جديد للكاتب</button> <code id="apexWriterToken"></code></p>
         <p id="apexWriterNote" class="muted" role="status"></p>
       </article>
+      <article class="panel" id="autoTransferPanel" hidden><h2>التحويل الآلي الكامل (من غير موظف)</h2>
+        <p class="muted">المرصد بيحوّل أوردر طلبات أو الموقع لوحده لما كل حاجة فيه أكيدة: كل صنف وإضافة ليها صنف واحد على Apex، الفرع والمنطقة معروفين، كاش ولا مدفوع واضح، مين بيدفع الخصم واضح، بطاقة العميل اتقرت ومفيهاش خصم أو هدية، والأسعار والتوصيل قريبين من الأوردر. غير كده بيسيبه للموظف ويكتب السبب، ولو فضل دقيقتين من غير ما حد يحوّله بيبعت لجروب الكول سنتر. ابدأ بـ«تجربة» (بيكتب بس كان هيحوّل إيه) وراجعها يوم، بعدين «تشغيل». الكتابة الفعلية على Apex بتمشي على وضع الكاتب اللي فوق.</p>
+        <p id="autoTransferStatus"></p>
+        <div class="row"><button type="button" data-auto-mode="off" class="secondary">إيقاف</button><button type="button" data-auto-mode="trial" class="secondary">تجربة (بيسجل بس)</button><button type="button" data-auto-mode="on">تشغيل</button></div>
+        <div class="table-wrap"><table id="autoTransferTable"></table></div>
+        <p id="autoTransferNote" class="muted" role="status"></p>
+      </article>
       <article class="panel" id="talActPanel" hidden><h2>شاشة طلبات: وقت التوصيل والقبول و«في الطريق» لكل فرع</h2>
         <p class="muted">وقت التوصيل بيتحفظ هنا ويوصل لشاشة طلبات خلال 30 ثانية. «في الطريق» بيتداس لوحده على طلبات أول ما الأوردر يخرج مع الطيار على Apex، وده بس للفروع اللي متعلّم عليها.</p>
         <div id="talActRows"></div>
@@ -432,7 +439,7 @@
 <script src="charts.js?v=4"></script>
 <script src="now-arc.js?v=3"></script>
 <script src="orders.js?v=4"></script>
-<script src="site.js?v=11"></script>
+<script src="site.js?v=12"></script>
 <script src="insights.js?v=2"></script>
 <script src="kpi.js?v=4"></script>
 <script src="bot.js?v=1"></script>

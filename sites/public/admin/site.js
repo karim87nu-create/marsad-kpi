@@ -399,6 +399,8 @@ window.MarsadSite = function MarsadSite(ctx) {
     if (!isAdmin) return;
     renderTalabatActions().catch(e => { $('talActNote').textContent = e.message; });
     renderStock().catch(e => { $('stockNote').textContent = e.message; });
+    $('autoTransferPanel').hidden = false;
+    renderAutoTransfer().catch(e => { $('autoTransferNote').textContent = e.message; });
     const s = await api('/api/apex-writer');
     const seen = s.lastSeen ? (Date.now() - s.lastSeen < 120000 ? 'الكاتب شغال (آخر سؤال ' + t12(new Date(s.lastSeen).toISOString()) + ')' : 'الكاتب واقف (آخر سؤال ' + t12(new Date(s.lastSeen).toISOString()) + ')') : (s.linked ? 'الكاتب لسه ماشتغلش' : 'مفيش مفتاح للكاتب');
     $('apexWriterStatus').replaceChildren(pill('الوضع: ' + APX[s.mode], s.mode === 'live' ? 'ok' : 'warn'), ' ', h('span', { className: 'muted', textContent: seen }),
@@ -410,6 +412,26 @@ window.MarsadSite = function MarsadSite(ctx) {
     if (mode === 'live' && !confirm('التشغيل هيكتب أوردرات حقيقية على Apex. اتأكدت من المعاينة والتجربة؟')) return;
     try { await api('/api/apex-writer', { method: 'POST', body: { action: 'mode', mode, confirm: mode === 'live' ? 'LIVE' : undefined } }); $('apexWriterNote').textContent = 'الوضع بقى: ' + APX[mode]; renderApexWriter(true); }
     catch (e) { $('apexWriterNote').textContent = e.message; }
+  });
+  // The full automatic transfer (11-11): its mode and today's orders — sent by itself, would be (trial), or why not.
+  const AUTO = { off: 'متوقف', trial: 'تجربة: بيسجل بس كان هيحوّل إيه', on: 'شغال: بيحوّل لوحده' };
+  const AUTO_D = { sent: 'اتحوّل آلي', would: 'كان هيتحوّل (تجربة)', wait: 'للموظف' };
+  async function renderAutoTransfer() {
+    const s = await api('/api/auto-transfer');
+    $('autoTransferStatus').replaceChildren(pill('الوضع: ' + AUTO[s.mode], s.mode === 'on' ? 'ok' : 'warn'), ' ',
+      h('span', { className: 'muted', textContent: 'النهارده: اتحوّل آلي ' + s.totals.sent + ' · كان هيتحوّل ' + s.totals.would + ' · للموظف ' + s.totals.wait }));
+    table('autoTransferTable', [
+      { title: 'الأوردر', get: r => (r.source === 'talabat' ? 'طلبات #' : 'الموقع #') + (r.code || r.ref) },
+      { title: 'وقت المراجعة', get: r => r.firstAt, show: r => t12(r.firstAt) },
+      { title: 'القرار', get: r => r.decision, show: r => pill(AUTO_D[r.decision] || r.decision, r.decision === 'wait' ? 'warn' : 'ok') },
+      { title: 'السبب / النتيجة', get: r => r.job ? (APX_STATE[r.job.state] || r.job.state) + (r.job.orderNo ? ' — Apex ' + r.job.orderNo : '') + (r.job.error ? ' — ' + r.job.error : '') : r.reasons || '' },
+    ], s.list, { empty: s.mode === 'off' ? 'التحويل الآلي متوقف' : 'لسه مفيش أوردرات النهارده' });
+  }
+  document.querySelectorAll('[data-auto-mode]').forEach(b => b.onclick = async () => {
+    const mode = b.dataset.autoMode;
+    if (mode === 'on' && !confirm('المرصد هيحوّل الأوردرات الأكيدة لوحده من غير موظف. راجعت يوم التجربة؟')) return;
+    try { await api('/api/auto-transfer', { method: 'POST', body: { mode, confirm: mode === 'on' ? 'ON' : undefined } }); $('autoTransferNote').textContent = 'الوضع بقى: ' + AUTO[mode]; renderAutoTransfer(); }
+    catch (e) { $('autoTransferNote').textContent = e.message; }
   });
   $('apexWriterKey').onclick = async () => {
     if (!confirm('مفتاح جديد هيوقف القديم. تكمل؟')) return;
