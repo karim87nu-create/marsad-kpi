@@ -129,6 +129,7 @@
   const SITE = window.MarsadSite({ api, h, $, table, kpi, pill, serverNow, state, showError, exportRows, canWrite: () => canWrite(), extensionCall: (...a) => extensionCall(...a), review: () => INS });
   const setRange = (from, to) => { $('day').value = from; $('dayTo').value = to; $('applyRange').click(); };
   const BOT = window.MarsadBot({ api, h, $, table, pill, state, canWrite: () => canWrite(), showError: x => showError(x) });
+  const ROSTER = window.MarsadRoster({ api, h, $, canWrite: () => canWrite(), showError: x => showError(x), cairoToday: () => cairoToday() });
   const KPI = window.MarsadKpi({ api, h, $, table, kpi, pill, state, exportSheets: (...a) => exportSheets(...a), setRange, cairoToday });
   INS = window.MarsadInsights({ api, h, $, table, kpi, pill, C, state, exportRows, canWrite: () => canWrite(), isAdmin: () => isAdmin(), showError, rerender: () => rerender(), OR, SITE });
 
@@ -877,7 +878,7 @@
   // Seven sections across the top; each has its own pages as tabs under it. One period (from–to) for every page that has one.
   const VIEWS = { now: ['الآن', null],
     day: ['الكول سنتر: اليوم', () => Promise.all([renderDay(), renderHours()])], team: ['أداء الموظفين', renderTeam], profile: ['ملف الموظف', renderProfile],
-    breaks: ['البريك والحضور ونهاية الشيفت', () => Promise.all([refreshRequests(), renderAttendance(), renderShifts()])], calls: ['المكالمات', renderCalls], missed: ['المكالمات الفائتة', renderMissed],
+    breaks: ['البريك والحضور ونهاية الشيفت', () => Promise.all([refreshRequests(), renderAttendance(), renderShifts()])], calls: ['المكالمات', renderCalls], missed: ['المكالمات الفائتة', renderMissed], roster: ['جدول مواعيد الموظفين', () => ROSTER.render()],
     branchesNow: ['الفروع الآن', null], transfer: ['تحويل الأوردرات: طلبات والموقع', () => Promise.all([renderPriceDiffs(), SITE.renderTalabat(), SITE.renderTransfer()])], entry: ['ضرب الأوردرات', () => OR.renderEntry()],
     sales: ['المبيعات', () => INS.renderSales()], branches: ['تقرير الفروع', () => Promise.all([renderClosures(), OR.renderBranches(), INS.renderBranch(), SITE.renderBranches()])],
     cancels: ['الإلغاءات', () => Promise.all([OR.renderCancels(), SITE.renderBranchTalabatCancels(), INS.renderCancelOwners()])],

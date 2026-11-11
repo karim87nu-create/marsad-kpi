@@ -210,6 +210,8 @@ CREATE INDEX IF NOT EXISTS audit_time ON audit(occurred_at);
 
 // Telegram tables live here too so a fresh database has everything.
 const EXTRA_SCHEMA = `
+CREATE TABLE IF NOT EXISTS roster (employee_id INTEGER NOT NULL, day TEXT NOT NULL, start TEXT, end TEXT, off INTEGER NOT NULL DEFAULT 0, set_by TEXT, set_at INTEGER, PRIMARY KEY(employee_id, day));
+CREATE INDEX IF NOT EXISTS roster_day ON roster(day);
 CREATE TABLE IF NOT EXISTS bot_cases (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, branch TEXT, chat_id TEXT, kind TEXT NOT NULL, needs TEXT NOT NULL, state TEXT NOT NULL, source TEXT, ref TEXT, code TEXT, text TEXT, from_name TEXT, msg_id INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, claimed_by TEXT, claimed_at INTEGER, outcome TEXT, outcome_note TEXT, done_by TEXT, done_at INTEGER, escalated_at INTEGER, parent_id INTEGER);
 CREATE INDEX IF NOT EXISTS bot_cases_open ON bot_cases(state, needs);
 CREATE INDEX IF NOT EXISTS bot_cases_day ON bot_cases(day);

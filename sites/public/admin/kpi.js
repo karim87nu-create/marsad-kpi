@@ -38,7 +38,8 @@ window.MarsadKpi = function MarsadKpi(ctx) {
   const score = list => { const t = list.map(([k, v]) => tone(k, v)).filter(Boolean); return t.length ? Math.round(t.filter(x => x === 'good').length / t.length * 100) : null; };
   const scorePill = s => s == null ? '—' : pill(s + '%', s >= 80 ? 'ok' : s >= 50 ? 'warn' : 'bad');
 
-  const empScore = e => score([['occupancy', e.occupancy], ['breakPerDay', e.breakPerDay], ['callsVsTeam', e.callsVsTeam]]);
+  const empScore = e => score([['occupancy', e.occupancy], ['breakPerDay', e.breakPerDay], ['callsVsTeam', e.callsVsTeam], ['avgAnswerWait', e.avgAnswerWait], ['conversionPct', e.orderCalls ? e.conversionPct : null],
+    ['fcrPct', e.fcrPct], ['missedMine', e.rosterDays || e.missedMine ? e.missedMine : null], ['adherencePct', e.adherencePct], ['lateDays', e.rosterDays ? e.lateDays : null]]);
   const brScore = b => score([['avgOut', b.avgOut], ['latePct', b.latePct], ['discountPct', b.discountPct], ['cancelPct', b.cancelPct]]);
 
   let empCols = [], brCols = [];
@@ -65,7 +66,13 @@ window.MarsadKpi = function MarsadKpi(ctx) {
       kpi('أوردرات الفروع', num(all.orders), 'info', pall.orders ? 'قبلها ' + pall.orders : ''),
       kpi('المبيعات', money(all.sales), 'info', pall.sales ? 'قبلها ' + money(pall.sales) : ''),
       card('avgOut', 'متوسط وقت الخروج', all.outN ? Math.round(all.out / all.outN * 10) / 10 : null, null, 'د', true),
-      card('discountPct', 'الخصومات من المبيعات', all.sales ? Math.round(all.disc / all.sales * 1000) / 10 : null, null, '%', true));
+      card('discountPct', 'الخصومات من المبيعات', all.sales ? Math.round(all.disc / all.sales * 1000) / 10 : null, null, '%', true),
+      // Linked (Karim 11-11): the call, the order and the customer by phone.
+      card('conversionPct', 'مكالمات الطلب اللي بقت أوردر', T.conversionPct, P.conversionPct, '%'),
+      card('fcrPct', 'الحل من أول مكالمة (FCR)', T.fcrPct, P.fcrPct, '%'),
+      kpi('فائتة كان حد متاح يلحقها', num(T.missedOwned), T.missedOwned ? 'warn' : 'info', T.missedCounted != null ? 'من ' + num(T.missedCounted) + ' فائتة' : ''),
+      kpi('مبيعات ضايعة (فائتة وماطلبش)', T.lost != null ? num(T.lost) + ' عميل' : '—', T.lost ? 'bad' : 'info', T.lostValue ? 'حوالي ' + money(T.lostValue) : ''));
+    if (T.linkedDays === 0) $('kpiTeamCards').append(h('p', { className: 'muted', textContent: 'ربط المكالمات بالأوردرات بيبدأ من أول يوم يبعت فيه جهاز الكاشير أرقام الأوردرات (بعد تحديث المرصد).' }));
     $('kpiTeamNote').textContent = T.complete === false ? 'سجل أرابيكس للفترة دي مش كامل، أرقام الكول سنتر ممكن تتغير.' : '';
 
     empCols = [
@@ -80,7 +87,18 @@ window.MarsadKpi = function MarsadKpi(ctx) {
       { title: 'مكالمات طويلة', get: e => e.longCalls, type: 'number' },
       { title: 'الانشغال', get: e => e.occupancy, show: e => cell('occupancy', e.occupancy, pe.get(e.id)?.occupancy, '%'), type: 'percent' },
       { title: 'البريك في اليوم (د)', get: e => e.breakPerDay, show: e => cell('breakPerDay', e.breakPerDay, pe.get(e.id)?.breakPerDay, 'د', true), type: 'number' },
-      { title: 'أيام بريك زيادة', get: e => e.overBreakDays, show: e => e.overBreakDays ? pill(String(e.overBreakDays), 'bad') : '0', type: 'number' }];
+      { title: 'أيام بريك زيادة', get: e => e.overBreakDays, show: e => e.overBreakDays ? pill(String(e.overBreakDays), 'bad') : '0', type: 'number' },
+      // Linked (Karim 11-11).
+      { title: 'متوسط انتظار العميل (ث)', get: e => e.avgAnswerWait, show: e => cell('avgAnswerWait', e.avgAnswerWait, pe.get(e.id)?.avgAnswerWait, 'ث', true), type: 'number' },
+      { title: 'بقت أوردر', get: e => e.conversionPct, show: e => h('span', {}, cell('conversionPct', e.conversionPct, pe.get(e.id)?.conversionPct, '%'), h('small', { className: 'muted', textContent: e.orderCalls ? ' (' + (e.converted || 0) + ' من ' + e.orderCalls + ')' : '' })), type: 'percent' },
+      { title: 'مبيعات مكالماته', get: e => e.revenue, show: e => money(e.revenue), type: 'number' },
+      { title: 'أوردرات ضربها', get: e => e.entered, type: 'number' },
+      { title: 'FCR', get: e => e.fcrPct, show: e => cell('fcrPct', e.fcrPct, pe.get(e.id)?.fcrPct, '%'), type: 'percent' },
+      { title: 'فائتة كان ممكن يلحقها', get: e => e.missedMine, show: e => e.missedMine ? h('span', { title: 'كان متاح: ' + (e.missedAvailable || 0) + ' · بريك زيادة: ' + (e.missedOverBreak || 0) + ' · مش موجود في شيفته: ' + (e.missedAway || 0) }, pill(String(e.missedMine), 'bad')) : '0', type: 'number' },
+      { title: 'الالتزام بالشيفت', get: e => e.adherencePct, show: e => cell('adherencePct', e.adherencePct, pe.get(e.id)?.adherencePct, '%'), type: 'percent' },
+      { title: 'تأخير', get: e => e.lateDays, show: e => e.lateDays ? pill(e.lateDays + ' يوم · ' + e.lateMinutes + ' د', 'bad') : (e.rosterDays ? '0' : '—'), type: 'number' },
+      { title: 'خروج بدري (د)', get: e => e.earlyMinutes, type: 'number' },
+      { title: 'غياب', get: e => e.absentDays, show: e => e.absentDays ? pill(String(e.absentDays), 'bad') : (e.rosterDays ? '0' : '—'), type: 'number' }];
     table('kpiEmployees', empCols, [...data.employees].sort((a, b) => (empScore(b) ?? -1) - (empScore(a) ?? -1) || b.calls - a.calls), { empty: 'مفيش موظفين اشتغلوا في الفترة دي' });
 
     brCols = [

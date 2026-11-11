@@ -31,7 +31,7 @@
     </div>
   </header>
   <div id="subbar">
-    <nav id="nav" aria-label="صفحات القسم"><div class="tabset" data-sec="calls" hidden><button type="button" data-view="day">اليوم</button><button type="button" data-view="team">الموظفين</button><button type="button" data-view="profile">ملف الموظف</button><button type="button" data-view="breaks">البريك والحضور<span class="badge" id="reqBadge" hidden></span></button><button type="button" data-view="calls">المكالمات</button><button type="button" data-view="missed">الفائتة</button></div><div class="tabset" data-sec="orders" hidden><button type="button" data-view="branchesNow">الفروع الآن<span class="badge" id="lateBadge" hidden></span></button><button type="button" data-view="transfer">تحويل الأوردرات</button><button type="button" data-view="entry">ضرب الأوردرات</button></div><div class="tabset" data-sec="reports" hidden><button type="button" data-view="sales">المبيعات</button><button type="button" data-view="branches">الفروع</button><button type="button" data-view="cancels">الإلغاءات</button></div><div class="tabset" data-sec="kpi" hidden><button type="button" data-view="kpi">الموظفين والفروع</button></div><div class="tabset" data-sec="followup" hidden><button type="button" data-view="followup">المتابعة والاستثناءات</button><button type="button" data-view="bot">بوت الفروع</button></div><div class="tabset" data-sec="settings" hidden><button type="button" data-view="people">الموظفين والمستخدمين</button><button type="button" data-view="messages">رسايل للموظفين</button><button type="button" data-view="telegram">تليجرام</button><button type="button" data-view="auto">التشغيل الآلي</button><button type="button" data-view="system">حالة النظام</button><button type="button" data-view="guide">طريقة الحساب</button></div></nav>
+    <nav id="nav" aria-label="صفحات القسم"><div class="tabset" data-sec="calls" hidden><button type="button" data-view="day">اليوم</button><button type="button" data-view="team">الموظفين</button><button type="button" data-view="profile">ملف الموظف</button><button type="button" data-view="breaks">البريك والحضور<span class="badge" id="reqBadge" hidden></span></button><button type="button" data-view="calls">المكالمات</button><button type="button" data-view="missed">الفائتة</button><button type="button" data-view="roster">جدول المواعيد</button></div><div class="tabset" data-sec="orders" hidden><button type="button" data-view="branchesNow">الفروع الآن<span class="badge" id="lateBadge" hidden></span></button><button type="button" data-view="transfer">تحويل الأوردرات</button><button type="button" data-view="entry">ضرب الأوردرات</button></div><div class="tabset" data-sec="reports" hidden><button type="button" data-view="sales">المبيعات</button><button type="button" data-view="branches">الفروع</button><button type="button" data-view="cancels">الإلغاءات</button></div><div class="tabset" data-sec="kpi" hidden><button type="button" data-view="kpi">الموظفين والفروع</button></div><div class="tabset" data-sec="followup" hidden><button type="button" data-view="followup">المتابعة والاستثناءات</button><button type="button" data-view="bot">بوت الفروع</button></div><div class="tabset" data-sec="settings" hidden><button type="button" data-view="people">الموظفين والمستخدمين</button><button type="button" data-view="messages">رسايل للموظفين</button><button type="button" data-view="telegram">تليجرام</button><button type="button" data-view="auto">التشغيل الآلي</button><button type="button" data-view="system">حالة النظام</button><button type="button" data-view="guide">طريقة الحساب</button></div></nav>
     <div id="dayPicker" class="period" hidden>
       <div class="presets"><button type="button" class="chip" data-range="today">النهارده</button><button type="button" class="chip" data-range="yesterday">امبارح</button><button type="button" class="chip" data-range="week">آخر 7 أيام</button><button type="button" class="chip" data-range="month">الشهر ده</button></div>
       <div class="dates"><button class="ghost small icon" id="dayPrev" title="اليوم اللي قبله" aria-label="اليوم اللي قبله"><svg class="ic" aria-hidden="true"><use href="#i-next"/></svg></button><label>من <input id="day" type="date"></label><label>إلى <input id="dayTo" type="date"></label><button class="ghost small icon" id="dayNext" title="اليوم اللي بعده" aria-label="اليوم اللي بعده"><svg class="ic" aria-hidden="true"><use href="#i-prev"/></svg></button><button class="small" id="applyRange">عرض</button><button class="ghost small" id="dayToday" hidden>النهارده</button></div>
@@ -209,11 +209,17 @@
       <div class="inline kpi-ranges"><span class="muted" id="kpiPeriod"></span><span class="grow"></span><button type="button" class="ghost small" id="kpiExport">تصدير Excel</button><button type="button" class="ghost small" id="kpiPrint">طباعة</button></div>
       <article class="panel"><h2>الكول سنتر والفروع</h2><div id="kpiTeamCards" class="cards"></div><p id="kpiTeamNote" class="note"></p></article>
       <article class="panel"><h2>محتاج متابعة</h2><ul id="kpiFlags" class="flags"></ul></article>
-      <article class="panel"><h2>الموظفين</h2><p class="muted">التقييم = نسبة الأهداف اللي اتحققت (الانشغال، البريك، المكالمات مقارنة بمتوسط الفريق). السهم = الفرق عن الفترة اللي قبلها.</p><div id="kpiEmployees"></div></article>
+      <article class="panel"><h2>الموظفين</h2><p class="muted">التقييم = نسبة الأهداف اللي اتحققت (الانشغال، البريك، المكالمات مقارنة بمتوسط الفريق، انتظار العميل، المكالمات اللي بقت أوردر، FCR، الفائتة اللي كان ممكن يلحقها، الالتزام بالشيفت، التأخير). «بقت أوردر» = مكالمة على طابور الطلب وبعدها أوردر هوت لاين بنفس الرقم في خلال 30 دقيقة. FCR = العميل ما اتصلش تاني في خلال 24 ساعة. «فائتة كان ممكن يلحقها» = عميل قفل وهو متاح، أو في بريك زيادة، أو مش موجود في شيفته. السهم = الفرق عن الفترة اللي قبلها.</p><div id="kpiEmployees"></div></article>
       <article class="panel"><h2>الفروع</h2><p class="muted">التقييم = نسبة الأهداف اللي اتحققت (وقت الخروج، المتأخر، الإلغاءات، الخصومات). الأرقام من Apex (جهاز الكاشير).</p><div id="kpiBranches"></div></article>
       <p class="muted" id="kpiTargets"></p>
     </section>
 
+    <section id="view-roster" class="view page" hidden>
+      <article class="panel"><h2>جدول مواعيد الموظفين <span class="muted" id="rosterWeek"></span></h2>
+        <p class="muted">المشرفين يكتبوا شيفت كل موظف للأسبوع: زي 16-24 أو 9:30-17 (لو الشيفت بيعدّي نص الليل اكتب النهاية عادي زي 18-2)، أو «إجازة». منه بيتحسب التأخير والخروج بدري والغياب والالتزام بالشيفت والفائتة وقت غياب الموظف.</p>
+        <div class="inline"><button type="button" class="ghost" id="rosterPrev">‹ الأسبوع اللي فات</button><button type="button" class="ghost" id="rosterNext">الأسبوع اللي جاي ›</button><button type="button" class="ghost" id="rosterCopy">انسخ الأسبوع اللي فات</button><button type="button" id="rosterSave">حفظ</button><span class="muted" id="rosterMsg"></span></div>
+        <div id="rosterTable" style="overflow:auto;margin-top:10px"></div></article>
+    </section>
     <section id="view-bot" class="view page" hidden>
       <article class="panel"><h2>مستني موافقة أو رد</h2><div id="botOpen"></div></article>
       <article class="panel"><h2>الفروع اللي البوت شغال معاها</h2><p class="muted">البوت بيرد في جروب الفرع على تليجرام. القايمة بتظهر لما الفرع يبعت /menu أو من زرار «ابعت القايمة للجروب».</p><div id="botBranches" class="inline"></div></article>
@@ -412,8 +418,9 @@
 <script src="orders.js?v=4"></script>
 <script src="site.js?v=11"></script>
 <script src="insights.js?v=2"></script>
-<script src="kpi.js?v=2"></script>
+<script src="kpi.js?v=3"></script>
 <script src="bot.js?v=1"></script>
-<script src="app.js?v=46"></script>
+<script src="roster.js?v=1"></script>
+<script src="app.js?v=47"></script>
 </body>
 </html>

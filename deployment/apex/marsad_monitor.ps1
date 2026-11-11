@@ -159,6 +159,18 @@ function ParseT($t, [datetime]$day){
   if ($d.Hour -lt $DayStartHour) { $r = $r.AddDays(1) }
   return $r
 }
+# Karim 11-11: the customer's number as a short one-way key (the same as the server's phKey in perf.js), so calls and
+# orders are linked without the number ever leaving this PC: the last 10 digits, SHA-256 of 'm1:' + them, first 16 hex.
+$script:Sha = [System.Security.Cryptography.SHA256]::Create()
+function PhKey([string]$raw){
+  $d = [regex]::Replace([string]$raw, '\D', '')
+  if ($d.StartsWith('0020')) { $d = $d.Substring(4) } elseif ($d.StartsWith('20') -and $d.Length -eq 12) { $d = $d.Substring(2) }
+  if ($d.StartsWith('0')) { $d = $d.Substring(1) }
+  if ($d.Length -lt 7) { return $null }
+  if ($d.Length -gt 10) { $d = $d.Substring($d.Length - 10) }
+  $h = $script:Sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes('m1:' + $d))
+  return (($h | ForEach-Object { $_.ToString('x2') }) -join '').Substring(0, 16)
+}
 function Mins($a, $b){ if ($a -eq $null -or $b -eq $null) { return $null } return [math]::Round(($b - $a).TotalMinutes, 0) }
 function IsoT($d){ if ($d -eq $null) { return $null } return ([DateTimeOffset][datetime]$d).ToString('yyyy-MM-ddTHH:mm:sszzz', $inv) }
 function R2($v){ if ($v -eq $null) { return 0 } return [math]::Round([double]$v, 2) }
@@ -1237,6 +1249,8 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
       cancels = $cancels.Count; cancelSales = SumOf $cancels 'Amt'
       discounts = SumOf $list 'Disc'; issues = $issues.Count
     }
+    # Every order of the day for linking calls to orders (Karim 11-11): [no, entry time, Apex user, kind, amount, branch, phone key, TransType].
+    book = @($list | ForEach-Object { ,@($_.No, (IsoT $_.Entry), (UName $_.User), $_.Kind, (R2 $_.Amt), (BName $_.Branch), (PhKey $_.Phone), $_.Trans) })
     branches = @($branchesOut); open = @($openList); staff = @($staff); hours = $hours
     cancels = @($cancelList); issues = @($issues); lateOut = @($lateOut); online = @($onlineList); sales = @($salesList); officer = $officerOut; tagColumns = $script:tagCols; details = $details; fixes = @(Get-Fixes $day $now); branchStatus = $script:branchStatus; users = @($script:Users.Values | Where-Object { $_ } | Sort-Object -Unique); alerts = @(@($pending) + $(if ($script:ServerFollow) { @($script:follow) } else { @() }))
   }

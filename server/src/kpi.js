@@ -15,6 +15,13 @@ const TARGETS = {
   latePct: { max: 10, label: 'خرجوا بعد 30 دقيقة', unit: '%' },
   discountPct: { max: 10, label: 'الخصومات من المبيعات', unit: '%' },
   cancelPct: { max: 5, label: 'الإلغاءات من الأوردرات', unit: '%' },
+  // Karim 11-11: the call, the order and the customer linked; the shift set by the supervisors.
+  conversionPct: { min: 40, label: 'المكالمات اللي بقت أوردر', unit: '%' },
+  fcrPct: { min: 85, label: 'الحل من أول مكالمة (FCR)', unit: '%' },
+  avgAnswerWait: { max: 10, label: 'متوسط انتظار العميل لحد الرد', unit: 'ث' },
+  missedMine: { max: 0, label: 'فائتة كان ممكن يلحقها', unit: '' },
+  adherencePct: { min: 90, label: 'الالتزام بالشيفت', unit: '%' },
+  lateDays: { max: 0, label: 'أيام تأخير', unit: '' },
 };
 
 const r1 = v => v == null || !Number.isFinite(v) ? null : Math.round(v * 10) / 10;
@@ -81,8 +88,17 @@ function setup(app) {
     const n = daysOf(from, to).length;
     const pTo = addDays(from, -1), pFrom = addDays(from, -n);
     const [cc, br, pcc, pbr] = await Promise.all([callCenter(from, to, ctx.now), branches(from, to), callCenter(pFrom, pTo, ctx.now).catch(() => null), branches(pFrom, pTo)]);
-    return { from, to, prev: { from: pFrom, to: pTo }, targets: TARGETS, team: cc.team, employees: cc.employees, branches: br,
-      before: { team: pcc?.team || null, employees: pcc?.employees || [], branches: pbr }, serverNow: iso(ctx.now) };
+    // The linked numbers (perf.js): the same employees, plus anyone on the shift table who did not work.
+    const [pf, ppf] = app.perfRange ? await Promise.all([app.perfRange(from, to, ctx.now).catch(() => null), app.perfRange(pFrom, pTo, ctx.now).catch(() => null)]) : [null, null];
+    const names = new Map((await db.prepare('SELECT id, name FROM employees').all()).map(e => [e.id, e.name]));
+    const merge = (list, p) => {
+      if (!p) return list;
+      const by = new Map(p.employees.map(e => [e.employeeId, e])), out = list.map(e => ({ ...e, ...(by.get(e.id) || {}) }));
+      for (const e of p.employees) if (!list.some(x => x.id === e.employeeId) && (e.rosterDays || e.missedMine)) out.push({ id: e.employeeId, name: names.get(e.employeeId) || '—', calls: 0, ...e });
+      return out;
+    };
+    return { from, to, prev: { from: pFrom, to: pTo }, targets: TARGETS, team: { ...cc.team, ...(pf?.team || {}) }, employees: merge(cc.employees, pf), branches: br,
+      before: { team: pcc?.team ? { ...pcc.team, ...(ppf?.team || {}) } : null, employees: merge(pcc?.employees || [], ppf), branches: pbr }, serverNow: iso(ctx.now) };
   });
 }
 
