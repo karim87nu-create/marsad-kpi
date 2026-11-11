@@ -139,7 +139,7 @@ main{max-width:1100px;margin:0 auto;padding:16px}
 </div>
 <div id="toast"></div>
 <script type="module">
-import { deliveryLabel, deliveryAddress, deliveryComment } from "./delivery-fields.js";
+import { deliveryLabel, deliveryAddress, splitDeliveryAddress, deliveryMark, deliveryComment } from "./delivery-fields.js";
 'use strict';
 const API = '';
 let token = null, data = null, filter = 'todo', source = '', choice = {}, picks = {}, branchPick = '';
@@ -402,7 +402,9 @@ function card(o) {
   fl.forEach((i, n) => { if (!p.items[n]) p.items[n] = firstPick(i); });
   const freeJob = !o.job || ['released', 'auto_failed', 'auto_preview'].includes(o.job.state), mineOrFree = freeJob || o.job.mine;
   const c = ticketCalc(o, fl, p);
-  const ad = addressParts(o.customer?.address, (data.locations || []).find(l => String(l.no) === String(p.loc))?.name || ''), cu = o.customer || {};
+  const cu = o.customer || {}, addressRaw = p.arabic?.address || cu.address, ad = addressParts(addressRaw, [
+    (data.locations || []).find(l => String(l.no) === String(p.loc))?.name, cu.talabatArea, cu.siteArea, cu.area
+  ]), addressLine = splitDeliveryAddress(ad.street), specialMark = deliveryMark(c.plat > 0 ? 'خصم طلبات ' + money(c.plat) : '', addressLine.extra);
   // Branch and area: the area decides the branch (Apex's own rule); the list shows the chosen branch's areas.
   let branchSel = '', areaSel = '', areaNote = '';
   if (auto) {
@@ -434,7 +436,8 @@ function card(o) {
       field('الاسم', '<b>' + esc(label) + '</b>' + (/[A-Za-z]{2,}/.test(cu.name || '') || cu.nameEn ? '<input data-arabic="name" placeholder="تعريب الاسم" title="' + esc(cu.nameEn ? 'العميل كتبه: ' + cu.nameEn + ' — صحّحه لو التعريب غلط، والمرصد هيتعلمه' : '') + '" value="' + esc(p.arabic?.name ?? (cu.nameEn ? cu.name : '')) + '">' : ''), label) +
       field('التليفون', cu.phone ? esc(cu.phone) : '', cu.phone) +
       (auto ? field('الفرع', branchSel, '') + field('المنطقة', areaSel, '', areaNote) : field('الفرع', esc(o.branch || ''), '')) +
-      field('العنوان', esc(ad.street || cu.address || ''), ad.street || cu.address, /[A-Za-z]{2,}/.test(cu.address || '') || cu.addressEn ? '<input data-arabic="address" placeholder="تعريب العنوان" title="' + esc(cu.addressEn ? 'العميل كتبه: ' + cu.addressEn + ' — صحّحه لو التعريب غلط، والمرصد هيتعلمه' : '') + '" value="' + esc(p.arabic?.address ?? (cu.addressEn ? cu.address : '')) + '">' : '') +
+      field('العنوان', esc(addressLine.main), addressLine.main, /[A-Za-z]{2,}/.test(cu.address || '') || cu.addressEn ? '<input data-arabic="address" placeholder="تعريب العنوان" title="' + esc(cu.addressEn ? 'العميل كتبه: ' + cu.addressEn + ' — صحّحه لو التعريب الغلط، والمرصد هيتعلمه' : '') + '" value="' + esc(p.arabic?.address ?? (cu.addressEn ? cu.address : '')) + '">' : '') +
+      (specialMark ? field('العلامة المميزة', esc(specialMark), specialMark) : addressLine.extra ? '<div class="warn">تكملة العنوان أطول من مساحة العلامة المميزة — اختصر العنوان قبل التسجيل</div>' : '') +
       (ad.floor || ad.flat ? field('الدور', esc(ad.floor), ad.floor) + field('الشقة', esc(ad.flat), ad.flat) : '') +
       (o.note ? field('ملاحظة الأوردر من المصدر', esc(o.note), o.note, '') : '') +
       (() => {
@@ -575,6 +578,7 @@ $('list').addEventListener('click', async e => {
   if (b.dataset.pay) { choice[key(o)] = b.dataset.pay; render(true); return; }
   if (b.dataset.act === 'auto') {
     const p = picks[key(o)] || {}, pay = choice[key(o)] || o.job?.payment || (o.payment === 'cash' || o.payment === 'paid' ? o.payment : null);
+    if (specialMark == null) { toast('تكملة العنوان أكبر من مساحة العلامة المميزة — اختصر العنوان قبل التسجيل'); return; }
     if (!pay) { toast('حدد الأول: كاش ولا مدفوع'); return; }
     if (!p.branch) { toast('اختار الفرع'); return; }
     if (!p.loc) { toast('اختار منطقة العميل'); return; }
@@ -630,6 +634,7 @@ $('list').addEventListener('click', async e => {
   }
   if (b.dataset.act) {
     const pay = choice[key(o)] || o.job?.payment || (o.payment === 'cash' || o.payment === 'paid' ? o.payment : null);
+    if (b.dataset.act === 'entered' && specialMark == null) { toast('تكملة العنوان أكبر من مساحة العلامة المميزة — اختصر العنوان قبل التسجيل'); return; }
     if (b.dataset.act === 'entered' && !pay) { toast('حدد الأول: كاش ولا مدفوع'); return; }
     if (b.dataset.act === 'entered' && o.discounts?.some(d => !d.who) && !confirm('فيه خصم مش واضح مين ممول له. متأكد إنك سجلته صح؟')) return;
     b.disabled = true;
