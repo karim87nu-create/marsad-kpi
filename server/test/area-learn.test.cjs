@@ -35,7 +35,7 @@ test('transfer: the Apex area chosen for a Talabat area is suggested for the nex
     assert.equal(r.status, 200, JSON.stringify(r.body));
     t.advance(9000);
     q = (await as('GET', '/api/transfer/queue?day=2026-10-22')).body;
-    assert.deepEqual(q.orders.find(o => o.ref === '3977900022').areaGuess, { no: 301, seen: 1 }, 'same area, an invisible mark more');
+    assert.deepEqual(q.orders.find(o => o.ref === '3977900022').areaGuess, { no: 301, seen: 1, share: 1 }, 'same area, an invisible mark more');
     assert.equal(q.orders.find(o => o.ref === '3977900023').areaGuess, undefined, 'another area');
   } finally { await t.close(); }
 });

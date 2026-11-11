@@ -27,6 +27,14 @@ test('website central panel: orders, items, money, branch and times reach the tr
     assert.equal(q.ref, '30824'); assert.equal(q.payment, 'cash'); assert.equal(q.target, 1615.5); assert.equal(q.branch, 'مدينة نصر'); assert.equal(q.note, 'من غير بصل');
     assert.equal(q.items.length, 2); assert.equal(q.items[0].name, 'طاجن لحمة بالبصل');
     assert.deepEqual(q.discounts.map(d => [d.amount, d.who]), [[200, 'restaurant']], 'the panel\'s adjustment is the restaurant\'s discount');
+    // Karim 11-11 «المناطق معروفه»: the area the customer chose on the website, taken like Talabat's.
+    assert.equal(q.customer.siteArea, 'النزهة الجديدة');
+    assert.equal(q.areaGuess, undefined, 'nothing learned yet');
+    const { normArabic } = require('../src/apex-customer-notes.js');
+    for (const r of ['a', 'b', 'c']) t.app.db.raw.prepare("INSERT INTO learned (kind, a, b, ref, value, at) VALUES ('transfer:area', ?, '28', ?, NULL, ?)").run(normArabic('النزهة الجديدة'), r, t0);
+    t.app.learn.forget?.(); t.advance(9000);
+    const q2 = (await t.call('GET', '/api/transfer/queue?day=2026-11-10', { headers: { 'x-transfer-session': sara } })).body.orders.find(o => o.source === 'site');
+    assert.deepEqual(q2.areaGuess, { no: 28, seen: 3, share: 1 }, 'what staff chose for Talabat orders of the same area');
     // Out with a driver, then gone from the central board → delivered.
     t.advance(20 * 60000); await push([order(3, { driver: { name: 'محمد' } })]);
     t.advance(25 * 60000); await push([{ ...order(1), id: 30825, number: '30825' }]);

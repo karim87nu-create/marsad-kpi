@@ -6,6 +6,7 @@ const { cairoToUtc } = require('../src/time.js');
 const { decide } = require('../src/autotransfer.js');
 const { APEX_PRICES } = require('../src/menu-seed.js');
 const { normArabic } = require('../src/apex-customer-notes.js');
+const { panelArea } = require('../src/site.js');
 
 const T = v => Math.round(v * 1.14 * 100) / 100;
 const KOFTA = '0108004', P = T(APEX_PRICES[KOFTA]);
@@ -47,7 +48,11 @@ test('auto transfer: decides only on certain orders and says why not', () => {
   assert.match(decide(base({ ...site, items: [{ qty: 1, name: 'كفتة', price: Math.round(P / 1.2), apex: [{ no: KOFTA }], addons: [] }] }), X).why.join(), /عن الموقع/);
   // A website delivery: the area of this customer's last automatic order to the same address.
   const sd = { source: 'site', fulfillment: 'delivery', areaGuess: undefined, subtotal: null, items: site.items };
-  assert.match(decide(base(sd), X).why.join(), /منطقة العميل/);
+  assert.match(decide(base(sd), X).why.join(), /لسه ما اتعلمتش/);
+  assert.match(decide(base({ ...sd, customer: { name: 'x', phone: '0100', address: 'y' } }), X).why.join(), /مش ظاهرة في الأوردر/);
+  // A learned area staff split between two Apex areas is not certain; an Apex area of exactly that name is.
+  assert.match(decide(base({ areaGuess: { no: 218, seen: 7, share: 0.6 } }), X).why.join(), /أكتر من منطقة/);
+  assert.equal(decide(base({ areaGuess: { no: 218, seen: 0, how: 'name' } }), X).ok, true);
   assert.equal(decide(base(sd), { ...X, customerArea: () => 218 }).ok, true);
 });
 
@@ -121,4 +126,13 @@ test('auto transfer: trial only records, on sends as «المرصد آلي», a 
     assert.match(alerts[0].text, /بطاقة العميل/);
     assert.equal(t.app.db.raw.prepare('SELECT COUNT(*) n FROM transfer_jobs WHERE ref = ? AND state = ?').get(ids[2], 'claimed').n, 1, 'the claim stays');
   } finally { await t.close(); }
+});
+
+// Karim 11-11 «المناطق معروفه»: the website's delivery area is read and taken like Talabat's.
+test('website area: from the panel\'s area field or the address\'s last part', () => {
+  assert.equal(panelArea({ customer: { address: '26 شارع أبو السعود، النزهة الجديدة' } }), 'النزهة الجديدة');
+  assert.equal(panelArea({ customer: { address: 'x', area: 'التجمع الخامس - البنفسج' } }), 'التجمع الخامس - البنفسج');
+  assert.equal(panelArea({ customer: { address: 'x' }, deliveryZone: { name: 'مدينتي' } }), 'مدينتي');
+  assert.equal(panelArea({ customer: { address: '5 شارع مكرم عبيد، الدور 3، شقة 9' } }), '');
+  assert.equal(panelArea({ customer: { address: 'شارع 9' } }), '');
 });

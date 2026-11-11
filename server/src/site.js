@@ -32,6 +32,18 @@ function readNotes(notes) {
 }
 
 // Apex branch number (transfer page) → the website panel's branch key (its «الفرع المسؤول» list, 11-11).
+// The delivery area the customer chose on the website (Karim 11-11 «المناطق معروفه»): the panel's own area field when
+// it has one, else the address's last part («26 شارع أبو السعود، النزهة الجديدة» → النزهة الجديدة).
+const textOf = v => typeof v === 'string' ? v : v && typeof v === 'object' ? String(v.name || v.title || v.label || v.nameAr || '') : '';
+export function panelArea(o) {
+  const c = o?.customer || {}, a = c.addressDetails || o?.address || {};
+  for (const v of [c.area, c.zone, c.region, c.district, c.neighborhood, a.area, a.zone, a.region, a.district, o?.area, o?.zone, o?.deliveryArea, o?.deliveryZone, o?.shippingZone, o?.region]) {
+    const t = textOf(v).trim(); if (t && t.length <= 80) return t;
+  }
+  const parts = String(c.address || '').split(/[،,]/).map(x => x.trim()).filter(Boolean);
+  const last = parts.length > 1 ? parts[parts.length - 1] : '';
+  return last && last.length <= 60 && !/^\d+$/.test(last) && !/(?:الدور|دور|شقة|شقه|floor|flat|apt)/i.test(last) ? last : '';
+}
 const SITE_BRANCH_OF_APEX = { 1: 'tagamoa-cloud', 2: 'nasr-city', 3: 'madinaty-craft-zone' };
 
 function setup(app) {
@@ -83,7 +95,7 @@ function setup(app) {
           const label = String(d?.label || '').trim(), value = String(d?.value || '').replace(/<[^>]*>/g, '').trim();
           return { name: (/^(?:الوزن|الحجم|الكمية|weight|size)$/i.test(label) ? value : (label ? label + ': ' : '') + value).slice(0, 160), price: 0 };
         }).filter(v => v.name) }));
-      const c = o.customer || {}, customer = customerOf({ name: String(c.name || '').slice(0, 120), phone: String(c.phone || '').slice(0, 30), address: String(c.address || '').slice(0, 300) });
+      const c = o.customer || {}, customer = customerOf({ name: String(c.name || '').slice(0, 120), phone: String(c.phone || '').slice(0, 30), address: String(c.address || '').slice(0, 300), area: panelArea(o) });
       const profile = { customer, items, payment: pay, panel: { number: String(o.number || id), stage, status, label, branchId: String(o.branchId || '').slice(0, 40) || null, fulfillment: String(o.fulfillment || '').slice(0, 20) || null } };
       writes.push(db.prepare("INSERT INTO match_profiles (source, ref, data) VALUES ('site', ?, ?) ON CONFLICT(source, ref) DO UPDATE SET data = excluded.data").bind(String(id), JSON.stringify(profile)));
       writes.push(db.prepare(`INSERT INTO site_orders (id, day, status, fulfillment, total, created_at, modified_at, notes_at, received_at, transfer_at, branch, out_at, driver, delivered_at, scheduled, transfers)

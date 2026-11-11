@@ -62,10 +62,13 @@ export function decide(o, x) {
   const pickup = o.source === 'site' && o.fulfillment === 'pickup';
   let loc = null, locHow = null;
   if (pickup) { loc = o.areaGuess?.how === 'pickup' ? Number(o.areaGuess.no) : null; locHow = 'pickup'; }
-  else if (o.areaGuess && Number(o.areaGuess.seen) >= 2) { loc = Number(o.areaGuess.no); locHow = 'learned'; }
+  // Learned: chosen 2+ times and at least 80% of the times (one area name staff put on two Apex areas is not certain).
+  else if (o.areaGuess && Number(o.areaGuess.seen) >= 2 && !(o.areaGuess.share < 0.8)) { loc = Number(o.areaGuess.no); locHow = 'learned'; }
+  else if (o.areaGuess?.how === 'name') { loc = Number(o.areaGuess.no); locHow = 'name'; }
   else { const c = x.customerArea?.(o); if (c) { loc = Number(c); locHow = 'customer'; } }
   let service = null;
-  if (!loc) why.push(o.source === 'talabat' ? 'منطقة طلبات دي لسه ما اتعلمتش على Apex' : 'منطقة العميل مش معروفة على Apex');
+  if (!loc) why.push(o.areaGuess && Number(o.areaGuess.seen) >= 2 ? 'المنطقة دي الموظفين اختاروا لها أكتر من منطقة على Apex'
+    : (o.customer?.talabatArea || o.customer?.siteArea) ? 'منطقة «' + (o.customer.talabatArea || o.customer.siteArea) + '» لسه ما اتعلمتش على Apex' : 'منطقة العميل مش ظاهرة في الأوردر');
   else if (!pickup) {
     const rows = (x.locations || []).filter(l => Number(l.no) === loc);
     const owners = [...new Set(rows.map(l => l.branch).filter(v => v != null).map(Number))];
@@ -100,7 +103,7 @@ export function decide(o, x) {
   }
   if (why.length) return { ok: false, why, quiet: why.every(w => w === 'لسه واصل' || w === 'أوردر مجدول' || w === 'تفاصيل الأوردر لسه ماوصلتش' || w === 'لسه ما اتقبلش على طلبات') };
   // The customer as the page shows it, without the English (the page's «what staff wrote over the Arabic» is not learned from this).
-  const { nameEn, addressEn, original, talabatArea, ...customer } = o.customer || {};
+  const { nameEn, addressEn, original, talabatArea, siteArea, ...customer } = o.customer || {};
   const body = { source: o.source, ref: String(o.ref), action: 'auto', payment: pay, branchNo: branch, locationNo: loc, code: o.code,
     items: lines.map(l => ({ itemNo: String(l.no), qty: l.qty, note: '' })),
     apexNote: card.status === 'found' ? { approved: false, note: card.text, custNo: card.custNo, items: [], resolution: null, gifts: null } : null,

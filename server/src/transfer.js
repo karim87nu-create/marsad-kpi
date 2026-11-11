@@ -222,13 +222,19 @@ function setup(app) {
     });
     // Karim 10-11: «طلبات بيكون فيها المنطقة ومع ذلك بيطلب تحديد المنطقة». Talabat names areas its own way
     // («الرحاب 1», «دار مصر الاندلس»); the Apex area the staff chose for the same Talabat area before is picked.
+    // Website orders too (Karim 11-11 «المناطق معروفه»): the area the customer chose on the website, by the same learning
+    // (the same words mean the same Apex area whichever platform wrote them), else an Apex area of exactly that name.
     const areaPairs = app.learn ? await areaLearned() : new Map();
+    const byName = new Map();
+    for (const l of base.locations || []) { const k = normArabic(String(l?.name || '')).slice(0, 120); if (k && Number.isInteger(l.no)) byName.set(k, (byName.get(k) || new Set()).add(l.no)); }
     for (let i = 0; i < list.length; i++) {
-      const o = list[i], k = !o.done && o.customer?.talabatArea && normArabic(o.customer.talabatArea).slice(0, 120);
-      const seen = k && areaPairs.get(k);
-      if (!seen?.size) continue;
-      const [no, n] = [...seen].sort((x, y) => y[1] - x[1])[0];
-      list[i] = { ...o, areaGuess: { no: Number(no), seen: n } };
+      const o = list[i], words = !o.done && !o.areaGuess && (o.customer?.talabatArea || o.customer?.siteArea), k = words && normArabic(words).slice(0, 120);
+      if (!k) continue;
+      const seen = areaPairs.get(k);
+      if (seen?.size) {
+        const top = [...seen].sort((x, y) => y[1] - x[1]), all = top.reduce((t, c) => t + c[1], 0);
+        list[i] = { ...o, areaGuess: { no: Number(top[0][0]), seen: top[0][1], share: Math.round(top[0][1] / all * 100) / 100 } };
+      } else if (byName.get(k)?.size === 1) list[i] = { ...o, areaGuess: { no: [...byName.get(k)][0], seen: 0, how: 'name' } };
     }
     // English typed by the customer (address, name, comments) shown and sent in Arabic (Karim 01-11); the original is kept.
     if (app.toArabic) {
@@ -455,7 +461,7 @@ function setup(app) {
         const discounts = pay ? [...(pay.coupons || []).map(c => ({ text: 'كوبون ' + c.code, amount: c.amount, who: 'restaurant' })),
           ...(!pay.coupons?.length && pay.discount ? [{ text: 'خصم الموقع', amount: pay.discount, who: 'restaurant' }] : [])] : [];
         list.push({ source: 'site', ref: String(o.id), code: String(p.panel?.number || o.id).replace(/\D/g, '') || String(o.id), at: iso(o.created_at), status: o.status, out: !!o.out_at || !!o.delivered_at || o.status === 'completed', branch: o.branch || null, apexBranch: apexBranchOf(o.branch), scheduled: !!o.scheduled,
-          customer: { name: p.customer?.name || null, phone: phoneOut(p.customer?.phoneDisplay || p.customer?.phone || p.customer?.mobileDisplay || p.customer?.mobile), address: p.customer?.address || null },
+          customer: { name: p.customer?.name || null, phone: phoneOut(p.customer?.phoneDisplay || p.customer?.phone || p.customer?.mobileDisplay || p.customer?.mobile), address: p.customer?.address || null, ...(p.customer?.area ? { siteArea: p.customer.area } : {}) },
           target: o.total ?? null, payment: sitePayment(pay), paymentTitle: pay?.title || null, note: pay?.note || null, discounts, fees: pay?.fees || [], shipping: pay?.shipping ?? null, total: o.total ?? null,
           fulfillment: o.fulfillment || null, ...(o.fulfillment === 'pickup' && PICKUP_AREAS[apexBranchOf(o.branch)] ? { areaGuess: { ...PICKUP_AREAS[apexBranchOf(o.branch)], how: 'pickup' } } : {}), items: (p.items || []).map(x => itemOut(x, 'site')), detailRead: !!p.items?.length,
           apex: a ? { no: a.no, sn: a.sn ?? null, user: a.user || null, how: a.how || null } : null, matching: sm.states?.get(o.id) || null, job: null });
@@ -712,9 +718,9 @@ function setup(app) {
         for (let i = 0; i < facts.length; i++) await app.learn.record('transfer:item', facts[i][0], facts[i][1], ref + ':' + i).catch(() => {});
       }
       // The Apex area chosen for this Talabat area teaches the next order of the same area (Karim 10-11).
-      if (source === 'talabat' && app.learn) {
-        const area = parseJson((await db.prepare("SELECT data FROM match_profiles WHERE source = 'talabat' AND ref = ?").get(ref))?.data, {})?.area;
-        if (area && normArabic(area)) await app.learn.record('transfer:area', normArabic(area).slice(0, 120), String(b.locationNo), ref).catch(() => {});
+      if (app.learn && !pickup) {
+        const d = parseJson((await db.prepare('SELECT data FROM match_profiles WHERE source = ? AND ref = ?').get(source, ref))?.data, {}), area = source === 'talabat' ? d?.area : d?.customer?.area;
+        if (area && normArabic(area)) await app.learn.record('transfer:area', normArabic(area).slice(0, 120), String(b.locationNo), source === 'talabat' ? ref : 'site:' + ref).catch(() => {});
       }
   }
   // The automatic transfer (11-11): the same checks and job as the page's button, as «المرصد آلي». Never over a claim.
