@@ -230,6 +230,8 @@ CREATE TABLE IF NOT EXISTS talabat_closures (id INTEGER PRIMARY KEY AUTOINCREMEN
 CREATE INDEX IF NOT EXISTS talabat_closures_day ON talabat_closures(day);
 CREATE TABLE IF NOT EXISTS telegram_log (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT UNIQUE NOT NULL, kind TEXT NOT NULL, employee_id INTEGER, text TEXT NOT NULL, created_at INTEGER NOT NULL, sent_at INTEGER, tries INTEGER NOT NULL DEFAULT 0, error TEXT);
 CREATE INDEX IF NOT EXISTS telegram_log_time ON telegram_log(created_at);
+CREATE INDEX IF NOT EXISTS telegram_log_kind_time ON telegram_log(kind, created_at);
+CREATE INDEX IF NOT EXISTS telegram_log_unsent ON telegram_log(created_at) WHERE sent_at IS NULL;
 CREATE INDEX IF NOT EXISTS events_employee_time ON events(employee_id, occurred_at);
 CREATE TABLE IF NOT EXISTS call_assignments (call_key TEXT PRIMARY KEY, employee_id INTEGER NOT NULL, decided_at INTEGER NOT NULL, decided_by TEXT, note TEXT);
 CREATE TABLE IF NOT EXISTS orders_days (day TEXT PRIMARY KEY, data TEXT NOT NULL, received_at INTEGER NOT NULL);

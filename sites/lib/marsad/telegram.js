@@ -225,7 +225,7 @@ function setup(app) {
     // ---- follow-ups: each problem we alerted about gets one reply when it is over ----
     // Only notifications actually sent are followed up; unknown/stale observations never prove a problem ended.
     const unresolved = await db.prepare(`SELECT l.* FROM telegram_log l WHERE (l.sent_at IS NOT NULL OR l.kind = 'gap') AND l.kind IN ('breakStart','breakOver','longCall','gap','breakRequest','queueNobody','logout','waitSla','source','notBound')
-      AND NOT EXISTS (SELECT 1 FROM telegram_log r WHERE r.key = 'resolved:' || l.key) ORDER BY l.id LIMIT 500`).all();
+      AND l.created_at > ? AND NOT EXISTS (SELECT 1 FROM telegram_log r WHERE r.key = 'resolved:' || l.key) ORDER BY l.id LIMIT 500`).all(now - 2 * 86400000);   // 11-11: the whole table was read every check (1 s); a follow-up after 2 days helps no one
     const closedGaps = new Set();
     const closedBreaks = new Set();   // employee:breakStartTime already followed up in this check
     for (const old of unresolved) {
