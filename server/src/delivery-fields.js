@@ -28,15 +28,19 @@ export function deliveryAddress(value, zone = '') {
 const PLAN = String.raw`(?:talabat\s*pro|(?<![\p{L}])t\s*-?\s*pro(?![\p{L}])|طلبات\s*برو|(?<![\p{L}])(?:تي\s*)?برو(?![\p{L}])|(?<![\p{L}])تبرو(?![\p{L}])|talabat\s*plus|طلبات\s*بلس)`;
 const FREE = String.raw`(?:free\s*delivery|توصيل\s*مجان[يى]|فر[يى]\s*د[يى]?ل[يى]فر[يى]|د[يى]?ل[يى]فر[يى]\s*مجان[يى])`;
 const PRO = new RegExp(String.raw`(?:عميل\s*)?${PLAN}(?:\s*(?:customer|member|subscriber|عميل|مشترك))?(?:\s*[-–:：|،,]?\s*${FREE})?|${FREE}(?:\s*(?:for|ل|لـ)\s*${PLAN}(?:\s*(?:customers?|عملاء))?)?`, 'giu');
+// The website writes where the order came from in its note («مصدر الطلب: موقع الدهان»): not for the kitchen (11-11).
+const SOURCE = /مصدر\s*الطلب\s*[:：]?\s*[^|،,\n]*/g;
 export function stripPlatformNotes(s) {
-  return String(s || '').replace(PRO, ' ').replace(/[\[(]\s*[.\s]*[\])]\s*\.?/g, ' ').replace(/^[\s.]+$/, '').replace(/\s*([|،,\-–:])\s*(?=[|،,]|$)/g, '').replace(/^[\s|،,\-–:]+|[\s|،,\-–:]+$/g, '').replace(/\s{2,}/g, ' ').trim();
+  return String(s || '').replace(SOURCE, ' ').replace(PRO, ' ').replace(/[\[(]\s*[.\s]*[\])]\s*\.?/g, ' ').replace(/^[\s.]+$/, '').replace(/\s*([|،,\-–:])\s*(?=[|،,]|$)/g, '').replace(/^[\s|،,\-–:]+|[\s|،,\-–:]+$/g, '').replace(/\s{2,}/g, ' ').trim();
 }
 export function deliveryComment(order) {
   const clean = s => String(s || '').split(/\s*[|\n]\s*/).map(stripPlatformNotes).filter(Boolean).join('، ').trim();
   const parts = [clean(order.note)];
   for (const [n, item] of (order.items || []).entries()) {
     const free = [...new Set((item.freeOptions || []).map(clean).filter(Boolean))];
-    if (free.length) parts.push((order.items.length > 1 ? 'الصنف ' + (n + 1) + ': ' : '') + free.join('، '));
+    // A website dish by its own (short) name, not «الصنف ١» (11-11: the Apex notes read «الصنف ١: خبز بلدي»).
+    const label = order.source === 'site' ? String(item.name || '').split(/\s+/).slice(0, 3).join(' ') : 'الصنف ' + (n + 1);
+    if (free.length) parts.push((order.items.length > 1 || order.source === 'site' ? label + ': ' : '') + free.join('، '));
     if (item.note) parts.push(clean(item.note));
   }
   return [...new Set(parts.filter(Boolean))].join(' | ');

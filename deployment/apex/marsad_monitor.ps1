@@ -912,6 +912,7 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
   }
 
   $script:cancelledByNote = New-Object System.Collections.ArrayList
+  if (-not $script:cxSeen) { $script:cxSeen = @{} }
   # ---- comments on the items (e.g. «بدون بصل»), per order ----
   $itemNotes = @{}
   try {
@@ -938,9 +939,21 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
   # alerts: no new warning, out of the branch's counts, and a warning already sent is closed quietly.
   $cancelWords = '(?i)ملغ[يىا]|اتلغ[يىا]|(?:^|[\s.،,])لغ[يى](?:$|[\s.،,])|اتكنسل|كنسل|cancel|(?:الغاء|إلغاء)\s*(?:ال)?(?:اوردر|أوردر|طلب)'
   foreach($o in $list){
-    if (-not $o.Open) { continue }
     $said = (@($o.Note) + @($o.Msgs)) -join ' '
-    if ($said -match $cancelWords) {
+    # «لا!!!!!غيييي»: letters only, a letter said many times once, then the words.
+    $plain = [regex]::Replace([regex]::Replace($said, '[^\p{L}\s]', ''), '(\p{L})\1+', '$1')
+    $isCx = ($said -match $cancelWords) -or ($plain -match $cancelWords) -or ($plain -match '(?<!\p{L})لاغ[يى](?!\p{L})')
+    # Karim 11-11: an order still on Apex 5 minutes after its comment said cancelled — the branch and online are told.
+    if ($isCx) {
+      if (-not $script:cxSeen.ContainsKey($o.No)) { $script:cxSeen[$o.No] = $now }
+      if (($now - $script:cxSeen[$o.No]).TotalMinutes -ge 5) {
+        $cxText = "🖥️ Apex | ❌ أوردر $($o.Disp) مكتوب في تعليقه إنه ملغي من 5 دقايق ولسه موجود على Apex — $(BName $o.Branch)`nالتعليق: $(($said -replace '\s+', ' ').Trim())`nالغوه على Apex دلوقتي"
+        Raise "cxnote:$($o.No)" 'ordersCancel' $cxText $false (BName $o.Branch) $o.Sn
+        Raise "cxnote-online:$($o.No)" 'ordersComment' $cxText $false (BName $o.Branch) $o.Sn
+      }
+    }
+    if (-not $o.Open) { continue }
+    if ($isCx) {
       $o.Open = $false
       foreach($wk in @("late:$($o.No)", "vlate:$($o.No)")) { if ($alerted.Contains($wk)) { [void]$script:cancelledByNote.Add([ordered]@{ key = $wk; kind = 'ordersLate'; follow = $true; status = 'deleted'; sn = $o.Sn; branch = (BName $o.Branch); text = "🖥️ Apex | أوردر $($o.Disp) اتكتب في تعليقه إنه ملغي" }) } }
     }

@@ -84,3 +84,10 @@ test('Talabat Pro note: «[tPro free delivery].» and its Arabic never reach the
   assert.equal(stripPlatformNotes('زود طحينة | [tPro free delivery].'), 'زود طحينة');
   assert.equal(stripPlatformNotes('برونزي من غير بصل'), 'برونزي من غير بصل');
 });
+
+test('website comment (Karim 11-11): no «مصدر الطلب: موقع الدهان», free choices by the dish\'s name', async () => {
+  const { deliveryComment } = await import('../src/delivery-fields.js');
+  const assert = require('node:assert/strict');
+  assert.equal(deliveryComment({ source: 'site', note: 'مصدر الطلب: موقع الدهان', items: [{ name: 'كفتة مشوية', freeOptions: ['خبز بلدي'] }] }), 'كفتة مشوية: خبز بلدي');
+  assert.equal(deliveryComment({ source: 'site', note: 'مصدر الطلب: موقع الدهان | من غير بصل', items: [] }), 'من غير بصل');
+});
