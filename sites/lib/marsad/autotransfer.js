@@ -85,6 +85,7 @@ export function decide(o, x) {
     const area = rows.find(l => Number(l.branch) === branch) || rows.find(l => l.branch == null) || rows[0];
     service = area && area.service != null && Number.isFinite(Number(area.service)) ? Number(area.service) : null;
     if (rows.length && service == null) why.push('المنطقة ملهاش سعر توصيل على Apex');
+    else if (rows.length && service === 0) why.push('رسوم المنطقة على Apex صفر — لازم الموظف يراجع منطقة العميل');
   } else service = 0;
   // Discounts: who pays each one (a paid order: all of it comes off on Apex anyway).
   if (pay !== 'paid' && (o.discounts || []).some(d => !d.who || d.unclear)) why.push('خصم مش واضح مين بيدفعه');
