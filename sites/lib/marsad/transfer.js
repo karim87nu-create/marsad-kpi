@@ -322,6 +322,13 @@ function setup(app) {
       throw error;
     }
   }
+  // Reconcile against the current Apex snapshot again at the moment an employee submits an action.
+  // The queue can be open in a stale browser tab after Apex has already received the order.
+  async function assertNotAlreadyOnApex(source, ref, day, now) {
+    const base = await baseFor(day, now);
+    const found = base?.list?.find(o => o.source === source && String(o.ref) === String(ref));
+    if (found?.apex) fail(409, 'الأوردر موجود على Apex بالفعل — مش هيتسجل مرة تانية');
+  }
   // Every push from the Talabat screens, the cashier PC or the website (and the page's own actions): the next read
   // is built in the background, so the page usually finds it ready.
   app.afterRequest((now, method, path) => {
@@ -740,6 +747,7 @@ function setup(app) {
     const source = b.source, ref = String(b.ref);
     const row = source === 'talabat' ? await db.prepare('SELECT day FROM talabat_orders WHERE id = ?').get(ref) : await db.prepare('SELECT day FROM site_orders WHERE id = ?').get(Number(ref));
     if (!row) fail(404, 'الأوردر مش موجود');
+    await assertNotAlreadyOnApex(source, ref, row.day, now);
     const cur = await db.prepare('SELECT * FROM transfer_jobs WHERE source = ? AND ref = ?').get(source, ref);
     if (cur && !(cur.state === 'claimed' && now - cur.at > CLAIM_MS)) fail(409, 'الأوردر مع ' + (cur.employee_name || 'حد'));
     const payment = ['cash', 'paid'].includes(b.payment) ? b.payment : null, note = b.note ? String(b.note).slice(0, 300) : null;
@@ -755,6 +763,7 @@ function setup(app) {
     if (!source || !/^\d{1,20}$/.test(ref)) fail(400, 'أوردر غير صحيح');
     const row = source === 'talabat' ? await db.prepare('SELECT day FROM talabat_orders WHERE id = ?').get(ref) : await db.prepare('SELECT day FROM site_orders WHERE id = ?').get(Number(ref));
     if (!row) fail(404, 'الأوردر مش موجود');
+    if (['claim', 'entered', 'auto'].includes(b.action)) await assertNotAlreadyOnApex(source, ref, row.day, ctx.now);
     const payment = ['cash', 'paid'].includes(b.payment) ? b.payment : null, note = b.note ? String(b.note).slice(0, 300) : null;
     const cur = await db.prepare('SELECT * FROM transfer_jobs WHERE source = ? AND ref = ?').get(source, ref);
     // Whose order it is: the one who claimed it (10 minutes), entered it, or sent it to the writer. A failed or preview-only
@@ -763,6 +772,7 @@ function setup(app) {
     const othersClaim = !free && cur.employee_id !== me.id;
     // Already on Apex or on its way there: nobody (the same employee included) sends or claims it again.
     if (cur && (/^auto_(?:sending|done)$/.test(cur.state) || (cur.state === 'auto_pending' && b.action !== 'release'))) fail(409, cur.state === 'auto_done' ? 'الأوردر اتسجل على Apex بالفعل (آلي)' : 'الأوردر بيتسجل على Apex دلوقتي');
+    if (cur?.state === 'entered') fail(409, 'الأوردر اتسجل بالفعل — مستني تأكيد ظهوره على Apex');
     if (b.action === 'claim') {
       if (othersClaim) fail(409, (cur.employee_name || 'حد تاني') + (cur.state === 'entered' ? ' سجله بالفعل' : ' شغال عليه دلوقتي'));
       // Atomic: only one claim wins even if two employees press at the same moment.
@@ -795,8 +805,6 @@ function setup(app) {
     const given = ctx.header('x-apex-writer'), hashes = [await setting('apex_writer_token_hash'), await setting('orders_token_hash')].filter(Boolean);
     if (!given || !hashes.includes(sha256(given))) fail(401, 'مفتاح كاتب Apex غير صحيح');
   };
-  app.apexWriterAuth = writer;
-
   // The on-premises read-only Apex login is the only source of customer-card notes.
   // Staff see these on the transfer page BEFORE they choose to submit an order.
   const profilePhone = (source, p) => deliveryPhone(source === 'talabat'
