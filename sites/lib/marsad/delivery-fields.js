@@ -8,7 +8,7 @@ export function deliveryPhone(value) {
 }
 export function deliveryLabel(name, source, payment, code) {
   const tag = String(code || '').replace(/\D/g, '').slice(0, 10);
-  const suffix = ' ' + (source === 'talabat' ? 'طلبات' : 'موقع') + '/' + (payment === 'paid' ? 'مدفوع' : payment === 'cash' ? 'كاش' : '؟') + (tag ? ' #' + tag : '');
+  const suffix = '/' + (source === 'talabat' ? 'طلبات' : 'موقع') + '/' + (payment === 'paid' ? 'مدفوع' : payment === 'cash' ? 'كاش' : '؟') + (tag ? '/#' + tag : '');
   const clean = String(name || 'عميل').replace(/#\s*\d+/g, '').replace(/\s+/g, ' ').trim() || 'عميل';
   return clean.slice(0, 50 - suffix.length).trim() + suffix;
 }
@@ -18,9 +18,35 @@ export function deliveryAddress(value, zone = '') {
     if (/^(?:الدور|الطابق|floor)/i.test(all)) floor = v.trim(); else flat = v.trim();
     return '';
   });
-  const key = s => s.trim().replace(/^(?:محافظة|governorate)\s+/i, '').toLowerCase();
-  const redundant = new Set(['مصر', 'egypt', 'القاهرة', 'cairo', 'الجيزة', 'giza', key(zone)]);
-  return { floor, flat, street: street.split(/[،,;؛\n—]+/).map(s => s.trim()).filter(s => s && !redundant.has(key(s))).join('، ') };
+  const key = s => s.trim().replace(/^(?:محافظة|governorate|منطقة|المنطقة|district|area)\s*[:：]?\s*/i, '')
+    .normalize('NFKD').replace(/[\u064b-\u065f\u0670\u0640]/g, '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').toLowerCase().replace(/\s+/g, ' ');
+  const areas = (Array.isArray(zone) ? zone : [zone]).map(s => String(s || '').trim()).filter(Boolean).sort((a, b) => b.length - a.length);
+  const redundant = new Set(['مصر', 'egypt', 'القاهرة', 'cairo', 'الجيزة', 'giza']);
+  const withoutArea = value => {
+    const words = String(value || '').trim().split(/\s+/).filter(Boolean);
+    for (const area of areas) {
+      const count = area.split(/\s+/).filter(Boolean).length;
+      if (count && key(words.slice(0, count).join(' ')) === key(area)) words.splice(0, count);
+      else if (count && key(words.slice(-count).join(' ')) === key(area)) words.splice(-count, count);
+    }
+    return words.join(' ');
+  };
+  return { floor, flat, street: street.split(/[،,;؛\n—]+/).map(withoutArea).filter(s => s && !redundant.has(key(s))).join('، ') };
+}
+export function splitDeliveryAddress(value, max = 52) {
+  const words = String(value || '').trim().split(/\s+/).filter(Boolean);
+  let main = '';
+  while (words.length) {
+    const next = words[0], size = Array.from(main ? main + ' ' + next : next).length;
+    if (main && size > max) break;
+    main = main ? main + ' ' + words.shift() : words.shift();
+  }
+  return { main, extra: words.join(' ') };
+}
+export function deliveryMark(sign, extra = '', max = 120) {
+  const base = String(sign || '').trim(), tail = String(extra || '').trim();
+  const value = [base, tail].filter(Boolean).join(base && tail ? '/' : '');
+  return Array.from(value).length <= max ? value : null;
 }
 // Talabat's own lines about the customer's plan («طلبات برو»، «توصيل مجاني»، «Talabat Pro customer») are not instructions
 // for the kitchen: they never go into the order's comment (Karim 11-11), wherever they sit in the note.
