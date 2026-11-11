@@ -1,3 +1,5 @@
+import { NAMES, translit } from './arabic-names.js';
+import { PHRASES } from './arabic-names-extra.js';
 // English → Arabic for what customers type in English (Karim 01-11): addresses, names, comments — the way an Egyptian
 // call-center employee would write them on Apex, not word for word. With an OpenAI key (config.openaiKey) the text is
 // translated by the model; without it (or until the model answers) a dictionary turns the common address words into
@@ -36,10 +38,10 @@ const WORDS = [
   // comments
   ['please', 'من فضلك'], ['call me', 'كلمني'], ['call', 'اتصل'], ['ring the bell', 'اضرب الجرس'], ["don't ring", 'متضربش الجرس'], ['no onion', 'من غير بصل'],
   ['without', 'من غير'], ['extra', 'زيادة'], ['spicy', 'حار'], ['no', 'من غير'], ['thanks', 'شكراً'], ['thank you', 'شكراً'],
+  ...PHRASES,
 ].sort((a, b) => b[0].length - a[0].length);
 const RX = WORDS.map(([en, ar]) => [new RegExp('(^|[^A-Za-z])' + en.replace(/ /g, '\\s+') + '(?=[^A-Za-z]|$)', 'gi'), ar]);
 
-import { NAMES, translit } from './arabic-names.js';
 
 // Words still in English after the dictionary: what staff taught (learned), a known name, else spelled out in Arabic
 // (Karim 11-11 «اي الصعب في تعريب الاسم والعنوان تلقائي»). Acronyms (AUC, CFC) and codes with digits (B12) stay.
@@ -54,12 +56,12 @@ function arabizeRest(s, learned) {
 
 function dictionary(text, learned) {
   let s = String(text).replace(/\bno\.?\s*(?=\d)/gi, 'رقم ');
-  // «Makram Ebeid Street» / «El-Nasr Road» → «شارع …» / «طريق …» (the name after the word, as in Arabic).
-  s = s.replace(/\b((?:(?:El|Al)[-\s])?[A-Z][A-Za-z']*(?:\s+[A-Z][A-Za-z']*){0,3})\s+(Street|St\.?|Road|Rd\.?|Axis)(?=[^A-Za-z]|$)/g,
-    (m, name, w) => ({ street: 'شارع', st: 'شارع', 'st.': 'شارع', road: 'طريق', rd: 'طريق', 'rd.': 'طريق', axis: 'محور' })[w.toLowerCase()] + ' ' + name);
-  s = s.replace(/\b(?:El|Al)[-\s](?=[A-Za-z])/g, 'ال');
-  for (const [rx, ar] of RX) s = s.replace(rx, (m, pre) => pre + ar);
-  s = arabizeRest(s, learned);
+  // Phrases and words first (longest first), so «El Banafseg» / «Ahmed El Zomor» are taken whole.
+  for (const [rx, ar] of RX) s = s.replace(rx, (m, pre, at, all) => pre + (all.slice(Math.max(0, at + pre.length - 2), at + pre.length) === 'ال' && ar.startsWith('ال') ? ar.slice(2) : ar));
+  s = s.replace(/\b(?:El|Al)[-\s](?=[A-Za-z])/gi, 'ال');
+  s = arabizeRest(s, learned).replace(/الال/g, 'ال');
+  // «مكرم عبيد شارع» / «… ش» → «شارع …» (the word before the name, as in Arabic), segment by segment.
+  s = s.split(/\s*[,،]\s*/).map(seg => { const m = seg.match(/^(.+?)\s+(شارع|ش|طريق|محور)$/); return m && !/^(?:شارع|طريق|محور)\s/.test(m[1]) ? (m[2] === 'ش' ? 'شارع' : m[2]) + ' ' + m[1] : seg; }).join('، ');
   return s.replace(/\s{2,}/g, ' ').replace(/\s+([،,])/g, '$1').trim();
 }
 

@@ -1,3 +1,4 @@
+import { NAMES_EXTRA } from './arabic-names-extra.js';
 // English spellings of Egyptian names and common address words → Arabic, the way the call center writes them
 // (Karim 11-11: names and addresses typed in English are written in Arabic on Apex automatically, free — no paid AI).
 // Keys are lower case; a word not here is spelled out by `translit` below, and what staff correct is learned
@@ -52,6 +53,9 @@ export const NAMES = {
   emara: 'عمارة', '3emara': 'عمارة', dor: 'الدور', door: 'الدور', sha2a: 'شقة', shaqa: 'شقة', shaa: 'شقة', midan: 'ميدان', maydan: 'ميدان', kobry: 'كوبري',
   gam3a: 'جامعة', gamea: 'جامع', masged: 'مسجد', kenisa: 'كنيسة', madrasa: 'مدرسة', bawaba: 'بوابة', bwaba: 'بوابة', makhbaz: 'مخبز', saydalia: 'صيدلية',
 };
+
+// The longer list (arabic-names-extra.js) adds to this one; a word here wins.
+for (const [k, v] of Object.entries(NAMES_EXTRA)) if (!(k in NAMES)) NAMES[k] = v;
 
 // What is left: spelled out letter by letter, Egyptian style («Bassiouny» → «باسيوني»). Not perfect, but always Arabic,
 // and staff can correct it on the transfer page (the correction is learned).

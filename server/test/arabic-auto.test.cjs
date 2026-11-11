@@ -15,7 +15,7 @@ test('English names and addresses come out in Arabic, and a correction is learne
     const [addr] = await ar('Building 12, Banafseg 5, in front of the mosque');
     assert.ok(!/[A-Za-z]{2,}/.test(addr), addr);
     assert.match(addr, /عمارة 12/); assert.match(addr, /البنفسج 5/); assert.match(addr, /أمام/);
-    assert.deepEqual(await ar('Villa B12, AUC'), ['فيلا B12, AUC'], 'codes and acronyms stay');
+    assert.deepEqual(await ar('Villa B12, AUC'), ['فيلا B12، AUC'], 'codes and acronyms stay');
     // Staff write it better: the whole text and each word are kept.
     await t.app.learnArabic('Hamdan Kassem', 'حمدان قاسم');
     assert.deepEqual(await ar('Hamdan Kassem'), ['حمدان قاسم']);
