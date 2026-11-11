@@ -1,7 +1,7 @@
 // مؤشرات الأداء (Karim 01-11): one place with clear numbers for each employee and each branch, against a target and
 // against the same length of time just before (yesterday for a day, the week before for a week). Read-only: built from
 // what the other pages already use (the call center day/range, and the Apex snapshot the cashier PC sends each day).
-import { addDays, businessDay, validDate, iso } from './time.js';
+import { addDays, businessDay, validDate, iso, dayWindow as dayWindowOf } from './time.js';
 import { parseJson } from './order-match.js';
 
 // Targets: what «good» is. Kept here so every page judges the same way.
@@ -22,6 +22,16 @@ const TARGETS = {
   missedMine: { max: 0, label: 'فائتة كان ممكن يلحقها', unit: '' },
   adherencePct: { min: 90, label: 'الالتزام بالشيفت', unit: '%' },
   lateDays: { max: 0, label: 'أيام تأخير', unit: '' },
+  qaScore: { min: 85, label: 'درجة الجودة', unit: '%' },
+  // Supervisors (Karim 11-11).
+  approvalMin: { max: 5, label: 'وقت الرد على الموافقات', unit: 'د' },
+  reviewMin: { max: 15, label: 'وقت الرد على رسايل الفروع', unit: 'د' },
+  breakReplyMin: { max: 2, label: 'وقت الرد على طلبات البريك', unit: 'د' },
+  qaDone: { min: 10, label: 'تقييمات جودة في الأسبوع', unit: '' },
+  // Branches, from Talabat, the website and the bot.
+  closedHours: { max: 1, label: 'ساعات القفل على طلبات في اليوم', unit: 'س' },
+  siteOutMin: { max: 30, label: 'أوردر الموقع من التحويل للخروج', unit: 'د' },
+  talabatCancelPct: { max: 3, label: 'إلغاءات طلبات', unit: '%' },
 };
 
 const r1 = v => v == null || !Number.isFinite(v) ? null : Math.round(v * 10) / 10;
@@ -79,12 +89,77 @@ function setup(app) {
     return { team, employees, days };
   }
 
+  // Supervisors: how fast they answer what waits for them, and the quality reviews they did (admin accounts by name).
+  async function supervisors(from, to) {
+    const w1 = dayWindowOf(from).start, w2 = dayWindowOf(to).end;
+    const by = new Map(), S = name => by.get(name) || by.set(name, { name, approvals: 0, approvalMs: 0, reviews: 0, reviewMs: 0, breaks: 0, breakMs: 0, qaDone: 0, shiftDecisions: 0 }).get(name);
+    const safe = async q => { try { return await q; } catch { return []; } };
+    for (const r of await safe(db.prepare("SELECT needs, done_by, created_at, done_at FROM bot_cases WHERE needs IN ('approval','review') AND state = 'done' AND done_by IS NOT NULL AND done_at BETWEEN ? AND ?").all(w1, w2))) {
+      const s = S(r.done_by); if (r.needs === 'approval') { s.approvals++; s.approvalMs += r.done_at - r.created_at; } else { s.reviews++; s.reviewMs += r.done_at - r.created_at; }
+    }
+    for (const r of await safe(db.prepare("SELECT decided_by, created_at, decided_at FROM break_requests WHERE decided_by IS NOT NULL AND decided_at BETWEEN ? AND ?").all(w1, w2))) { const s = S(r.decided_by); s.breaks++; s.breakMs += r.decided_at - r.created_at; }
+    for (const r of await safe(db.prepare("SELECT decided_by, COUNT(*) n FROM shift_decisions WHERE decided_at BETWEEN ? AND ? GROUP BY decided_by").all(w1, w2))) if (r.decided_by) S(r.decided_by).shiftDecisions += r.n;
+    const qa = app.qaRange ? await app.qaRange(from, to) : null;
+    if (qa) for (const [name, n] of qa.supervisors) S(name).qaDone += n;
+    const weeks = Math.max(1, daysOf(from, to).length / 7);
+    return [...by.values()].map(s => ({ name: s.name, approvals: s.approvals, approvalMin: s.approvals ? r1(s.approvalMs / s.approvals / 60000) : null, reviews: s.reviews, reviewMin: s.reviews ? r1(s.reviewMs / s.reviews / 60000) : null,
+      breaks: s.breaks, breakReplyMin: s.breaks ? r1(s.breakMs / s.breaks / 60000) : null, qaDone: s.qaDone, qaPerWeek: r1(s.qaDone / weeks), shiftDecisions: s.shiftDecisions })).sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+  }
+  // Branches: Talabat closures and cancellations, website orders from transfer to out, and what they told the bot.
+  const bkey = x => String(x || '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/^\s*(فرع|الدهان)[\s,،-]*/g, '').trim();
+  const sameBranch = (a, b) => { const x = bkey(a), y = bkey(b); if (!x || !y) return false; return x === y || x.includes(y) || y.includes(x) || x.split(/[\s,،-]+/).some(w => w.length > 3 && y.includes(w)); };
+  async function branchExtras(from, to, names) {
+    const safe = async q => { try { return await q; } catch { return []; } };
+    const out = new Map(names.map(n => [n, { closedMinutes: 0, closures: 0, talabatOrders: 0, talabatCancels: 0, siteOut: 0, siteOutN: 0, itemOut: 0, botRequests: 0 }]));
+    const find = name => names.find(n => sameBranch(n, name));
+    const w2 = dayWindowOf(to).end;
+    for (const r of await safe(db.prepare('SELECT branch, name, started_at, ended_at FROM talabat_closures WHERE day BETWEEN ? AND ?').all(from, to))) {
+      const n = find(r.branch || r.name); if (!n) continue; const o = out.get(n); o.closures++; o.closedMinutes += Math.max(0, (Math.min(r.ended_at || w2, w2) - r.started_at) / 60000);
+    }
+    for (const r of await safe(db.prepare("SELECT store, UPPER(COALESCE(status,'')) st, COUNT(*) n FROM talabat_orders WHERE day BETWEEN ? AND ? GROUP BY store, st").all(from, to))) {
+      const n = find(r.store); if (!n) continue; const o = out.get(n); o.talabatOrders += r.n; if (/CANCEL|REJECT/.test(r.st)) o.talabatCancels += r.n;
+    }
+    for (const r of await safe(db.prepare("SELECT branch, transfer_at, out_at FROM site_orders WHERE day BETWEEN ? AND ? AND transfer_at IS NOT NULL AND out_at IS NOT NULL AND out_at > transfer_at").all(from, to))) {
+      const n = find(r.branch); if (!n) continue; const o = out.get(n); o.siteOut += (r.out_at - r.transfer_at) / 60000; o.siteOutN++;
+    }
+    for (const r of await safe(db.prepare('SELECT branch, kind, COUNT(*) n FROM bot_cases WHERE day BETWEEN ? AND ? AND parent_id IS NULL GROUP BY branch, kind').all(from, to))) {
+      const n = find(r.branch); if (!n) continue; const o = out.get(n); o.botRequests += r.n; if (r.kind === 'item_out') o.itemOut += r.n;
+    }
+    const days = Math.max(1, daysOf(from, to).length);
+    return new Map([...out].map(([n, o]) => [n, { closedHours: r1(o.closedMinutes / 60 / days), closures: o.closures, talabatCancelPct: o.talabatOrders ? r1(o.talabatCancels / o.talabatOrders * 100) : null, talabatCancels: o.talabatCancels,
+      siteOutMin: o.siteOutN ? r1(o.siteOut / o.siteOutN) : null, siteOrders: o.siteOutN, itemOut: o.itemOut, botRequests: o.botRequests }]));
+  }
+
   app.route('GET', '/api/kpi', async ctx => {
     await app.requireAdmin(ctx);
     const today = businessDay(ctx.now);
     const to = validDate(String(ctx.query.to || '')) ? ctx.query.to : today;
     const from = validDate(String(ctx.query.from || '')) ? ctx.query.from : to;
     if (from > to || to > today) fail(400, 'اختار فترة صحيحة');
+    return build(from, to, ctx);
+  });
+
+  // Karim 11-11 «يظهر للموظفين عادي»: each employee sees their own numbers and where they stand, on the transfer page.
+  const good = (k, v) => { const t = TARGETS[k]; if (!t || v == null) return null; return !(t.max != null && v > t.max) && !(t.min != null && v < t.min); };
+  const empScore = e => { const t = [['occupancy', e.occupancy], ['breakPerDay', e.breakPerDay], ['callsVsTeam', e.callsVsTeam], ['avgAnswerWait', e.avgAnswerWait], ['conversionPct', e.orderCalls ? e.conversionPct : null],
+    ['fcrPct', e.fcrPct], ['missedMine', e.rosterDays || e.missedMine ? e.missedMine : null], ['adherencePct', e.adherencePct], ['lateDays', e.rosterDays ? e.lateDays : null], ['qaScore', e.qaCount ? e.qaScore : null]].map(([k, v]) => good(k, v)).filter(x => x != null);
+    return t.length ? Math.round(t.filter(Boolean).length / t.length * 100) : null; };
+  app.route('GET', '/api/me/kpi', async ctx => {
+    const me = await app.transferWho(ctx);
+    if (!me.staff) fail(400, 'الصفحة دي للموظف');
+    const today = businessDay(ctx.now), range = String(ctx.query.range || 'week');
+    const from = range === 'day' ? today : range === 'month' ? today.slice(0, 8) + '01' : addDays(today, -6);
+    const d = await build(from, today, ctx);
+    const avg = (() => { const w = d.employees.filter(e => e.callsPerDay != null); return w.length ? w.reduce((n, e) => n + e.callsPerDay, 0) / w.length : null; })();
+    for (const e of d.employees) { e.callsVsTeam = avg && e.callsPerDay != null ? Math.round(e.callsPerDay / avg * 100) : null; e.score = empScore(e); }
+    const ranked = d.employees.filter(e => e.score != null).sort((a, b) => b.score - a.score || (b.calls || 0) - (a.calls || 0));
+    const mine = d.employees.find(e => e.id === me.id) || null, pmine = d.before.employees.find(e => e.id === me.id) || null;
+    let qa = []; try { qa = await db.prepare('SELECT call_at, total, critical, notes, evaluator, created_at FROM qa_evals WHERE employee_id = ? AND day BETWEEN ? AND ? ORDER BY id DESC LIMIT 20').all(me.id, from, today); } catch {}
+    return { from, to: today, range, targets: TARGETS, me: mine, before: pmine, rank: mine ? ranked.findIndex(e => e.id === me.id) + 1 || null : null, of: ranked.length,
+      board: ranked.map((e, i) => ({ rank: i + 1, name: e.name, score: e.score, me: e.id === me.id })), qa: qa.map(q => ({ callAt: iso(q.call_at), total: q.total, critical: q.critical, notes: q.notes, by: q.evaluator })) };
+  });
+
+  async function build(from, to, ctx) {
     const n = daysOf(from, to).length;
     const pTo = addDays(from, -1), pFrom = addDays(from, -n);
     const [cc, br, pcc, pbr] = await Promise.all([callCenter(from, to, ctx.now), branches(from, to), callCenter(pFrom, pTo, ctx.now).catch(() => null), branches(pFrom, pTo)]);
@@ -97,9 +172,19 @@ function setup(app) {
       for (const e of p.employees) if (!list.some(x => x.id === e.employeeId) && (e.rosterDays || e.missedMine)) out.push({ id: e.employeeId, name: names.get(e.employeeId) || '—', calls: 0, ...e });
       return out;
     };
-    return { from, to, prev: { from: pFrom, to: pTo }, targets: TARGETS, team: { ...cc.team, ...(pf?.team || {}) }, employees: merge(cc.employees, pf), branches: br,
-      before: { team: pcc?.team ? { ...pcc.team, ...(ppf?.team || {}) } : null, employees: merge(pcc?.employees || [], ppf), branches: pbr }, serverNow: iso(ctx.now) };
-  });
+    const [qa, pqa] = app.qaRange ? await Promise.all([app.qaRange(from, to), app.qaRange(pFrom, pTo)]) : [null, null];
+    const withQa = (list, q) => {
+      if (!q) return list;
+      const out = list.map(e => ({ ...e, ...(q.employees.get(e.id) || {}) }));
+      for (const [id, x] of q.employees) if (!out.some(e => e.id === id)) out.push({ id, name: names.get(id) || '—', calls: 0, ...x });
+      return out;
+    };
+    const [bx, pbx] = await Promise.all([branchExtras(from, to, br.map(b => b.name)), branchExtras(pFrom, pTo, pbr.map(b => b.name))]);
+    const withBx = (list, x) => list.map(b => ({ ...b, ...(x.get(b.name) || {}) }));
+    const [sup, psup] = await Promise.all([supervisors(from, to), supervisors(pFrom, pTo)]);
+    return { from, to, prev: { from: pFrom, to: pTo }, targets: TARGETS, team: { ...cc.team, ...(pf?.team || {}) }, employees: withQa(merge(cc.employees, pf), qa), branches: withBx(br, bx), supervisors: sup,
+      before: { team: pcc?.team ? { ...pcc.team, ...(ppf?.team || {}) } : null, employees: withQa(merge(pcc?.employees || [], ppf), pqa), branches: withBx(pbr, pbx), supervisors: psup }, serverNow: iso(ctx.now) };
+  }
 }
 
 export { setup, TARGETS };

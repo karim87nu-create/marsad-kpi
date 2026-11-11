@@ -25,9 +25,8 @@ test('linked KPIs: conversion, FCR, answer wait, missed calls one could have tak
     // The Apex day (sent by the cashier PC): a hotline order from the customer Sara spoke to, 10 minutes after.
     const P1 = '01011112222', P2 = '01233334444', P3 = '01155556666';
     t.app.db.raw.prepare('INSERT INTO orders_days (day, data, received_at) VALUES (?,?,?)').run(day, JSON.stringify({ v: 1, day, book: [
-      [5001, new Date(T(20, 15)).toISOString(), 'sara_apex', 'Hotline', 320, 'مدينة نصر', phKey(P1), 'Delivery'],
-      [5002, new Date(T(20, 40)).toISOString(), 'sara_apex', 'Hotline', 150, 'التجمع', phKey('999'), 'Takeaway'],
-    ] }), T(23));
+      [5001, Math.floor(T(20, 15) / 1000), 320, phKey(P1)],
+    ], staff: [{ name: 'sara_apex', orders: 2 }] }), T(23));
     t.app.db.raw.prepare('INSERT INTO apex_names (apex_name, employee_id, set_at) VALUES (?,?,?)').run('sara_apex', sara.id, T(12));
     const iso = ms => new Date(ms).toISOString();
     const call = (employeeId, phone, a, b, queue = '601') => ({ employeeId, phone, queue, callType: 'incoming', complete: true, startedAt: iso(a), endedAt: iso(b), durationSeconds: (b - a) / 1000, outsideHours: false });
@@ -58,5 +57,31 @@ test('linked KPIs: conversion, FCR, answer wait, missed calls one could have tak
     const k = (await admin('GET', '/api/kpi?from=' + day + '&to=' + day)).body;
     assert.equal(k.targets.conversionPct.min, 40);
     assert.ok(k.employees.some(e => e.id === ali.id && e.absentDays === 1), 'on the table and absent: listed');
+  } finally { await t.close(); }
+});
+
+test('quality review: the week\'s calls (flagged first), the form, the score in the KPI page, calibration, supervisors', async () => {
+  const day = '2026-11-11', T = (h, m = 0) => cairoToUtc(2026, 11, 11, h, m);
+  const t = await start({ at: T(23, 30) });
+  try {
+    const admin = await t.admin();
+    const sara = await t.employee(admin, { name: 'سارة', code: 'E1', pin: '1111' });
+    const calls = Array.from({ length: 8 }, (_, i) => ({ key: day + '|' + sara.id + '|' + T(20, i), employeeId: sara.id, at: T(20, i), durationSeconds: 60 + i, queue: '601', phoneEnd: '22' + i, flags: i === 6 ? ['repeat', 'wentToPlatform'] : i === 3 ? ['complaint'] : [] }));
+    t.app.perfDay = async d => ({ calls: d === day ? calls : [] });
+    const q = (await admin('GET', '/api/qa?week=' + day)).body;
+    assert.equal(q.week, '2026-11-07');
+    assert.equal(q.calls.length, 5, 'five a week per employee');
+    assert.deepEqual(q.calls[0].flagLabels, ['العميل اتصل تاني', 'ماطلبش مننا وطلب من طلبات أو الموقع'], 'the most flagged first');
+    assert.equal(q.calls[1].flagLabels[0], 'شكوى');
+    const marks = Object.fromEntries(q.form.map(f => [f.key, 'good'])); marks.upsell = 'bad'; marks.problem = 'na';
+    assert.equal((await admin('POST', '/api/qa', { callKey: q.calls[0].key, marks: { opening: 'good' } })).status, 400, 'every line of the form');
+    const r = await admin('POST', '/api/qa', { callKey: q.calls[0].key, marks, notes: 'اقترح إضافات' });
+    assert.equal(r.body.total, 88.9, 'upsell missed (10 of 90 that apply)');
+    assert.equal((await admin('POST', '/api/qa', { callKey: q.calls[1].key, marks, critical: 'rude' })).body.total, 0, 'a critical error makes it zero');
+    const k = (await admin('GET', '/api/kpi?from=' + day + '&to=' + day)).body;
+    const e = k.employees.find(x => x.id === sara.id);
+    assert.equal(e.qaCount, 2); assert.equal(e.qaScore, 44.5);
+    assert.equal(k.supervisors.find(s => s.name === 'الإدارة').qaDone, 2);
+    assert.equal((await admin('GET', '/api/qa?week=' + day)).body.calls[0].evaluated, 1);
   } finally { await t.close(); }
 });

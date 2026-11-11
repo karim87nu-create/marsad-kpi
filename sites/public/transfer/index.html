@@ -40,6 +40,12 @@ main{max-width:1100px;margin:0 auto;padding:16px}
 .box{background:#0b1729;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
 #calls{background:#2a1d05;border:1px solid var(--warn);border-radius:14px;padding:12px;margin-bottom:14px;display:grid;gap:10px}
 #calls h2{margin:0;font-size:16px;color:var(--warn)}
+#mine{background:var(--panel);border:1px solid var(--accent);border-radius:14px;padding:12px;margin-bottom:14px;display:grid;gap:10px}
+#mine .k{background:#0b1729;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+#mine .k b{display:block;font-size:20px}
+#mine .k.good{border-color:var(--ok)} #mine .k.bad{border-color:var(--bad)}
+#mine .k small{color:var(--muted)}
+#mineBoard .row{display:flex;gap:8px;padding:3px 8px;border-radius:8px} #mineBoard .row.me{background:var(--panel2);color:var(--accent);font-weight:700}
 .call{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:grid;gap:8px}
 .call .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .call .why{white-space:pre-wrap;background:#0b1729;border-radius:8px;padding:6px 10px}
@@ -107,6 +113,7 @@ main{max-width:1100px;margin:0 auto;padding:16px}
     <h1>تحويل أوردرات طلبات والموقع</h1>
     <span id="auto" class="pill off" title="الصفحة دي مش بتكتب على Apex">جاري تحميل حالة التحويل…</span>
     <span id="me" class="pill"></span>
+    <button class="ghost" id="mineBtn">📊 أرقامي</button>
     <button class="ghost" id="out">خروج</button>
   </header>
   <main>
@@ -121,6 +128,10 @@ main{max-width:1100px;margin:0 auto;padding:16px}
       <span id="branchBar" class="bar" style="margin:0"></span>
       <span class="count" id="count"></span>
     </div>
+    <section id="mine" hidden aria-label="أرقامي">
+      <div class="bar"><b>أرقامي</b><button data-mine="day" class="ghost">النهارده</button><button data-mine="week" class="on">آخر 7 أيام</button><button data-mine="month" class="ghost">الشهر ده</button><span class="count" id="mineRank"></span></div>
+      <div id="mineCards" class="grid"></div><div id="mineBoard"></div><div id="mineQa"></div>
+    </section>
     <section id="calls" hidden aria-label="مكالمات مطلوبة من الفروع"></section>
     <p id="queueStatus" role="status">جاري تحميل الطلبات…</p>
     <div id="list"></div>
@@ -741,6 +752,23 @@ $('calls').addEventListener('click', async e => {
     $('calls').dataset.key = ''; document.activeElement?.blur?.(); await loadCalls();
   } catch (err) { toast(err.message); e.target.disabled = false; }
 });
+// أرقامي (Karim 11-11): the employee's own numbers against the targets, and where they stand in the team.
+let mineRange = 'week';
+const MINE = [['calls', 'مكالمات اترد عليها', ''], ['avgAnswerWait', 'متوسط انتظار العميل', 'ث'], ['conversionPct', 'مكالمات بقت أوردر', '%'], ['revenue', 'مبيعات مكالماتك', 'ج'], ['fcrPct', 'الحل من أول مكالمة', '%'],
+  ['missedMine', 'فائتة كان ممكن تلحقها', ''], ['occupancy', 'الانشغال', '%'], ['breakPerDay', 'البريك في اليوم', 'د'], ['adherencePct', 'الالتزام بالشيفت', '%'], ['lateDays', 'أيام تأخير', ''], ['absentDays', 'غياب', ''], ['qaScore', 'درجة الجودة', '%']];
+async function loadMine() {
+  try {
+    const d = await api('GET', '/api/me/kpi?range=' + mineRange), e = d.me || {}, b = d.before || {};
+    $('mineRank').textContent = d.rank ? 'ترتيبك ' + d.rank + ' من ' + d.of : 'لسه مفيش أرقام كفاية للترتيب';
+    const ok = (k, v) => { const t = d.targets[k]; if (!t || v == null) return ''; return (t.max != null && v > t.max) || (t.min != null && v < t.min) ? 'bad' : 'good'; };
+    $('mineCards').innerHTML = MINE.map(([k, label, unit]) => { const v = e[k], t = d.targets[k];
+      return '<div class="k ' + ok(k, v) + '"><small>' + esc(label) + '</small><b>' + (v == null ? '—' : esc(money(v)) + (unit ? ' ' + unit : '')) + '</b><small>' + (t ? 'الهدف ' + (t.min != null ? '≥ ' + t.min : '≤ ' + t.max) + (t.unit ? ' ' + t.unit : '') : '') + (b[k] != null ? ' · قبلها ' + esc(money(b[k])) : '') + '</small></div>'; }).join('');
+    $('mineBoard').innerHTML = d.board.length ? '<b>الترتيب</b>' + d.board.map(x => '<div class="row' + (x.me ? ' me' : '') + '"><span>' + x.rank + '</span><span>' + esc(x.name) + '</span><span style="margin-inline-start:auto">' + x.score + '%</span></div>').join('') : '';
+    $('mineQa').innerHTML = d.qa.length ? '<b>تقييمات الجودة</b>' + d.qa.map(q => '<div class="box">' + time(q.callAt) + ' — <b>' + q.total + '%</b> (' + esc(q.by) + ')' + (q.notes ? '<div class="muted">' + esc(q.notes) + '</div>' : '') + '</div>').join('') : '';
+  } catch (err) { toast(err.message); }
+}
+$('mineBtn').onclick = () => { $('mine').hidden = !$('mine').hidden; if (!$('mine').hidden) loadMine(); };
+$('mine').addEventListener('click', e => { const r = e.target.dataset.mine; if (!r) return; mineRange = r; for (const b of document.querySelectorAll('[data-mine]')) b.className = b.dataset.mine === r ? 'on' : 'ghost'; loadMine(); });
 function boot() { $('login').hidden = true; $('app').hidden = false; load(); loadCalls(); }
 if (token) boot(); else logout();
 setInterval(() => { if (token && !document.hidden) { load(); loadCalls(); } }, 5000);

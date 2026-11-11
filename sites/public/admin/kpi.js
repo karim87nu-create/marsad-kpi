@@ -39,8 +39,9 @@ window.MarsadKpi = function MarsadKpi(ctx) {
   const scorePill = s => s == null ? '—' : pill(s + '%', s >= 80 ? 'ok' : s >= 50 ? 'warn' : 'bad');
 
   const empScore = e => score([['occupancy', e.occupancy], ['breakPerDay', e.breakPerDay], ['callsVsTeam', e.callsVsTeam], ['avgAnswerWait', e.avgAnswerWait], ['conversionPct', e.orderCalls ? e.conversionPct : null],
-    ['fcrPct', e.fcrPct], ['missedMine', e.rosterDays || e.missedMine ? e.missedMine : null], ['adherencePct', e.adherencePct], ['lateDays', e.rosterDays ? e.lateDays : null]]);
-  const brScore = b => score([['avgOut', b.avgOut], ['latePct', b.latePct], ['discountPct', b.discountPct], ['cancelPct', b.cancelPct]]);
+    ['fcrPct', e.fcrPct], ['missedMine', e.rosterDays || e.missedMine ? e.missedMine : null], ['adherencePct', e.adherencePct], ['lateDays', e.rosterDays ? e.lateDays : null], ['qaScore', e.qaCount ? e.qaScore : null]]);
+  const brScore = b => score([['avgOut', b.avgOut], ['latePct', b.latePct], ['discountPct', b.discountPct], ['cancelPct', b.cancelPct], ['closedHours', b.closedHours], ['talabatCancelPct', b.talabatCancelPct], ['siteOutMin', b.siteOutMin]]);
+  const supScore = x => score([['approvalMin', x.approvalMin], ['reviewMin', x.reviewMin], ['breakReplyMin', x.breakReplyMin], ['qaDone', x.qaPerWeek]]);
 
   let empCols = [], brCols = [];
   async function render() {
@@ -98,7 +99,8 @@ window.MarsadKpi = function MarsadKpi(ctx) {
       { title: 'الالتزام بالشيفت', get: e => e.adherencePct, show: e => cell('adherencePct', e.adherencePct, pe.get(e.id)?.adherencePct, '%'), type: 'percent' },
       { title: 'تأخير', get: e => e.lateDays, show: e => e.lateDays ? pill(e.lateDays + ' يوم · ' + e.lateMinutes + ' د', 'bad') : (e.rosterDays ? '0' : '—'), type: 'number' },
       { title: 'خروج بدري (د)', get: e => e.earlyMinutes, type: 'number' },
-      { title: 'غياب', get: e => e.absentDays, show: e => e.absentDays ? pill(String(e.absentDays), 'bad') : (e.rosterDays ? '0' : '—'), type: 'number' }];
+      { title: 'غياب', get: e => e.absentDays, show: e => e.absentDays ? pill(String(e.absentDays), 'bad') : (e.rosterDays ? '0' : '—'), type: 'number' },
+      { title: 'درجة الجودة', get: e => e.qaScore, show: e => e.qaCount ? h('span', {}, cell('qaScore', e.qaScore, pe.get(e.id)?.qaScore, '%'), h('small', { className: 'muted', textContent: ' (' + e.qaCount + ' تقييم)' })) : '—', type: 'percent' }];
     table('kpiEmployees', empCols, [...data.employees].sort((a, b) => (empScore(b) ?? -1) - (empScore(a) ?? -1) || b.calls - a.calls), { empty: 'مفيش موظفين اشتغلوا في الفترة دي' });
 
     brCols = [
@@ -111,7 +113,26 @@ window.MarsadKpi = function MarsadKpi(ctx) {
       { title: 'خرجوا بعد 30 د', get: b => b.latePct, show: b => cell('latePct', b.latePct, pb.get(b.name)?.latePct, '%', true), type: 'percent' },
       { title: 'الإلغاءات', get: b => b.cancelPct, show: b => h('span', {}, cell('cancelPct', b.cancelPct, pb.get(b.name)?.cancelPct, '%', true), h('small', { className: 'muted', textContent: ' (' + b.cancels + ')' })), type: 'percent' },
       { title: 'الخصومات', get: b => b.discountPct, show: b => cell('discountPct', b.discountPct, pb.get(b.name)?.discountPct, '%', true), type: 'percent' },
-      { title: 'طلبات / هوت لاين / الموقع', get: b => b.mix.talabat, show: b => b.mix.talabat + ' / ' + b.mix.hotline + ' / ' + b.mix.site }];
+      { title: 'طلبات / هوت لاين / الموقع', get: b => b.mix.talabat, show: b => b.mix.talabat + ' / ' + b.mix.hotline + ' / ' + b.mix.site },
+      { title: 'قفل على طلبات (س/يوم)', get: b => b.closedHours, show: b => b.closures ? h('span', {}, cell('closedHours', b.closedHours, pb.get(b.name)?.closedHours, 'س', true), h('small', { className: 'muted', textContent: ' (' + b.closures + ' مرة)' })) : '0', type: 'number' },
+      { title: 'إلغاءات طلبات', get: b => b.talabatCancelPct, show: b => cell('talabatCancelPct', b.talabatCancelPct, pb.get(b.name)?.talabatCancelPct, '%', true), type: 'percent' },
+      { title: 'الموقع: من التحويل للخروج (د)', get: b => b.siteOutMin, show: b => cell('siteOutMin', b.siteOutMin, pb.get(b.name)?.siteOutMin, 'د', true), type: 'number' },
+      { title: 'أصناف خلصت (البوت)', get: b => b.itemOut, show: b => b.itemOut ? pill(String(b.itemOut), 'warn') : '0', type: 'number' },
+      { title: 'طلبات الفرع من البوت', get: b => b.botRequests, type: 'number' }];
+    // المشرفين (Karim 11-11).
+    const ps = new Map((data.before.supervisors || []).map(x => [x.name, x]));
+    table('kpiSupervisors', [
+      { title: 'المشرف', get: x => x.name },
+      { title: 'التقييم', get: x => supScore(x), show: x => scorePill(supScore(x)), type: 'percent' },
+      { title: 'موافقات الإلغاء', get: x => x.approvals, type: 'number' },
+      { title: 'وقت الرد على الموافقة (د)', get: x => x.approvalMin, show: x => cell('approvalMin', x.approvalMin, ps.get(x.name)?.approvalMin, 'د', true), type: 'number' },
+      { title: 'رسايل الفروع', get: x => x.reviews, type: 'number' },
+      { title: 'وقت الرد على الفرع (د)', get: x => x.reviewMin, show: x => cell('reviewMin', x.reviewMin, ps.get(x.name)?.reviewMin, 'د', true), type: 'number' },
+      { title: 'طلبات بريك', get: x => x.breaks, type: 'number' },
+      { title: 'وقت الرد على البريك (د)', get: x => x.breakReplyMin, show: x => cell('breakReplyMin', x.breakReplyMin, ps.get(x.name)?.breakReplyMin, 'د', true), type: 'number' },
+      { title: 'تقييمات جودة في الأسبوع', get: x => x.qaPerWeek, show: x => cell('qaDone', x.qaPerWeek, ps.get(x.name)?.qaPerWeek, ''), type: 'number' },
+      { title: 'نهايات شيفت اتحددت', get: x => x.shiftDecisions, type: 'number' },
+    ], data.supervisors || [], { empty: 'مفيش شغل مشرفين متسجل في الفترة دي' });
     table('kpiBranches', brCols, [...data.branches].sort((a, b) => (brScore(b) ?? -1) - (brScore(a) ?? -1) || b.orders - a.orders), { empty: 'مفيش بيانات فروع للفترة دي (بتيجي من جهاز الكاشير)' });
 
     // What needs attention, in words.

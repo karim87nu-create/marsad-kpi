@@ -22,7 +22,7 @@ export function phKey(raw) {
   if (d.startsWith('0020')) d = d.slice(4); else if (d.startsWith('20') && d.length === 12) d = d.slice(2);
   if (d.startsWith('0')) d = d.slice(1);
   if (d.length < 7) return null;
-  return sha256('m1:' + d.slice(-10)).slice(0, 16);
+  return sha256('m1:' + d.slice(-10)).slice(0, 12);
 }
 // A week starts on Saturday.
 export function weekStart(day) {
@@ -95,7 +95,12 @@ function setup(app) {
     const row = await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(day);
     let d = {}; try { d = JSON.parse(row?.data || '{}'); } catch {}
     // [no, at, apexUser, kind, amount, branch, phoneKey, TransType]
-    return (Array.isArray(d.book) ? d.book : []).filter(x => Array.isArray(x)).map(x => ({ no: x[0], at: Date.parse(x[1]), user: x[2], kind: x[3], amount: Number(x[4]) || 0, branch: x[5], ph: x[6] || null, trans: x[7] || null })).filter(o => Number.isFinite(o.at));
+    const fixed = new Set((Array.isArray(d.fixes) ? d.fixes : []).map(x => String(x?.no)));
+    // The cashier PC sends only the hotline delivery orders: [no, entry unix seconds, amount, phone key].
+    const book = (Array.isArray(d.book) ? d.book : []).filter(x => Array.isArray(x)).map(x => ({ no: x[0], at: Number(x[1]) * 1000, kind: 'Hotline', trans: 'Delivery', amount: Number(x[2]) || 0, ph: x[3] || null, fixed: fixed.has(String(x[0])) })).filter(o => Number.isFinite(o.at));
+    // Orders each Apex user entered (all kinds), from the day's staff summary.
+    book.staff = (Array.isArray(d.staff) ? d.staff : []).map(x => ({ user: x?.name, orders: Number(x?.orders) || 0 }));
+    return book;
   }
   // Orders on Talabat and the website by phone (for «didn't order from us at all» on a missed call).
   async function platformPhones(day) {
@@ -128,28 +133,36 @@ function setup(app) {
     const answered = calls.filter(c => c.employeeId && c.complete && c.callType !== 'outgoing' && !c.outsideHours);
     const usedOrders = new Set();
     // The call center's own orders: hotline delivery (pickup by phone is «Delivery» on Apex too), not the branches' counter.
-    const hotline = book.filter(o => o.kind === 'Hotline' && (!o.trans || o.trans === 'Delivery') && o.ph);
+    const hotline = book.filter(o => o.ph);
     let teamConverted = 0, teamRevenue = 0, teamRepeat = 0, teamAnswered = 0, teamOrderCalls = 0;
+    const callList = [];
     for (const c of answered) {
       const e = E(c.employeeId); e.answered++; teamAnswered++;
       const k = phKey(c.phone), start = Date.parse(c.startedAt), end = Date.parse(c.endedAt) || start;
       // A call on the order queue (Arabicss queue «…1» = طلب أوردر; unknown queue counts too) is a chance to sell.
       const forOrder = !c.queue || A.purpose(c.queue) === '1';
       if (forOrder) { e.orderCalls++; teamOrderCalls++; }
+      // What the quality review looks at first (qa.js).
+      const flags = [], dur = c.durationSeconds || Math.round((end - start) / 1000);
+      if (A.purpose(c.queue) === '3') flags.push('complaint');
+      if (forOrder && dur < 20) flags.push('short');
+      if (dur > (RULES.callAlertSeconds || 240)) flags.push('long');
       if (k) {
         const o = forOrder && hotline.find(o => !usedOrders.has(o.no) && o.ph === k && o.at >= start - 2 * 60000 && o.at <= end + CONVERT_MS);
-        if (o) { usedOrders.add(o.no); e.converted++; e.revenue += o.amount; teamConverted++; teamRevenue += o.amount; }
+        if (o) { usedOrders.add(o.no); e.converted++; e.revenue += o.amount; teamConverted++; teamRevenue += o.amount; if (o.fixed) flags.push('fixed'); }
+        else if (forOrder && (plat.get(k) || []).some(t => t >= start && t <= end + 2 * 3600000)) flags.push('wentToPlatform');
         const again = allRecords.some(r => r.startMs != null && r.startMs > end + 60000 && r.startMs <= end + REPEAT_MS && phKey(r.phone) === k);
-        if (again) { e.repeat++; teamRepeat++; }
+        if (again) { e.repeat++; teamRepeat++; flags.push('repeat'); }
         const rec = (recKey.get(k) || []).find(r => r.startMs != null && Math.abs(r.startMs + (r.waitSeconds || 0) * 1000 - start) <= 120000);
         if (rec?.waitSeconds != null) { e.waitSum += rec.waitSeconds; e.waitN++; }
       } else {
         const rec = records.find(r => digits(r.phone) && digits(r.phone) === digits(c.phone) && r.startMs != null && Math.abs(r.startMs + (r.waitSeconds || 0) * 1000 - start) <= 120000);
         if (rec?.waitSeconds != null) { e.waitSum += rec.waitSeconds; e.waitN++; }
       }
+      callList.push({ key: day + '|' + c.employeeId + '|' + start, employeeId: c.employeeId, at: start, durationSeconds: dur, queue: c.queue || null, phoneEnd: digits(c.phone).slice(-4) || null, flags });
     }
     // Orders each employee entered on Apex (by the Apex user name linked to them).
-    for (const o of book) { const id = names.get(o.user); if (id) E(id).entered++; }
+    for (const u of book.staff || []) { const id = names.get(u.user); if (id) E(id).entered += u.orders; }
 
     // Missed calls: who could have taken it.
     const segs = new Map(); for (const s of states) { if (!s.employeeId) continue; (segs.get(s.employeeId) || segs.set(s.employeeId, []).get(s.employeeId)).push({ ...s, a: Date.parse(s.startedAt), b: Date.parse(s.endedAt) }); }
@@ -196,10 +209,11 @@ function setup(app) {
       }
     }
     // A shift still running counts only up to now.
-    return { day, employees: per, team: { answered: teamAnswered, orderCalls: teamOrderCalls, converted: teamConverted, revenue: teamRevenue, repeat: teamRepeat, missedCounted, missedOwned, lost,
-      avgHotline: hotline.length ? hotline.reduce((n, o) => n + o.amount, 0) / hotline.length : null, linked: book.length > 0 } };
+    return { day, employees: per, calls: callList, team: { answered: teamAnswered, orderCalls: teamOrderCalls, converted: teamConverted, revenue: teamRevenue, repeat: teamRepeat, missedCounted, missedOwned, lost,
+      avgHotline: hotline.length ? hotline.reduce((n, o) => n + o.amount, 0) / hotline.length : null, linked: book.length > 0 || (book.staff || []).length > 0 } };
   }
 
+  app.perfDay = async (day, now) => { let next = []; try { next = (await app.dayHistory(addDays(day, 1), now)).records || []; } catch {} return dayPerf(day, now, next); };
   app.perfRange = async (from, to, now) => {
     const days = []; for (let d = from; d <= to && days.length < 62; d = addDays(d, 1)) days.push(d);
     const by = new Map(), team = { answered: 0, orderCalls: 0, converted: 0, revenue: 0, repeat: 0, missedCounted: 0, missedOwned: 0, lost: 0, lostValue: 0, linkedDays: 0 };

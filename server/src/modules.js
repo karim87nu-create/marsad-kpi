@@ -30,6 +30,8 @@ import * as branchClosures from './branch-closures.js';
 import * as translate from './translate.js';
 import * as branchBot from './branch-bot.js';
 import * as perf from './perf.js';
+import * as qa from './qa.js';
+import * as forecast from './forecast.js';
 
-const MODULES = [translate, admin, employees, sessions, dashboard, breaks, messages, shifts, history, engine, telegram, importRows, ops, range, orders, names, learn, reviews, site, talabat, cancels, whatsapp, transfer, talabatActions, systemWatch, backup, archive, kpi, branchClosures, branchBot, perf];
+const MODULES = [translate, admin, employees, sessions, dashboard, breaks, messages, shifts, history, engine, telegram, importRows, ops, range, orders, names, learn, reviews, site, talabat, cancels, whatsapp, transfer, talabatActions, systemWatch, backup, archive, kpi, branchClosures, branchBot, perf, qa, forecast];
 export { MODULES };
