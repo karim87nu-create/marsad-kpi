@@ -49,3 +49,12 @@ test('international customer reaches transfer queue from actual Talabat ingestio
     assert.equal(q.body.orders[0].customer.phone, '+966501234567');
   } finally { await t.close(); }
 });
+
+test('Talabat Pro / free delivery lines never reach the order comment (Karim 11-11)', async () => {
+  const { stripPlatformNotes } = await import('../src/delivery-fields.js');
+  for (const [inp, out] of [
+    ['طلبات برو توصيل مجاني', ''], ['طلبات برو - توصيل مجاني', ''], ['Talabat Pro customer', ''], ['Free delivery for Talabat Pro customers', ''],
+    ['اتصل قبل ما توصل - طلبات برو توصيل مجاني', 'اتصل قبل ما توصل'], ['توصيل مجاني، من غير بصل', 'من غير بصل'], ['عميل طلبات برو: الشقة 4', 'الشقة 4'],
+    ['من غير بصل', 'من غير بصل']]) assert.equal(stripPlatformNotes(inp), out, inp);
+  assert.equal(deliveryComment({ note: 'طلبات برو توصيل مجاني', items: [{ name: 'x', freeOptions: ['سلطة بلدي'] }] }), 'سلطة بلدي');
+});

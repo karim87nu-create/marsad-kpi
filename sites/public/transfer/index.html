@@ -423,10 +423,10 @@ function card(o) {
       '<span class="when">' + time(o.at) + (o.scheduled ? ' <span class="warn">بميعاد</span>' : '') + '</span><span class="state ' + st.cls + '">' + esc(st.text) + '</span></div>' +
     // The customer screen on Apex, field by field.
     '<div class="form">' +
-      field('الاسم', '<b>' + esc(label) + '</b>' + (/[A-Za-z]{2,}/.test(cu.name || '') ? '<input data-arabic="name" placeholder="تعريب الاسم (اختياري)" value="' + esc(p.arabic?.name || '') + '">' : ''), label) +
+      field('الاسم', '<b>' + esc(label) + '</b>' + (/[A-Za-z]{2,}/.test(cu.name || '') || cu.nameEn ? '<input data-arabic="name" placeholder="تعريب الاسم" title="' + esc(cu.nameEn ? 'العميل كتبه: ' + cu.nameEn + ' — صحّحه لو التعريب غلط، والمرصد هيتعلمه' : '') + '" value="' + esc(p.arabic?.name ?? (cu.nameEn ? cu.name : '')) + '">' : ''), label) +
       field('التليفون', cu.phone ? esc(cu.phone) : '', cu.phone) +
       (auto ? field('الفرع', branchSel, '') + field('المنطقة', areaSel, '', areaNote) : field('الفرع', esc(o.branch || ''), '')) +
-      field('العنوان', esc(ad.street || cu.address || ''), ad.street || cu.address, /[A-Za-z]{2,}/.test(cu.address || '') ? '<input data-arabic="address" placeholder="تعريب العنوان (اختياري)" value="' + esc(p.arabic?.address || '') + '">' : '') +
+      field('العنوان', esc(ad.street || cu.address || ''), ad.street || cu.address, /[A-Za-z]{2,}/.test(cu.address || '') || cu.addressEn ? '<input data-arabic="address" placeholder="تعريب العنوان" title="' + esc(cu.addressEn ? 'العميل كتبه: ' + cu.addressEn + ' — صحّحه لو التعريب غلط، والمرصد هيتعلمه' : '') + '" value="' + esc(p.arabic?.address ?? (cu.addressEn ? cu.address : '')) + '">' : '') +
       (ad.floor || ad.flat ? field('الدور', esc(ad.floor), ad.floor) + field('الشقة', esc(ad.flat), ad.flat) : '') +
       (o.note ? field('ملاحظة الأوردر من المصدر', esc(o.note), o.note, '') : '') +
       (() => {

@@ -9,7 +9,7 @@
 // the bridge is proven (numbering under live work and the branch delivery); this page never writes to Apex.
 import { businessDay, iso, validDate, addDays } from './time.js';
 import { parseJson } from './order-match.js';
-import { deliveryPhone, deliveryLabel, deliveryAddress } from './delivery-fields.js';
+import { deliveryPhone, deliveryLabel, deliveryAddress, stripPlatformNotes } from './delivery-fields.js';
 import { parseApexCustomerNote, normArabic, guessApexItem } from './apex-customer-notes.js';
 import { knownNos, itemKey } from './items.js';
 import { APEX_NAMES, APEX_PRICES } from './menu-seed.js';
@@ -232,7 +232,8 @@ function setup(app) {
         const o = list[i]; if (o.done) continue;
         const c = o.customer;
         list[i] = { ...o,
-          ...(c ? { customer: { ...c, name: tr(c.name), address: tr(c.address), area: tr(c.area), ...(changed(c.address) || changed(c.name) ? { original: [c.name, c.address].filter(Boolean).join(' — ') } : {}) } } : {}),
+          ...(c ? { customer: { ...c, name: tr(c.name), address: tr(c.address), area: tr(c.area), ...(changed(c.address) || changed(c.name) ? { original: [c.name, c.address].filter(Boolean).join(' — ') } : {}),
+            ...(changed(c.name) ? { nameEn: c.name } : {}), ...(changed(c.address) ? { addressEn: c.address } : {}) } } : {}),
           ...(changed(o.note) ? { note: tr(o.note), noteOriginal: o.note } : {}),
           ...(o.items ? { items: o.items.map(x => ({ ...x, note: tr(x.note), freeOptions: (x.freeOptions || []).map(tr) })) } : {}) };
       }
@@ -661,7 +662,7 @@ function setup(app) {
       // Karim 10-11: the customer-card note is the call center's, not the kitchen's — it is not written in the order's
       // comment (which prints in the branch). What it gave shows on Apex by itself: the discount field, or the gift
       // lines named «هدية بدل خصم بطاقة العميل» / «مستحق من ملاحظة العميل».
-      const safeRemarks = String(b.note || '').trim();
+      const safeRemarks = b.note ? String(b.note).split(/\s*\|\s*/).map(stripPlatformNotes).filter(Boolean).join(' | ') : '';
       if (safeRemarks.length > 200) fail(409, 'ملاحظات الأوردر مع بطاقة العميل أطول من مساحة APEX — راجعها قبل التسجيل');
       // Karim 11-11: a website pickup goes to the branch's «استلام فرع» area, with no address, floor or flat.
       let pickup = false;
@@ -711,6 +712,8 @@ function setup(app) {
       const texts = [b.customer?.name, b.customer?.address, safeRemarks].filter(Boolean);
       const arabic = app.toArabic ? await app.toArabic(texts, { wait: true }) : new Map();
       const translatedName = arabic.get(b.customer?.name) || b.customer?.name;
+      // What the employee wrote over the automatic Arabic is learned for next time (Karim 11-11).
+      if (app.learnArabic) for (const [en, ar] of [[b.customer?.nameEn, b.customer?.name], [b.customer?.addressEn, b.customer?.address]]) if (en && ar) await app.learnArabic(en, ar).catch(() => {});
       const translatedAddress = arabic.get(b.customer?.address) || b.customer?.address;
       const translatedNote = arabic.get(safeRemarks) || safeRemarks;
       if (translatedNote.length > 200) fail(400, 'الملاحظات بعد الترجمة أطول من مساحة Apex — اختصرها');

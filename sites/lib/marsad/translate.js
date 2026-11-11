@@ -39,13 +39,27 @@ const WORDS = [
 ].sort((a, b) => b[0].length - a[0].length);
 const RX = WORDS.map(([en, ar]) => [new RegExp('(^|[^A-Za-z])' + en.replace(/ /g, '\\s+') + '(?=[^A-Za-z]|$)', 'gi'), ar]);
 
-function dictionary(text) {
+import { NAMES, translit } from './arabic-names.js';
+
+// Words still in English after the dictionary: what staff taught (learned), a known name, else spelled out in Arabic
+// (Karim 11-11 «اي الصعب في تعريب الاسم والعنوان تلقائي»). Acronyms (AUC, CFC) and codes with digits (B12) stay.
+function arabizeRest(s, learned) {
+  return s.replace(/[A-Za-z][A-Za-z0-9']*/g, (w, at, all) => {
+    const k = w.toLowerCase().replace(/'/g, '');
+    let v = learned?.get(k) || NAMES[k];
+    if (!v) { if (/\d/.test(w) || (/^[A-Z]{2,4}$/.test(w)) || w.length < 2) return w; v = translit(w); }
+    return all.slice(Math.max(0, at - 2), at) === 'ال' && v.startsWith('ال') ? v.slice(2) : v;
+  });
+}
+
+function dictionary(text, learned) {
   let s = String(text).replace(/\bno\.?\s*(?=\d)/gi, 'رقم ');
   // «Makram Ebeid Street» / «El-Nasr Road» → «شارع …» / «طريق …» (the name after the word, as in Arabic).
   s = s.replace(/\b((?:(?:El|Al)[-\s])?[A-Z][A-Za-z']*(?:\s+[A-Z][A-Za-z']*){0,3})\s+(Street|St\.?|Road|Rd\.?|Axis)(?=[^A-Za-z]|$)/g,
     (m, name, w) => ({ street: 'شارع', st: 'شارع', 'st.': 'شارع', road: 'طريق', rd: 'طريق', 'rd.': 'طريق', axis: 'محور' })[w.toLowerCase()] + ' ' + name);
   s = s.replace(/\b(?:El|Al)[-\s](?=[A-Za-z])/g, 'ال');
   for (const [rx, ar] of RX) s = s.replace(rx, (m, pre) => pre + ar);
+  s = arabizeRest(s, learned);
   return s.replace(/\s{2,}/g, ' ').replace(/\s+([،,])/g, '$1').trim();
 }
 
@@ -69,7 +83,7 @@ export function setup(app) {
     return out;
   }
   async function save(src, ar, how) {
-    await db.prepare('INSERT INTO translations (src, ar, how, at) VALUES (?,?,?,?) ON CONFLICT(src) DO UPDATE SET ar = excluded.ar, how = excluded.how, at = excluded.at WHERE translations.how <> \'ai\' OR excluded.how = \'ai\'')
+    await db.prepare('INSERT INTO translations (src, ar, how, at) VALUES (?,?,?,?) ON CONFLICT(src) DO UPDATE SET ar = excluded.ar, how = excluded.how, at = excluded.at WHERE excluded.how = \'staff\' OR (translations.how <> \'staff\' AND (translations.how <> \'ai\' OR excluded.how = \'ai\'))')
       .run(src, ar, how, app.now());
     if (how === 'ai') memo.set(src, { ar, how });
   }
@@ -88,13 +102,31 @@ export function setup(app) {
   }
   const busy = new Set();
   // Arabic for each text now (cached, else the dictionary); the model's answer is fetched in the background for next time.
+  // Words staff corrected (kept as «w:<word>» → Arabic, how = 'staff').
+  async function learnedWords(texts) {
+    const words = [...new Set(texts.flatMap(t => String(t || '').match(/[A-Za-z][A-Za-z0-9']*/g) || []).map(w => 'w:' + w.toLowerCase().replace(/'/g, '')))];
+    const out = new Map();
+    for (let i = 0; i < words.length; i += 80) {
+      const part = words.slice(i, i + 80);
+      try { for (const r of await db.prepare("SELECT src, ar FROM translations WHERE how = 'staff' AND src IN (" + part.map(() => '?').join(',') + ')').all(...part)) out.set(r.src.slice(2), r.ar); } catch {}
+    }
+    return out;
+  }
+  // What staff wrote instead of the automatic Arabic: the whole text, and word by word when the words line up.
+  app.learnArabic = async function learnArabic(src, ar) {
+    src = String(src || '').trim(); ar = String(ar || '').trim();
+    if (!src || !ar || !LATIN.test(src) || LATIN.test(ar) || src.length > 300) return;
+    await save(src, ar, 'staff');
+    const en = src.split(/\s+/).filter(Boolean), arw = ar.split(/\s+/).filter(Boolean);
+    if (en.length === arw.length && en.length <= 8) for (let i = 0; i < en.length; i++) if (/^[A-Za-z][A-Za-z']+$/.test(en[i])) await save('w:' + en[i].toLowerCase().replace(/'/g, ''), arw[i], 'staff');
+  };
   app.toArabic = async function toArabic(texts, { waitUntil, wait = false } = {}) {
-    const have = await cached(texts), res = new Map();
+    const have = await cached(texts), res = new Map(), learned = await learnedWords(texts);
     const todo = [];
     for (const t of new Set(texts.filter(Boolean))) {
       if (!LATIN.test(t)) { res.set(t, t); continue; }
       const c = have.get(t);
-      if (c?.how === 'ai') res.set(t, c.ar); else res.set(t, dictionary(t));
+      if (c?.how === 'ai' || c?.how === 'staff') res.set(t, c.ar); else res.set(t, dictionary(t, learned));
       if ((!c || c.how !== 'ai') && key() && !busy.has(t)) todo.push(t);
     }
     await Promise.all([...res].filter(([t]) => LATIN.test(t) && !have.get(t)).map(([t, v]) => save(t, v, 'dict').catch(() => {})));
