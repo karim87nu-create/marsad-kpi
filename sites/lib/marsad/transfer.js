@@ -685,6 +685,7 @@ function setup(app) {
       }
       const area = areas.find(l => l.branch === branchNo) || areas.find(l => l.branch == null) || areas[0];
       const areaService = pickup ? 0 : Number.isFinite(Number(area?.service)) && area?.service !== null ? Number(area.service) : null;
+      if (!pickup && areaService === 0 && b.confirmFreeArea !== true) fail(409, 'رسوم المنطقة على Apex صفر — راجع العنوان وأكد اختيار المنطقة قبل التسجيل');
       // The source's platform discount is a separate fact from any Apex price adjustment.
       // A stale browser or an empty sign must never erase a known Talabat discount.
       const sourceOrder = (await baseFor(row.day, now)).list.find(o => o.source === source && String(o.ref) === ref) || null;
