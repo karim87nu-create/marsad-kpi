@@ -20,7 +20,8 @@ import { normArabic } from './apex-customer-notes.js';
 import { APEX_PRICES } from './menu-seed.js';
 
 export const MODES = ['off', 'trial', 'on'];
-const TICK_MS = 30000, SETTLE_MS = 60000, ALERT_MS = 2 * 60000;
+const QUIET = new Set(['لسه واصل', 'أوردر مجدول', 'تفاصيل الأوردر لسه ماوصلتش', 'لسه ما اتقبلش على طلبات', 'أوردر قديم — غالباً اتسجل بإيد', 'اتحوّل للفرع على الموقع — غالباً اتسجل بإيد']);
+const TICK_MS = 30000, SETTLE_MS = 60000, MAX_AGE_MS = 20 * 60000, ALERT_MS = 2 * 60000;
 const r2 = v => Math.round(v * 100) / 100, T = v => r2(v * 1.14);
 const TALABAT_FEE_NO = '0114006', BRANCH_NAME = { 1: 'التجمع', 2: 'مدينة نصر', 3: 'مدينتي' };
 const amountIn = t => { const m = String(t || '').split(' | ').slice(1).join(' ').replace(/,/g, '').match(/-?\d+(?:\.\d+)?/); return m ? Number(m[0]) : null; };
@@ -40,10 +41,15 @@ export function decide(o, x) {
   const why = [];
   const age = x.now - Date.parse(o.at || 0);
   if (!(age >= SETTLE_MS)) why.push('لسه واصل');
+  // 11-11: an old order is one staff already handled (entered on Apex by hand, matching did not find it) — 9 website
+  // orders of the day were written twice. Only orders of the last 20 minutes; a website order staff already sent to a
+  // branch on the panel is handled.
+  if (age > MAX_AGE_MS) why.push('أوردر قديم — غالباً اتسجل بإيد');
+  if (o.source === 'site' && o.sentToBranch) why.push('اتحوّل للفرع على الموقع — غالباً اتسجل بإيد');
   if (o.scheduled) why.push('أوردر مجدول');
   if (o.source === 'talabat' && /^(?:NEW|PENDING|WAITING|RECEIVED|PLACED|UNACCEPTED)/i.test(String(o.status || ''))) why.push('لسه ما اتقبلش على طلبات');
   if (o.source === 'talabat' && /pick|استلام/i.test(String(o.deliveryType || ''))) why.push('استلام من الفرع على طلبات');
-  if (!o.items?.length) { why.push(o.detailRead ? 'مفيش أصناف' : 'تفاصيل الأوردر لسه ماوصلتش'); return { ok: false, why, quiet: why.every(w => w === 'لسه واصل' || w === 'أوردر مجدول' || w === 'تفاصيل الأوردر لسه ماوصلتش' || w === 'لسه ما اتقبلش على طلبات') }; }
+  if (!o.items?.length) { why.push(o.detailRead ? 'مفيش أصناف' : 'تفاصيل الأوردر لسه ماوصلتش'); return { ok: false, why, quiet: why.every(w => QUIET.has(w)) }; }
   if (o.source === 'talabat' && o.items.some(i => !i.modifiersComplete)) why.push('الإضافات مش ظاهرة كاملة');
   if (o.items.some(i => (i.addons || []).some(a => a.qty == null))) why.push('عدد إضافة مش واضح');
   // Lines: every dish and paid add-on.
@@ -111,7 +117,7 @@ export function decide(o, x) {
       else if (T(apexItems) < sItems * 0.97 - 3 || T(apexItems) > sItems * 1.06 + 3) why.push('أسعار Apex مختلفة عن الموقع بـ ' + Math.round(Math.abs(T(apexItems) - sItems)) + ' ج');
     }
   }
-  if (why.length) return { ok: false, why, quiet: why.every(w => w === 'لسه واصل' || w === 'أوردر مجدول' || w === 'تفاصيل الأوردر لسه ماوصلتش' || w === 'لسه ما اتقبلش على طلبات') };
+  if (why.length) return { ok: false, why, quiet: why.every(w => QUIET.has(w)) };
   // The customer as the page shows it, without the English (the page's «what staff wrote over the Arabic» is not learned from this).
   const { nameEn, addressEn, original, talabatArea, siteArea, ...customer } = o.customer || {};
   const body = { source: o.source, ref: String(o.ref), action: 'auto', payment: pay, branchNo: branch, locationNo: loc, code: o.code,

@@ -66,11 +66,16 @@ function setup(app) {
       const tm = await app.talabat.matchDay(day);
       const snap = parseJson((await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(day))?.data, {});
       const outOf = new Map([...(snap.lateOut || []), ...(snap.online || [])].filter(a => a.out).map(a => [String(a.no), a.out]));
+      // Only orders on a Talabat live screen now (11-11: orders that left the screen kept their old status, the oldest 20
+      // filled the list, the screen skipped them all, and nothing was pressed since 03-11). The newest out first.
+      const liveNow = parseJson(await setting('talabat_live_now'), {});
       for (const o of tm.rows) {
         if (!wantOut.includes(canonicalStore(o.store)) || OUT.has(String(o.status || '').toUpperCase()) || o.picked_up_at || o.delivered_at) continue;
+        if (!(ctx.now - (liveNow[o.id] || 0) < 3 * 60000)) continue;
         const a = tm.matches.get(o.id), out = a && outOf.get(String(a.no));
         if (out) onTheWay.push({ id: String(o.id), code: o.code || null, out });
       }
+      onTheWay.sort((x, y) => String(y.out).localeCompare(String(x.out)));
     }
     return { accept, onTheWay: onTheWay.slice(0, 20), serverNow: iso(ctx.now) };
   });

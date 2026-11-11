@@ -63,7 +63,8 @@ export function resolveOrders(rows, apex, { manual = new Map(), branchOk = () =>
       const reference = referenceEvidence(o, a);
       // The Talabat #code staff write in the customer's name on Apex (Karim's rule). Apex keeps only 20 characters of that
       // field, so the code at its end is often cut («#9981» → «#998»): an equal tag is the order; a cut one only supports it.
-      const code = o.source === 'talabat' && o.code ? String(o.code).replace(/\D/g, '') : '', tag = a.tag ? String(a.tag).replace(/\D/g, '') : '';
+      // The website's order number too (11-11: every website order stayed «not on Apex» though its #number is in the name).
+      const code = o.source === 'talabat' && o.code ? String(o.code).replace(/\D/g, '') : o.source === 'site' ? String(o.code || o.panel?.number || o.id || '').replace(/\D/g, '') : '', tag = a.tag ? String(a.tag).replace(/\D/g, '') : '';
       const tagExact = !!code && tag === code, tagPart = !!code && !tagExact && tag.length >= 3 && code.startsWith(tag);
       const exact = reference.exact || tagExact;
       const time = Number(a.t ?? Date.parse(a.at)), gap = time - o.anchor, branch = branchOk(o.branch, a.branch);

@@ -28,6 +28,10 @@ test('auto transfer: decides only on certain orders and says why not', () => {
   assert.equal(decide(base({ job: { state: 'claimed' } }), X), null, 'with somebody');
   assert.match(why({ at: new Date(NOW - 10000).toISOString() }), /لسه واصل/);
   assert.equal(decide(base({ at: new Date(NOW - 10000).toISOString() }), X).quiet, true, 'a new order is no alert');
+  // 11-11: 9 website orders staff had entered by hand were written again hours later.
+  assert.match(why({ at: new Date(NOW - 25 * 60000).toISOString() }), /أوردر قديم/);
+  assert.equal(decide(base({ at: new Date(NOW - 25 * 60000).toISOString() }), X).quiet, true);
+  assert.match(why({ source: 'site', sentToBranch: true }), /اتحوّل للفرع على الموقع/);
   assert.match(why({ items: [{ qty: 1, name: 'Kofta', price: P, modifiersComplete: true, apex: [{ no: KOFTA }, { no: '0108001' }], addons: [] }] }), /أكتر من اختيار/);
   assert.match(why({ items: [{ qty: 1, name: 'Kofta', price: P, modifiersComplete: false, apex: [{ no: KOFTA }], addons: [] }] }), /الإضافات مش ظاهرة/);
   assert.match(why({ payment: 'mixed' }), /كاش ولا مدفوع/);
@@ -126,6 +130,11 @@ test('auto transfer: trial only records, on sends as «المرصد آلي», a 
     assert.equal(log()[ids[0]].decision, 'sent');
     const p3 = JSON.parse(t.app.db.raw.prepare('SELECT payload FROM transfer_jobs WHERE ref = ?').get(ids[3]).payload);
     assert.equal(p3.apexCustomerBenefit.percent, 10, 'the card discount is taken on Apex by itself');
+    // Written by the Apex writer: on Apex with its number at once, before matching finds it (11-11).
+    t.app.db.raw.prepare("UPDATE transfer_jobs SET state = 'auto_done', result = ? WHERE ref = ?").run(JSON.stringify({ orderNo: 701631, shiftSerial: 566 }), ids[0]);
+    t.advance(9000);
+    const q9 = (await as('GET', '/api/transfer/queue?day=2026-10-22')).body.orders.find(x => x.ref === ids[0]);
+    assert.equal(q9.apex.no, 701631); assert.equal(q9.done, true);
     assert.equal(t.app.db.raw.prepare('SELECT COUNT(*) n FROM transfer_jobs WHERE ref = ?').get(ids[1]).n, 0);
 
     // Still waiting after 2 minutes: once to the call center group, with the reason.

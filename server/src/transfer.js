@@ -213,7 +213,9 @@ function setup(app) {
     const slim = o => ({ source: o.source, ref: o.ref, code: o.code, at: o.at, status: o.status, out: o.out, branch: o.branch, apexBranch: o.apexBranch, total: o.total, apex: o.apex, done: true });
     // The automatic transfer's word on each waiting order (autotransfer.js): sent by itself, would be (trial), or why not.
     const autoNotes = app.autoTransferNotes && ctx.me ? await app.autoTransferNotes(day) : new Map();
-    const list = base.list.map(o => {
+    const list = base.list.map(o0 => {
+      // An order the Apex writer wrote is on Apex, with its number, even before matching finds it (11-11).
+      const j0 = jobOf(o0.source, String(o0.ref)), o = !o0.apex && j0?.state === 'auto_done' && j0.result?.orderNo ? { ...o0, apex: { no: j0.result.orderNo, sn: j0.result.shiftSerial ?? null, user: null, how: 'job' } } : o0;
       const note = customerNotes.get(o.source + ':' + o.ref);
       const linked = note && note.phone_hash === sha256(deliveryPhone(o.customer?.phone) || '');
       return { ...(o.apex || o.out ? slim(o) : o), ...(o.source === 'talabat' ? { onLive: onLive(o.ref) } : {}),
@@ -469,7 +471,7 @@ function setup(app) {
         const p = sProfiles.get(String(o.id)) || {}, pay = p.payment || null, a = sm.matches.get(o.id);
         const discounts = pay ? [...(pay.coupons || []).map(c => ({ text: 'كوبون ' + c.code, amount: c.amount, who: 'restaurant' })),
           ...(!pay.coupons?.length && pay.discount ? [{ text: 'خصم الموقع', amount: pay.discount, who: 'restaurant' }] : [])] : [];
-        list.push({ source: 'site', ref: String(o.id), code: String(p.panel?.number || o.id).replace(/\D/g, '') || String(o.id), at: iso(o.created_at), status: o.status, out: !!o.out_at || !!o.delivered_at || o.status === 'completed', branch: o.branch || null, apexBranch: apexBranchOf(o.branch), scheduled: !!o.scheduled,
+        list.push({ source: 'site', ref: String(o.id), code: String(p.panel?.number || o.id).replace(/\D/g, '') || String(o.id), at: iso(o.created_at), status: o.status, out: !!o.out_at || !!o.delivered_at || o.status === 'completed', sentToBranch: !!o.transfer_at, branch: o.branch || null, apexBranch: apexBranchOf(o.branch), scheduled: !!o.scheduled,
           customer: { name: p.customer?.name || null, phone: phoneOut(p.customer?.phoneDisplay || p.customer?.phone || p.customer?.mobileDisplay || p.customer?.mobile), address: p.customer?.address || null, ...(p.customer?.area ? { siteArea: p.customer.area } : {}) },
           target: o.total ?? null, payment: sitePayment(pay), paymentTitle: pay?.title || null, note: pay?.note || null, discounts, fees: pay?.fees || [], shipping: pay?.shipping ?? null, total: o.total ?? null,
           fulfillment: o.fulfillment || null, ...(o.fulfillment === 'pickup' && PICKUP_AREAS[apexBranchOf(o.branch)] ? { areaGuess: { ...PICKUP_AREAS[apexBranchOf(o.branch)], how: 'pickup' } } : {}), items: (p.items || []).map(x => itemOut(x, 'site')), detailRead: !!p.items?.length,
