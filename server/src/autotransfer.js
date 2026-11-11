@@ -5,7 +5,7 @@
 //  - the branch is known, and the area: a branch pickup, the Apex area staff chose for this Talabat area before (2+ times),
 //    or the area of this customer's last automatic order to the same address; the area belongs to that branch;
 //  - cash or paid is clear, and who pays every discount (a paid order needs nothing more);
-//  - the customer's card on Apex was read in the last 5 minutes; a cash order with one clear discount on it is discounted
+//  - the customer's card on Apex was read in the last 10 minutes; a cash order with one clear discount on it is discounted
 //    by itself — a paid order's discount (the customer's gift or keeping it) and free items on the card wait for a person;
 //  - Apex's prices come to the order's within a small difference (the website: Apex is kept up to 5% above it),
 //    and Talabat's delivery to the area's delivery on Apex;
@@ -20,7 +20,7 @@ import { normArabic } from './apex-customer-notes.js';
 import { APEX_PRICES } from './menu-seed.js';
 
 export const MODES = ['off', 'trial', 'on'];
-const TICK_MS = 15000, SETTLE_MS = 60000, ALERT_MS = 2 * 60000;
+const TICK_MS = 30000, SETTLE_MS = 60000, ALERT_MS = 2 * 60000;
 const r2 = v => Math.round(v * 100) / 100, T = v => r2(v * 1.14);
 const TALABAT_FEE_NO = '0114006', BRANCH_NAME = { 1: 'التجمع', 2: 'مدينة نصر', 3: 'مدينتي' };
 const amountIn = t => { const m = String(t || '').split(' | ').slice(1).join(' ').replace(/,/g, '').match(/-?\d+(?:\.\d+)?/); return m ? Number(m[0]) : null; };
@@ -84,7 +84,7 @@ export function decide(o, x) {
   if (pay !== 'paid' && (o.discounts || []).some(d => !d.who || d.unclear)) why.push('خصم مش واضح مين بيدفعه');
   // The customer's card on Apex.
   const card = o.apexCustomerNote;
-  const fresh = card && card.checkedAt && x.now - Date.parse(card.checkedAt) <= 5 * 60000;
+  const fresh = card && card.checkedAt && x.now - Date.parse(card.checkedAt) <= 10 * 60000;
   if (!card || !fresh || (card.status !== 'none' && card.status !== 'found')) why.push('مستني قراءة بطاقة العميل من Apex');
   // Karim 11-11: a cash order with one clear discount on the card is discounted on Apex by itself. Only the customer's
   // choice needs a person: a paid order's gift instead of the discount (or keeping it for the next order), free items.
@@ -143,7 +143,8 @@ function setup(app) {
     try {
       const m = await mode(); if (m === 'off') return { mode: m };
       const day = businessDay(now);
-      const q = await app.transferQueue(day, { now });
+      const q = await app.transferQueue(day, { now, cachedOnly: true });
+      if (!q) return { mode: m, skipped: 'no recent build' };
       const areas = await customerAreas(day);
       const { deliveryPhone } = await import('./delivery-fields.js');
       const x = { now, locations: q.locations || [], customerArea: o => areas.get(deliveryPhone(o.customer?.phone) + '|' + normAddress(o.customer?.address)) || null };

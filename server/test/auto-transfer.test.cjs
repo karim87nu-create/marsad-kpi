@@ -44,7 +44,7 @@ test('auto transfer: decides only on certain orders and says why not', () => {
   assert.match(why(cardOf([{ kind: 'item', name: 'رز' }])), /أصناف هدية/);
   assert.match(why(cardOf([{ kind: 'percent', value: 10 }, { kind: 'amount', value: 20 }])), /مش واضحة/);
   assert.match(why(cardOf([], { unrecognized: true })), /مش واضحة/);
-  assert.match(why({ apexCustomerNote: { status: 'none', checkedAt: new Date(NOW - 10 * 60000).toISOString() } }), /قراءة بطاقة العميل/);
+  assert.match(why({ apexCustomerNote: { status: 'none', checkedAt: new Date(NOW - 15 * 60000).toISOString() } }), /قراءة بطاقة العميل/);
   assert.equal(decide(base({ apexCustomerNote: { status: 'found', checkedAt: new Date(NOW - 60000).toISOString(), directives: [], text: 'عميل قديم', custNo: '7' } }), X).ok, true, 'a card with nothing to give');
   assert.match(why({ subtotal: P * 1.5 }), /أسعار Apex مختلفة/);
   assert.match(why({ bill: [{ k: 'رسوم التوصيل', text: 'رسوم التوصيل | 90' }] }), /توصيل Apex مختلف/);
@@ -71,6 +71,8 @@ test('auto transfer: trial only records, on sends as «المرصد آلي», a 
     await t.employee(admin, { name: 'سارة', code: 'E1', pin: '1111' });
     const sara = (await t.call('POST', '/api/transfer/login', { body: { pin: '1111' } })).body.token;
     const as = (method, path, body) => t.call(method, path, { body, headers: { 'x-transfer-session': sara } });
+    // The automatic transfer reads only the last completed build (an employee's page builds it).
+    const tick = async (plus = 0) => { await as('GET', '/api/transfer/queue?day=2026-10-22'); return t.app.autoTransfer.tick(t.app.now() + plus, { force: true }); };
     const { token } = (await admin('POST', '/api/talabat/token')).body;
     const store = 'الدهان، التجمع الخامس - البنفسج';
     const ids = ['3977900051', '3977900052', '3977900053', '3977900054'], areas = ['البنفسج 5', 'البنفسج 5', 'الرحاب 2', 'البنفسج 5'];
@@ -97,7 +99,7 @@ test('auto transfer: trial only records, on sends as «المرصد آلي», a 
     // Trial: nothing is sent; the page and the admin show what would have happened.
     assert.equal((await admin('POST', '/api/auto-transfer', { mode: 'on' })).status, 400, 'turning it on needs the confirmation');
     assert.equal((await admin('POST', '/api/auto-transfer', { mode: 'trial' })).status, 200);
-    let r = await t.app.autoTransfer.tick(t.app.now(), { force: true });
+    let r = await tick();
     assert.equal(r.mode, 'trial');
     const log = () => Object.fromEntries(t.app.db.raw.prepare('SELECT ref, decision, reasons FROM auto_transfer_log').all().map(x => [x.ref, x]));
     assert.equal(log()[ids[0]].decision, 'would', JSON.stringify(log()));
@@ -115,7 +117,7 @@ test('auto transfer: trial only records, on sends as «المرصد آلي», a 
     assert.equal((await as('POST', '/api/transfer/job', { source: 'talabat', ref: ids[2], action: 'claim' })).status, 200);
     // On: the certain order goes to the writer as «المرصد آلي»; the others stay for the employees.
     assert.equal((await admin('POST', '/api/auto-transfer', { mode: 'on', confirm: 'ON' })).status, 200);
-    await t.app.autoTransfer.tick(t.app.now(), { force: true });
+    await tick();
     const job = t.app.db.raw.prepare('SELECT * FROM transfer_jobs WHERE ref = ?').get(ids[0]);
     assert.equal(job.state, 'auto_pending'); assert.equal(job.employee_name, 'المرصد آلي');
     const p = JSON.parse(job.payload);
@@ -128,8 +130,8 @@ test('auto transfer: trial only records, on sends as «المرصد آلي», a 
 
     // Still waiting after 2 minutes: once to the call center group, with the reason.
     t.advance(3 * 60000);
-    await t.app.autoTransfer.tick(t.app.now(), { force: true });
-    await t.app.autoTransfer.tick(t.app.now() + 20000, { force: true });
+    await tick();
+    await tick(20000);
     const alerts = t.app.db.raw.prepare("SELECT key, text, target FROM telegram_log WHERE kind = 'autoWaiting'").all();
     assert.equal(alerts.length, 1, JSON.stringify(alerts));
     assert.equal(alerts[0].key, 'autoWait:talabat:' + ids[1]); assert.equal(alerts[0].target, 'online');

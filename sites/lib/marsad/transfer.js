@@ -192,7 +192,8 @@ function setup(app) {
     const me = ctx.me || { id: null, name: 'المرصد آلي', staff: false };
     // The day's orders (heavy: Apex snapshot, matching) are built once every few seconds for everyone on the page;
     // only the claims (who has which order) are read fresh for each request.
-    const base = await baseFor(day, ctx.now, { allowStale: true });
+    const base = await baseFor(day, ctx.now, ctx.cachedOnly ? { cachedOnly: true } : { allowStale: true });
+    if (!base) return null;
     const snap = { locations: base.locations };
     const jobs = new Map((await db.prepare('SELECT * FROM transfer_jobs WHERE day = ?').all(day)).map(j => [j.source + ':' + j.ref, j]));
     const customerNotes = new Map((await db.prepare('SELECT source, ref, cust_no, note, status, checked_at, phone_hash FROM apex_customer_notes WHERE day = ?').all(day)).map(n => [
@@ -289,8 +290,16 @@ function setup(app) {
     if (db.kind !== 'd1') x.run = run;
     return run;
   }
-  async function baseFor(day, now, { allowStale = false } = {}) {
+  async function baseFor(day, now, { allowStale = false, cachedOnly = false } = {}) {
     const x = S(day);
+    // The automatic transfer (11-11) never builds the day itself: it reads the last completed build (a minute at most),
+    // so it adds no load next to the employees' page and the pushes.
+    if (cachedOnly) {
+      const b = queueCache.get(day); if (b && now - b.at < 60000) return b;
+      const r = await db.prepare('SELECT at, data FROM transfer_cache WHERE day = ?').get(day);
+      const d = r && now - r.at < 60000 ? parseJson(r.data, null) : null; if (d) return d;
+      return null;
+    }
     if (db.kind !== 'd1' && x.run) return x.run;                                    // a build is running here: its result is the freshest
     const b = queueCache.get(day);
     if (b && !x.dirty && now - b.at < QUEUE_CACHE_MS) return b;
@@ -591,7 +600,7 @@ function setup(app) {
       const noteProfile = await db.prepare('SELECT data FROM match_profiles WHERE source = ? AND ref = ?').get(source, ref);
       const currentPhone = profilePhone(source, parseJson(noteProfile?.data, {}));
       if (!noteRecord || !currentPhone || noteRecord.phone_hash !== sha256(currentPhone)
-        || noteRecord.status === 'error' || now - noteRecord.checked_at > 5 * 60000) {
+        || noteRecord.status === 'error' || now - noteRecord.checked_at > 10 * 60000) {
         fail(409, 'ملاحظات بطاقة العميل على APEX لسه ما اتراجعتش — استنى القراءة من جهاز الكاشير');
       }
       const verifiedCardNote = parseApexCustomerNote(noteRecord.note);
@@ -733,7 +742,7 @@ function setup(app) {
     if (cur && !(cur.state === 'claimed' && now - cur.at > CLAIM_MS)) fail(409, 'الأوردر مع ' + (cur.employee_name || 'حد'));
     const payment = ['cash', 'paid'].includes(b.payment) ? b.payment : null, note = b.note ? String(b.note).slice(0, 300) : null;
     await autoJob({ me, b, source, ref, row, cur, othersClaim: false, payment, note, now });
-    S(row.day).dirty = true; queueCache.delete(row.day);
+    S(row.day).dirty = true;
     await app.audit('transfer_auto', null, { actor: me.name, source, ref, payment, branch: b.branchNo, location: b.locationNo, items: b.items, automatic: true });
     return { ok: true };
   };
@@ -792,6 +801,7 @@ function setup(app) {
   app.route('POST', '/api/apex-writer/customer-notes/pending', async ctx => {
     await writer(ctx);
     const day = businessDay(ctx.now), due = ctx.now - 5 * 60000, out = [];
+    const sent = new Set((await db.prepare("SELECT source, ref FROM transfer_jobs WHERE day = ? AND state IN ('auto_pending', 'auto_sending', 'auto_done', 'entered')").all(day)).map(j => j.source + ':' + j.ref));
     for (const source of ['talabat', 'site']) {
       const orderTable = source === 'talabat' ? 'talabat_orders' : 'site_orders';
       const join = source === 'talabat' ? 'o.id = p.ref' : 'CAST(o.id AS TEXT) = p.ref';
@@ -804,12 +814,15 @@ function setup(app) {
         WHERE o.day = ? ${terminal} ORDER BY o.id DESC LIMIT 35`).all(source, day);
       for (const row of rows) {
         const phone = profilePhone(source, parseJson(row.data, {}));
-        if (!phone || out.length >= 25) continue;
+        if (!phone || sent.has(source + ':' + row.ref)) continue;
         if (row.phone_hash === sha256(phone) && Number(row.checked_at) >= due) continue;
-        out.push({ source, ref: row.ref, day, phone });
+        out.push({ source, ref: row.ref, day, phone, last: row.phone_hash === sha256(phone) ? Number(row.checked_at) || 0 : 0 });
       }
     }
-    return { pending: out };
+    // 11-11: Talabat's 35 always filled the 25 places, so a website order's card was never read again. Orders already
+    // on their way to Apex are skipped; never read first, then the longest ago, whichever platform.
+    out.sort((a, b) => a.last - b.last);
+    return { pending: out.slice(0, 25).map(({ last, ...x }) => x) };
   });
   app.route('POST', '/api/apex-writer/customer-notes/result', async ctx => {
     await writer(ctx);
