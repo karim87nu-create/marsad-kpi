@@ -133,16 +133,19 @@ function setup(app) {
       // Apex, the branch and the online group are told to void it there (once).
       // Drive all missing-order checks from the recent indexed order rows, joining profiles by their primary key.
       // The old IN(subquery) form scanned the full profile table on each minute's central-board refresh.
-      const recent = await db.prepare(`SELECT s.id, s.fulfillment, s.out_at, s.delivered_at, s.status, s.gone_at, s.branch, s.total, s.transfers, s.scheduled,
-        json_extract(p.data, '$.panel.stage') AS panel_stage, json_extract(p.data, '$.panel.number') AS panel_number
-        FROM site_orders s LEFT JOIN match_profiles p ON p.source = 'site' AND p.ref = CAST(s.id AS TEXT)
-        WHERE s.created_at >= ? AND s.delivered_at IS NULL AND s.status NOT IN ('cancelled','failed','wallet-failed')`).all(now - 14 * 3600000);
+      const recent = await db.prepare("SELECT id, fulfillment, out_at, delivered_at, status, gone_at, branch, total, transfers, scheduled FROM site_orders WHERE created_at >= ? AND delivered_at IS NULL AND status NOT IN ('cancelled','failed','wallet-failed')").all(now - 14 * 3600000);
+      const recentProfiles = new Map(), recentIds = recent.map(r => Number(r.id)).filter(n => Number.isInteger(n) && n > 0);
+      for (let i = 0; i < recentIds.length; i += 90) {
+        const part = recentIds.slice(i, i + 90), qs = part.map(() => '?').join(',');
+        for (const p of await db.prepare(`SELECT ref, data FROM match_profiles WHERE source = 'site' AND ref IN (${qs})`).all(...part.map(String))) recentProfiles.set(String(p.ref), parseJson(p.data, {}));
+      }
       for (const r of recent) {
         if (seen.has(r.id)) { if (r.gone_at) writes.push(db.prepare('UPDATE site_orders SET gone_at = NULL WHERE id = ?').bind(r.id)); continue; }
-        if ((r.fulfillment === 'pickup' && Number(r.panel_stage) >= 2) || r.out_at != null) {
+        const panel = recentProfiles.get(String(r.id))?.panel || {};
+        if ((r.fulfillment === 'pickup' && Number(panel.stage) >= 2) || r.out_at != null) {
           writes.push(db.prepare("UPDATE site_orders SET delivered_at = ?, status = 'completed' WHERE id = ? AND delivered_at IS NULL").bind(now, r.id)); continue;
         }
-        if (r.status === 'completed' || r.scheduled || r.panel_number == null) continue;
+        if (r.status === 'completed' || r.scheduled || panel.number == null) continue;
         if (!r.gone_at) { writes.push(db.prepare('UPDATE site_orders SET gone_at = ? WHERE id = ?').bind(now, r.id)); continue; }
         if (now - r.gone_at < 3 * 60000) continue;
         writes.push(db.prepare("UPDATE site_orders SET status = 'cancelled' WHERE id = ?").bind(r.id));
