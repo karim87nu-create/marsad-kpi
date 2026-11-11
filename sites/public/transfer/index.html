@@ -409,22 +409,27 @@ function card(o) {
   let branchSel = '', areaSel = '', areaNote = '';
   if (auto) {
     const all = areaList();
+    const zeroFee = l => l.service != null && Number.isFinite(Number(l.service)) && Number(l.service) === 0;
+    const deliveryArea = l => o.fulfillment === 'pickup' || !zeroFee(l);
     // Karim 10-11: the Apex area chosen before for the same Talabat area comes first.
-    if (!p.loc && !p.locTried && o.areaGuess && all.some(l => String(l.no) === String(o.areaGuess.no))) {
+    if (!p.loc && !p.locTried && o.areaGuess && all.some(l => String(l.no) === String(o.areaGuess.no) && deliveryArea(l))) {
       p.locTried = true; pickArea(p, String(o.areaGuess.no)); p.locGuess = o.areaGuess.how === 'pickup' ? 'pickup' : 'learned';
+    } else if (!p.loc && !p.locTried && o.fulfillment !== 'pickup' && o.areaGuess && all.some(l => String(l.no) === String(o.areaGuess.no) && zeroFee(l))) {
+      p.locTried = true; p.zeroFeeGuess = true;
     }
     if (!p.loc && !p.locTried && (cu.address || cu.area || cu.talabatArea)) {
       p.locTried = true;
       const nz = v => String(v || '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/[ًٌٍَُِّْـ]/g, '').replace(/[^؀-ۿa-z0-9 ]/gi, ' ').replace(/\s+/g, ' ').trim();
       const addr = ' ' + nz((cu.talabatArea || '') + ' ' + (cu.area || '') + ' ' + (cu.address || '')) + ' ';
-      const hit = all.filter(l => nz(l.name).length >= 3 && addr.includes(' ' + nz(l.name) + ' ')).sort((a, b) => nz(b.name).length - nz(a.name).length)[0];
+      const hit = all.filter(l => deliveryArea(l) && nz(l.name).length >= 3 && addr.includes(' ' + nz(l.name) + ' ')).sort((a, b) => nz(b.name).length - nz(a.name).length)[0];
       if (hit) { pickArea(p, hit.no); p.locGuess = true; }
     }
     const bname = no => (data.branches || []).find(b => String(b.no) === String(no))?.name || ('فرع ' + no);
     branchSel = '<select data-pick="branch" aria-label="الفرع على Apex"><option value="">اختار الفرع…</option>' + (data.branches || []).map(b => '<option value="' + b.no + '"' + (String(p.branch) === String(b.no) ? ' selected' : '') + '>' + esc(b.name) + '</option>').join('') + '</select>';
     const areas = all.filter(l => !p.branch || !l.branches.length || l.branches.some(b => String(b) === String(p.branch)));
-    areaSel = '<select data-pick="loc" aria-label="المنطقة على Apex"><option value="">اختار المنطقة…</option>' + areas.map(l => '<option value="' + l.no + '"' + (String(p.loc) === String(l.no) ? ' selected' : '') + '>' + esc(l.name) + '</option>').join('') + '</select>';
-    areaNote = o.fulfillment === 'pickup' ? '<div class="warn">استلام من الفرع — بيتسجل على «استلام فرع» بتاع الفرع اللي تختاره، من غير عنوان ولا دور ولا شقة</div>' : p.moved ? '<div class="warn">الفرع اتغير لـ ' + esc(bname(p.branch)) + ' عشان المنطقة تبعه</div>' : p.locGuess === 'learned' ? '<div class="muted">اتختارت من الأوردرات اللي فاتت لنفس منطقة طلبات' + (cu.talabatArea ? ' («' + esc(cu.talabatArea) + '»)' : '') + ' — اتأكد منها</div>' : p.locGuess ? '<div class="muted">اتختارت من العنوان — اتأكد منها</div>' : '';
+    areaSel = '<select data-pick="loc" aria-label="المنطقة على Apex"><option value="">اختار المنطقة…</option>' + areas.map(l => '<option value="' + l.no + '"' + (String(p.loc) === String(l.no) ? ' selected' : '') + '>' + esc(l.name) + (zeroFee(l) && o.fulfillment !== 'pickup' ? ' — رسوم التوصيل 0 ج' : '') + '</option>').join('') + '</select>';
+    const selectedArea = all.find(l => String(l.no) === String(p.loc));
+    areaNote = o.fulfillment === 'pickup' ? '<div class="warn">استلام من الفرع — بيتسجل على «استلام فرع» بتاع الفرع اللي تختاره، من غير عنوان ولا دور ولا شقة</div>' : selectedArea && zeroFee(selectedArea) ? '<div class="warn">رسوم المنطقة على Apex صفر. راجع إنها منطقة عنوان العميل وليست توصيلًا مجانيًا قبل التسجيل.</div>' : p.zeroFeeGuess ? '<div class="warn">اتوقف الاختيار التلقائي لأن المنطقة المتعلمة رسومها صفر. اختار منطقة العميل يدويًا.</div>' : p.moved ? '<div class="warn">الفرع اتغير لـ ' + esc(bname(p.branch)) + ' عشان المنطقة تبعه</div>' : p.locGuess === 'learned' ? '<div class="muted">اتختارت من الأوردرات اللي فاتت لنفس منطقة طلبات' + (cu.talabatArea ? ' («' + esc(cu.talabatArea) + '»)' : '') + ' — اتأكد منها</div>' : p.locGuess ? '<div class="muted">اتختارت من العنوان — اتأكد منها</div>' : '';
   }
   const label = fullLabel(o, pay);
   const actLabel = mode === 'shadow' ? 'جرّب التسجيل (مش هيتسجل)' : mode === 'test' ? 'سجّل على نسخة التجربة' : 'سجّل على Apex';
@@ -582,6 +587,9 @@ $('list').addEventListener('click', async e => {
     if (!pay) { toast('حدد الأول: كاش ولا مدفوع'); return; }
     if (!p.branch) { toast('اختار الفرع'); return; }
     if (!p.loc) { toast('اختار منطقة العميل'); return; }
+    const chosenArea = areaList().find(l => String(l.no) === String(p.loc));
+    const confirmFreeArea = o.fulfillment !== 'pickup' && chosenArea?.service != null && Number.isFinite(Number(chosenArea.service)) && Number(chosenArea.service) === 0;
+    if (confirmFreeArea && !confirm('رسوم المنطقة المختارة على Apex صفر. اتأكد إنها منطقة العميل فعلًا وليست توصيلًا مجانيًا. تكمل؟')) return;
     if (p.saving) { toast('استنى حفظ اختيار الصنف'); return; }
     const missingAt = flatLines(o).findIndex((i, n) => !/^\d{1,10}$/.test(String(p.items?.[n] || '')));
     if (missingAt >= 0) { toast('اختار الصنف على Apex لـ: ' + flatLines(o)[missingAt].name); return; }
@@ -616,7 +624,7 @@ $('list').addEventListener('click', async e => {
     if (bad.length && !confirm(bad.join('\n') + '\n\nمتأكد إنه صح؟')) return;
     b.disabled = true;
     try {
-      await api('POST', '/api/transfer/job', { source: o.source, ref: o.ref, action: 'auto', payment: pay, branchNo: Number(p.branch), locationNo: Number(p.loc), code: o.code,
+      await api('POST', '/api/transfer/job', { source: o.source, ref: o.ref, action: 'auto', payment: pay, branchNo: Number(p.branch), locationNo: Number(p.loc), confirmFreeArea, code: o.code,
         items: flatLines(o).map((i, n) => ({ itemNo: p.items[n], qty: i.qty, note: '' })),
         apexNote: cardNote?.status === 'found' ? { approved: !!p.apexNoteApproved || (!contacted && giftsChosen) || cardSelf(cardNote, pay), note: cardNote.text, custNo: cardNote.custNo, items: noteItems,
           resolution: contacted ? 'contacted' : giftsChosen ? 'gift' : null, gifts: !contacted && giftsChosen ? Object.entries(p.cardGifts).map(([itemNo, qty]) => ({ itemNo, qty })) : null } : null,
