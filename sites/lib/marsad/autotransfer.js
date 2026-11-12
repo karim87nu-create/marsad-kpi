@@ -7,8 +7,8 @@
 //  - cash or paid is clear, and who pays every discount (a paid order needs nothing more);
 //  - the customer's card on Apex was read in the last 10 minutes; a cash order with one clear discount on it is discounted
 //    by itself — a paid order's discount (the customer's gift or keeping it) and free items on the card wait for a person;
-//  - Apex's prices come to the order's within a small difference (the website: Apex is kept up to 5% above it),
-//    and Talabat's delivery to the area's delivery on Apex;
+//  - every item has an Apex price; item price differences do not block transfer and remain visible in the admin
+//    price-difference review; Talabat's delivery still has to match the area's delivery on Apex;
 //  - nobody has the order and it is not on Apex already.
 // Otherwise the order stays for the employee with the reason shown on the transfer page; when the mode is «on» and it is
 // still waiting after 2 minutes, the call center group is told on Telegram (once per order).
@@ -108,14 +108,12 @@ export function decide(o, x) {
     else if (o.source === 'talabat') {
       const tItems = o.subtotal ?? billAmount(o, /^(?:المجموع الفرعي|subtotal)$/i);
       if (tItems == null) why.push('مجموع الأصناف على طلبات مش ظاهر');
-      else if (Math.abs(T(apexItems) - tItems) > Math.max(8, tItems * 0.06)) why.push('أسعار Apex مختلفة عن طلبات بـ ' + Math.round(Math.abs(T(apexItems) - tItems)) + ' ج');
       // Free delivery from Talabat (Pro, offers: the delivery line 0 or missing) is not a price difference (Karim 11-11).
       const delFee = billAmount(o, /توصيل|delivery/i), tDel = (delFee || 0) + (billAmount(o, /رسوم الخدمة|service/i) || 0);
       if (service != null && delFee > 0 && !freeDelivery(o) && Math.abs(T(service) + T(Number(APEX_PRICES[TALABAT_FEE_NO]) || 7.02) - tDel) > 10) why.push('توصيل Apex مختلف عن طلبات');
     } else {
       const sItems = o.items.reduce((s, i) => s + (Number(i.price) || 0), 0);
       if (!(sItems > 0)) why.push('أسعار الموقع مش ظاهرة');
-      else if (T(apexItems) < sItems * 0.97 - 3 || T(apexItems) > sItems * 1.06 + 3) why.push('أسعار Apex مختلفة عن الموقع بـ ' + Math.round(Math.abs(T(apexItems) - sItems)) + ' ج');
     }
   }
   if (why.length) return { ok: false, why, quiet: why.every(w => QUIET.has(w)) };
