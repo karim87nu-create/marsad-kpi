@@ -821,7 +821,7 @@ function setup(app) {
       await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at, payload, result) VALUES (?,?,?,'entered',?,?,?,?,?,?,NULL)
         ON CONFLICT(source, ref) DO UPDATE SET state = 'entered', employee_id = excluded.employee_id, employee_name = excluded.employee_name, payment = excluded.payment, note = excluded.note, at = excluded.at, payload = excluded.payload, result = NULL`)
         .run(source, ref, row.day, me.id, me.name, payment, note, ctx.now, payload);
-      if (!pickup) await learnTransferArea(source, ref, locationNo);
+      if (!pickup) await learnTransferArea(source, ref, locationNo, true);
     } else if (b.action === 'release') {
       if (othersClaim) fail(409, 'الأوردر مع ' + (cur.employee_name || 'حد تاني'));
       await db.prepare("UPDATE transfer_jobs SET state = 'released', at = ? WHERE source = ? AND ref = ?").run(ctx.now, source, ref);
