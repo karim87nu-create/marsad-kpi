@@ -262,6 +262,8 @@ CREATE INDEX IF NOT EXISTS wa_messages_day ON wa_messages(day);
 CREATE TABLE IF NOT EXISTS apex_names (apex_name TEXT PRIMARY KEY, employee_id INTEGER NOT NULL, set_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS transfer_jobs (source TEXT NOT NULL, ref TEXT NOT NULL, day TEXT NOT NULL, state TEXT NOT NULL, employee_id INTEGER, employee_name TEXT, payment TEXT, note TEXT, at INTEGER NOT NULL, PRIMARY KEY(source, ref));
 CREATE INDEX IF NOT EXISTS transfer_jobs_day ON transfer_jobs(day);
+CREATE TABLE IF NOT EXISTS apex_cancels (order_no INTEGER PRIMARY KEY, day TEXT NOT NULL, sn TEXT, branch TEXT, text TEXT NOT NULL, seen_at INTEGER NOT NULL, state TEXT NOT NULL, at INTEGER NOT NULL, result TEXT, done_at INTEGER);
+CREATE INDEX IF NOT EXISTS apex_cancels_day ON apex_cancels(day);
 `;
 
 // Statements one by one (D1 runs one statement per call); comments removed.
