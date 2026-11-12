@@ -38,7 +38,7 @@ const pickOf = i => (i.apex || []).length === 1 ? i.apex[0].no : i.apexPick && (
 export function decide(o, x) {
   if (!o || o.done || o.apex || o.out) return null;
   if (o.job) return null;
-  const why = [];
+  const why = [], warnings = [];
   const age = x.now - Date.parse(o.at || 0);
   if (!(age >= SETTLE_MS)) why.push('لسه واصل');
   // 11-11: an old order is one staff already handled (entered on Apex by hand, matching did not find it) — 9 website
@@ -110,20 +110,20 @@ export function decide(o, x) {
       if (tItems == null) why.push('مجموع الأصناف على طلبات مش ظاهر');
       // Free delivery from Talabat (Pro, offers: the delivery line 0 or missing) is not a price difference (Karim 11-11).
       const delFee = billAmount(o, /توصيل|delivery/i), tDel = (delFee || 0) + (billAmount(o, /رسوم الخدمة|service/i) || 0);
-      if (service != null && delFee > 0 && !freeDelivery(o) && Math.abs(T(service) + T(Number(APEX_PRICES[TALABAT_FEE_NO]) || 7.02) - tDel) > 10) why.push('توصيل Apex مختلف عن طلبات');
+      if (service != null && delFee > 0 && !freeDelivery(o) && Math.abs(T(service) + T(Number(APEX_PRICES[TALABAT_FEE_NO]) || 7.02) - tDel) > 10) warnings.push('فرق سعر التوصيل بين Apex وطلبات');
     } else {
       const sItems = o.items.reduce((s, i) => s + (Number(i.price) || 0), 0);
       if (!(sItems > 0)) why.push('أسعار الموقع مش ظاهرة');
     }
   }
-  if (why.length) return { ok: false, why, quiet: why.every(w => QUIET.has(w)) };
+  if (why.length) return { ok: false, why, warnings, quiet: why.every(w => QUIET.has(w)) };
   // The customer as the page shows it, without the English (the page's «what staff wrote over the Arabic» is not learned from this).
   const { nameEn, addressEn, original, talabatArea, siteArea, ...customer } = o.customer || {};
   const body = { source: o.source, ref: String(o.ref), action: 'auto', payment: pay, branchNo: branch, locationNo: loc, code: o.code,
     items: lines.map(l => ({ itemNo: String(l.no), qty: l.qty, note: '' })),
     apexNote: card.status === 'found' ? { approved: true, note: card.text, custNo: card.custNo, items: [], resolution: null, gifts: null } : null,
     note: deliveryComment(o), customer, discountSplit: (o.discounts || []).map(() => null) };
-  return { ok: true, why: [], body, locHow };
+  return { ok: true, why: [], warnings, body, locHow };
 }
 
 function setup(app) {
@@ -164,7 +164,7 @@ function setup(app) {
       for (const o of q.orders || []) {
         const d = decide(o, x); if (!d) continue;
         const k = o.source + ':' + o.ref, prev = seen.get(k);
-        let decision = d.ok ? (m === 'on' ? 'sent' : 'would') : 'wait', reasons = d.why.join(' · ');
+        let decision = d.ok ? (m === 'on' ? 'sent' : 'would') : 'wait', reasons = (d.ok ? d.warnings : d.why).join(' · ');
         if (d.ok && m === 'on') {
           try { await app.transferAutoJob(d.body, now); }
           catch (e) { decision = 'wait'; reasons = String(e?.message || e).slice(0, 200); }
