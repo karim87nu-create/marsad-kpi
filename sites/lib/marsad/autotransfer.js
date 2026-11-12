@@ -130,7 +130,7 @@ function setup(app) {
   const { db, fail } = app;
   const mode = async () => { const v = (await db.prepare("SELECT value FROM settings WHERE key = 'auto_transfer'").get())?.value; return MODES.includes(v) ? v : 'off'; };
 
-  // The area of this customer's last automatic orders to the same address (website delivery orders have no Talabat area).
+  // The area of this customer's last confirmed Apex orders to the same address (including manual entries).
   // Read again at most every 10 minutes (11-11: D1 «overloaded»).
   let areasAt = 0, areasDay = null, areasCache = new Map();
   async function customerAreas(day) {
@@ -138,7 +138,7 @@ function setup(app) {
     areasDay = day; areasAt = Date.now(); areasCache = await readAreas(day); return areasCache;
   }
   async function readAreas(day) {
-    const rows = await db.prepare("SELECT payload FROM transfer_jobs WHERE payload IS NOT NULL AND state IN ('auto_done', 'auto_pending', 'auto_sending') AND day >= date(?, '-120 days') ORDER BY at DESC LIMIT 2000").all(day).catch(() => []);
+    const rows = await db.prepare("SELECT payload FROM transfer_jobs WHERE payload IS NOT NULL AND state IN ('auto_done', 'entered') AND day >= date(?, '-120 days') ORDER BY at DESC LIMIT 2000").all(day).catch(() => []);
     const m = new Map();
     for (const r of rows) {
       const p = parseJson(r.payload, {}); if (p.pickup || !p.customer?.phone || !p.locationNo) continue;
