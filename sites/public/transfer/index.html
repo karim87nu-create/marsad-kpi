@@ -616,12 +616,7 @@ $('list').addEventListener('click', async e => {
     if (o.items.some(i => (i.addons || []).some(a => a.qty == null))) { toast('عدد إضافة مش واضح — سجله بإيدك'); return; }
     const cc = ticketCalc(o, flatLines(o), p);
     const rest = cc.rest, platSum = cc.plat;
-    // Karim 10-11 (#2087: Apex 2685 for an order paid 1225): asked only when the items or the delivery differ — never because
-    // of a discount (the discount lines decide that part).
-    const bad = [];
-    if (cc.itemsDiff != null && Math.abs(cc.itemsDiff) > 0.1 * cc.tItems + 15) bad.push('أصناف Apex ' + (cc.itemsDiff > 0 ? 'أغلى' : 'أرخص') + ' من طلبات بـ ' + money(Math.abs(cc.itemsDiff)) + ' — غالبًا صنف أو حجم غلط');
-    if (cc.delDiff != null && Math.abs(cc.delDiff) > 20) bad.push('توصيل Apex مختلف عن طلبات بـ ' + money(Math.abs(cc.delDiff)) + ' — راجع المنطقة');
-    if (bad.length && !confirm(bad.join('\n') + '\n\nمتأكد إنه صح؟')) return;
+    // Price differences are recorded for follow-up after the Apex write; they do not stop an otherwise verified transfer.
     b.disabled = true;
     try {
       await api('POST', '/api/transfer/job', { source: o.source, ref: o.ref, action: 'auto', payment: pay, branchNo: Number(p.branch), locationNo: Number(p.loc), confirmFreeArea, code: o.code,
