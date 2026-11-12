@@ -553,6 +553,15 @@ function setup(app) {
     }
     return pairs;
   }
+  async function learnTransferArea(source, ref, locationNo) {
+    if (!app.learn || !locationNo) return;
+    const d = parseJson((await db.prepare('SELECT data FROM match_profiles WHERE source = ? AND ref = ?').get(source, ref))?.data, {});
+    const area = source === 'talabat' ? d?.area : d?.customer?.area;
+    if (area && normArabic(area)) {
+      const evidence = source === 'talabat' ? String(ref) : 'site:' + ref;
+      await app.learn.record('transfer:area', normArabic(area).slice(0, 120), String(locationNo), evidence).catch(() => {});
+    }
+  }
   app.route('POST', '/api/transfer/selection', async ctx => {
     const me = await who(ctx), b = ctx.body;
     const source = ['talabat', 'site'].includes(b.source) ? b.source : null, ref = String(b.ref || '');
@@ -739,10 +748,7 @@ function setup(app) {
         for (let i = 0; i < facts.length; i++) await app.learn.record('transfer:item', facts[i][0], facts[i][1], ref + ':' + i).catch(() => {});
       }
       // The Apex area chosen for this Talabat area teaches the next order of the same area (Karim 10-11).
-      if (app.learn && !pickup) {
-        const d = parseJson((await db.prepare('SELECT data FROM match_profiles WHERE source = ? AND ref = ?').get(source, ref))?.data, {}), area = source === 'talabat' ? d?.area : d?.customer?.area;
-        if (area && normArabic(area)) await app.learn.record('transfer:area', normArabic(area).slice(0, 120), String(b.locationNo), source === 'talabat' ? ref : 'site:' + ref).catch(() => {});
-      }
+      if (!pickup) await learnTransferArea(source, ref, locationNo);
   }
   // The automatic transfer (11-11): the same checks and job as the page's button, as «المرصد آلي». Never over a claim.
   app.transferAutoJob = async (b, now) => {
@@ -787,9 +793,30 @@ function setup(app) {
     } else if (b.action === 'entered') {
       if (othersClaim) fail(409, 'الأوردر مع ' + (cur.employee_name || 'حد تاني'));
       if (!payment) fail(400, 'حدد: كاش ولا مدفوع');
-      await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at) VALUES (?,?,?,'entered',?,?,?,?,?)
-        ON CONFLICT(source, ref) DO UPDATE SET state = 'entered', employee_id = excluded.employee_id, employee_name = excluded.employee_name, payment = excluded.payment, note = excluded.note, at = excluded.at`)
-        .run(source, ref, row.day, me.id, me.name, payment, note, ctx.now);
+      const branchNo = Number(b.branchNo), selectedLocation = Number(b.locationNo);
+      if (!Number.isInteger(branchNo) || branchNo < 1 || branchNo > 99) fail(400, 'اختار فرع Apex');
+      if (!Number.isInteger(selectedLocation) || selectedLocation < 1) fail(400, 'اختار منطقة العميل على Apex');
+      const siteOrder = source === 'site' ? await db.prepare('SELECT fulfillment FROM site_orders WHERE id = ?').get(Number(ref)) : null;
+      const pickup = siteOrder?.fulfillment === 'pickup';
+      const locationNo = pickup ? PICKUP_AREAS[branchNo]?.no : selectedLocation;
+      if (!locationNo) fail(400, 'اختار منطقة Apex الخاصة بالفرع');
+      const daySnap = parseJson((await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(row.day))?.data, {});
+      const areas = (Array.isArray(daySnap.locations) ? daySnap.locations : []).filter(l => Number(l?.no) === locationNo);
+      const owners = [...new Set(areas.map(l => l.branch).filter(x => x != null).map(Number))];
+      if (owners.length && !owners.includes(branchNo)) fail(400, 'المنطقة دي تبع فرع تاني على Apex — غيّر الفرع');
+      const area = areas.find(l => Number(l.branch) === branchNo) || areas.find(l => l.branch == null) || areas[0];
+      const areaService = pickup ? 0 : Number.isFinite(Number(area?.service)) && area?.service !== null ? Number(area.service) : null;
+      if (!pickup && (!area || areaService == null)) fail(400, 'المنطقة مش موجودة أو سعر توصيلها مش ظاهر على Apex');
+      if (!pickup && areaService === 0 && b.confirmFreeArea !== true) fail(409, 'رسوم المنطقة على Apex صفر — راجع العنوان وأكد اختيار المنطقة قبل التسجيل');
+      const profile = parseJson((await db.prepare('SELECT data FROM match_profiles WHERE source = ? AND ref = ?').get(source, ref))?.data, {});
+      const phone = source === 'talabat' ? (profile.phoneDisplay || profile.phone || profile.mobileDisplay || profile.mobile) : (profile.customer?.phoneDisplay || profile.customer?.phone || profile.customer?.mobileDisplay || profile.customer?.mobile);
+      const address = source === 'talabat' ? profile.address : profile.customer?.address;
+      const payload = JSON.stringify({ v: 1, source, ref, branchNo, locationNo, payment, areaService, ...(pickup ? { pickup: true } : {}),
+        customer: { phone: deliveryPhone(phone), address: String(address || '').slice(0, 360) } });
+      await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at, payload, result) VALUES (?,?,?,'entered',?,?,?,?,?,?,NULL)
+        ON CONFLICT(source, ref) DO UPDATE SET state = 'entered', employee_id = excluded.employee_id, employee_name = excluded.employee_name, payment = excluded.payment, note = excluded.note, at = excluded.at, payload = excluded.payload, result = NULL`)
+        .run(source, ref, row.day, me.id, me.name, payment, note, ctx.now, payload);
+      if (!pickup) await learnTransferArea(source, ref, locationNo);
     } else if (b.action === 'release') {
       if (othersClaim) fail(409, 'الأوردر مع ' + (cur.employee_name || 'حد تاني'));
       await db.prepare("UPDATE transfer_jobs SET state = 'released', at = ? WHERE source = ? AND ref = ?").run(ctx.now, source, ref);
