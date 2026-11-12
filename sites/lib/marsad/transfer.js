@@ -542,6 +542,8 @@ function setup(app) {
   let areaFilled = false;
   async function areaLearned() {
     let pairs = await app.learn.pairs('transfer:area');
+    const confirmed = await app.learn.pairs('transfer:area-confirmed');
+    for (const [area, locations] of confirmed) pairs.set(area, locations);
     if (!pairs.size && !areaFilled) {
       areaFilled = true;
       const rows = await db.prepare(`SELECT j.ref, j.payload, p.data FROM transfer_jobs j JOIN match_profiles p ON p.source = 'talabat' AND p.ref = j.ref
@@ -553,13 +555,14 @@ function setup(app) {
     }
     return pairs;
   }
-  async function learnTransferArea(source, ref, locationNo) {
+  async function learnTransferArea(source, ref, locationNo, confirmed = false) {
     if (!app.learn || !locationNo) return;
     const d = parseJson((await db.prepare('SELECT data FROM match_profiles WHERE source = ? AND ref = ?').get(source, ref))?.data, {});
     const area = source === 'talabat' ? d?.area : d?.customer?.area;
     if (area && normArabic(area)) {
       const evidence = source === 'talabat' ? String(ref) : 'site:' + ref;
       await app.learn.record('transfer:area', normArabic(area).slice(0, 120), String(locationNo), evidence).catch(() => {});
+      if (confirmed) await app.learn.record('transfer:area-confirmed', normArabic(area).slice(0, 120), String(locationNo), evidence).catch(() => {});
     }
   }
   app.route('POST', '/api/transfer/selection', async ctx => {
@@ -679,7 +682,7 @@ function setup(app) {
       if (safeRemarks.length > 200) fail(409, 'ملاحظات الأوردر مع بطاقة العميل أطول من مساحة APEX — راجعها قبل التسجيل');
       // Karim 11-11: a website pickup goes to the branch's «استلام فرع» area, with no address, floor or flat.
       let pickup = false;
-      if (source === 'site') { const so = await db.prepare('SELECT fulfillment FROM site_orders WHERE id = ?').get(Number(ref)); pickup = so?.fulfillment === 'pickup'; }
+      if (source === 'site') { const so = await db.prepare('SELECT fulfillment, branch FROM site_orders WHERE id = ?').get(Number(ref)); pickup = so?.fulfillment === 'pickup'; }
       if (pickup && !PICKUP_AREAS[Number(b.branchNo)]) fail(400, 'اختار فرع Apex');
       const locationNo = pickup ? PICKUP_AREAS[Number(b.branchNo)].no : Number(b.locationNo);
       if (!Number.isInteger(locationNo) || locationNo < 1) fail(400, 'اختار منطقة العميل على Apex');
@@ -748,7 +751,7 @@ function setup(app) {
         for (let i = 0; i < facts.length; i++) await app.learn.record('transfer:item', facts[i][0], facts[i][1], ref + ':' + i).catch(() => {});
       }
       // The Apex area chosen for this Talabat area teaches the next order of the same area (Karim 10-11).
-      if (!pickup) await learnTransferArea(source, ref, locationNo);
+      if (!pickup) await learnTransferArea(source, ref, locationNo, true);
   }
   // The automatic transfer (11-11): the same checks and job as the page's button, as «المرصد آلي». Never over a claim.
   app.transferAutoJob = async (b, now) => {
@@ -797,6 +800,8 @@ function setup(app) {
       if (!Number.isInteger(branchNo) || branchNo < 1 || branchNo > 99) fail(400, 'اختار فرع Apex');
       if (!Number.isInteger(selectedLocation) || selectedLocation < 1) fail(400, 'اختار منطقة العميل على Apex');
       const siteOrder = source === 'site' ? await db.prepare('SELECT fulfillment FROM site_orders WHERE id = ?').get(Number(ref)) : null;
+      const assignedBranch = apexBranchOf(siteOrder?.branch);
+      if (assignedBranch && assignedBranch !== branchNo) fail(409, 'الأوردر على الموقع متحوّل لفرع تاني — غيّر الفرع قبل التأكيد');
       const pickup = siteOrder?.fulfillment === 'pickup';
       const locationNo = pickup ? PICKUP_AREAS[branchNo]?.no : selectedLocation;
       if (!locationNo) fail(400, 'اختار منطقة Apex الخاصة بالفرع');
