@@ -407,7 +407,7 @@ function card(o) {
   ]), addressLine = splitDeliveryAddress(ad.street), specialMark = deliveryMark(c.plat > 0 ? 'خصم طلبات ' + money(c.plat) : '', addressLine.extra);
   // Branch and area: the area decides the branch (Apex's own rule); the list shows the chosen branch's areas.
   let branchSel = '', areaSel = '', areaNote = '';
-  if (auto) {
+  if (auto || mineOrFree) {
     const all = areaList();
     const zeroFee = l => l.service != null && Number.isFinite(Number(l.service)) && Number(l.service) === 0;
     const deliveryArea = l => o.fulfillment === 'pickup' || !zeroFee(l);
@@ -440,7 +440,7 @@ function card(o) {
     '<div class="form">' +
       field('الاسم', '<b>' + esc(label) + '</b>' + (/[A-Za-z]{2,}/.test(cu.name || '') || cu.nameEn ? '<input data-arabic="name" placeholder="تعريب الاسم" title="' + esc(cu.nameEn ? 'العميل كتبه: ' + cu.nameEn + ' — صحّحه لو التعريب غلط، والمرصد هيتعلمه' : '') + '" value="' + esc(p.arabic?.name ?? (cu.nameEn ? cu.name : '')) + '">' : ''), label) +
       field('التليفون', cu.phone ? esc(cu.phone) : '', cu.phone) +
-      (auto ? field('الفرع', branchSel, '') + field('المنطقة', areaSel, '', areaNote) : field('الفرع', esc(o.branch || ''), '')) +
+      (auto || mineOrFree ? field('الفرع', branchSel, '') + field('المنطقة', areaSel, '', areaNote) : field('الفرع', esc(o.branch || ''), '')) +
       field('العنوان', esc(addressLine.main), addressLine.main, /[A-Za-z]{2,}/.test(cu.address || '') || cu.addressEn ? '<input data-arabic="address" placeholder="تعريب العنوان" title="' + esc(cu.addressEn ? 'العميل كتبه: ' + cu.addressEn + ' — صحّحه لو التعريب الغلط، والمرصد هيتعلمه' : '') + '" value="' + esc(p.arabic?.address ?? (cu.addressEn ? cu.address : '')) + '">' : '') +
       (specialMark ? field('العلامة المميزة', esc(specialMark), specialMark) : addressLine.extra ? '<div class="warn">تكملة العنوان أطول من مساحة العلامة المميزة — اختصر العنوان قبل التسجيل</div>' : '') +
       (ad.floor || ad.flat ? field('الدور', esc(ad.floor), ad.floor) + field('الشقة', esc(ad.flat), ad.flat) : '') +
@@ -644,9 +644,16 @@ $('list').addEventListener('click', async e => {
     const pay = choice[key(o)] || o.job?.payment || (o.payment === 'cash' || o.payment === 'paid' ? o.payment : null);
     if (b.dataset.act === 'entered' && specialMark == null) { toast('تكملة العنوان أكبر من مساحة العلامة المميزة — اختصر العنوان قبل التسجيل'); return; }
     if (b.dataset.act === 'entered' && !pay) { toast('حدد الأول: كاش ولا مدفوع'); return; }
+    const p = picks[key(o)] || {};
+    if (b.dataset.act === 'entered' && !p.branch) { toast('حدد فرع Apex عشان التأكيد يتعلم الاختيار'); return; }
+    if (b.dataset.act === 'entered' && !p.loc) { toast('حدد منطقة Apex عشان التأكيد يتعلم الاختيار'); return; }
     if (b.dataset.act === 'entered' && o.discounts?.some(d => !d.who) && !confirm('فيه خصم مش واضح مين ممول له. متأكد إنك سجلته صح؟')) return;
+    const selectedArea = areaList().find(l => String(l.no) === String(p.loc));
+    const confirmFreeArea = o.fulfillment !== 'pickup' && selectedArea?.service != null && Number.isFinite(Number(selectedArea.service)) && Number(selectedArea.service) === 0;
+    if (b.dataset.act === 'entered' && confirmFreeArea && !confirm('رسوم المنطقة المختارة على Apex صفر. اتأكد إنها منطقة العميل فعلًا وليست توصيلًا مجانيًا. تكمل؟')) return;
     b.disabled = true;
-    try { await api('POST', '/api/transfer/job', { source: o.source, ref: o.ref, action: b.dataset.act, payment: pay }); await load(); }
+    try { await api('POST', '/api/transfer/job', { source: o.source, ref: o.ref, action: b.dataset.act, payment: pay,
+      ...(b.dataset.act === 'entered' ? { branchNo: Number(p.branch), locationNo: Number(p.loc), confirmFreeArea } : {}) }); await load(); }
     catch (err) { toast(err.message); b.disabled = false; }
   }
 });
