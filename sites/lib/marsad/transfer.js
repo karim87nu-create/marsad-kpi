@@ -1245,6 +1245,11 @@ function setup(app) {
     const r = await db.prepare("UPDATE transfer_jobs SET state = ?, result = ?, at = ? WHERE source = ? AND ref = ? AND state = 'auto_sending'")
       .run(state, JSON.stringify(result), retryAt || ctx.now, source, ref);
     if (!r.changes) fail(409, 'الأوردر مش في حالة إرسال');
+    // Karim 11-14 (#4720402628): the customer's card on Apex changed after it was read (another order of the same
+    // customer used the discount, or the branch edited it). The writer refuses (right: never a discount twice); the card is
+    // read again at once so the page shows the card as it is now and the order can be sent again.
+    if (state === 'auto_failed' && /customer note changed|customer changed before/i.test(result.error || ''))
+      await db.prepare('UPDATE apex_customer_notes SET checked_at = 0 WHERE source = ? AND ref = ?').run(source, ref).catch(() => {});
     if (state === 'auto_done') {
       // The durable result is already saved. Optional learning must never turn
       // an accepted Apex write into an HTTP failure reported by the cashier.

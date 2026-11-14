@@ -199,6 +199,7 @@ function plain(e) {
     [/stopped on Apex/i, 'فيه صنف موقوف على Apex'], [/no price on Apex/i, 'فيه صنف ملوش سعر أونلاين على Apex'], [/business day is not open|no open day/i, 'يوم Apex لسه ما اتفتحش'],
     [/later day is open|stale/i, 'Apex فاتح يوم تاني — كلم المشرف'], [/timed out|Unable to connect|remote name|connection/i, 'Apex مش بيرد دلوقتي — جرب تاني بعد دقيقة'],
     [/Arithmetic overflow/i, 'Apex رفض الأوردر بسبب رقم مش مظبوط فيه — سجله بإيدك وبلغ المشرف'], [/no Apex order of this kind today/i, 'مفيش أوردر من النوع ده على Apex النهارده لسه — سجل أول واحد بإيدك'],
+    [/customer note changed|customer changed before/i, 'بطاقة العميل على Apex اتغيرت بعد ما اتقرت (غالبًا أوردر تاني للعميل خد الخصم) — استنى دقيقة لحد ما البطاقة تتقري تاني، راجع الخصم وابعته تاني'],
     [/فرق كبير|مش زي الأوردر/, null]];
   for (const [re, msg] of M) if (re.test(t)) return msg || t;
   return /[\u0600-\u06ff]/.test(t) ? t : 'حصلت مشكلة على Apex — سجله بإيدك وبلغ المشرف';
