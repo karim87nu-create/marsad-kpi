@@ -563,7 +563,8 @@ function render(force) {
   // Talabat: only what is on a live screen now (Karim 01-11). A claimed order stays with its employee.
   // Karim 11-14 (#4720240053: no hashtag, so not on «لسه ماتسجلش» either — found by chance): an order with no hashtag yet
   // is the one the live screen missed; it stays in the list for 45 minutes so nobody loses it.
-  const noTag = o => o.source === 'talabat' && !o.code && o.at && now - Date.parse(o.at) < 45 * 60000 && !/CANCEL|REJECT|DELIVER/i.test(o.status || '');
+  // Only an accepted one: a «NEW» order never accepted (11-14: #4720240053 — the customer ordered again as #2992) is not work.
+  const noTag = o => o.source === 'talabat' && !o.code && o.at && now - Date.parse(o.at) < 45 * 60000 && /^(?:ACCEPTED|READY|PREORDER ACCEPTED)$/i.test(o.status || '');
   const onScreen = o => o.source !== 'talabat' || o.onLive || noTag(o) || (o.job && !/^(?:released)$/.test(o.job.state || ''));
   const waiting = o => !o.apex && !o.out && !/^(?:entered|auto_done)$/.test(o.job?.state || '') && recent(o) && onScreen(o);
   // Newest first (Karim 01-11): the order that just came is at the top, older ones go down.
