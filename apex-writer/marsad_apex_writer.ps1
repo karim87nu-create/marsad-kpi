@@ -161,13 +161,15 @@ IF @Exec = 0 BEGIN
     (SELECT ISNULL(MAX(PosSerial), 0) + 1 FROM dbo.Counter WITH (NOLOCK) WHERE num = @Pos) AS PosSerial,
     (SELECT ISNULL(MAX(BranchOrderNo), 0) + 2 FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE BranchNo = @Branch) AS BranchOrderNo,
     (SELECT ISNULL(MAX(TypeSerial), 0) + 1 FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE RTRIM(PayWay) IN ('Cash', 'Ledge', 'Visa')) AS TypeSerial,
-    (SELECT TOP 1 CustNo FROM dbo.Customers WITH (NOLOCK) WHERE @Phone <> '' AND (Mobile = @Phone OR Phone = @Phone) ORDER BY CustNo DESC) AS CustNo;
+    (SELECT TOP 1 CustNo FROM dbo.Customers WITH (NOLOCK) WHERE @Phone <> '' AND (Mobile = @Phone OR Phone = @Phone) ORDER BY CASE WHEN Phone = @Phone THEN 0 ELSE 1 END, CustNo DESC) AS CustNo;
   RETURN;
 END;
+-- Karim 11-14 (#31128 «اتعمل علي رقم تاني»): one number on two customers (88795 as its phone, 406889 as a second
+-- mobile with another main phone): the customer whose main phone it is comes first, then the newest.
 -- The customer by phone, looked up before any lock (424,000 customers: a slow search must never hold the tables).
 -- Trailing spaces do not count in SQL Server's = on char columns, so no RTRIM (which would stop it using an index).
 DECLARE @CustFound numeric(18,0);
-IF @Phone <> '' SELECT TOP 1 @CustFound = CustNo FROM dbo.Customers WITH (NOLOCK) WHERE Mobile = @Phone OR Phone = @Phone ORDER BY CustNo DESC;
+IF @Phone <> '' SELECT TOP 1 @CustFound = CustNo FROM dbo.Customers WITH (NOLOCK) WHERE Mobile = @Phone OR Phone = @Phone ORDER BY CASE WHEN Phone = @Phone THEN 0 ELSE 1 END, CustNo DESC;
 BEGIN TRY
   BEGIN TRANSACTION;
   -- Exact one-time customer note must still be on this same APEX customer.
@@ -839,7 +841,7 @@ function Sync-CustomerNotes {
       $result = @{ source = [string]$p.source; ref = [string]$p.ref; day = [string]$p.day; phone = [string]$p.phone; status = 'error' }
       try {
         $q = $c.CreateCommand(); $q.CommandTimeout = 5
-        $q.CommandText = 'SELECT TOP 1 CustNo, Note FROM dbo.Customers WITH (NOLOCK) WHERE Phone = @phone OR Mobile = @phone ORDER BY CustNo DESC'
+        $q.CommandText = 'SELECT TOP 1 CustNo, Note FROM dbo.Customers WITH (NOLOCK) WHERE Phone = @phone OR Mobile = @phone ORDER BY CASE WHEN Phone = @phone THEN 0 ELSE 1 END, CustNo DESC'
         [void]$q.Parameters.AddWithValue('@phone', [string]$p.phone)
         $rd = $q.ExecuteReader()
         try {
