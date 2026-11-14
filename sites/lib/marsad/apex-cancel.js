@@ -71,12 +71,52 @@ function setup(app) {
     return { ok: true };
   });
 
+  // Karim 11-14 «بنبعت تعديل للفرع بكومنت لاغي وبعد ٥ دقائق بيتشال»: a Talabat order cancelled on Talabat after it was
+  // entered on Apex gets what the call center does by hand — an edit sent to the branch with the comment «لاغي» (Apex's
+  // own edit: the remarks change, a new print copy, and the branch's print log asks the branch to print it again). The
+  // monitor then sees «لاغي» like any comment, and five minutes later the order is cancelled (above). Never an order
+  // already with its pilot (the branch group is told by the Talabat cancel alert). Only with the automatic cancel on.
+  const NOTE = 'لاغي — الأوردر اتلغى على طلبات';
+  app.talabatCancelNotes = async (rows, matches, outNos, now) => {
+    if (await mode() !== 'on') return 0;
+    let n = 0;
+    for (const o of rows || []) {
+      if (!/^(?:CANCELLED|REJECTED)$/i.test(String(o.status || '')) || !(now - Number(o.cancelled_at || o.updated_at || 0) < 3 * 3600000)) continue;
+      const a = matches.get(o.id);
+      if (!a || !a.no || a.cancelled || !['code', 'evidence', 'manual'].includes(a.how) || outNos.has(String(a.no))) continue;
+      const r = await db.prepare('INSERT OR IGNORE INTO apex_cancel_notes (order_no, day, talabat_id, code, sn, branch, state, at) VALUES (?,?,?,?,?,?,?,?)')
+        .run(Number(a.no), businessDay(now), String(o.id), o.code ? String(o.code) : null, a.sn == null ? null : String(a.sn), a.branch || null, 'pending', now);
+      n += r?.meta?.changes || r?.changes || 0;
+    }
+    return n;
+  };
+  app.route('POST', '/api/apex-writer/cancel-note-next', async ctx => {
+    await app.apexWriterAuth(ctx);
+    if (await mode() !== 'on') return { orders: [] };
+    // A copy the writer took and never answered for (writer stopped): tried once more, then left to the 5-minute rule.
+    await db.prepare("UPDATE apex_cancel_notes SET state = 'failed', result = 'الكاتب ماردش' WHERE state = 'sending' AND at < ?").run(ctx.now - 5 * 60000);
+    const rows = await db.prepare("SELECT order_no FROM apex_cancel_notes WHERE state = 'pending' ORDER BY at LIMIT 10").all();
+    if (rows.length) await db.batch(rows.map(r => db.prepare("UPDATE apex_cancel_notes SET state = 'sending', at = ? WHERE order_no = ? AND state = 'pending'").bind(ctx.now, r.order_no)));
+    return { orders: rows.map(r => ({ orderNo: r.order_no, text: NOTE })) };
+  });
+  const NOTE_ST = { 1: 'الأوردر مش موجود على Apex (اتلغى قبل كده)', 2: 'خرج مع الطيار', 3: 'مكتوب عليه لاغي من قبل كده' };
+  app.route('POST', '/api/apex-writer/cancel-note', async ctx => {
+    await app.apexWriterAuth(ctx);
+    for (const d of (Array.isArray(ctx.body?.done) ? ctx.body.done : []).slice(0, 20)) {
+      const no = Number(d?.orderNo), st = Number(d?.st);
+      const state = st === 0 ? 'sent' : st === 1 || st === 3 ? 'gone' : st === 2 ? 'withPilot' : 'failed';
+      await db.prepare('UPDATE apex_cancel_notes SET state = ?, result = ?, done_at = ? WHERE order_no = ?').run(state, st === 0 ? null : NOTE_ST[st] || String(d?.note || 'خطأ').slice(0, 200), ctx.now, no);
+    }
+    return { ok: true };
+  });
+
   // Admin: the switch and the list.
   app.route('GET', '/api/apex-cancel', async ctx => {
     await app.requireAdmin(ctx);
     const day = /^\d{4}-\d{2}-\d{2}$/.test(String(ctx.query.day || '')) ? ctx.query.day : businessDay(ctx.now);
     const rows = await db.prepare('SELECT * FROM apex_cancels WHERE day = ? ORDER BY seen_at DESC').all(day);
-    return { mode: await mode(), day, list: rows.map(r => ({ orderNo: r.order_no, sn: r.sn, branch: r.branch, text: r.text, seenAt: iso(r.seen_at), state: r.state, result: r.result, doneAt: iso(r.done_at) })) };
+    const notes = await db.prepare('SELECT * FROM apex_cancel_notes WHERE day = ? ORDER BY at DESC').all(day);
+    return { mode: await mode(), day, notes: notes.map(r => ({ orderNo: r.order_no, sn: r.sn, branch: r.branch, code: r.code, state: r.state, result: r.result, at: iso(r.at), doneAt: iso(r.done_at) })), list: rows.map(r => ({ orderNo: r.order_no, sn: r.sn, branch: r.branch, text: r.text, seenAt: iso(r.seen_at), state: r.state, result: r.result, doneAt: iso(r.done_at) })) };
   });
   app.route('POST', '/api/apex-cancel', async ctx => {
     const who = await app.requireAdmin(ctx, 'admin');

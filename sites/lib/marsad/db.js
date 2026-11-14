@@ -269,6 +269,8 @@ CREATE INDEX IF NOT EXISTS transfer_jobs_day ON transfer_jobs(day);
 CREATE INDEX IF NOT EXISTS transfer_jobs_state_at ON transfer_jobs(state, at);   -- the writer's stuck/retry checks (11-14)
 CREATE TABLE IF NOT EXISTS apex_cancels (order_no INTEGER PRIMARY KEY, day TEXT NOT NULL, sn TEXT, branch TEXT, text TEXT NOT NULL, seen_at INTEGER NOT NULL, state TEXT NOT NULL, at INTEGER NOT NULL, result TEXT, done_at INTEGER);
 CREATE INDEX IF NOT EXISTS apex_cancels_day ON apex_cancels(day);
+CREATE TABLE IF NOT EXISTS apex_cancel_notes (order_no INTEGER PRIMARY KEY, day TEXT NOT NULL, talabat_id TEXT, code TEXT, sn TEXT, branch TEXT, state TEXT NOT NULL, at INTEGER NOT NULL, result TEXT, done_at INTEGER);
+CREATE INDEX IF NOT EXISTS apex_cancel_notes_state ON apex_cancel_notes(state, at);
 `;
 
 // Statements one by one (D1 runs one statement per call); comments removed.

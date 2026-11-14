@@ -761,6 +761,13 @@
       { title: 'التعليق', get: x => x.text, cls: () => 'wrap' }, { title: 'الحالة', get: x => x.stateLabel },
       { title: 'النتيجة', get: x => x.result || '—', cls: () => 'wrap' }
     ], rows, { empty: 'مفيش تعليقات إلغاء مسجلة النهارده' });
+    // أوردرات طلبات اتلغت على طلبات بعد ما اتضربت: تعديل «لاغي» اتبعت للفرع (والإلغاء بعد ٥ دقايق في الجدول اللي فوق).
+    const NS = { pending: 'مستني الكاتب', sending: 'جاري التعديل', sent: 'اتبعت «لاغي» للفرع', gone: 'مش موجود / متعلم لاغي قبل كده', withPilot: 'خرج مع الطيار', failed: 'فشل — راجع النتيجة' };
+    const notes = (d.notes || []).map(x => ({ ...x, orderLabel: x.sn ? x.sn + ' (' + x.orderNo + ')' : x.orderNo, stateLabel: NS[x.state] || x.state }));
+    if ($('apexCancelNotes')) table('apexCancelNotes', [
+      { title: 'الأوردر', get: x => x.orderLabel }, { title: 'طلبات', get: x => x.code ? '#' + x.code : '—' }, { title: 'الفرع', get: x => x.branch || '—' },
+      { title: 'الحالة', get: x => x.stateLabel }, { title: 'النتيجة', get: x => x.result || '—', cls: () => 'wrap' }
+    ], notes, { empty: 'مفيش أوردرات طلبات اتلغت بعد ما اتضربت النهارده' });
   }
   $('apexCancelOn').onclick = async () => {
     $('apexCancelOn').disabled = true;

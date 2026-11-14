@@ -760,6 +760,68 @@ SELECT @st AS st;
   L ("cancel: " + ($done | ConvertTo-Json -Compress))
 }
 
+# Karim 11-14 «بنبعت تعديل للفرع بكومنت لاغي وبعد ٥ دقائق بيتشال»: a Talabat order cancelled on Talabat after it was
+# entered gets the edit the call center sends by hand, read from Apex 11-14 (orders 3530408/3530409): the remarks become
+# «لاغي …», the order gets the next print number with its copy in Orders_M_Prints / Orders_D_Prints, and the branch's
+# print log (PrintedOrders.Modified + 1) makes the branch print it again. The monitor then sees «لاغي» and the
+# 5-minute cancel above removes it. Never an order with a pilot, gone, or already marked «لاغي».
+$script:noteNext = Get-Date
+function Apply-CancelNotes {
+  if ((Get-Date) -lt $script:noteNext) { return }
+  $script:noteNext = (Get-Date).AddSeconds(30)
+  $s = Api '/api/apex-writer/cancel-note-next' @{}
+  $todo = @($s.orders | Where-Object { $_ -and [int64]$_.orderNo -gt 0 })
+  if (-not $todo.Count) { return }
+  if (-not $AllowLive) { throw 'production writes are locked on this PC ($AllowLive)' }
+  $c = Open-Db 'live'; $done = @()
+  try {
+    foreach($t in $todo){
+      try {
+        $cmd = $c.CreateCommand(); $cmd.CommandTimeout = 20
+        $cmd.CommandText = @"
+SET XACT_ABORT ON;
+BEGIN TRAN;
+DECLARE @st int = 0, @p int, @b int, @sh int, @d datetime;
+IF NOT EXISTS (SELECT 1 FROM dbo.Orders_M_Daily WITH (UPDLOCK, HOLDLOCK) WHERE OrderNo = @o) SET @st = 1;
+ELSE IF EXISTS (SELECT 1 FROM dbo.Orders_M_Daily WHERE OrderNo = @o AND ISNULL(WaiterNo, 0) > 0) SET @st = 2;
+ELSE IF EXISTS (SELECT 1 FROM dbo.Orders_M_Daily WHERE OrderNo = @o AND (Remarks LIKE N'%لاغ%' OR Remarks LIKE N'%ملغ%')) SET @st = 3;
+IF @st = 0
+BEGIN
+  SELECT @p = ISNULL(MAX(x.PrintsNo), 0) + 1 FROM (SELECT PrintsNo FROM dbo.Orders_M_Daily WHERE OrderNo = @o UNION ALL SELECT PrintsNo FROM dbo.Orders_M_Prints WHERE OrderNo = @o) x;
+  SELECT @b = BranchNo, @sh = ShiftNo, @d = OrderDate FROM dbo.Orders_M_Daily WHERE OrderNo = @o;
+  UPDATE dbo.Orders_M_Daily SET Remarks = LEFT(@Text + CASE WHEN LEN(RTRIM(ISNULL(Remarks, ''))) > 0 THEN ' | ' + RTRIM(Remarks) ELSE '' END, 200), PrintsNo = @p, OrderTime = @TimeText WHERE OrderNo = @o;
+  INSERT INTO dbo.Orders_M_Prints (OrderNo, PrintsNo, ShiftSerial, TypeSerial, TableNo, HallNo, GuestNo, CustNo, BankNo, EmpNo, TakeAwayLoc, Remarks, OrderDate, TimeIn, OrderTime, ReturnTime,
+    UserNo, PosNo, WaiterNo, ShiftNo, TransType, PayWay, DiscountType, MinCharge, SubTotal, Tips, Service, Tax, Discount, ComboDifference, Addition, MinChargeDifference, CashPayment,
+    VisaPayment, HourNo, Closed, State, Payed, SerialNo, CustPayment, Changed, SNo, RecieveNo, DelegationNo, PersonName, DepositNo, BranchNo, PosSerial, BranchOrderNo, BranchShiftSerial,
+    OrderPrinted, CallCenterNo, ReceiveTime, Exclusive, TaxInvoiceNo, ManagerNo, CheckDiscount, TaxDiscount, Trans_Serial, PremiumPayment, DepositValue, CheckNo, OrderNo_Int)
+  SELECT OrderNo, @p, ShiftSerial, TypeSerial, TableNo, HallNo, GuestNo, CustNo, BankNo, EmpNo, TakeAwayLoc, Remarks, OrderDate, @TimeText, @TimeText, ReturnTime,
+    UserNo, PosNo, WaiterNo, ShiftNo, TransType, PayWay, DiscountType, MinCharge, SubTotal, Tips, Service, Tax, Discount, ComboDifference, Addition, MinChargeDifference, CashPayment,
+    VisaPayment, HourNo, Closed, State, Payed, SerialNo, CustPayment, Changed, SNo, RecieveNo, DelegationNo, PersonName, DepositNo, BranchNo, PosSerial, BranchOrderNo, BranchShiftSerial,
+    OrderPrinted, CallCenterNo, ReceiveTime, Exclusive, TaxInvoiceNo, ManagerNo, CheckDiscount, TaxDiscount, Trans_Serial, PremiumPayment, DepositValue, CheckNo, OrderNo_Int
+  FROM dbo.Orders_M_Daily WHERE OrderNo = @o;
+  INSERT INTO dbo.Orders_D_Prints (OrderNo, PrintsNo, ItemNo, SerialNo, Qty, Price, Description, Combo, ItemDetailNo, Rank, ItemsCombo, ItemDiscount, ItemTime, OpenDesc, TimeVal, ItemTax, ItemService, Printed, SentBy, Weight, ItemsNo)
+  SELECT OrderNo, @p, ItemNo, SerialNo, Qty, Price, Description, Combo, ItemDetailNo, Rank, ItemsCombo, ItemDiscount, ItemTime, OpenDesc, TimeVal, ItemTax, ItemService, Printed, SentBy, Weight, ItemsNo
+  FROM dbo.Orders_D_Daily WHERE OrderNo = @o;
+  UPDATE dbo.PrintedOrders SET Modified = ISNULL(Modified, 0) + 1 WHERE OrderNo = @o;
+  INSERT INTO dbo.OrderLog (TOrderNo, OrderNo, OrderDate, ItemTime, TableNo, ItemNo, ItemName, Qty, Description, Status, BranchNo, WaiterName, UserName, ShiftNo, PosNo)
+  VALUES (0, @o, @d, @TimeText, '', '', '', 0, '', 'Check Out', @b, 'MARSAD', 'MARSAD', @sh, @Pos);
+END
+COMMIT;
+SELECT @st AS st;
+"@
+        [void]$cmd.Parameters.AddWithValue('@o', [int64]$t.orderNo)
+        [void]$cmd.Parameters.AddWithValue('@Text', [string]$t.text)
+        [void]$cmd.Parameters.AddWithValue('@Pos', [int]$WriterPos)
+        [void]$cmd.Parameters.AddWithValue('@TimeText', (Get-Date).ToString('hh:mm:ss tt', [Globalization.CultureInfo]::GetCultureInfo('ar-EG')))
+        $st = [int]$cmd.ExecuteScalar()
+        $done += @{ orderNo = [int64]$t.orderNo; st = $st; ok = ($st -eq 0) }
+      } catch { $done += @{ orderNo = [int64]$t.orderNo; st = -1; ok = $false; note = $_.Exception.Message } }
+    }
+  } finally { try { $c.Close() } catch {} }
+  [void](Api '/api/apex-writer/cancel-note' @{ done = $done })
+  L ("cancel note: " + ($done | ConvertTo-Json -Compress))
+}
+
 # Read customer-card notes only; never modify customer records during lookup.
 # Scoped by the server to existing Talabat/website orders and confirmed phone numbers.
 # Customers has no index on Phone/Mobile (checked 07-11: only PK_Customers on CustNo), so each lookup reads the whole
@@ -804,6 +866,7 @@ for (;;) {
   try { Self-Test } catch { L "self-test: $($_.Exception.Message)" }
   try { Apply-Stock } catch { L "stock: $($_.Exception.Message)" }
   try { Apply-Cancels } catch { L "cancel: $($_.Exception.Message)" }
+  try { Apply-CancelNotes } catch { L "cancel note: $($_.Exception.Message)" }
   $c = $null
   try {
     $n = Api '/api/apex-writer/next' @{}

@@ -344,6 +344,12 @@ function setup(app) {
     let r = {}; try { r = JSON.parse(c?.rules || '{}'); } catch {}
     const clock = t => new Date(t).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit' });
     const out = [], det = app.apexDetails ? await app.apexDetails(day, { talabat: true }) : { extra: () => '' };
+    // Cancelled on Talabat, still on Apex and not out: «لاغي» edit to the branch (apex-cancel.js), then the 5-minute cancel.
+    if (app.talabatCancelNotes && m.hasApex) {
+      const snap = parseJson((await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(day))?.data, {});
+      const outNos = new Set([...(snap.lateOut || []), ...(snap.online || [])].filter(a => a.out).map(a => String(a.no)));
+      await app.talabatCancelNotes(m.rows, m.matches, outNos, now).catch(() => 0);
+    }
     for (const o of m.rows) {
       const store = o.store ? '\nالفرع: ' + storeName(o.store) : '', ref = o.id; // the short #code staff use; the long id only when there is no code
       if (m.hasApex && o.accepted_at && !m.matches.get(o.id) && o.status !== 'CANCELLED' && now - o.accepted_at > NOT_ENTERED_MIN * 60000 && now - o.accepted_at < 3 * 3600000)

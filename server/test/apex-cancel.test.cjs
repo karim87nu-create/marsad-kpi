@@ -46,3 +46,35 @@ test('apex cancel: 5 minutes after a cancel comment — off: told; on: the write
     assert.equal(a.mode, 'on'); assert.equal(a.list.length, 4);
   } finally { await t.close(); }
 });
+
+// Karim 11-14 «بنبعت تعديل للفرع بكومنت لاغي وبعد ٥ دقائق بيتشال»: cancelled on Talabat, on Apex, not out → a «لاغي» edit.
+test('apex cancel: a Talabat order cancelled after it was entered gets a «لاغي» edit to the branch', async () => {
+  const t0 = cairoToUtc(2026, 11, 14, 20, 0, 0);
+  const t = await start({ at: t0 });
+  try {
+    const admin = await t.admin();
+    const wt = (await admin('POST', '/api/apex-writer', { action: 'token' })).body.token;
+    const w = (path, body) => t.call('POST', path, { body: body || {}, headers: { 'x-apex-writer': wt } });
+    const now = t.app.now();
+    const rows = [
+      { id: '1', code: '101', status: 'CANCELLED', cancelled_at: now - 60000 },   // → edit
+      { id: '2', code: '102', status: 'CANCELLED', cancelled_at: now - 60000 },   // out with its pilot
+      { id: '3', code: '103', status: 'ACCEPTED' },                               // not cancelled
+      { id: '4', code: '104', status: 'CANCELLED', cancelled_at: now - 60000 },   // matched by a guess only
+      { id: '5', code: '105', status: 'CANCELLED', cancelled_at: now - 60000 }    // Apex order already cancelled
+    ];
+    const matches = new Map([['1', { no: 702901, sn: 12, branch: 'التجمع', how: 'code' }], ['2', { no: 702902, how: 'code' }], ['3', { no: 702903, how: 'code' }],
+      ['4', { no: 702904, how: 'time' }], ['5', { no: 702905, how: 'code', cancelled: true }]]);
+    const out = new Set(['702902']);
+    assert.equal(await t.app.talabatCancelNotes(rows, matches, out, now), 0, 'off: nothing');
+    assert.equal((await admin('POST', '/api/apex-cancel', { mode: 'on', confirm: 'ON' })).status, 200);
+    assert.equal(await t.app.talabatCancelNotes(rows, matches, out, now), 1);
+    assert.equal(await t.app.talabatCancelNotes(rows, matches, out, now), 0, 'once per order');
+    const next = (await w('/api/apex-writer/cancel-note-next')).body.orders;
+    assert.deepEqual(next, [{ orderNo: 702901, text: 'لاغي — الأوردر اتلغى على طلبات' }]);
+    assert.match(next[0].text, /لاغي/, 'the monitor reads it as a cancel comment');
+    assert.deepEqual((await w('/api/apex-writer/cancel-note-next')).body.orders, [], 'given once');
+    await w('/api/apex-writer/cancel-note', { done: [{ orderNo: 702901, st: 0, ok: true }] });
+    assert.equal(t.app.db.raw.prepare('SELECT state FROM apex_cancel_notes WHERE order_no = 702901').get().state, 'sent');
+  } finally { await t.close(); }
+});
