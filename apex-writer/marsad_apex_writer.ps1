@@ -96,7 +96,7 @@ IF @Existing IS NOT NULL BEGIN SELECT 'exists' AS r, @Existing AS OrderNo; RETUR
 IF (SELECT COUNT(*) FROM dbo.Counter WITH (NOLOCK) WHERE num = @Pos) <> 1 THROW 51004, 'writer POS needs exactly one Counter row', 1;
 -- Template: the newest order of the same kind entered by Apex itself today (same OnlineType text, cash), same branch first.
 SELECT TOP 1 @Tpl = OrderNo FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderDate = @Date AND RTRIM(PayWay) = @PayWay AND PosNo <> @Pos
-  AND ((@Kind = 'talabat' AND (OnlineType LIKE '%TALABAT%' OR OnlineType LIKE N'%طلبات%')) OR (@Kind = 'site' AND (OnlineType LIKE N'%موقع%' OR OnlineType LIKE '%WEB%' OR OnlineType LIKE '%SITE%')))
+  AND ((@Kind = 'talabat' AND (OnlineType LIKE '%TALABAT%' OR OnlineType LIKE N'%طلبات%')) OR (@Kind = 'site' AND ISNULL(RTRIM(OnlineType), '') = '' AND RTRIM(TransType) = 'Delivery' AND ISNULL(Otlob, 0) = 0))
   -- The kind that matches the payment first (one «TALABAT VISA» order was saved as cash today; never copy that one for cash).
   ORDER BY CASE WHEN (@PayWay = 'Ledge' AND (OnlineType LIKE '%VISA%' OR OnlineType LIKE N'%مدفوع%')) OR (@PayWay = 'Cash' AND (OnlineType LIKE '%CASH%' OR OnlineType LIKE N'%كاش%')) THEN 0 ELSE 1 END, CASE WHEN BranchNo = @Branch THEN 0 ELSE 1 END, CheckNo DESC;
 -- The test copy may have its day closed (orders moved to Orders_M): take the template from there.
@@ -104,15 +104,17 @@ IF @NoTpl = 1 AND @IsTest = 1 SET @Tpl = NULL;   -- test copy only: try the «fi
 DECLARE @TplArchive bit = 0;
 IF @Tpl IS NULL AND @IsTest = 1 AND @NoTpl = 0 BEGIN
   SELECT TOP 1 @Tpl = OrderNo FROM dbo.Orders_M WITH (NOLOCK) WHERE RTRIM(PayWay) = @PayWay AND PosNo <> @Pos
-    AND ((@Kind = 'talabat' AND (OnlineType LIKE '%TALABAT%' OR OnlineType LIKE N'%طلبات%')) OR (@Kind = 'site' AND (OnlineType LIKE N'%موقع%' OR OnlineType LIKE '%WEB%' OR OnlineType LIKE '%SITE%')))
+    AND ((@Kind = 'talabat' AND (OnlineType LIKE '%TALABAT%' OR OnlineType LIKE N'%طلبات%')) OR (@Kind = 'site' AND ISNULL(RTRIM(OnlineType), '') = '' AND RTRIM(TransType) = 'Delivery' AND ISNULL(Otlob, 0) = 0))
     ORDER BY CASE WHEN (@PayWay = 'Ledge' AND (OnlineType LIKE '%VISA%' OR OnlineType LIKE N'%مدفوع%')) OR (@PayWay = 'Cash' AND (OnlineType LIKE '%CASH%' OR OnlineType LIKE N'%كاش%')) THEN 0 ELSE 1 END, CASE WHEN BranchNo = @Branch THEN 0 ELSE 1 END, OrderDate DESC, CheckNo DESC;
   SET @TplArchive = 1;
 END;
 -- No such order yet today (the first of the day): the settings every online order on Apex has (read 01-11 from all 353
 -- online orders of the day: Delivery, guest 1, hall 0, Otlob 1, track 0, «voucher» discount, tax 14%) — Karim: «احنا عارفين».
 -- The kind's name always follows the payment: TALABAT VISA / TALABAT CASH / موقعنا مدفوع / موقعنا كاش.
+-- Karim 11-14: a website order goes in on the ordinary menu, like a call-center delivery order — no online kind at all
+-- (the label «/موقع/كاش|مدفوع/#n» in the customer's name says it is the website's).
 DECLARE @OnlineType nvarchar(50) = CASE WHEN @Kind = 'talabat' THEN CASE WHEN @PayWay = 'Ledge' THEN 'TALABAT VISA' ELSE 'TALABAT CASH' END
-                                       ELSE CASE WHEN @PayWay = 'Ledge' THEN N'موقعنا مدفوع' ELSE N'موقعنا كاش' END END;
+                                       ELSE NULL END;
 DECLARE @Service money;
 SELECT @TaxRatio = TaxRatio FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderNo = @Tpl;
 IF @TaxRatio IS NULL SELECT @TaxRatio = TaxRatio FROM dbo.Orders_M WITH (NOLOCK) WHERE OrderNo = @Tpl;
@@ -255,7 +257,7 @@ BEGIN TRY
   FROM (SELECT TOP 1 * FROM (
           SELECT 0 AS o, TakeAwayLoc, TableNo, GuestNo, TransType, DiscountType, HallNo, Otlob, DeliveryTrack FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderNo = @Tpl
           UNION ALL SELECT 0, TakeAwayLoc, TableNo, GuestNo, TransType, DiscountType, HallNo, Otlob, DeliveryTrack FROM dbo.Orders_M WITH (NOLOCK) WHERE OrderNo = @Tpl AND @TplArchive = 1
-          UNION ALL SELECT 1, '', '', 1, 'Delivery', 'voucher', 0, 1, 0) x ORDER BY o) t;
+          UNION ALL SELECT 1, '', '', 1, 'Delivery', CASE WHEN @Kind = 'site' THEN '' ELSE 'voucher' END, 0, CASE WHEN @Kind = 'site' THEN 0 ELSE 1 END, 0) x ORDER BY o) t;
   IF @@ROWCOUNT <> 1 THROW 51012, 'template order disappeared', 1;
   INSERT INTO dbo.Orders_D_Daily (OrderNo, ItemNo, SerialNo, Qty, Price, Description, Combo, ItemDetailNo, Rank, ItemsCombo, ItemDiscount, ItemTime, OpenDesc, TimeVal, ItemTax, ItemService, Printed, PrintedSlip, Weight, ItemsNo, SentBy, Finished)
   SELECT @OrderNo, l.ItemNo, l.SerialNo, l.Qty, l.Price, l.Note, '0', l.ItemNo, NULL, NULL, CASE WHEN l.SerialNo = @DiscLine THEN @RestDiscount ELSE 0 END, @Time, '', 0, NULL, NULL, @PrintedFlag, @PrintedFlag, 1, 1, 0, 0 FROM @Lines l;   -- Weight 1, ItemsNo 1 on every Apex online line
@@ -368,7 +370,8 @@ function Price-Lines($c, $job){
     $r = $t.Rows[0]
     $cand = [ordered]@{ ItemsOnlinePrice = $r.op; ItemsOnlineTypes = $r.ot; ItemsBranchesOnPrice = $r.bo; ItemsBranchesPrice = $r.bp; ItemsDeliveryPrice = $r.dp }
     $l | Add-Member -NotePropertyName candidates -NotePropertyValue ($cand.Keys | Where-Object { $cand[$_] -isnot [DBNull] -and $cand[$_] -ne $null } | ForEach-Object { "$_=$([math]::Round([double]$cand[$_],2))" }) -Force
-    $v = $cand[$PriceSource]   # only the proven source; no fallback to another list
+    # Karim 11-14: the website's orders on the ordinary delivery menu (read 11-14: call-center delivery lines = Items.DeliveryPrice).
+    $v = $cand[$(if ($job.source -eq 'site') { 'ItemsDeliveryPrice' } else { $PriceSource })]   # only the proven source; no fallback to another list
     if ($v -is [DBNull] -or $v -eq $null -or [decimal]$v -le 0) { throw ('no price on Apex for item ' + $l.itemNo) }
     $l | Add-Member -NotePropertyName price -NotePropertyValue $(if ($l.free -eq $true) { [decimal]0 } else { [decimal]$v }) -Force
   }

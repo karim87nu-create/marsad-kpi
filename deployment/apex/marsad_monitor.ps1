@@ -376,7 +376,11 @@ function TagOf($r){
 # A comment worth sending: not only a #code or numbers.
 function NoteWorth([string]$n){ return [bool]($n -and ([regex]::Replace($n, '#\s*\d+|[\d\s\p{P}…]', '')).Length -ge 3) }
 # Our naming: anything without an online mark is a Hotline order.
-function KindOf([string]$online){
+# Karim 11-14: the website's orders go in on the ordinary menu with no online kind; the Marsad label in the customer's
+# name («…/موقع/كاش/#31088») still says they are the website's.
+$SiteLabel = '/موقع/(?:كاش|مدفوع|؟)'
+function KindOf([string]$online, [string]$name = ''){
+  if (-not $online -and $name -match $SiteLabel) { return 'الموقع' }
   if ($online -match '(?i)talabat|talbat') { return 'طلبات' }
   if ($online -match 'موقعنا') { return 'الموقع' }
   if ($online -match '(?i)waffarha') { return 'وفرها' }
@@ -854,7 +858,7 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
     $online = S $r.OnlineType
     $o = [pscustomobject]@{
       No = [int64](N $r.OrderNo); Branch = [int](N $r.BranchNo); User = [int](N $r.UserNo); Trans = S $r.TransType; Pay = S $r.PayWay
-      Online = $online; Kind = KindOf $online; Entry = $entry; Out = $outT; Waiter = $waiter; Sub = N $r.SubTotal; Disc = N $r.Discount; Amt = AmtOf $r
+      Online = $online; Kind = KindOf $online (S $r.NameTxt); Entry = $entry; Out = $outT; Waiter = $waiter; Sub = N $r.SubTotal; Disc = N $r.Discount; Amt = AmtOf $r
       Phone = ((S $r.o_Phone) -replace '\D', '')
       Sn = $(if ($selSn) { SnOf $r.SnX } else { $null })
       WaitMin = $null; Open = $false; Sched = $null; Over = $null
@@ -893,7 +897,7 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
     if ((N $r.WaiterNo) -le 0) { continue }
     [void]$cancels.Add([pscustomobject]@{
       No = [int64](N $r.OrderNo); Branch = [int](N $r.BranchNo); User = [int](N $r.UserNo); Del = [int](N $r.DelUserNo); Pilot = [int](N $r.WaiterNo)
-      Kind = KindOf (S $r.OnlineType); Entry = ParseT $r.TimeIn $day; Out = ParseT $r.OrderTime $day; DelT = ParseT $r.DeleteTime $day; Sched = $null; RateEligible = $false; LateForRate = $false
+      Kind = KindOf (S $r.OnlineType) (S $r.o_CustName); Entry = ParseT $r.TimeIn $day; Out = ParseT $r.OrderTime $day; DelT = ParseT $r.DeleteTime $day; Sched = $null; RateEligible = $false; LateForRate = $false
       Sub = N $r.SubTotal; Amt = AmtOf $r; Sn = $(if ($delSn) { SnOf $r.SnX } else { $null }); Loc = $(if ($script:Locations) { $script:Locations[[int](N $r.o_LocationNo)] } else { $null }); Customer = CustomerOf $r; Why = S $r.Remarks; ReasonNo = [int](N $r.ReasonNo) })
     $c = $cancels[$cancels.Count - 1]
     $c | Add-Member -NotePropertyName Disp -NotePropertyValue $(if ($c.Sn -ne $null) { $c.Sn } else { $c.No })
@@ -1135,13 +1139,13 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
   # column of the online orders, so it is found wherever it is written. Only the digits are sent, never the name.
   $tags = @{}; $script:tagCols = @{}
   try {
-    $raw = Q "SELECT * FROM Orders_M_Daily WITH (NOLOCK) WHERE OrderDate = @d AND ISNULL(OnlineType,'') <> ''" $p
+    $raw = Q "SELECT * FROM Orders_M_Daily WITH (NOLOCK) WHERE OrderDate = @d AND (ISNULL(OnlineType,'') <> '' OR o_CustName LIKE N'%/موقع/%')" $p
     foreach($r in $raw.Rows){ $tg = TagOf $r; if ($tg) { $tags[[int64](N $r.OrderNo)] = $tg } }
   } catch { L "tag scan: $($_.Exception.Message)" }
   # The items of each online order (to compare with what the platform received). Service lines are left out.
   $lines = @{}
   try {
-    foreach($x in (Q "SELECT d.OrderNo, d.ItemNo, d.Qty, d.Price, i.ItemName FROM Orders_D_daily d WITH (NOLOCK) JOIN Orders_M_Daily m WITH (NOLOCK) ON m.OrderNo = d.OrderNo LEFT JOIN Items i ON i.ItemNo = d.ItemNo WHERE m.OrderDate = @d AND ISNULL(m.OnlineType,'') <> ''" $p).Rows){
+    foreach($x in (Q "SELECT d.OrderNo, d.ItemNo, d.Qty, d.Price, i.ItemName FROM Orders_D_daily d WITH (NOLOCK) JOIN Orders_M_Daily m WITH (NOLOCK) ON m.OrderNo = d.OrderNo LEFT JOIN Items i ON i.ItemNo = d.ItemNo WHERE m.OrderDate = @d AND (ISNULL(m.OnlineType,'') <> '' OR m.o_CustName LIKE N'%/موقع/%')" $p).Rows){
       $nm = S $x.ItemName; if ($nm -match '^(خدمة|خدمه|توصيل|delivery|service)$') { continue }
       $k = [int64](N $x.OrderNo); if (-not $lines.ContainsKey($k)) { $lines[$k] = New-Object System.Collections.ArrayList }
       [void]$lines[$k].Add([ordered]@{ no = (S $x.ItemNo); name = $nm; qty = R2 $x.Qty; price = R2 $x.Price })
@@ -1158,12 +1162,12 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
   $dlines = @{}; $dtags = @{}
   if (@($cancels | Where-Object { $_.Kind -ne 'Hotline' }).Count) {
     try {
-      foreach($x in (Q "SELECT d.OrderNo, d.ItemNo, d.Qty, d.Price, i.ItemName FROM DOrders_D d WITH (NOLOCK) JOIN DOrders_M m WITH (NOLOCK) ON m.OrderNo = d.OrderNo LEFT JOIN Items i ON i.ItemNo = d.ItemNo WHERE m.OrderDate = @d AND ISNULL(m.OnlineType,'') <> ''" $p).Rows){
+      foreach($x in (Q "SELECT d.OrderNo, d.ItemNo, d.Qty, d.Price, i.ItemName FROM DOrders_D d WITH (NOLOCK) JOIN DOrders_M m WITH (NOLOCK) ON m.OrderNo = d.OrderNo LEFT JOIN Items i ON i.ItemNo = d.ItemNo WHERE m.OrderDate = @d AND (ISNULL(m.OnlineType,'') <> '' OR m.o_CustName LIKE N'%/موقع/%')" $p).Rows){
         $nm = S $x.ItemName; if ($nm -match '^(خدمة|خدمه|توصيل|delivery|service)$') { continue }
         $k = [int64](N $x.OrderNo); if (-not $dlines.ContainsKey($k)) { $dlines[$k] = New-Object System.Collections.ArrayList }
         [void]$dlines[$k].Add([ordered]@{ no = (S $x.ItemNo); name = $nm; qty = R2 $x.Qty; price = R2 $x.Price })
       }
-      $raw = Q "SELECT * FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d AND ISNULL(OnlineType,'') <> ''" $p
+      $raw = Q "SELECT * FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d AND (ISNULL(OnlineType,'') <> '' OR o_CustName LIKE N'%/موقع/%')" $p
       foreach($r in $raw.Rows){ $tg = TagOf $r; if ($tg) { $dtags[[int64](N $r.OrderNo)] = $tg } }
     } catch { L "cancel lines: $($_.Exception.Message)" }
   }
