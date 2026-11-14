@@ -151,7 +151,7 @@ test('website pickup (Karim 11-11): written on the branch\'s «استلام فر
     assert.equal(p.locationNo, 268, 'the branch\'s pickup area, whatever area was sent');
     assert.equal(p.pickup, true); assert.equal(p.areaService, 0);
     assert.deepEqual([p.customer.address, p.customer.floor, p.customer.flat], ['', '', '']);
-    assert.match(p.label, /موقع\/كاش #30950$/);
+    assert.match(p.label, /\/موقع\/كاش\/#30950$/);   // 11-12 label format: name/موقع/كاش/#number
   } finally { await t.close(); }
 });
 

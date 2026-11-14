@@ -31,7 +31,10 @@ test('ties in either direction are ambiguous and independent of row order', () =
   }
   assert.equal(resolveOrders([row()], [apex(1), apex(2)], opts).matches.size, 0);
 });
-test("an exact order id cannot overrule a different phone, items, branch, value, or time", () => {
+// 11-12 (ChatGPT, «Match Apex orders by durable source identifier»; kept 11-14): the platform's full order ID that Apex
+// itself recorded is that order even when staff changed the phone, the items, the value, the branch or entered it late —
+// it must never be entered again.
+test("the platform's full order id on Apex confirms the order despite a different phone, items, branch, value, or time", () => {
   const cases = [
     { branch: 'مدينتي' }, { amount: 900 },
     { customer: { ...customer, phone: '01112345678' } },
@@ -39,14 +42,16 @@ test("an exact order id cannot overrule a different phone, items, branch, value,
   ];
   for (const extra of cases) {
     const d = resolveOrders([row()], [apex(1, { sourceRefs: { talabat: { orderId: '10000001' } }, ...extra })], opts);
-    assert.equal(d.matches.size, 0, JSON.stringify(extra));
-    assert.equal(d.states.get('10000001').state, 'ambiguous');
+    assert.equal(d.matches.get('10000001')?.no, 1, JSON.stringify(extra));
   }
 });
-test('an exact tag with missing customer or basket remains a suggestion, not a confirmation', () => {
+test('the full order id confirms even with no customer or basket to compare', () => {
   const d = resolveOrders([row('10000001', { customer: {}, items: [] })], [apex(1, { sourceRefs: { talabat: { orderId: '10000001' } }, customer: {}, items: [] })], opts);
+  assert.equal(d.matches.get('10000001')?.no, 1);
+});
+test('a typed #code counts only in the order\'s own branch (codes repeat between branches)', () => {
+  const d = resolveOrders([row('10000001', { code: '752' })], [apex(1, { tag: '#752', branch: 'مدينتي', t: anchor + 4 * 3600000 })], opts);
   assert.equal(d.matches.size, 0);
-  assert.equal(d.states.get('10000001').state, 'tentative');
 });
 
 test('phone plus matching name or address confirms; missing identity stays tentative; manual choices reserve first', () => {
@@ -113,9 +118,9 @@ test('live-only hashtags neither boost nor veto customer and item matches',()=>{
  const d=resolveOrders([row('10000001',{code:'8403'})],[apex(1,{tag:'9999'})],opts);
  assert.equal(d.matches.get('10000001').no,1);assert.equal(d.how.get('10000001'),'evidence');
 });
-test('a contradictory source reference cannot outrank the correct customer',()=>{
- const wrong=apex(1,{sourceRefs:{talabat:{orderId:'10000001'}},customer:{...customer,phone:'01112345678'}});
- const d=resolveOrders([row()],[wrong,apex(2)],opts);assert.equal(d.matches.get('10000001').no,2);
+test('a look-alike by phone never wins over the order Apex recorded with the full platform id',()=>{
+ const withId=apex(1,{sourceRefs:{talabat:{orderId:'10000001'}},customer:{...customer,phone:'01112345678'}});
+ const d=resolveOrders([row()],[withId,apex(2)],opts);assert.notEqual(d.matches.get('10000001')?.no,2);
 });
 
 test('website uses the same phone, Arabic basket and quantity evidence without hashtags',()=>{

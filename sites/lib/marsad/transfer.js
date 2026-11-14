@@ -799,7 +799,7 @@ function setup(app) {
       const branchNo = Number(b.branchNo), selectedLocation = Number(b.locationNo);
       if (!Number.isInteger(branchNo) || branchNo < 1 || branchNo > 99) fail(400, 'اختار فرع Apex');
       if (!Number.isInteger(selectedLocation) || selectedLocation < 1) fail(400, 'اختار منطقة العميل على Apex');
-      const siteOrder = source === 'site' ? await db.prepare('SELECT fulfillment FROM site_orders WHERE id = ?').get(Number(ref)) : null;
+      const siteOrder = source === 'site' ? await db.prepare('SELECT fulfillment, branch FROM site_orders WHERE id = ?').get(Number(ref)) : null;
       const assignedBranch = apexBranchOf(siteOrder?.branch);
       if (assignedBranch && assignedBranch !== branchNo) fail(409, 'الأوردر على الموقع متحوّل لفرع تاني — غيّر الفرع قبل التأكيد');
       const pickup = siteOrder?.fulfillment === 'pickup';

@@ -21,7 +21,8 @@ export function deliveryAddress(value, zone = '') {
   const key = s => s.trim().replace(/^(?:محافظة|governorate|منطقة|المنطقة|district|area)\s*[:：]?\s*/i, '')
     .normalize('NFKD').replace(/[\u064b-\u065f\u0670\u0640]/g, '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').toLowerCase().replace(/\s+/g, ' ');
   const areas = (Array.isArray(zone) ? zone : [zone]).map(s => String(s || '').trim()).filter(Boolean).sort((a, b) => b.length - a.length);
-  const redundant = new Set(['مصر', 'egypt', 'القاهرة', 'cairo', 'الجيزة', 'giza']);
+  // Compared in the same normalized form as key() gives (ة→ه): «محافظة القاهرة» is dropped again (11-14).
+  const redundant = new Set(['مصر', 'egypt', 'القاهرة', 'cairo', 'الجيزة', 'giza'].map(key));
   const withoutArea = value => {
     const words = String(value || '').trim().split(/\s+/).filter(Boolean);
     for (const area of areas) {

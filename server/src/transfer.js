@@ -9,7 +9,7 @@
 // the bridge is proven (numbering under live work and the branch delivery); this page never writes to Apex.
 import { businessDay, iso, validDate, addDays } from './time.js';
 import { parseJson } from './order-match.js';
-import { deliveryPhone, deliveryLabel, deliveryAddress, stripPlatformNotes } from './delivery-fields.js';
+import { deliveryPhone, deliveryLabel, deliveryAddress, splitDeliveryAddress, deliveryMark, stripPlatformNotes } from './delivery-fields.js';
 import { parseApexCustomerNote, normArabic, guessApexItem } from './apex-customer-notes.js';
 import { knownNos, itemKey } from './items.js';
 import { APEX_NAMES, APEX_PRICES } from './menu-seed.js';
@@ -322,6 +322,13 @@ function setup(app) {
       throw error;
     }
   }
+  // Reconcile against the current Apex snapshot again at the moment an employee submits an action.
+  // The queue can be open in a stale browser tab after Apex has already received the order.
+  async function assertNotAlreadyOnApex(source, ref, day, now) {
+    const base = await baseFor(day, now);
+    const found = base?.list?.find(o => o.source === source && String(o.ref) === String(ref));
+    if (found?.apex) fail(409, 'الأوردر موجود على Apex بالفعل — مش هيتسجل مرة تانية');
+  }
   // Every push from the Talabat screens, the cashier PC or the website (and the page's own actions): the next read
   // is built in the background, so the page usually finds it ready.
   app.afterRequest((now, method, path) => {
@@ -535,6 +542,8 @@ function setup(app) {
   let areaFilled = false;
   async function areaLearned() {
     let pairs = await app.learn.pairs('transfer:area');
+    const confirmed = await app.learn.pairs('transfer:area-confirmed');
+    for (const [area, locations] of confirmed) pairs.set(area, locations);
     if (!pairs.size && !areaFilled) {
       areaFilled = true;
       const rows = await db.prepare(`SELECT j.ref, j.payload, p.data FROM transfer_jobs j JOIN match_profiles p ON p.source = 'talabat' AND p.ref = j.ref
@@ -545,6 +554,16 @@ function setup(app) {
       if (facts.length) { app.learn.forget?.(); pairs = await app.learn.pairs('transfer:area'); }
     }
     return pairs;
+  }
+  async function learnTransferArea(source, ref, locationNo, confirmed = false) {
+    if (!app.learn || !locationNo) return;
+    const d = parseJson((await db.prepare('SELECT data FROM match_profiles WHERE source = ? AND ref = ?').get(source, ref))?.data, {});
+    const area = source === 'talabat' ? d?.area : d?.customer?.area;
+    if (area && normArabic(area)) {
+      const evidence = source === 'talabat' ? String(ref) : 'site:' + ref;
+      await app.learn.record('transfer:area', normArabic(area).slice(0, 120), String(locationNo), evidence).catch(() => {});
+      if (confirmed) await app.learn.record('transfer:area-confirmed', normArabic(area).slice(0, 120), String(locationNo), evidence).catch(() => {});
+    }
   }
   app.route('POST', '/api/transfer/selection', async ctx => {
     const me = await who(ctx), b = ctx.body;
@@ -663,7 +682,7 @@ function setup(app) {
       if (safeRemarks.length > 200) fail(409, 'ملاحظات الأوردر مع بطاقة العميل أطول من مساحة APEX — راجعها قبل التسجيل');
       // Karim 11-11: a website pickup goes to the branch's «استلام فرع» area, with no address, floor or flat.
       let pickup = false;
-      if (source === 'site') { const so = await db.prepare('SELECT fulfillment FROM site_orders WHERE id = ?').get(Number(ref)); pickup = so?.fulfillment === 'pickup'; }
+      if (source === 'site') { const so = await db.prepare('SELECT fulfillment, branch FROM site_orders WHERE id = ?').get(Number(ref)); pickup = so?.fulfillment === 'pickup'; }
       if (pickup && !PICKUP_AREAS[Number(b.branchNo)]) fail(400, 'اختار فرع Apex');
       const locationNo = pickup ? PICKUP_AREAS[Number(b.branchNo)].no : Number(b.locationNo);
       if (!Number.isInteger(locationNo) || locationNo < 1) fail(400, 'اختار منطقة العميل على Apex');
@@ -678,6 +697,7 @@ function setup(app) {
       }
       const area = areas.find(l => l.branch === branchNo) || areas.find(l => l.branch == null) || areas[0];
       const areaService = pickup ? 0 : Number.isFinite(Number(area?.service)) && area?.service !== null ? Number(area.service) : null;
+      if (!pickup && areaService === 0 && b.confirmFreeArea !== true) fail(409, 'رسوم المنطقة على Apex صفر — راجع العنوان وأكد اختيار المنطقة قبل التسجيل');
       // The source's platform discount is a separate fact from any Apex price adjustment.
       // A stale browser or an empty sign must never erase a known Talabat discount.
       const sourceOrder = (await baseFor(row.day, now)).list.find(o => o.source === source && String(o.ref) === ref) || null;
@@ -697,7 +717,7 @@ function setup(app) {
       const sourceRestaurantDiscount = sourceDiscounts.filter(d => d.who === 'restaurant' && !d.unclear).reduce((sum, d) => sum + (Number(d.amount) || 0), 0) + splitRest;
       // A Talabat order: the discounts are Talabat's bill on the server, even when it has none (never the browser's numbers).
       const fromSource = !!sourceOrder;
-      const sign = platformDiscount > 0 ? 'خصم طلبات ' + platformDiscount.toFixed(2) : fromSource ? '' : String(b.sign || '').slice(0, 120);
+      const signBase = platformDiscount > 0 ? 'خصم طلبات ' + platformDiscount.toFixed(2) : fromSource ? '' : String(b.sign || '').slice(0, 120);
       const restaurantDiscount = fromSource || sourceDiscounts.length ? Math.round((sourceRestaurantDiscount + (payment === 'paid' ? platformDiscount : 0)) * 100) / 100 : Math.max(0, Number(b.restaurantDiscount) || 0);
       // What Apex must total, from Talabat's own bill on the server (never the browser's sum): cash = what the customer pays
       // + Talabat's whole share (known + the employee's split); paid = what the customer paid.
@@ -714,8 +734,10 @@ function setup(app) {
       const translatedAddress = arabic.get(b.customer?.address) || b.customer?.address;
       const translatedNote = arabic.get(safeRemarks) || safeRemarks;
       if (translatedNote.length > 200) fail(400, 'الملاحظات بعد الترجمة أطول من مساحة Apex — اختصرها');
-      const address = pickup ? { street: '', floor: '', flat: '' } : deliveryAddress(translatedAddress, area?.name || '');
-      const deliveryFields = { address: [address.street, address.floor ? 'الدور: ' + address.floor : '', address.flat ? 'الشقة: ' + address.flat : ''].filter(Boolean).join(' — '), floor: address.floor, flat: address.flat };
+      const address = pickup ? { street: '', floor: '', flat: '' } : deliveryAddress(translatedAddress, [area?.name, sourceOrder?.customer?.talabatArea, sourceOrder?.customer?.siteArea, b.customer?.area]);
+      const addressLine = splitDeliveryAddress(address.street), sign = deliveryMark(signBase, addressLine.extra);
+      if (sign == null) fail(409, 'تكملة العنوان أكبر من مساحة العلامة المميزة — اختصر العنوان قبل التسجيل');
+      const deliveryFields = { address: addressLine.main, floor: address.floor, flat: address.flat };
       const payload = { v: 1, source, ref, code: String(b.code || '').replace(/[^\d]/g, '').slice(0, 10) || null, db: mode, branchNo, locationNo, payment,
         label: deliveryLabel(translatedName, source, payment, b.code), customer: { name: String(translatedName || '').slice(0, 80), phone: deliveryPhone(b.customer?.phone), address: pickup ? '' : String(b.customer?.address || '').slice(0, 360), ...deliveryFields }, ...(pickup ? { pickup: true } : {}),
         sign, platformDiscount, note: translatedNote, items: [...clean, ...noteItems], apexCustomerBenefit: noteBenefit,
@@ -729,10 +751,7 @@ function setup(app) {
         for (let i = 0; i < facts.length; i++) await app.learn.record('transfer:item', facts[i][0], facts[i][1], ref + ':' + i).catch(() => {});
       }
       // The Apex area chosen for this Talabat area teaches the next order of the same area (Karim 10-11).
-      if (app.learn && !pickup) {
-        const d = parseJson((await db.prepare('SELECT data FROM match_profiles WHERE source = ? AND ref = ?').get(source, ref))?.data, {}), area = source === 'talabat' ? d?.area : d?.customer?.area;
-        if (area && normArabic(area)) await app.learn.record('transfer:area', normArabic(area).slice(0, 120), String(b.locationNo), source === 'talabat' ? ref : 'site:' + ref).catch(() => {});
-      }
+      if (!pickup) await learnTransferArea(source, ref, locationNo, true);
   }
   // The automatic transfer (11-11): the same checks and job as the page's button, as «المرصد آلي». Never over a claim.
   app.transferAutoJob = async (b, now) => {
@@ -740,6 +759,7 @@ function setup(app) {
     const source = b.source, ref = String(b.ref);
     const row = source === 'talabat' ? await db.prepare('SELECT day FROM talabat_orders WHERE id = ?').get(ref) : await db.prepare('SELECT day FROM site_orders WHERE id = ?').get(Number(ref));
     if (!row) fail(404, 'الأوردر مش موجود');
+    await assertNotAlreadyOnApex(source, ref, row.day, now);
     const cur = await db.prepare('SELECT * FROM transfer_jobs WHERE source = ? AND ref = ?').get(source, ref);
     if (cur && !(cur.state === 'claimed' && now - cur.at > CLAIM_MS)) fail(409, 'الأوردر مع ' + (cur.employee_name || 'حد'));
     const payment = ['cash', 'paid'].includes(b.payment) ? b.payment : null, note = b.note ? String(b.note).slice(0, 300) : null;
@@ -755,6 +775,7 @@ function setup(app) {
     if (!source || !/^\d{1,20}$/.test(ref)) fail(400, 'أوردر غير صحيح');
     const row = source === 'talabat' ? await db.prepare('SELECT day FROM talabat_orders WHERE id = ?').get(ref) : await db.prepare('SELECT day FROM site_orders WHERE id = ?').get(Number(ref));
     if (!row) fail(404, 'الأوردر مش موجود');
+    if (['claim', 'entered', 'auto'].includes(b.action)) await assertNotAlreadyOnApex(source, ref, row.day, ctx.now);
     const payment = ['cash', 'paid'].includes(b.payment) ? b.payment : null, note = b.note ? String(b.note).slice(0, 300) : null;
     const cur = await db.prepare('SELECT * FROM transfer_jobs WHERE source = ? AND ref = ?').get(source, ref);
     // Whose order it is: the one who claimed it (10 minutes), entered it, or sent it to the writer. A failed or preview-only
@@ -763,6 +784,7 @@ function setup(app) {
     const othersClaim = !free && cur.employee_id !== me.id;
     // Already on Apex or on its way there: nobody (the same employee included) sends or claims it again.
     if (cur && (/^auto_(?:sending|done)$/.test(cur.state) || (cur.state === 'auto_pending' && b.action !== 'release'))) fail(409, cur.state === 'auto_done' ? 'الأوردر اتسجل على Apex بالفعل (آلي)' : 'الأوردر بيتسجل على Apex دلوقتي');
+    if (cur?.state === 'entered') fail(409, 'الأوردر اتسجل بالفعل — مستني تأكيد ظهوره على Apex');
     if (b.action === 'claim') {
       if (othersClaim) fail(409, (cur.employee_name || 'حد تاني') + (cur.state === 'entered' ? ' سجله بالفعل' : ' شغال عليه دلوقتي'));
       // Atomic: only one claim wins even if two employees press at the same moment.
@@ -774,9 +796,32 @@ function setup(app) {
     } else if (b.action === 'entered') {
       if (othersClaim) fail(409, 'الأوردر مع ' + (cur.employee_name || 'حد تاني'));
       if (!payment) fail(400, 'حدد: كاش ولا مدفوع');
-      await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at) VALUES (?,?,?,'entered',?,?,?,?,?)
-        ON CONFLICT(source, ref) DO UPDATE SET state = 'entered', employee_id = excluded.employee_id, employee_name = excluded.employee_name, payment = excluded.payment, note = excluded.note, at = excluded.at`)
-        .run(source, ref, row.day, me.id, me.name, payment, note, ctx.now);
+      const branchNo = Number(b.branchNo), selectedLocation = Number(b.locationNo);
+      if (!Number.isInteger(branchNo) || branchNo < 1 || branchNo > 99) fail(400, 'اختار فرع Apex');
+      if (!Number.isInteger(selectedLocation) || selectedLocation < 1) fail(400, 'اختار منطقة العميل على Apex');
+      const siteOrder = source === 'site' ? await db.prepare('SELECT fulfillment, branch FROM site_orders WHERE id = ?').get(Number(ref)) : null;
+      const assignedBranch = apexBranchOf(siteOrder?.branch);
+      if (assignedBranch && assignedBranch !== branchNo) fail(409, 'الأوردر على الموقع متحوّل لفرع تاني — غيّر الفرع قبل التأكيد');
+      const pickup = siteOrder?.fulfillment === 'pickup';
+      const locationNo = pickup ? PICKUP_AREAS[branchNo]?.no : selectedLocation;
+      if (!locationNo) fail(400, 'اختار منطقة Apex الخاصة بالفرع');
+      const daySnap = parseJson((await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(row.day))?.data, {});
+      const areas = (Array.isArray(daySnap.locations) ? daySnap.locations : []).filter(l => Number(l?.no) === locationNo);
+      const owners = [...new Set(areas.map(l => l.branch).filter(x => x != null).map(Number))];
+      if (owners.length && !owners.includes(branchNo)) fail(400, 'المنطقة دي تبع فرع تاني على Apex — غيّر الفرع');
+      const area = areas.find(l => Number(l.branch) === branchNo) || areas.find(l => l.branch == null) || areas[0];
+      const areaService = pickup ? 0 : Number.isFinite(Number(area?.service)) && area?.service !== null ? Number(area.service) : null;
+      if (!pickup && (!area || areaService == null)) fail(400, 'المنطقة مش موجودة أو سعر توصيلها مش ظاهر على Apex');
+      if (!pickup && areaService === 0 && b.confirmFreeArea !== true) fail(409, 'رسوم المنطقة على Apex صفر — راجع العنوان وأكد اختيار المنطقة قبل التسجيل');
+      const profile = parseJson((await db.prepare('SELECT data FROM match_profiles WHERE source = ? AND ref = ?').get(source, ref))?.data, {});
+      const phone = source === 'talabat' ? (profile.phoneDisplay || profile.phone || profile.mobileDisplay || profile.mobile) : (profile.customer?.phoneDisplay || profile.customer?.phone || profile.customer?.mobileDisplay || profile.customer?.mobile);
+      const address = source === 'talabat' ? profile.address : profile.customer?.address;
+      const payload = JSON.stringify({ v: 1, source, ref, branchNo, locationNo, payment, areaService, ...(pickup ? { pickup: true } : {}),
+        customer: { phone: deliveryPhone(phone), address: String(address || '').slice(0, 360) } });
+      await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at, payload, result) VALUES (?,?,?,'entered',?,?,?,?,?,?,NULL)
+        ON CONFLICT(source, ref) DO UPDATE SET state = 'entered', employee_id = excluded.employee_id, employee_name = excluded.employee_name, payment = excluded.payment, note = excluded.note, at = excluded.at, payload = excluded.payload, result = NULL`)
+        .run(source, ref, row.day, me.id, me.name, payment, note, ctx.now, payload);
+      if (!pickup) await learnTransferArea(source, ref, locationNo, true);
     } else if (b.action === 'release') {
       if (othersClaim) fail(409, 'الأوردر مع ' + (cur.employee_name || 'حد تاني'));
       await db.prepare("UPDATE transfer_jobs SET state = 'released', at = ? WHERE source = ? AND ref = ?").run(ctx.now, source, ref);
@@ -796,7 +841,6 @@ function setup(app) {
     if (!given || !hashes.includes(sha256(given))) fail(401, 'مفتاح كاتب Apex غير صحيح');
   };
   app.apexWriterAuth = writer;
-
   // The on-premises read-only Apex login is the only source of customer-card notes.
   // Staff see these on the transfer page BEFORE they choose to submit an order.
   const profilePhone = (source, p) => deliveryPhone(source === 'talabat'

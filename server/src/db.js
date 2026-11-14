@@ -210,8 +210,6 @@ CREATE INDEX IF NOT EXISTS audit_time ON audit(occurred_at);
 
 // Telegram tables live here too so a fresh database has everything.
 const EXTRA_SCHEMA = `
-CREATE TABLE IF NOT EXISTS apex_cancels (order_no INTEGER PRIMARY KEY, day TEXT NOT NULL, sn INTEGER, branch TEXT, text TEXT, seen_at INTEGER, state TEXT NOT NULL, result TEXT, at INTEGER NOT NULL, done_at INTEGER);
-CREATE INDEX IF NOT EXISTS apex_cancels_day ON apex_cancels (day);
 CREATE TABLE IF NOT EXISTS auto_transfer_log (source TEXT NOT NULL, ref TEXT NOT NULL, day TEXT NOT NULL, code TEXT, decision TEXT NOT NULL, reasons TEXT, at INTEGER NOT NULL, first_at INTEGER NOT NULL, alerted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (source, ref));
 CREATE INDEX IF NOT EXISTS auto_transfer_log_day ON auto_transfer_log (day);
 CREATE TABLE IF NOT EXISTS qa_evals (id INTEGER PRIMARY KEY AUTOINCREMENT, week TEXT NOT NULL, day TEXT NOT NULL, call_key TEXT NOT NULL, employee_id INTEGER NOT NULL, call_at INTEGER, evaluator TEXT NOT NULL, marks TEXT, critical TEXT, total REAL, notes TEXT, created_at INTEGER NOT NULL, UNIQUE(call_key, evaluator));
@@ -264,6 +262,8 @@ CREATE INDEX IF NOT EXISTS wa_messages_day ON wa_messages(day);
 CREATE TABLE IF NOT EXISTS apex_names (apex_name TEXT PRIMARY KEY, employee_id INTEGER NOT NULL, set_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS transfer_jobs (source TEXT NOT NULL, ref TEXT NOT NULL, day TEXT NOT NULL, state TEXT NOT NULL, employee_id INTEGER, employee_name TEXT, payment TEXT, note TEXT, at INTEGER NOT NULL, PRIMARY KEY(source, ref));
 CREATE INDEX IF NOT EXISTS transfer_jobs_day ON transfer_jobs(day);
+CREATE TABLE IF NOT EXISTS apex_cancels (order_no INTEGER PRIMARY KEY, day TEXT NOT NULL, sn TEXT, branch TEXT, text TEXT NOT NULL, seen_at INTEGER NOT NULL, state TEXT NOT NULL, at INTEGER NOT NULL, result TEXT, done_at INTEGER);
+CREATE INDEX IF NOT EXISTS apex_cancels_day ON apex_cancels(day);
 `;
 
 // Statements one by one (D1 runs one statement per call); comments removed.
@@ -283,7 +283,7 @@ const REQUIRED_ADDED_COLUMNS = {
   telegram_log: ['reply_to', 'message_id', 'target', 'branch'],
   transfer_jobs: ['payload', 'result'],
   talabat_orders: ['code', 'milestones'],
-  site_orders: ['transfers', 'total'],
+  site_orders: ['transfers', 'total', 'scheduled', 'gone_at'],
   wa_messages: ['sending_at'],
   telegram_config: ['branch_chat_id', 'branch_chat_title'],
 };
@@ -317,6 +317,7 @@ async function migrate(db) {
   try { await db.prepare('SELECT code, milestones FROM talabat_orders LIMIT 0').all(); } catch { for (const c of ['code TEXT', 'milestones TEXT']) { try { await db.prepare('ALTER TABLE talabat_orders ADD COLUMN ' + c).run(); } catch {} } }
   try { await db.prepare('SELECT transfers FROM site_orders LIMIT 0').all(); } catch { try { await db.prepare('ALTER TABLE site_orders ADD COLUMN transfers INTEGER').run(); } catch {} }
   try { await db.prepare('SELECT total FROM site_orders LIMIT 0').all(); } catch { try { await db.prepare('ALTER TABLE site_orders ADD COLUMN total REAL').run(); } catch {} }
+  try { await db.prepare('SELECT scheduled FROM site_orders LIMIT 0').all(); } catch { try { await db.prepare('ALTER TABLE site_orders ADD COLUMN scheduled INTEGER NOT NULL DEFAULT 0').run(); } catch {} }
   try { await db.prepare('SELECT gone_at FROM site_orders LIMIT 0').all(); } catch { try { await db.prepare('ALTER TABLE site_orders ADD COLUMN gone_at INTEGER').run(); } catch {} }
   // Two groups: the call center's (default) and the branch managers' (target = 'branches').
   try { await db.prepare('SELECT target FROM telegram_log LIMIT 0').all(); } catch { try { await db.prepare('ALTER TABLE telegram_log ADD COLUMN target TEXT').run(); } catch {} }
@@ -357,3 +358,4 @@ function d1Adapter(d1) {
 }
 
 export { SCHEMA, SCHEMA_STATEMENTS, schemaReady, migrate, d1Adapter, norm };
+

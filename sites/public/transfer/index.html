@@ -405,6 +405,7 @@ function card(o) {
   const cu = o.customer || {}, addressRaw = p.arabic?.address || cu.address, ad = addressParts(addressRaw, [
     (data.locations || []).find(l => String(l.no) === String(p.loc))?.name, cu.talabatArea, cu.siteArea, cu.area
   ]), addressLine = splitDeliveryAddress(ad.street), specialMark = deliveryMark(c.plat > 0 ? 'خصم طلبات ' + money(c.plat) : '', addressLine.extra);
+  p.markOk = specialMark != null;   // read by the buttons' click handler (another scope)
   // Branch and area: the area decides the branch (Apex's own rule); the list shows the chosen branch's areas.
   let branchSel = '', areaSel = '', areaNote = '';
   if (auto || mineOrFree) {
@@ -583,7 +584,7 @@ $('list').addEventListener('click', async e => {
   if (b.dataset.pay) { choice[key(o)] = b.dataset.pay; render(true); return; }
   if (b.dataset.act === 'auto') {
     const p = picks[key(o)] || {}, pay = choice[key(o)] || o.job?.payment || (o.payment === 'cash' || o.payment === 'paid' ? o.payment : null);
-    if (specialMark == null) { toast('تكملة العنوان أكبر من مساحة العلامة المميزة — اختصر العنوان قبل التسجيل'); return; }
+    if ((picks[key(o)] || {}).markOk === false) { toast('تكملة العنوان أكبر من مساحة العلامة المميزة — اختصر العنوان قبل التسجيل'); return; }
     if (!pay) { toast('حدد الأول: كاش ولا مدفوع'); return; }
     if (!p.branch) { toast('اختار الفرع'); return; }
     if (!p.loc) { toast('اختار منطقة العميل'); return; }
@@ -637,7 +638,7 @@ $('list').addEventListener('click', async e => {
   }
   if (b.dataset.act) {
     const pay = choice[key(o)] || o.job?.payment || (o.payment === 'cash' || o.payment === 'paid' ? o.payment : null);
-    if (b.dataset.act === 'entered' && specialMark == null) { toast('تكملة العنوان أكبر من مساحة العلامة المميزة — اختصر العنوان قبل التسجيل'); return; }
+    if (b.dataset.act === 'entered' && (picks[key(o)] || {}).markOk === false) { toast('تكملة العنوان أكبر من مساحة العلامة المميزة — اختصر العنوان قبل التسجيل'); return; }
     if (b.dataset.act === 'entered' && !pay) { toast('حدد الأول: كاش ولا مدفوع'); return; }
     const p = picks[key(o)] || {};
     if (b.dataset.act === 'entered' && !p.branch) { toast('حدد فرع Apex عشان التأكيد يتعلم الاختيار'); return; }

@@ -7,8 +7,8 @@
 //  - cash or paid is clear, and who pays every discount (a paid order needs nothing more);
 //  - the customer's card on Apex was read in the last 10 minutes; a cash order with one clear discount on it is discounted
 //    by itself — a paid order's discount (the customer's gift or keeping it) and free items on the card wait for a person;
-//  - Apex's prices come to the order's within a small difference (the website: Apex is kept up to 5% above it),
-//    and Talabat's delivery to the area's delivery on Apex;
+//  - every item has an Apex price; item price differences do not block transfer and remain visible in the admin
+//    price-difference review; Talabat's delivery still has to match the area's delivery on Apex;
 //  - nobody has the order and it is not on Apex already.
 // Otherwise the order stays for the employee with the reason shown on the transfer page; when the mode is «on» and it is
 // still waiting after 2 minutes, the call center group is told on Telegram (once per order).
@@ -38,7 +38,7 @@ const pickOf = i => (i.apex || []).length === 1 ? i.apex[0].no : i.apexPick && (
 export function decide(o, x) {
   if (!o || o.done || o.apex || o.out) return null;
   if (o.job) return null;
-  const why = [];
+  const why = [], warnings = [];
   const age = x.now - Date.parse(o.at || 0);
   if (!(age >= SETTLE_MS)) why.push('لسه واصل');
   // 11-11: an old order is one staff already handled (entered on Apex by hand, matching did not find it) — 9 website
@@ -85,6 +85,7 @@ export function decide(o, x) {
     const area = rows.find(l => Number(l.branch) === branch) || rows.find(l => l.branch == null) || rows[0];
     service = area && area.service != null && Number.isFinite(Number(area.service)) ? Number(area.service) : null;
     if (rows.length && service == null) why.push('المنطقة ملهاش سعر توصيل على Apex');
+    else if (rows.length && service === 0) why.push('رسوم المنطقة على Apex صفر — لازم الموظف يراجع منطقة العميل');
   } else service = 0;
   // Discounts: who pays each one (a paid order: all of it comes off on Apex anyway).
   if (pay !== 'paid' && (o.discounts || []).some(d => !d.who || d.unclear)) why.push('خصم مش واضح مين بيدفعه');
@@ -107,31 +108,29 @@ export function decide(o, x) {
     else if (o.source === 'talabat') {
       const tItems = o.subtotal ?? billAmount(o, /^(?:المجموع الفرعي|subtotal)$/i);
       if (tItems == null) why.push('مجموع الأصناف على طلبات مش ظاهر');
-      else if (Math.abs(T(apexItems) - tItems) > Math.max(8, tItems * 0.06)) why.push('أسعار Apex مختلفة عن طلبات بـ ' + Math.round(Math.abs(T(apexItems) - tItems)) + ' ج');
       // Free delivery from Talabat (Pro, offers: the delivery line 0 or missing) is not a price difference (Karim 11-11).
       const delFee = billAmount(o, /توصيل|delivery/i), tDel = (delFee || 0) + (billAmount(o, /رسوم الخدمة|service/i) || 0);
-      if (service != null && delFee > 0 && !freeDelivery(o) && Math.abs(T(service) + T(Number(APEX_PRICES[TALABAT_FEE_NO]) || 7.02) - tDel) > 10) why.push('توصيل Apex مختلف عن طلبات');
+      if (service != null && delFee > 0 && !freeDelivery(o) && Math.abs(T(service) + T(Number(APEX_PRICES[TALABAT_FEE_NO]) || 7.02) - tDel) > 10) warnings.push('فرق سعر التوصيل بين Apex وطلبات');
     } else {
       const sItems = o.items.reduce((s, i) => s + (Number(i.price) || 0), 0);
       if (!(sItems > 0)) why.push('أسعار الموقع مش ظاهرة');
-      else if (T(apexItems) < sItems * 0.97 - 3 || T(apexItems) > sItems * 1.06 + 3) why.push('أسعار Apex مختلفة عن الموقع بـ ' + Math.round(Math.abs(T(apexItems) - sItems)) + ' ج');
     }
   }
-  if (why.length) return { ok: false, why, quiet: why.every(w => QUIET.has(w)) };
+  if (why.length) return { ok: false, why, warnings, quiet: why.every(w => QUIET.has(w)) };
   // The customer as the page shows it, without the English (the page's «what staff wrote over the Arabic» is not learned from this).
   const { nameEn, addressEn, original, talabatArea, siteArea, ...customer } = o.customer || {};
   const body = { source: o.source, ref: String(o.ref), action: 'auto', payment: pay, branchNo: branch, locationNo: loc, code: o.code,
     items: lines.map(l => ({ itemNo: String(l.no), qty: l.qty, note: '' })),
     apexNote: card.status === 'found' ? { approved: true, note: card.text, custNo: card.custNo, items: [], resolution: null, gifts: null } : null,
     note: deliveryComment(o), customer, discountSplit: (o.discounts || []).map(() => null) };
-  return { ok: true, why: [], body, locHow };
+  return { ok: true, why: [], warnings, body, locHow };
 }
 
 function setup(app) {
   const { db, fail } = app;
   const mode = async () => { const v = (await db.prepare("SELECT value FROM settings WHERE key = 'auto_transfer'").get())?.value; return MODES.includes(v) ? v : 'off'; };
 
-  // The area of this customer's last automatic orders to the same address (website delivery orders have no Talabat area).
+  // The area of this customer's last confirmed Apex orders to the same address (including manual entries).
   // Read again at most every 10 minutes (11-11: D1 «overloaded»).
   let areasAt = 0, areasDay = null, areasCache = new Map();
   async function customerAreas(day) {
@@ -139,7 +138,7 @@ function setup(app) {
     areasDay = day; areasAt = Date.now(); areasCache = await readAreas(day); return areasCache;
   }
   async function readAreas(day) {
-    const rows = await db.prepare("SELECT payload FROM transfer_jobs WHERE payload IS NOT NULL AND state IN ('auto_done', 'auto_pending', 'auto_sending') AND day >= date(?, '-120 days') ORDER BY at DESC LIMIT 2000").all(day).catch(() => []);
+    const rows = await db.prepare("SELECT payload FROM transfer_jobs WHERE payload IS NOT NULL AND state IN ('auto_done', 'entered') AND day >= date(?, '-120 days') ORDER BY at DESC LIMIT 2000").all(day).catch(() => []);
     const m = new Map();
     for (const r of rows) {
       const p = parseJson(r.payload, {}); if (p.pickup || !p.customer?.phone || !p.locationNo) continue;
@@ -165,7 +164,7 @@ function setup(app) {
       for (const o of q.orders || []) {
         const d = decide(o, x); if (!d) continue;
         const k = o.source + ':' + o.ref, prev = seen.get(k);
-        let decision = d.ok ? (m === 'on' ? 'sent' : 'would') : 'wait', reasons = d.why.join(' · ');
+        let decision = d.ok ? (m === 'on' ? 'sent' : 'would') : 'wait', reasons = (d.ok ? d.warnings : d.why).join(' · ');
         if (d.ok && m === 'on') {
           try { await app.transferAutoJob(d.body, now); }
           catch (e) { decision = 'wait'; reasons = String(e?.message || e).slice(0, 200); }

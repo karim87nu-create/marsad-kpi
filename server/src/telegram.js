@@ -7,7 +7,7 @@ import { platformAlertText } from './order-identifiers.js';
 import * as A from './arabicss.js';
 import { sha256Bytes, randomBytes, b64, fromB64 } from './security.js';
 
-const TICK_MS = 5000, WAIT_ALERT_S = 7, LATE_ANSWER_S = 7;   // a customer answered after more than 7 s also gets the team's state while they waited
+const TICK_MS = 5000, OUTBOX_MAX_AGE_MS = 2 * 60000, WAIT_ALERT_S = 7, LATE_ANSWER_S = 7;   // queued notices are useful only while still current
 
 const RULE_LIST = {
   waitSla: 'عميل عدّى 7 ثواني انتظار',
@@ -471,8 +471,10 @@ function setup(app) {
       }));
       let groups = null;
       // Two passes: a branch message copied to its branch group in the first pass is sent in the second, without waiting a tick.
+      // A disconnected sender must not replay an old backlog when Telegram comes back.
+      await db.prepare("UPDATE telegram_log SET tries = 5, error = 'expired:stale' WHERE sent_at IS NULL AND tries < 5 AND created_at <= ?").run(now - OUTBOX_MAX_AGE_MS);
       for (let pass = 0, copied = true; pass < 2 && copied; pass++) { copied = false;
-      for (const r of await db.prepare('SELECT * FROM telegram_log WHERE sent_at IS NULL AND tries < 5 AND created_at > ? ORDER BY id LIMIT 500').all(now - 3600000)) {
+      for (const r of await db.prepare('SELECT * FROM telegram_log WHERE sent_at IS NULL AND tries < 5 AND created_at > ? ORDER BY id LIMIT 500').all(now - OUTBOX_MAX_AGE_MS)) {
         if (sent >= 20) break;
         if (r.kind === 'ordersComment') continue; // Old queued comments are retained in the log, never sent on their own.
         if (r.kind === 'gap' && await db.prepare("SELECT 1 FROM telegram_log l WHERE l.kind = 'gap' AND l.employee_id = ? AND l.id != ? AND l.message_id IS NOT NULL AND l.sent_at IS NOT NULL AND l.error IS NULL AND NOT EXISTS (SELECT 1 FROM telegram_log x WHERE x.key = 'resolved:' || l.key) LIMIT 1").get(r.employee_id, r.id)) {

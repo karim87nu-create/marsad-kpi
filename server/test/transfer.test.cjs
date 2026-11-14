@@ -72,7 +72,11 @@ test('transfer page: employee PIN sign-in, queue with label data, one claim at a
     const busy = await as(ali)('POST', '/api/transfer/job', { source: 'talabat', ref: '3977500001', action: 'claim' });
     assert.equal(busy.status, 409); assert.match(busy.body.error, /سارة/);
     assert.equal((await as(sara)('POST', '/api/transfer/job', { source: 'talabat', ref: '3977500001', action: 'entered' })).status, 400, 'payment must be chosen');
-    assert.equal((await as(sara)('POST', '/api/transfer/job', { source: 'talabat', ref: '3977500001', action: 'entered', payment: 'cash' })).status, 200);
+    // 11-12 (ChatGPT): «entered» names the Apex branch and area too, so the hand entry teaches the area.
+    assert.equal((await as(sara)('POST', '/api/transfer/job', { source: 'talabat', ref: '3977500001', action: 'entered', payment: 'cash' })).status, 400, 'branch and area must be chosen');
+    const okeyE = (await admin('POST', '/api/orders/token')).body.token;
+    await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': okeyE }, body: { v: 1, day: '2026-10-22', online: [], locations: [{ no: 218, name: 'التجمع الخامس', branch: 1, service: 20 }] } });
+    assert.equal((await as(sara)('POST', '/api/transfer/job', { source: 'talabat', ref: '3977500001', action: 'entered', payment: 'cash', branchNo: 1, locationNo: 218 })).status, 200);
     q = (await as(ali)('GET', '/api/transfer/queue?day=2026-10-22')).body;
     assert.equal(q.orders[0].job.state, 'entered'); assert.equal(q.orders[0].job.by, 'سارة'); assert.equal(q.orders[0].job.mine, false);
     assert.equal(q.orders[0].apex, null, '«entered» is the employee’s word; «in Apex» only when the monitor sees it');
@@ -370,8 +374,11 @@ test('whose order: a failed automatic transfer is free for anyone; one on Apex o
     // Failed under Sara's name: Mona can take it and mark it entered by hand.
     assert.equal((await as(mona)('POST', '/api/transfer/job', { source: 'talabat', ref: '3977800001', action: 'claim' })).status, 200);
     assert.equal((await as(sara)('POST', '/api/transfer/job', { source: 'talabat', ref: '3977800001', action: 'claim' })).status, 409, 'now with Mona');
-    assert.equal((await as(mona)('POST', '/api/transfer/job', { source: 'talabat', ref: '3977800001', action: 'entered', payment: 'cash' })).status, 200);
-    assert.equal((await as(sara)('POST', '/api/transfer/job', { source: 'talabat', ref: '3977800001', action: 'entered', payment: 'cash' })).status, 409, 'Mona entered it');
+    const day0 = t.app.db.raw.prepare("SELECT day FROM talabat_orders WHERE id = '3977800001'").get().day;
+    const okeyW = (await admin('POST', '/api/orders/token')).body.token;
+    await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': okeyW }, body: { v: 1, day: day0, online: [], locations: [{ no: 218, name: 'التجمع الخامس', branch: 1, service: 20 }] } });
+    assert.equal((await as(mona)('POST', '/api/transfer/job', { source: 'talabat', ref: '3977800001', action: 'entered', payment: 'cash', branchNo: 1, locationNo: 218 })).status, 200);
+    assert.equal((await as(sara)('POST', '/api/transfer/job', { source: 'talabat', ref: '3977800001', action: 'entered', payment: 'cash', branchNo: 1, locationNo: 218 })).status, 409, 'Mona entered it');
   } finally { await t.close(); }
 });
 

@@ -67,9 +67,14 @@ export function resolveOrders(rows, apex, { manual = new Map(), branchOk = () =>
       const code = o.source === 'talabat' && o.code ? String(o.code).replace(/\D/g, '') : o.source === 'site' ? String(o.code || o.panel?.number || o.id || '').replace(/\D/g, '') : '', tag = a.tag ? String(a.tag).replace(/\D/g, '') : '';
       const tagExact = !!code && tag === code, tagPart = !!code && !tagExact && tag.length >= 3 && code.startsWith(tag);
       const exact = reference.exact || tagExact;
+      // A full source order ID / platform tag is durable identity. A cashier may enter it
+      // well after the live-order window, but it is still the same order and must not be entered again.
       const time = Number(a.t ?? Date.parse(a.at)), gap = time - o.anchor, branch = branchOk(o.branch, a.branch);
+      // The platform's full order ID on Apex is the order wherever and whenever it was entered; a #code typed in the name
+      // (a Talabat code is 3–4 digits and can repeat in another branch) counts only in the order's own branch.
+      const identifier = !reference.conflict && (reference.exact || (tagExact && branch !== false));
       const withinTime = Number.isFinite(time) && gap >= -120000 && gap <= windowFor(o);
-      if (!Number.isFinite(time) || (!exact && !reference.conflict && !withinTime)) continue;
+      if (!Number.isFinite(time) || (!identifier && !reference.conflict && !withinTime)) continue;
       const ac = customerOf(a.customer), ap = new Set([ac.phone, ac.mobile].filter(Boolean));
       const phone = cp.size && ap.size ? [...cp].some(p => ap.has(p)) : null;
       const name = similar(c.name, ac.name), address = similar(c.address, ac.address);
@@ -84,10 +89,10 @@ export function resolveOrders(rows, apex, { manual = new Map(), branchOk = () =>
       const identity = phone === true || tagExact;
       const nameConflict = !identity && c.name && ac.name && name != null && name < .2;
       const addressConflict = false;
-      const conflict = reference.conflict || (phone === false && !tagExact) || nameConflict || addressConflict || branch === false || (item && !item.ok && !tagExact) || (money != null && money > .3 && !tagExact) || !withinTime;
-      // Explicit source order IDs never bypass contradictory customer or basket evidence.
-      // Sure: the #code itself in the right branch and time, or the same phone with the basket and the amount agreeing.
-      const fullEvidence = withinTime && branch !== false && (tagExact || (identity && money != null && money < .15 && item?.ok !== false && (item?.ok === true || tagPart)));
+      const conflict = reference.conflict || (!identifier && ((phone === false && !tagExact) || nameConflict || addressConflict || branch === false || (item && !item.ok && !tagExact) || (money != null && money > .3 && !tagExact) || !withinTime));
+      // A full durable order identifier confirms the source order even if the cashier entered it late.
+      // Otherwise: the #code in the right branch and time, or the same phone with matching basket and amount.
+      const fullEvidence = identifier || (withinTime && branch !== false && (tagExact || (identity && money != null && money < .15 && item?.ok !== false && (item?.ok === true || tagPart))));
       const strong = !conflict && fullEvidence;
       const score = (exact ? 100 : 0) + (tagPart ? 30 : 0) + (phone === true ? 42 : phone === false ? -70 : 0) +
         (name ?? 0) * 16 + (address ?? 0) * 18 + (item ? item.ok ? 32 : -24 : 0) +

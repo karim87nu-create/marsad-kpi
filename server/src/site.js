@@ -60,14 +60,16 @@ function setup(app) {
   app.route('POST', '/api/site/panel', async ctx => {
     await app.extensionAuth(ctx);
     const list = (Array.isArray(ctx.body?.orders) ? ctx.body.orders : []).slice(0, 300), now = ctx.now, writes = [];
-    // 11-11 (D1 «overloaded»): the whole board comes again every minute — one read for all its orders, and a profile is
-    // written only when it changed.
+    // The board can contain 300 orders and is resent every minute. Read saved order + profile state together, in bounded
+    // groups; the D1 primary key on (source, ref) makes each profile lookup a point read.
     const ids = [...new Set(list.map(o => Number(o?.id)).filter(n => Number.isInteger(n) && n > 0))];
     const olds = new Map(), profs = new Map();
     for (let i = 0; i < ids.length; i += 90) {
       const part = ids.slice(i, i + 90), qs = part.map(() => '?').join(',');
-      for (const r of await db.prepare(`SELECT * FROM site_orders WHERE id IN (${qs})`).all(...part)) olds.set(Number(r.id), r);
-      for (const r of await db.prepare(`SELECT ref, data FROM match_profiles WHERE source = 'site' AND ref IN (${qs})`).all(...part.map(String))) profs.set(String(r.ref), r.data);
+      for (const r of await db.prepare(`SELECT s.*, p.data AS profile_data FROM site_orders s LEFT JOIN match_profiles p ON p.source = 'site' AND p.ref = CAST(s.id AS TEXT) WHERE s.id IN (${qs})`).all(...part)) {
+        olds.set(Number(r.id), r);
+        if (r.profile_data != null) profs.set(String(r.id), r.profile_data);
+      }
     }
     for (const o of list) {
       const id = Number(o?.id); if (!Number.isInteger(id) || id <= 0) continue;
@@ -107,29 +109,43 @@ function setup(app) {
       const c = o.customer || {}, customer = customerOf({ name: String(c.name || '').slice(0, 120), phone: String(c.phone || '').slice(0, 30), address: String(c.address || '').slice(0, 300), area: panelArea(o) });
       const profile = { customer, items, payment: pay, panel: { number: String(o.number || id), stage, status, label, branchId: String(o.branchId || '').slice(0, 40) || null, fulfillment: String(o.fulfillment || '').slice(0, 20) || null } };
       const pj = JSON.stringify(profile);
-      if (profs.get(String(id)) !== pj) writes.push(db.prepare("INSERT INTO match_profiles (source, ref, data) VALUES ('site', ?, ?) ON CONFLICT(source, ref) DO UPDATE SET data = excluded.data").bind(String(id), pj));
-      writes.push(db.prepare(`INSERT INTO site_orders (id, day, status, fulfillment, total, created_at, modified_at, notes_at, received_at, transfer_at, branch, out_at, driver, delivered_at, scheduled, transfers)
+      const profileChanged = profs.get(String(id)) !== pj;
+      if (profileChanged) writes.push(db.prepare("INSERT INTO match_profiles (source, ref, data) VALUES ('site', ?, ?) ON CONFLICT(source, ref) DO UPDATE SET data = excluded.data").bind(String(id), pj));
+      const day = businessDay(created), nextStatus = cancelled ? 'cancelled' : done ? 'completed' : status || 'processing';
+      const fulfillment = String(o.fulfillment || '') || null, total = num(o.total), modified = Number(o.lastActionAt) > 1e9 ? Number(o.lastActionAt) * 1000 : (old?.modified_at ?? now);
+      const branch = String(o.branchName || '').slice(0, 60) || null, driver = o.driver ? String(o.driver.name || o.driver).slice(0, 80) : null;
+      const transfers = old?.branch && branch && old.branch !== branch ? (old.transfers || 1) + 1 : (assigned ? 1 : 0);
+      const orderChanged = !old || old.day !== day || old.status !== nextStatus || old.fulfillment !== fulfillment || old.total !== total || old.modified_at !== modified ||
+        old.received_at == null || (assigned != null && old.transfer_at == null) || (branch != null && old.branch !== branch) || old.out_at !== outAt || old.driver !== driver ||
+        old.delivered_at !== deliveredAt || Number(old.transfers || 0) !== Number(transfers || 0);
+      if (profileChanged || orderChanged) writes.push(db.prepare(`INSERT INTO site_orders (id, day, status, fulfillment, total, created_at, modified_at, notes_at, received_at, transfer_at, branch, out_at, driver, delivered_at, scheduled, transfers)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?) ON CONFLICT(id) DO UPDATE SET status = excluded.status, fulfillment = excluded.fulfillment, total = excluded.total, modified_at = excluded.modified_at,
         notes_at = excluded.notes_at, received_at = COALESCE(site_orders.received_at, excluded.received_at), transfer_at = COALESCE(site_orders.transfer_at, excluded.transfer_at),
         branch = COALESCE(excluded.branch, site_orders.branch), out_at = COALESCE(site_orders.out_at, excluded.out_at), driver = COALESCE(excluded.driver, site_orders.driver),
         delivered_at = COALESCE(site_orders.delivered_at, excluded.delivered_at), transfers = MAX(site_orders.transfers, excluded.transfers)`)
-        .bind(id, businessDay(created), cancelled ? 'cancelled' : done ? 'completed' : status || 'processing', String(o.fulfillment || '') || null, num(o.total), created,
-          (Number(o.lastActionAt) > 1e9 ? Number(o.lastActionAt) * 1000 : now), now, created, assigned, String(o.branchName || '').slice(0, 60) || null, outAt,
-          o.driver ? String(o.driver.name || o.driver).slice(0, 80) : null, deliveredAt, old?.branch && o.branchName && old.branch !== o.branchName ? (old.transfers || 1) + 1 : (assigned ? 1 : 0)));
+        .bind(id, day, nextStatus, fulfillment, total, created, modified, now, created, assigned, branch, outAt, driver, deliveredAt, transfers));
     }
     // The central board lists every open order: one that was out with a driver and is gone from it was delivered.
     if (ctx.body?.board === 'central' && list.length) {
       const seen = new Set(list.map(o => Number(o?.id)));
-      // A pickup order that was ready and is gone from the board was picked up.
-      for (const r of await db.prepare("SELECT id FROM site_orders WHERE created_at >= ? AND fulfillment = 'pickup' AND delivered_at IS NULL AND status NOT IN ('cancelled','failed','wallet-failed') AND id IN (SELECT CAST(ref AS INTEGER) FROM match_profiles WHERE source = 'site' AND json_extract(data, '$.panel.stage') >= 2)").all(now - 14 * 3600000))
-        if (!seen.has(r.id)) writes.push(db.prepare("UPDATE site_orders SET delivered_at = ?, status = 'completed' WHERE id = ? AND delivered_at IS NULL").bind(now, r.id));
-      for (const r of await db.prepare("SELECT id FROM site_orders WHERE created_at >= ? AND out_at IS NOT NULL AND delivered_at IS NULL AND status NOT IN ('cancelled','failed','wallet-failed')").all(now - 14 * 3600000))
-        if (!seen.has(r.id)) writes.push(db.prepare("UPDATE site_orders SET delivered_at = ?, status = 'completed' WHERE id = ? AND delivered_at IS NULL").bind(now, r.id));
       // Karim 11-11 «بيتعامل ازاي مع اللاغي علي الموقع»: an order cancelled on the website mostly just leaves the central
       // board. Gone before it went out (no driver) for 3 minutes → cancelled: off the transfer page; if it is already on
       // Apex, the branch and the online group are told to void it there (once).
-      for (const r of await db.prepare("SELECT id, gone_at, branch, total FROM site_orders WHERE created_at >= ? AND scheduled = 0 AND out_at IS NULL AND delivered_at IS NULL AND status NOT IN ('cancelled','failed','wallet-failed','completed') AND id IN (SELECT CAST(ref AS INTEGER) FROM match_profiles WHERE source = 'site' AND json_extract(data, '$.panel.number') IS NOT NULL)").all(now - 14 * 3600000)) {
+      // Drive all missing-order checks from the recent indexed order rows, joining profiles by their primary key.
+      // The old IN(subquery) form scanned the full profile table on each minute's central-board refresh.
+      const recent = await db.prepare("SELECT id, fulfillment, out_at, delivered_at, status, gone_at, branch, total, transfers, scheduled FROM site_orders WHERE created_at >= ? AND delivered_at IS NULL AND status NOT IN ('cancelled','failed','wallet-failed')").all(now - 14 * 3600000);
+      const recentProfiles = new Map(), recentIds = recent.map(r => Number(r.id)).filter(n => Number.isInteger(n) && n > 0);
+      for (let i = 0; i < recentIds.length; i += 90) {
+        const part = recentIds.slice(i, i + 90), qs = part.map(() => '?').join(',');
+        for (const p of await db.prepare(`SELECT ref, data FROM match_profiles WHERE source = 'site' AND ref IN (${qs})`).all(...part.map(String))) recentProfiles.set(String(p.ref), parseJson(p.data, {}));
+      }
+      for (const r of recent) {
         if (seen.has(r.id)) { if (r.gone_at) writes.push(db.prepare('UPDATE site_orders SET gone_at = NULL WHERE id = ?').bind(r.id)); continue; }
+        const panel = recentProfiles.get(String(r.id))?.panel || {};
+        if ((r.fulfillment === 'pickup' && Number(panel.stage) >= 2) || r.out_at != null) {
+          writes.push(db.prepare("UPDATE site_orders SET delivered_at = ?, status = 'completed' WHERE id = ? AND delivered_at IS NULL").bind(now, r.id)); continue;
+        }
+        if (r.status === 'completed' || r.scheduled || panel.number == null) continue;
         if (!r.gone_at) { writes.push(db.prepare('UPDATE site_orders SET gone_at = ? WHERE id = ?').bind(now, r.id)); continue; }
         if (now - r.gone_at < 3 * 60000) continue;
         writes.push(db.prepare("UPDATE site_orders SET status = 'cancelled' WHERE id = ?").bind(r.id));
@@ -140,10 +156,11 @@ function setup(app) {
     for (const o of list) {
       const id = Number(o?.id); if (!Number.isInteger(id)) continue;
       if (/cancel|failed|refund/i.test(String(o.status || '')) || /ملغ|اتلغ/.test(String(o.statusLabel || ''))) {
-        const r = await db.prepare('SELECT id, branch, total FROM site_orders WHERE id = ?').get(id); if (r) await siteCancelledOnApex(r, now, writes);
+        const r = olds.get(id); if (r) await siteCancelledOnApex(r, now, writes);
       }
     }
-    if (writes.length) await db.batch(writes);
+    // Keep each atomic D1 batch under 80 statements. Replays are idempotent because all writes are keyed upserts/state updates.
+    for (let i = 0; i < writes.length; i += 80) await db.batch(writes.slice(i, i + 80));
     await put('site_panel_at', String(now));
     // Karim 11-11: «عايز الاوردر في الصفحه المركزيه برضو يتحول للفرع». An order the Marsad wrote on Apex and that is still
     // without a branch on the central panel: the extension picks that branch in the panel and presses «إرسال للفرع» itself

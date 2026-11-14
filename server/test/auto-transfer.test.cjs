@@ -50,13 +50,17 @@ test('auto transfer: decides only on certain orders and says why not', () => {
   assert.match(why(cardOf([], { unrecognized: true })), /مش واضحة/);
   assert.match(why({ apexCustomerNote: { status: 'none', checkedAt: new Date(NOW - 15 * 60000).toISOString() } }), /قراءة بطاقة العميل/);
   assert.equal(decide(base({ apexCustomerNote: { status: 'found', checkedAt: new Date(NOW - 60000).toISOString(), directives: [], text: 'عميل قديم', custNo: '7' } }), X).ok, true, 'a card with nothing to give');
-  assert.match(why({ subtotal: P * 1.5 }), /أسعار Apex مختلفة/);
-  assert.match(why({ bill: [{ k: 'رسوم التوصيل', text: 'رسوم التوصيل | 90' }] }), /توصيل Apex مختلف/);
+  // 11-12 (ChatGPT, Karim): price differences no longer stop the transfer; the delivery one is noted as a warning.
+  assert.equal(decide(base({ subtotal: P * 1.5 }), X).ok, true);
+  const del = decide(base({ bill: [{ k: 'رسوم التوصيل', text: 'رسوم التوصيل | 90' }] }), X);
+  assert.equal(del.ok, true); assert.match(del.warnings.join(), /فرق سعر التوصيل/);
+  // A zero-fee Apex area is never taken by itself (it is usually the wrong area).
+  assert.match(decide(base(), { ...X, locations: [{ no: 218, name: 'التجمع الخامس', branch: 1, service: 0 }] }).why.join(), /رسوم المنطقة على Apex صفر/);
   // Website: Apex is up to 5% above the website; a pickup goes to the branch's pickup area.
   const site = { source: 'site', fulfillment: 'pickup', areaGuess: { no: 353, name: 'استلام فرع التجمع', how: 'pickup' }, subtotal: null, items: [{ qty: 1, name: 'كفتة', price: Math.round(P / 1.04), apex: [{ no: KOFTA }], addons: [] }] };
   const s = decide(base(site), X);
   assert.equal(s.ok, true, s.why.join()); assert.equal(s.body.locationNo, 353);
-  assert.match(decide(base({ ...site, items: [{ qty: 1, name: 'كفتة', price: Math.round(P / 1.2), apex: [{ no: KOFTA }], addons: [] }] }), X).why.join(), /عن الموقع/);
+  assert.equal(decide(base({ ...site, items: [{ qty: 1, name: 'كفتة', price: Math.round(P / 1.2), apex: [{ no: KOFTA }], addons: [] }] }), X).ok, true);
   // A website delivery: the area of this customer's last automatic order to the same address.
   const sd = { source: 'site', fulfillment: 'delivery', areaGuess: undefined, subtotal: null, items: site.items };
   assert.match(decide(base(sd), X).why.join(), /لسه ما اتعلمتش/);
@@ -164,7 +168,8 @@ test('auto transfer: Talabat free delivery (Pro) is not a delivery difference', 
   assert.equal(decide(base({ bill: [...svc, { k: 'رسوم التوصيل', text: 'رسوم التوصيل | 0' }] }), X).ok, true, 'delivery 0');
   assert.equal(decide(base({ bill: svc }), X).ok, true, 'no delivery line');
   assert.equal(decide(base({ bill: [...svc, { k: 'رسوم التوصيل', text: 'رسوم التوصيل | 90' }, { k: 'ملاحظة', text: 'ملاحظة | Talabat Pro: توصيل مجاني' }] }), X).ok, true, 'Pro');
-  assert.match(decide(base({ bill: [...svc, { k: 'رسوم التوصيل', text: 'رسوم التوصيل | 90' }] }), X).why.join(), /توصيل Apex مختلف/);
+  assert.match(decide(base({ bill: [...svc, { k: 'رسوم التوصيل', text: 'رسوم التوصيل | 90' }] }), X).warnings.join(), /فرق سعر التوصيل/);
+  assert.equal(decide(base({ bill: [...svc, { k: 'رسوم التوصيل', text: 'رسوم التوصيل | 0' }] }), X).warnings.length, 0);
 });
 
 // Karim 11-11: a hashtag missing from a branch's sequence → that branch's group and the online group.
