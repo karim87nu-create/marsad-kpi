@@ -4,7 +4,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>مرصد الدهان — الإدارة</title>
 <link rel="preload" href="fonts/plex-arabic-arabic-400.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="style.css?v=25">
+<link rel="stylesheet" href="style.css?v=26">
 </head>
 <body>
 <!-- Icons: drawn in one stroke style (after Lucide, ISC license). -->
@@ -31,7 +31,7 @@
     </div>
   </header>
   <div id="subbar">
-    <nav id="nav" aria-label="صفحات القسم"><div class="tabset" data-sec="orders" hidden><button type="button" data-view="transferLive">التحويلات لايف</button><button type="button" data-view="branchesNow">الفروع الآن<span class="badge" id="lateBadge" hidden></span></button><button type="button" data-view="transfer">تحويل الأوردرات</button><button type="button" data-view="entry">ضرب الأوردرات</button></div><div class="tabset" data-sec="calls" hidden><button type="button" data-view="now">الآن</button><button type="button" data-view="day">اليوم</button><button type="button" data-view="team">الموظفين</button><button type="button" data-view="profile">ملف الموظف</button><button type="button" data-view="breaks">البريك والحضور<span class="badge" id="reqBadge" hidden></span></button><button type="button" data-view="calls">المكالمات</button><button type="button" data-view="missed">الفائتة</button></div><div class="tabset" data-sec="reports" hidden><button type="button" data-view="daily">تقرير اليوم</button><button type="button" data-view="sales">المبيعات</button><button type="button" data-view="branches">الفروع</button><button type="button" data-view="cancels">الإلغاءات</button><button type="button" data-view="kpi">مؤشرات الأداء</button><button type="button" data-view="followup">المتابعة والاستثناءات</button><button type="button" data-view="qa">الجودة</button></div><div class="tabset" data-sec="team" hidden><button type="button" data-view="roster">جدول المواعيد</button><button type="button" data-view="forecast">التوقع والاحتياج</button><button type="button" data-view="people">الموظفين والمستخدمين</button><button type="button" data-view="messages">رسايل للموظفين</button></div><div class="tabset" data-sec="settings" hidden><button type="button" data-view="auto">التشغيل الآلي</button><button type="button" data-view="bot">بوت الفروع</button><button type="button" data-view="telegram">تليجرام</button><button type="button" data-view="system">حالة النظام</button><button type="button" data-view="guide">طريقة الحساب</button></div></nav>
+    <nav id="nav" aria-label="صفحات القسم"><div class="tabset" data-sec="orders" hidden><button type="button" data-view="transferLive">التحويلات لايف</button><button type="button" data-view="branchesNow">الفروع الآن<span class="badge" id="lateBadge" hidden></span></button><button type="button" data-view="transfer">تحويل الأوردرات</button><button type="button" data-view="entry">ضرب الأوردرات</button></div><div class="tabset" data-sec="calls" hidden><button type="button" data-view="now">الآن</button><button type="button" data-view="day">اليوم</button><button type="button" data-view="team">الموظفين</button><button type="button" data-view="profile">ملف الموظف</button><button type="button" data-view="breaks">البريك والحضور<span class="badge" id="reqBadge" hidden></span></button><button type="button" data-view="calls">المكالمات</button><button type="button" data-view="missed">الفائتة</button></div><div class="tabset" data-sec="reports" hidden><button type="button" data-view="daily">تقرير اليوم</button><button type="button" data-view="trend">على مدار الوقت</button><button type="button" data-view="branches">الفروع</button><button type="button" data-view="kpi">الموظفين والمشرفين</button><button type="button" data-view="transferReport">التحويل على Apex</button><button type="button" data-view="sales">المبيعات</button><button type="button" data-view="cancels">الإلغاءات</button><button type="button" data-view="qa">الجودة</button><button type="button" data-view="followup">المتابعة والاستثناءات</button></div><div class="tabset" data-sec="team" hidden><button type="button" data-view="roster">جدول المواعيد</button><button type="button" data-view="forecast">التوقع والاحتياج</button><button type="button" data-view="people">الموظفين والمستخدمين</button><button type="button" data-view="messages">رسايل للموظفين</button></div><div class="tabset" data-sec="settings" hidden><button type="button" data-view="auto">التشغيل الآلي</button><button type="button" data-view="bot">بوت الفروع</button><button type="button" data-view="telegram">تليجرام</button><button type="button" data-view="system">حالة النظام</button><button type="button" data-view="guide">طريقة الحساب</button></div></nav>
     <div id="dayPicker" class="period" hidden>
       <div class="presets"><button type="button" class="chip" data-range="today">النهارده</button><button type="button" class="chip" data-range="yesterday">امبارح</button><button type="button" class="chip" data-range="week">آخر 7 أيام</button><button type="button" class="chip" data-range="month">الشهر ده</button></div>
       <div class="dates"><button class="ghost small icon" id="dayPrev" title="اليوم اللي قبله" aria-label="اليوم اللي قبله"><svg class="ic" aria-hidden="true"><use href="#i-next"/></svg></button><label>من <input id="day" type="date"></label><label>إلى <input id="dayTo" type="date"></label><button class="ghost small icon" id="dayNext" title="اليوم اللي بعده" aria-label="اليوم اللي بعده"><svg class="ic" aria-hidden="true"><use href="#i-prev"/></svg></button><button class="small" id="applyRange">عرض</button><button class="ghost small" id="dayToday" hidden>النهارده</button></div>
@@ -46,9 +46,20 @@
     <section id="view-daily" class="view page" hidden>
       <p id="dailyNote" class="note"></p>
       <p><button class="ghost small" data-export="daily">تصدير Excel</button></p>
+      <article class="panel"><h2>المؤشرات الرئيسية</h2><div id="dailyHead" class="cards four"></div></article>
       <div id="dailyGroups"></div>
       <article class="panel"><h2>الفروع</h2><div id="dailyBranches"></div></article>
       <article class="panel"><h2>ليه أوردرات اتسابت للموظف</h2><div id="dailyReasons"></div></article>
+    </section>
+    <section id="view-trend" class="view page" hidden>
+      <p id="trendNote" class="note"></p>
+      <p><button class="ghost small" data-export="trend">تصدير Excel</button></p>
+      <div id="trendGrid" class="tr-grid"></div>
+    </section>
+    <section id="view-transferReport" class="view page" hidden>
+      <div class="blockh"><h2>التحويل الآلي: فروق الأسعار والأوردرات اللي ماتسجلتش</h2></div>
+      <article class="panel"><h2>محتاج مراجعة <button class="ghost small" data-export="priceDiffs">تصدير Excel</button></h2><p class="muted">الأوردر بيتسجل على Apex حتى لو فيه فرق سعر. هنا كل أوردر سعره على Apex طلع مختلف عن طلبات أو الموقع (غير توصيل طلبات اللي بيتخصم عادي)، أو ماتسجلش، عشان تعدل السعر أو الصنف.</p><div id="priceDiffCards" class="cards"></div><div id="priceDiffs"></div></article>
+      <article class="panel"><h2>ليه الأوردرات اتسابت للموظف <button class="ghost small" data-export="autoReasons">تصدير Excel</button></h2><p class="muted">كل أوردر طلبات أو الموقع ماتحوّلش آلي في الفترة، والسبب اللي وقّفه. الصنف أو المنطقة اللي المرصد مش عارفها مكتوبة باسمها، عشان تتعلّم مرة واحدة.</p><div id="autoReasonCards" class="cards"></div><div id="autoReasons"></div></article>
     </section>
     <section id="view-now" class="view">
       <p id="nowStale" class="stalebar" role="alert" hidden></p>
@@ -143,9 +154,6 @@
     </section>
 
     <section id="view-transfer" class="view page" hidden>
-      <div class="blockh"><h2>التحويل الآلي: فروق الأسعار والأوردرات اللي ماتسجلتش</h2></div>
-      <article class="panel"><h2>محتاج مراجعة <button class="ghost small" data-export="priceDiffs">تصدير Excel</button></h2><p class="muted">الأوردر بيتسجل على Apex حتى لو فيه فرق سعر. هنا كل أوردر سعره على Apex طلع مختلف عن طلبات أو الموقع (غير توصيل طلبات اللي بيتخصم عادي)، أو ماتسجلش، عشان تعدل السعر أو الصنف.</p><div id="priceDiffCards" class="cards"></div><div id="priceDiffs"></div></article>
-      <article class="panel"><h2>ليه الأوردرات اتسابت للموظف <button class="ghost small" data-export="autoReasons">تصدير Excel</button></h2><p class="muted">كل أوردر طلبات أو الموقع ماتحوّلش آلي في الفترة، والسبب اللي وقّفه. الصنف أو المنطقة اللي المرصد مش عارفها مكتوبة باسمها، عشان تتعلّم مرة واحدة.</p><div id="autoReasonCards" class="cards"></div><div id="autoReasons"></div></article>
       <div class="blockh"><h2>أوردرات طلبات</h2></div>
       <p id="talNote" class="note"></p>
       <div class="filters"><select id="talPick" aria-label="الفرع"><option value="">كل الفروع</option></select><button class="ghost small" data-export="talabat">تصدير Excel</button></div>
@@ -190,6 +198,7 @@
     </section>
 
     <section id="view-branches" class="view page" hidden>
+      <article class="panel"><h2>تقييم الفروع مقابل الأهداف</h2><p class="muted">التقييم = نسبة الأهداف اللي اتحققت (وقت الخروج، المتأخر، الإلغاءات، الخصومات، القفل على طلبات، إلغاءات طلبات، وقت أوردرات الموقع). الأرقام من Apex وطلبات والموقع وبوت الفروع.</p><div id="kpiBranches"></div></article>
       <div class="blockh"><h2>إغلاق الفروع على طلبات</h2></div>
       <article class="panel"><h2>كل مرة فرع اتقفل أو بقى مشغول على طلبات <button class="ghost small" data-export="closures">تصدير Excel</button></h2><p class="muted">من شاشة طلبات: إمتى اتقفل، لحد إمتى، والسبب زي ما طلبات كاتباه. بيوصل تنبيه لجروب الفرع والكول سنتر وقت ما يتقفل ولما يرجع.</p><div id="closureCards" class="cards"></div><div id="closureTable"></div></article>
       <p id="branchNote" class="note"></p>
@@ -226,7 +235,6 @@
       <article class="panel"><h2>محتاج متابعة</h2><ul id="kpiFlags" class="flags"></ul></article>
       <article class="panel"><h2>الموظفين</h2><p class="muted">التقييم = نسبة الأهداف اللي اتحققت (الانشغال، البريك، المكالمات مقارنة بمتوسط الفريق، انتظار العميل، المكالمات اللي بقت أوردر، FCR، الفائتة اللي كان ممكن يلحقها، الالتزام بالشيفت، التأخير). «بقت أوردر» = مكالمة على طابور الطلب وبعدها أوردر هوت لاين بنفس الرقم في خلال 30 دقيقة. FCR = العميل ما اتصلش تاني في خلال 24 ساعة. «فائتة كان ممكن يلحقها» = عميل قفل وهو متاح، أو في بريك زيادة، أو مش موجود في شيفته. السهم = الفرق عن الفترة اللي قبلها.</p><div id="kpiEmployees"></div></article>
       <article class="panel"><h2>المشرفين</h2><p class="muted">من شغلهم في المرصد: الموافقات ورسايل الفروع (بوت الفروع)، طلبات البريك، تقييمات الجودة، وتحديد نهاية الشيفت.</p><div id="kpiSupervisors"></div></article>
-      <article class="panel"><h2>الفروع</h2><p class="muted">التقييم = نسبة الأهداف اللي اتحققت (وقت الخروج، المتأخر، الإلغاءات، الخصومات، القفل على طلبات، إلغاءات طلبات، وقت أوردرات الموقع). الأرقام من Apex وطلبات والموقع وبوت الفروع.</p><div id="kpiBranches"></div></article>
       <p class="muted" id="kpiTargets"></p>
     </section>
 
@@ -477,8 +485,9 @@
 <script src="forecast.js?v=1"></script>
 <script src="transfer-live.js?v=1"></script>
 <script src="home.js?v=3"></script>
-<script src="daily.js?v=1"></script>
-<script src="app.js?v=54"></script>
+<script src="daily.js?v=3"></script>
+<script src="trend.js?v=2"></script>
+<script src="app.js?v=55"></script>
 </body>
 </html>
 

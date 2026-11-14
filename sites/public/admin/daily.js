@@ -45,8 +45,15 @@ window.MarsadDaily = function MarsadDaily(ctx) {
   async function render(day) {
     const d = await api('/api/daily?day=' + encodeURIComponent(day), { timeout: 60000 });
     rows = metrics(d.cur, d.prev);
+    // The eight headline numbers (تصور المؤشرات): each against its target and the same day a week before.
+    const U = (v, u) => fmt(v, !u ? '' : u === '%' ? '%' : ' ' + u);
+    const T = x => x.min != null && x.max != null ? 'من ' + U(x.min, x.unit) + ' لحد ' + U(x.max, x.unit) : x.min != null ? U(x.min, x.unit) + ' أو أكتر' : U(x.max, x.unit) + ' أو أقل';
+    const lower = x => x.max != null && x.min == null;
+    $('dailyHead').replaceChildren(...(d.headline || []).map(x => { const c = change(x.value, x.before, lower(x) ? -1 : 1);
+      return kpi(x.label, U(x.value, x.unit), x.tone, 'الهدف ' + T(x) + (c.text ? ' · ' + c.text : '')); }));
+    rows = [...(d.headline || []).map(x => M('المؤشرات الرئيسية', x.label, x.value, x.before, x.unit ? ' ' + x.unit : '', lower(x) ? -1 : 1)), ...rows];
     $('dailyNote').textContent = 'يوم ' + d.day + ' مقارنة بنفس اليوم الأسبوع اللي فات (' + d.compareDay + '). الأخضر أحسن، الأحمر أسوأ.';
-    const groups = [...new Set(rows.map(r => r.group))];
+    const groups = [...new Set(rows.map(r => r.group))].filter(g => g !== 'المؤشرات الرئيسية');
     $('dailyGroups').replaceChildren(...groups.map(g => h('article', { className: 'panel' }, h('h2', { textContent: g }),
       h('div', { className: 'cards' }, ...rows.filter(r => r.group === g).map(r => { const c = change(r.a, r.b, r.better); return kpi(r.label, r.show ? r.show(r.a) : fmt(r.a, r.unit), c.tone, c.text); })))));
     const pb = new Map((d.prev.branches || []).map(b => [b.no, b]));

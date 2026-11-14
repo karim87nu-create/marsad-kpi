@@ -306,6 +306,31 @@ function setup(app) {
     return { serverNow: iso(now), day, stale: q?.stale === true, autoMode: await mode(), writerMode: await setting('apex_bridge_mode') || 'shadow',
       parts: { writerSeen: iso(writerSeen), apexPush: iso(apex.pushedAt), talabatScreen: q?.liveScreen === true }, list };
   };
+  // One day's transfer to Apex (Karim 11-14, the KPIs): orders, on Apex, automatic, the minutes from arrival to Apex
+  // (from Apex's own entry time), how many waited 5+ minutes, and the writes that failed.
+  app.transferDayStats = async (day, now) => {
+    const q = await app.transferQueue(day, { now, me: { id: null, name: 'admin', staff: false } }).catch(() => null);
+    if (!q?.orders) return null;
+    const row = await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(day);
+    const online = new Map(((parseJson(row?.data, {}) || {}).online || []).filter(a => a?.no).map(a => [String(a.no), a.at]));
+    const jobs = await db.prepare('SELECT source, ref, state, employee_name FROM transfer_jobs WHERE day = ?').all(day);
+    const jobOf = new Map(jobs.map(j => [j.source + ':' + j.ref, j]));
+    const out = { all: 0, onApex: 0, auto: 0, minutes: [], waited5: 0, failed: jobs.filter(j => j.state === 'auto_failed').length, talabat: { all: 0, auto: 0 }, site: { all: 0, auto: 0 } };
+    for (const o of q.orders) {
+      if (o.scheduled) continue;
+      out.all++; out[o.source] && out[o.source].all++;
+      const j = jobOf.get(o.source + ':' + o.ref), auto = j?.state === 'auto_done' && j.employee_name === 'المرصد آلي';
+      if (auto) { out.auto++; out[o.source] && out[o.source].auto++; }
+      if (!o.apex?.no) continue;
+      out.onApex++;
+      const m = (Date.parse(online.get(String(o.apex.no)) || '') - Date.parse(o.at || '')) / 60000;
+      if (Number.isFinite(m) && m >= 0 && m < 180) { out.minutes.push(m); if (m >= 5) out.waited5++; }
+    }
+    const n = out.minutes.length;
+    return { all: out.all, onApex: out.onApex, auto: out.auto, talabat: out.talabat, site: out.site, failed: out.failed,
+      toApexMin: n ? Math.round(out.minutes.reduce((a, b) => a + b, 0) / n * 10) / 10 : null,
+      autoPct: out.all ? Math.round(out.auto / out.all * 1000) / 10 : null, waited5Pct: n ? Math.round(out.waited5 / n * 1000) / 10 : null, waited5: out.waited5 };
+  };
   app.route('GET', '/api/auto-transfer/report', async ctx => {
     await app.requireAdmin(ctx);
     const to = /^\d{4}-\d{2}-\d{2}$/.test(String(ctx.query.to || '')) ? ctx.query.to : businessDay(ctx.now);

@@ -1,8 +1,8 @@
 // الرئيسية (Karim 11-14 «عايزين نغير الاداره بتقاريرها بكل حاجه تناسب الي وصلنالو» — «لوحة واحدة لكل حاجة لايف»):
 // the branches' board, the transfers and what needs a person, in one small answer for the home page (every 5 s) and for
 // the manager's Telegram group. The calls come from /api/live, as on the call-center screen.
-import { businessDay, iso, isOperating, cairoParts } from './time.js';
-import { dailyReport, dailyText } from './daily.js';
+import { businessDay, iso, isOperating, cairoParts, addDays } from './time.js';
+import { dailyReport, dailyText, headline, judge } from './daily.js';
 import { parseJson } from './order-match.js';
 
 const minsSince = (t, now) => Number.isFinite(t) ? Math.max(0, Math.floor((now - t) / 60000)) : null;
@@ -96,6 +96,11 @@ function setup(app) {
       const key = 'mgrDaily:' + day;
       if (!await db.prepare('SELECT 1 FROM telegram_log WHERE key = ?').get(key)) await tell(key, 'managerDaily', dailyText(await dailyReport(app, day, now)), now);
     }
+    // Saturday's night: the week against the week before (the eight numbers, each a 7-day average).
+    if (rules.managerWeekly !== false && new Date(Date.UTC(p.year, p.month - 1, p.day)).getUTCDay() === 6 && (p.hour > 2 || p.hour === 2 && p.minute >= 20) && p.hour < 9) {
+      const key = 'mgrWeekly:' + day;
+      if (!await db.prepare('SELECT 1 FROM telegram_log WHERE key = ?').get(key)) await tell(key, 'managerWeekly', await weekText(day, now), now);
+    }
     if (rules.managerAttention === false || !isOperating(now)) return;
     const h = await app.homeNow(now);
     const slot = Math.floor(now / HOUR);
@@ -106,7 +111,66 @@ function setup(app) {
       await tell('mgr:' + once, 'managerAttention', (a.level === 'bad' ? '🔴 ' : '🟠 ') + a.text, now);
     }
   };
-  app.afterRequest(async now => { try { await app.managerTick(now); } catch {} });
+  async function weekText(day, now) {
+    const avg = async (to) => {
+      const sums = {}, n = {};
+      for (let i = 0; i < 7; i++) { const r = await dailyReport(app, addDays(to, -i), now); for (const x of r.headline) if (x.value != null) { sums[x.key] = (sums[x.key] || 0) + x.value; n[x.key] = (n[x.key] || 0) + 1; } }
+      return Object.fromEntries(Object.keys(sums).map(k => [k, Math.round(sums[k] / n[k] * 10) / 10]));
+    };
+    const [a, b] = [await avg(day), await avg(addDays(day, -7))];
+    const dot = { good: '🟢', warn: '🟡', bad: '🔴' }, lines = ['📈 الأسبوع لحد ' + day + ' مقارنة بالأسبوع اللي قبله (متوسط اليوم)', ''];
+    for (const x of headline({})) { const v = a[x.key]; if (v == null) continue; const w = b[x.key];
+      lines.push((dot[judge(x, v)] || '⚪') + ' ' + x.label + ': ' + v + (x.unit ? ' ' + x.unit : '') + (w != null ? ' (كان ' + w + ')' : '')); }
+    return lines.join('\n');
+  }
+
+  // الصبح الساعة 10 (Karim 11-14, تصور المؤشرات): yesterday's numbers to whom they belong — each branch its own (and where it
+  // stands among the branches), the call center its own, the online group the transfer to Apex. Once a day each.
+  let lastMorning = 0;
+  app.morningTick = async (now, { force = false } = {}) => {
+    if (!force && now - lastMorning < 60000) return; lastMorning = now;
+    const p = cairoParts(new Date(now)); if (p.hour < 10 || p.hour >= 13) return;
+    const day = addDays(businessDay(now), -1);
+    if (await setting('morning_done') === day) return;
+    const rules = parseJson((await db.prepare('SELECT rules FROM telegram_config WHERE id = 1').get().catch(() => null))?.rules, {}) || {};
+    const rep = await dailyReport(app, day, now), c = rep.cur, fmt = v => v == null ? '—' : Number(v).toLocaleString('en-US', { maximumFractionDigits: 1 });
+    const put = (key, kind, text, target, branch) => db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, sent_at, target, branch) VALUES (?, ?, NULL, ?, ?, NULL, ?, ?)').run(key, kind, text, now, target, branch);
+    const T = { late: 30 };
+    if (rules.morningBranch !== false && c.branches.length) {
+      const ranked = [...c.branches].filter(b => b.orders).sort((x, y) => (x.lateRate ?? 99) - (y.lateRate ?? 99) || (x.avgOut ?? 99) - (y.avgOut ?? 99));
+      for (const b of ranked) {
+        const pb = (rep.prev.branches || []).find(x => x.no === b.no) || {}, rank = ranked.indexOf(b) + 1;
+        const text = ['📊 فرع ' + b.name + ' — يوم ' + day, '',
+          '• أوردرات: ' + fmt(b.orders) + (pb.orders ? ' (الأسبوع اللي فات ' + fmt(pb.orders) + ')' : ''),
+          '• متوسط وقت الخروج: ' + fmt(b.avgOut) + ' د (الهدف ' + T.late + ' د أو أقل)',
+          '• خرجوا بعد 30 دقيقة: ' + fmt(b.lateRate) + '% (الهدف 10% أو أقل)',
+          '• إلغاءات: ' + fmt(b.cancels), '',
+          'ترتيبكم بين الفروع في الالتزام بالوقت: ' + rank + ' من ' + ranked.length].join('\n');
+        await put('morning:branch:' + day + ':' + b.no, 'morningBranch', text, 'branches', b.name);
+      }
+    }
+    if (rules.morningCalls !== false && c.calls) {
+      const d = await app.heavy('day', day, now).catch(() => null);
+      const top = (d?.employees || []).filter(e => (e.answered ?? e.calls) > 0).sort((x, y) => (y.answered ?? y.calls) - (x.answered ?? x.calls)).slice(0, 3);
+      const text = ['☎️ الكول سنتر — يوم ' + day, '',
+        '• مكالمات: ' + fmt(c.calls.calls) + ' · اترد عليها ' + fmt(c.calls.answered),
+        '• الرد خلال 10 ثواني: ' + fmt(c.calls.sla) + '% (الهدف 90% أو أكتر)',
+        '• الفائتة: ' + fmt(c.calls.abandonmentRate) + '% (الهدف 3% أو أقل)',
+        ...(top.length ? ['', '👏 أكتر مكالمات: ' + top.map(e => e.name + ' (' + (e.answered ?? e.calls) + ')').join('، ')] : [])].join('\n');
+      await put('morning:calls:' + day, 'morningCalls', text, null, null);
+    }
+    if (rules.morningOnline !== false && c.apex?.all) {
+      const a = c.apex, r = c.transfers.reasons.slice(0, 4);
+      const text = ['🤖 التحويل على Apex — يوم ' + day, '',
+        '• أوردرات طلبات والموقع: ' + a.all + ' · اتسجل آلي ' + a.auto + ' (' + fmt(a.autoPct) + '%، الهدف 80%)',
+        '• الوقت لحد Apex: ' + fmt(a.toApexMin) + ' د (الهدف 3 د) · استنوا 5 دقايق أو أكتر: ' + a.waited5,
+        ...(a.failed ? ['• ماتسجلوش: ' + a.failed] : []),
+        ...(r.length ? ['', 'ليه اتسابوا للموظف:', ...r.map(x => '– ' + x.reason + ': ' + x.orders + (x.details.length ? ' (' + x.details.map(d => d.name).join('، ') + ')' : ''))] : [])].join('\n');
+      await put('morning:online:' + day, 'morningOnline', text, 'online', null);
+    }
+    await db.prepare("INSERT INTO settings (key, value) VALUES ('morning_done', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(day);
+  };
+  app.afterRequest(async now => { try { await app.managerTick(now); } catch {} try { await app.morningTick(now); } catch {} });
 }
 
 export { setup };

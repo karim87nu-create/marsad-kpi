@@ -32,6 +32,12 @@ const TARGETS = {
   closedHours: { max: 1, label: 'ساعات القفل على طلبات في اليوم', unit: 'س' },
   siteOutMin: { max: 30, label: 'أوردر الموقع من التحويل للخروج', unit: 'د' },
   talabatCancelPct: { max: 3, label: 'إلغاءات طلبات', unit: '%' },
+  // Karim 11-14 «نفذ» (تصور المؤشرات): the transfer to Apex, and the eight headline numbers.
+  toApexMin: { max: 3, label: 'الوقت لحد Apex', unit: 'د' },
+  autoPct: { min: 80, label: 'نسبة التحويل الآلي', unit: '%' },
+  waited5Pct: { max: 2, label: 'أوردرات استنت 5 دقايق لحد Apex', unit: '%' },
+  failedWrites: { max: 0, label: 'أوردرات ماتسجلتش (الكاتب رجّع غلط)', unit: '' },
+  branchCancelPct: { max: 2, label: 'إلغاءات بسبب الفرع', unit: '%' },
 };
 
 const r1 = v => v == null || !Number.isFinite(v) ? null : Math.round(v * 10) / 10;

@@ -130,6 +130,7 @@
   const setRange = (from, to) => { $('day').value = from; $('dayTo').value = to; $('applyRange').click(); };
   const TL = window.MarsadTransferLive({ api, h, $, table, pill, kpi });
   const HOME = window.MarsadHome({ api, h, $, pill, kpi, dur, show: v => show(v) });
+  const TREND = window.MarsadTrend({ api, h, $, exportRows: (...a) => exportRows(...a) });
   const DAILY = window.MarsadDaily({ api, h, $, table, kpi, dur, exportRows: (...a) => exportRows(...a) });
   const BOT = window.MarsadBot({ api, h, $, table, pill, state, canWrite: () => canWrite(), showError: x => showError(x) });
   const ROSTER = window.MarsadRoster({ api, h, $, canWrite: () => canWrite(), showError: x => showError(x), cairoToday: () => cairoToday() });
@@ -936,6 +937,7 @@
     try {
       if (kind === 'priceDiffs') return exportRows('فروق-الأسعار', priceDiffColumns, priceDiffRows);
       if (kind === 'daily') return DAILY.export();
+      if (kind === 'trend') return TREND.export();
       if (kind === 'autoReasons') return exportRows('اسباب-التحويل-اليدوي', autoReasonColumns, autoReasonRows);
       if (kind === 'closures') return exportRows('إغلاق-الفروع', closureColumns, closureRows);
       if (OR.exportKind(kind) || SITE.exportKind(kind) || INS.exportKind(kind)) return;
@@ -960,15 +962,15 @@
   const VIEWS = { home: ['الرئيسية', null], daily: ['تقرير اليوم', () => DAILY.render(state.to)], now: ['الكول سنتر الآن', null],
     day: ['الكول سنتر: اليوم', () => Promise.all([renderDay(), renderHours()])], team: ['أداء الموظفين', renderTeam], profile: ['ملف الموظف', renderProfile],
     breaks: ['البريك والحضور ونهاية الشيفت', () => Promise.all([refreshRequests(), renderAttendance(), renderShifts()])], calls: ['المكالمات', renderCalls], missed: ['المكالمات الفائتة', renderMissed], roster: ['جدول مواعيد الموظفين', () => ROSTER.render()], forecast: ['التوقع والاحتياج', () => FC.render()],
-    branchesNow: ['الفروع الآن', null], transferLive: ['التحويلات لايف', () => TL.refresh()], transfer: ['تحويل الأوردرات: طلبات والموقع', () => Promise.all([renderPriceDiffs(), renderAutoReasons(), SITE.renderTalabat(), SITE.renderTransfer()])], entry: ['ضرب الأوردرات', () => OR.renderEntry()],
-    sales: ['المبيعات', () => INS.renderSales()], branches: ['تقرير الفروع', () => Promise.all([renderClosures(), OR.renderBranches(), INS.renderBranch(), SITE.renderBranches()])],
+    branchesNow: ['الفروع الآن', null], transferLive: ['التحويلات لايف', () => TL.refresh()], transfer: ['تحويل الأوردرات: طلبات والموقع', () => Promise.all([SITE.renderTalabat(), SITE.renderTransfer()])], transferReport: ['التحويل على Apex', () => Promise.all([renderAutoReasons(), renderPriceDiffs()])], trend: ['على مدار الوقت', () => TREND.render(state.day, state.to)], entry: ['ضرب الأوردرات', () => OR.renderEntry()],
+    sales: ['المبيعات', () => INS.renderSales()], branches: ['الفروع', () => Promise.all([KPI.render(), renderClosures(), OR.renderBranches(), INS.renderBranch(), SITE.renderBranches()])],
     cancels: ['الإلغاءات', () => Promise.all([OR.renderCancels(), SITE.renderBranchTalabatCancels(), INS.renderCancelOwners()])],
-    kpi: ['مؤشرات الأداء: الموظفين والفروع', () => KPI.render()], followup: ['المتابعة والاستثناءات', renderFollowup], bot: ['بوت الفروع', () => BOT.render()], qa: ['الجودة: تقييم المكالمات', () => QA.render()],
+    kpi: ['الموظفين والمشرفين', () => KPI.render()], followup: ['المتابعة والاستثناءات', renderFollowup], bot: ['بوت الفروع', () => BOT.render()], qa: ['الجودة: تقييم المكالمات', () => QA.render()],
     people: ['الموظفين والمستخدمين', renderManage], messages: ['رسايل للموظفين', renderManage], telegram: ['تنبيهات تليجرام', renderManage],
     auto: ['التشغيل الآلي', renderAuto], system: ['حالة النظام', renderSystem], guide: ['طريقة حساب الأرقام', async () => {}] };
   // Old page names (links, other parts of the page) open the page they are part of now.
   const ALIAS = { hours: 'day', requests: 'breaks', attendance: 'breaks', shifts: 'breaks', talabat: 'transfer', siteTransfer: 'transfer', siteBranches: 'branches', branchFile: 'branches', manage: 'people' };
-  const DAY_VIEWS = ['daily', 'day', 'team', 'profile', 'breaks', 'calls', 'missed', 'followup', 'bot', 'entry', 'transfer', 'sales', 'branches', 'cancels', 'kpi'];
+  const DAY_VIEWS = ['daily', 'trend', 'transferReport', 'day', 'team', 'profile', 'breaks', 'calls', 'missed', 'followup', 'bot', 'entry', 'transfer', 'sales', 'branches', 'cancels', 'kpi'];
   const SECTION_OF = {};
   for (const t of document.querySelectorAll('#nav .tabset')) for (const b of t.querySelectorAll('[data-view]')) SECTION_OF[b.dataset.view] = t.dataset.sec;
   SECTION_OF.home = 'home';

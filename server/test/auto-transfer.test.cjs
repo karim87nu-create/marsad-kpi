@@ -156,6 +156,10 @@ test('auto transfer: trial only records, on sends as «المرصد آلي», a 
     assert.equal(daily.compareDay, '2026-10-15'); assert.equal(daily.cur.transfers.talabat.all, 4); assert.equal(daily.cur.transfers.talabat.auto, 2);
     const { dailyText } = require('../src/daily.js');
     assert.match(dailyText(daily), /التحويل على Apex/);
+    assert.deepEqual(daily.headline.map(x => x.key), ['sla', 'abandon', 'toApexMin', 'autoPct', 'avgOut', 'latePct', 'cancelPct', 'adherencePct']);
+    assert.equal(daily.cur.apex.all, 4); assert.equal(daily.cur.apex.onApex, 1);
+    const tr = (await admin('GET', '/api/trend?from=2026-10-20&to=2026-10-22')).body;
+    assert.equal(tr.days.length, 3); assert.equal(tr.targets.toApexMin.max, 3);
 
     // Still waiting after 2 minutes: once to the call center group, with the reason.
     t.advance(3 * 60000);
@@ -177,6 +181,13 @@ test('auto transfer: trial only records, on sends as «المرصد آلي», a 
     t.clock.now = cairoToUtc(2026, 10, 23, 2, 20, 0);
     await t.app.managerTick(t.app.now(), { force: true });
     assert.match(mgr().find(x => x.kind === 'managerDaily').text, /تقرير يوم 2026-10-22/);
+    // الصبح 10: yesterday to whom it belongs (the online group: the transfer to Apex), once.
+    t.clock.now = cairoToUtc(2026, 10, 23, 10, 5, 0);
+    await t.app.morningTick(t.app.now(), { force: true }); await t.app.morningTick(t.app.now(), { force: true });
+    const morning = t.app.db.raw.prepare("SELECT key, target, text FROM telegram_log WHERE kind LIKE 'morning%'").all();
+    assert.equal(morning.filter(x => x.key === 'morning:online:2026-10-22').length, 1, JSON.stringify(morning));
+    assert.equal(morning.find(x => x.key === 'morning:online:2026-10-22').target, 'online');
+    assert.match(morning.find(x => x.key === 'morning:online:2026-10-22').text, /التحويل على Apex/);
   } finally { await t.close(); }
 });
 
