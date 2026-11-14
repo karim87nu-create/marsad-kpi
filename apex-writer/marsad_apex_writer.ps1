@@ -114,7 +114,7 @@ END;
 -- Karim 11-14: a website order goes in on the ordinary menu, like a call-center delivery order — no online kind at all
 -- (the label «/موقع/كاش|مدفوع/#n» in the customer's name says it is the website's).
 DECLARE @OnlineType nvarchar(50) = CASE WHEN @Kind = 'talabat' THEN CASE WHEN @PayWay = 'Ledge' THEN 'TALABAT VISA' ELSE 'TALABAT CASH' END
-                                       ELSE NULL END;
+                                       ELSE '' END;   -- '' as on every call-center order (none is NULL, read 11-14)
 DECLARE @Service money;
 SELECT @TaxRatio = TaxRatio FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderNo = @Tpl;
 IF @TaxRatio IS NULL SELECT @TaxRatio = TaxRatio FROM dbo.Orders_M WITH (NOLOCK) WHERE OrderNo = @Tpl;
