@@ -43,10 +43,13 @@ export function deliveryNotes(value, scheduledAt = null) {
 
 export function cleanOptionComment(value) {
   const s=String(value || '').trim();
-  const heading='(?:اختيارات?|خيارات?|اختيار)\\s+(?:السلط[ةه]|السلطات|الأرز|الارز|العيش|الخبز|الصوص|الإضافات|الاضافات)';
+  // Karim 11-14 (Apex 702803: «نص فرخة مشوية: اختيارات السلطة المجانية: طحينة (ضمن الوجبة)»): «المجانية» after the
+  // heading and «(ضمن الوجبة)» after the choice are the website's words, not the kitchen's.
+  const heading='(?:اختيارات?|خيارات?|اختيار)\\s+(?:السلط[ةه]|السلطات|الأرز|الارز|العيش|الخبز|الصوص|الإضافات|الاضافات)(?:\\s+(?:المجاني[ةه]|مجاني[ةه]?|المجانا))?';
   if(new RegExp('^'+heading+'\\s*[:：]?\\s*$','i').test(s))return '';
   if(!/بدون|من غير|حساسي|لا |كلم|اتصل|بدل|زيادة/.test(s) && new RegExp('^[^:：]{1,80}[:：]\\s*'+heading+'\\s*[:：]?\\s*$','i').test(s))return '';
-  return s.replace(new RegExp('(^|[:：]\\s*)'+heading+'\\s*[:：]\\s*','i'),'$1');
+  return s.replace(new RegExp('(^|[:：]\\s*)'+heading+'\\s*[:：]\\s*','i'),'$1')
+    .replace(/\s*[(\[]\s*(?:ضمن\s+(?:الوجب[ةه]|العرض|الكومبو)|مجان[يا]|مجانًا)\s*[)\]]/gu,'').replace(/\s*[x×]\s*(\d+)/giu,' ×$1').replace(/ ×1(?!\d)/g,'').trim();
 }
 
 // Apex keeps Arabic in the Windows Arabic code page: letters outside it (ڤ چ گ پ, Persian ی ک), direction marks and
@@ -190,6 +193,7 @@ function cleanChoice(value) {
     // Any choice-group heading before the choice: «اختيارات السلطة المجانية: طحينة» → «طحينة».
     .replace(/^(?:[^:：]{0,40}[:：]\s*)?(?:اختيارات?|خيارات?|اختيار|نوع)\s+[^:：]{1,40}[:：]\s*/u, '')
     .replace(/\s*[x×]\s*(\d+)/giu, ' ×$1')
+    .replace(/ ×1(?!\d)/g, '')
     .replace(/\s{2,}/g, ' ').replace(/^[\s:：،,|-]+|[\s:：،,|-]+$/g, '').trim();
 }
 export function deliveryComment(order) {

@@ -116,3 +116,11 @@ test('comment on Apex: no choice-group headings or «(ضمن الوجبة)», we
   assert.equal(deliveryLabel('// ', 'talabat', 'paid', '5223'), 'عميل/طلبات/مدفوع/#5223');
   assert.equal(deliveryLabel('محمد /', 'talabat', 'cash', '1207'), 'محمد/طلبات/كاش/#1207');
 });
+
+// Karim 11-14 (Apex 702803 / 702805 printed «نص فرخة مشوية: اختيارات السلطة…»): whatever the page sends, Apex gets the choice only.
+test('the website\'s free-choice wording never reaches Apex', async () => {
+  const { compactDeliveryComment } = await import('../src/delivery-fields.js');
+  assert.equal(compactDeliveryComment('نص فرخة مشوية: اختيارات السلطة المجانية: طحينة (ضمن الوجبة)', 200), 'نص فرخة مشوية: طحينة');
+  assert.equal(compactDeliveryComment('صدور مشوية: اختيارات السلطة المجانية: طحينة × 4 (ضمن الوجبة)', 200), 'صدور مشوية: طحينة ×4');
+  assert.equal(compactDeliveryComment('بدون بصل | كفتة: اختيارات السلطة: بابا غنوج', 200), 'بدون بصل | كفتة: بابا غنوج');
+});
