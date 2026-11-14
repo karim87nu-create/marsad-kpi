@@ -50,7 +50,7 @@ const RULE_LIST = {
   transferFailed: 'التحويل الآلي: أوردر ماتسجلش على Apex أو مستني (سجّله بإيدك)',
   autoWaiting: 'التحويل الآلي: أوردر المرصد ماحوّلوش لوحده ومستني موظف بعد دقيقتين (والسبب)',
 };
-const RECOVERY_LABELS = { breakStart: 'رجع من البريك', breakOver: 'رجع من البريك', longCall: 'خلّص المكالمة الطويلة', gap: 'رجع الرصد', breakRequest: 'الرد على طلب البريك', queueNobody: 'انتهى الانتظار', logout: 'رجع للشغل',
+const RECOVERY_LABELS = { managerAttention: 'اتحلت', breakStart: 'رجع من البريك', breakOver: 'رجع من البريك', longCall: 'خلّص المكالمة الطويلة', gap: 'رجع الرصد', breakRequest: 'الرد على طلب البريك', queueNobody: 'انتهى الانتظار', logout: 'رجع للشغل',
   waitSla: 'العميل خرج من الانتظار: اترد عليه أو لا', waitConfirm: 'تأكيد سجل أرابيكس', source: 'رجعت قراءة الانتظار', notBound: 'دخل التحويلة' };
 const OUT_TEXT = { arabicss: 'خرج من أرابيكس', extension: 'سجّل خروج من التحويلة', browser: 'قفل المتصفح أو صفحة أرابيكس' };
 const mask = phone => { const d = String(phone || '').replace(/\D/g, ''); return d.length > 4 ? '••••' + d.slice(-4) : d || 'رقم غير ظاهر'; };

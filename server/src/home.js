@@ -111,6 +111,17 @@ function setup(app) {
     if (rules.managerAttention === false || !isOperating(now)) return;
     const h = await app.homeNow(now);
     const slot = Math.floor(now / HOUR);
+    // Karim 11-14 «لي علي الجروب بتاعي مفيش ردود تغيير حاله»: what was told and is no longer so gets a reply under it.
+    const open = new Set(h.attention.map(a => a.key));
+    const told = await db.prepare("SELECT l.key, l.text, l.created_at FROM telegram_log l WHERE l.target = 'manager' AND l.kind = 'managerAttention' AND l.created_at >= ? AND NOT EXISTS (SELECT 1 FROM telegram_log r WHERE r.key = 'resolved:' || l.key)").all(now - 24 * HOUR);
+    for (const r of told) {
+      const base = r.key.slice(4).replace(/:[^:]+$/, '');
+      if (open.has(base)) continue;
+      const mins = Math.max(1, Math.round((now - r.created_at) / 60000)), what = r.text.replace(/^(?:🔴|🟠)\s*/u, '');
+      const done = base.startsWith('tfail:') || base.startsWith('twait:') ? '✅ اتحلت' : base.startsWith('late:') ? '✅ الفرع خلص التأخير' : base.startsWith('cancel:') ? '✅ اتقفلت' : '✅ رجع يشتغل';
+      await db.prepare("INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, reply_to, sent_at, target, branch) VALUES (?, 'managerAttention:resolved', NULL, ?, ?, ?, NULL, 'manager', NULL)")
+        .run('resolved:' + r.key, done + ' بعد ' + mins + ' دقيقة\n' + what, now, r.key);
+    }
     for (const a of h.attention) {
       if (a.key.startsWith('twait:') && !/من (?:1\d|[2-9]\d|\d{3,}) دقيقة/.test(a.text)) continue;   // 10 minutes and more only
       if (a.key.startsWith('late:') && !a.key.endsWith(':v')) continue;                                  // very late only

@@ -178,6 +178,13 @@ test('auto transfer: trial only records, on sends as «المرصد آلي», a 
     assert.ok(mgr().some(x => x.kind === 'managerAttention' && x.text.includes('مستني التسجيل على Apex')), JSON.stringify(mgr()));
     assert.equal(new Set(mgr().map(x => x.key)).size, mgr().length);
     const n = mgr().length; await t.app.managerTick(t.app.now(), { force: true }); assert.equal(mgr().length, n, 'once');
+    // Settled: a reply under the message (the writer is back).
+    const partKey = mgr().find(x => x.key.startsWith('mgr:part:writer:'))?.key;
+    assert.ok(partKey, JSON.stringify(mgr()));
+    t.app.db.raw.prepare("INSERT INTO settings (key, value) VALUES ('apex_writer_seen', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(String(t.app.now()));
+    await t.app.managerTick(t.app.now(), { force: true }); await t.app.managerTick(t.app.now(), { force: true });
+    const res = t.app.db.raw.prepare("SELECT key, reply_to, text FROM telegram_log WHERE kind = 'managerAttention:resolved'").all();
+    assert.equal(res.filter(x => x.reply_to === partKey).length, 1, JSON.stringify(res)); assert.match(res.find(x => x.reply_to === partKey).text, /رجع يشتغل/);
     t.clock.now = cairoToUtc(2026, 10, 23, 2, 20, 0);
     await t.app.managerTick(t.app.now(), { force: true });
     assert.match(mgr().find(x => x.kind === 'managerDaily').text, /تقرير يوم 2026-10-22/);
