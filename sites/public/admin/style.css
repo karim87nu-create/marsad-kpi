@@ -426,3 +426,19 @@ ul.flags{margin:0;padding-inline-start:20px;line-height:1.9}
 @media print{#bar,#subbar,.kpi-ranges button,[data-export]{display:none!important}main{max-width:none;padding:0}.page .panel{break-inside:avoid}}
 .page>.blockh:first-child{border-top:0;margin-top:6px;padding-top:0}
 details.more{margin-top:12px}details.more>summary{color:var(--accent);font-weight:600;padding:6px 0}
+/* الرئيسية (Karim 11-14) */
+.home-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}
+.home-block>h2{display:flex;justify-content:space-between;align-items:center}
+.home-more{font-size:.85rem;font-weight:600;color:var(--accent);text-decoration:none}
+.page .kpi.click{cursor:pointer}.page .kpi.click:hover{border-color:var(--accent)}
+.home-alerts{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.home-alerts li{border-inline-start:4px solid var(--warn,#e0a100);padding:8px 12px;border-radius:8px;background:var(--panel2)}
+.home-alerts li.bad{border-color:var(--bad,#e05050)}
+.home-alerts a{color:inherit;text-decoration:none;display:block}
+.home-ok{color:var(--good,#3cb371);font-weight:600;margin:6px 0}
+.home-attn h2 .badge:empty{display:none}
+.home-branches td,.home-branches th{padding:6px 8px}
+@media (max-width:900px){.home-grid{grid-template-columns:1fr}}
+@media (max-width:600px){.page .cards{grid-template-columns:repeat(2,minmax(0,1fr))!important}#sections{overflow-x:auto;flex-wrap:nowrap}#sections button span{white-space:nowrap}#nav .tabset{overflow-x:auto;flex-wrap:nowrap}#nav .tabset button{white-space:nowrap}}
+.home-block .cards{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media (max-width:1300px){.home-block .cards{grid-template-columns:repeat(2,minmax(0,1fr))}}

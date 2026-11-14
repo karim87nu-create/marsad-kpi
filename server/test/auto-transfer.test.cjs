@@ -148,6 +148,14 @@ test('auto transfer: trial only records, on sends as «المرصد آلي», a 
     assert.equal(lv(ids[2]).state, 'claimed'); assert.equal(lv(ids[3]).state, 'writing');
     assert.equal(lv(ids[1]).state, 'waiting'); assert.match(lv(ids[1]).why, /مش واضحة/);
     assert.equal(live.autoMode, 'on');
+    // Karim 11-14: the home page and the day's report.
+    const home = (await admin('GET', '/api/home')).body;
+    assert.equal(home.transfers.onApex, 1); assert.equal(home.transfers.auto, 1); assert.equal(home.transfers.writing, 1);
+    assert.ok(Array.isArray(home.attention)); assert.equal(home.board.day, '2026-10-22');
+    const daily = (await admin('GET', '/api/daily?day=2026-10-22')).body;
+    assert.equal(daily.compareDay, '2026-10-15'); assert.equal(daily.cur.transfers.talabat.all, 4); assert.equal(daily.cur.transfers.talabat.auto, 2);
+    const { dailyText } = require('../src/daily.js');
+    assert.match(dailyText(daily), /التحويل على Apex/);
 
     // Still waiting after 2 minutes: once to the call center group, with the reason.
     t.advance(3 * 60000);
@@ -158,6 +166,17 @@ test('auto transfer: trial only records, on sends as «المرصد آلي», a 
     assert.equal(alerts[0].key, 'autoWait:talabat:' + ids[1]); assert.equal(alerts[0].target, 'online');
     assert.match(alerts[0].text, /مش واضحة/);
     assert.equal(t.app.db.raw.prepare('SELECT COUNT(*) n FROM transfer_jobs WHERE ref = ? AND state = ?').get(ids[2], 'claimed').n, 1, 'the claim stays');
+    // جروب المتابعة: what needs him once, and the day's report after 2:15 ص.
+    t.app.db.raw.prepare("INSERT INTO settings (key, value) VALUES ('telegram_manager_chat_id', '-100')").run();
+    t.advance(10 * 60000);
+    await t.app.managerTick(t.app.now(), { force: true }); await t.app.managerTick(t.app.now(), { force: true });
+    const mgr = () => t.app.db.raw.prepare("SELECT key, kind, text FROM telegram_log WHERE target = 'manager'").all();
+    assert.ok(mgr().some(x => x.kind === 'managerAttention' && x.text.includes('مستني التسجيل على Apex')), JSON.stringify(mgr()));
+    assert.equal(new Set(mgr().map(x => x.key)).size, mgr().length);
+    const n = mgr().length; await t.app.managerTick(t.app.now(), { force: true }); assert.equal(mgr().length, n, 'once');
+    t.clock.now = cairoToUtc(2026, 10, 23, 2, 20, 0);
+    await t.app.managerTick(t.app.now(), { force: true });
+    assert.match(mgr().find(x => x.kind === 'managerDaily').text, /تقرير يوم 2026-10-22/);
   } finally { await t.close(); }
 });
 

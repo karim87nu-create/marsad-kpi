@@ -29,17 +29,20 @@ test('admin page: مرصد الدهان sections, live branches board, reports, 
     assert.equal((await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': push }, body: payload })).status, 200);
 
     const root = path.join(__dirname, '../../sites/public/admin');
-    dom = new JSDOM(fs.readFileSync(path.join(root, 'index.html'), 'utf8'), { url: 'http://localhost/admin/', runScripts: 'outside-only', pretendToBeVisual: true });
+    dom = new JSDOM(fs.readFileSync(path.join(root, 'index.html'), 'utf8'), { url: 'http://localhost/admin/#now', runScripts: 'outside-only', pretendToBeVisual: true });
     const w = dom.window, doc = w.document; w.sessionStorage.setItem('marsadAdminToken', token); w.MARSAD_API = t.base; w.fetch = (u, o) => fetch(u, { ...o, signal: undefined }); // Node fetch needs its own AbortSignal realm.
     w.confirm = () => true; w.alert = x => { throw Error(x); };
     for (const f of [...doc.querySelectorAll('script[src]')].map(s => s.getAttribute('src').split('?')[0]).filter(f => f !== 'config.js')) w.eval(fs.readFileSync(path.join(root, f), 'utf8'));
     const until = async (f, what) => { for (let i = 0; i < 300; i++) { if (f()) return; await new Promise(r => setTimeout(r, 10)); } throw Error('UI did not finish: ' + what + ' ' + doc.getElementById('error').textContent + ' / ' + doc.getElementById('title').textContent + ' / ' + doc.getElementById('boardRoot').textContent.slice(0, 300)); };
-    await until(() => !doc.getElementById('app').hidden && doc.getElementById('title').textContent === 'الآن' && doc.getElementById('sync').textContent.includes('آخر تحديث'), 'login');
+    await until(() => !doc.getElementById('app').hidden && doc.getElementById('title').textContent === 'الكول سنتر الآن' && doc.getElementById('sync').textContent.includes('آخر تحديث'), 'login');
     assert.equal(doc.title.includes('مرصد الدهان'), true);
     assert.equal(doc.querySelector('[data-sec="orders"]').hidden, true, 'orders tabs hidden while الآن is open');
 
     // Switching section opens the live board.
+    // Karim 11-14: the orders section opens on «التحويلات لايف»; the branches board is next to it.
     doc.querySelector('[data-section="orders"]').click();
+    await until(() => doc.getElementById('title').textContent === 'التحويلات لايف', 'orders section');
+    doc.querySelector('[data-view="branchesNow"]').click();
     await until(() => doc.querySelectorAll('#boardRoot .ob-t').length === 3, 'board tickets');
     assert.equal(doc.querySelector('[data-sec="calls"]').hidden, true);
     await until(() => doc.querySelector('#boardRoot .ob-t.red'), 'red ticket');

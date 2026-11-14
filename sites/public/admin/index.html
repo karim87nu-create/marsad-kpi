@@ -4,7 +4,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>مرصد الدهان — الإدارة</title>
 <link rel="preload" href="fonts/plex-arabic-arabic-400.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="style.css?v=21">
+<link rel="stylesheet" href="style.css?v=23">
 </head>
 <body>
 <!-- Icons: drawn in one stroke style (after Lucide, ISC license). -->
@@ -23,7 +23,7 @@
 <div id="app" hidden>
   <header id="bar">
     <div class="brand"><span class="mark">م</span><div><strong>مرصد الدهان</strong><small id="who"></small></div></div>
-    <nav id="sections" aria-label="أقسام المرصد"><button type="button" data-section="now" data-view="now"><svg class="ic" aria-hidden="true"><use href="#i-now"/></svg><span>الآن</span></button><button type="button" data-section="calls"><svg class="ic" aria-hidden="true"><use href="#i-calls"/></svg><span>الكول سنتر</span></button><button type="button" data-section="orders"><svg class="ic" aria-hidden="true"><use href="#i-bag"/></svg><span>الأوردرات</span></button><button type="button" data-section="reports"><svg class="ic" aria-hidden="true"><use href="#i-report"/></svg><span>التقارير</span></button><button type="button" data-section="kpi"><svg class="ic" aria-hidden="true"><use href="#i-gauge"/></svg><span>مؤشرات الأداء</span></button><button type="button" data-section="followup"><svg class="ic" aria-hidden="true"><use href="#i-followup"/></svg><span>المتابعة</span></button><button type="button" data-section="settings"><svg class="ic" aria-hidden="true"><use href="#i-gear"/></svg><span>الإعدادات</span></button></nav>
+    <nav id="sections" aria-label="أقسام المرصد"><button type="button" data-section="home" data-view="home"><svg class="ic" aria-hidden="true"><use href="#i-now"/></svg><span>الرئيسية</span></button><button type="button" data-section="orders"><svg class="ic" aria-hidden="true"><use href="#i-bag"/></svg><span>الأوردرات</span></button><button type="button" data-section="calls"><svg class="ic" aria-hidden="true"><use href="#i-calls"/></svg><span>الكول سنتر</span></button><button type="button" data-section="reports"><svg class="ic" aria-hidden="true"><use href="#i-report"/></svg><span>التقارير</span></button><button type="button" data-section="team"><svg class="ic" aria-hidden="true"><use href="#i-team"/></svg><span>الفريق</span></button><button type="button" data-section="settings"><svg class="ic" aria-hidden="true"><use href="#i-gear"/></svg><span>الإعدادات</span></button></nav>
     <div class="bar-end">
       <button type="button" id="reqBell" class="ghost icon" title="طلبات البريك" aria-label="طلبات البريك"><svg class="ic" aria-hidden="true"><use href="#i-bell"/></svg><span class="badge" id="reqBellN" hidden></span></button>
       <span id="sync" class="sync"></span>
@@ -31,7 +31,7 @@
     </div>
   </header>
   <div id="subbar">
-    <nav id="nav" aria-label="صفحات القسم"><div class="tabset" data-sec="calls" hidden><button type="button" data-view="day">اليوم</button><button type="button" data-view="team">الموظفين</button><button type="button" data-view="profile">ملف الموظف</button><button type="button" data-view="breaks">البريك والحضور<span class="badge" id="reqBadge" hidden></span></button><button type="button" data-view="calls">المكالمات</button><button type="button" data-view="missed">الفائتة</button><button type="button" data-view="roster">جدول المواعيد</button><button type="button" data-view="forecast">التوقع والاحتياج</button></div><div class="tabset" data-sec="orders" hidden><button type="button" data-view="branchesNow">الفروع الآن<span class="badge" id="lateBadge" hidden></span></button><button type="button" data-view="transferLive">التحويلات لايف</button><button type="button" data-view="transfer">تحويل الأوردرات</button><button type="button" data-view="entry">ضرب الأوردرات</button></div><div class="tabset" data-sec="reports" hidden><button type="button" data-view="sales">المبيعات</button><button type="button" data-view="branches">الفروع</button><button type="button" data-view="cancels">الإلغاءات</button></div><div class="tabset" data-sec="kpi" hidden><button type="button" data-view="kpi">الموظفين والفروع</button></div><div class="tabset" data-sec="followup" hidden><button type="button" data-view="followup">المتابعة والاستثناءات</button><button type="button" data-view="bot">بوت الفروع</button><button type="button" data-view="qa">الجودة</button></div><div class="tabset" data-sec="settings" hidden><button type="button" data-view="people">الموظفين والمستخدمين</button><button type="button" data-view="messages">رسايل للموظفين</button><button type="button" data-view="telegram">تليجرام</button><button type="button" data-view="auto">التشغيل الآلي</button><button type="button" data-view="system">حالة النظام</button><button type="button" data-view="guide">طريقة الحساب</button></div></nav>
+    <nav id="nav" aria-label="صفحات القسم"><div class="tabset" data-sec="orders" hidden><button type="button" data-view="transferLive">التحويلات لايف</button><button type="button" data-view="branchesNow">الفروع الآن<span class="badge" id="lateBadge" hidden></span></button><button type="button" data-view="transfer">تحويل الأوردرات</button><button type="button" data-view="entry">ضرب الأوردرات</button></div><div class="tabset" data-sec="calls" hidden><button type="button" data-view="now">الآن</button><button type="button" data-view="day">اليوم</button><button type="button" data-view="team">الموظفين</button><button type="button" data-view="profile">ملف الموظف</button><button type="button" data-view="breaks">البريك والحضور<span class="badge" id="reqBadge" hidden></span></button><button type="button" data-view="calls">المكالمات</button><button type="button" data-view="missed">الفائتة</button></div><div class="tabset" data-sec="reports" hidden><button type="button" data-view="daily">تقرير اليوم</button><button type="button" data-view="sales">المبيعات</button><button type="button" data-view="branches">الفروع</button><button type="button" data-view="cancels">الإلغاءات</button><button type="button" data-view="kpi">مؤشرات الأداء</button><button type="button" data-view="followup">المتابعة والاستثناءات</button><button type="button" data-view="qa">الجودة</button></div><div class="tabset" data-sec="team" hidden><button type="button" data-view="roster">جدول المواعيد</button><button type="button" data-view="forecast">التوقع والاحتياج</button><button type="button" data-view="people">الموظفين والمستخدمين</button><button type="button" data-view="messages">رسايل للموظفين</button></div><div class="tabset" data-sec="settings" hidden><button type="button" data-view="auto">التشغيل الآلي</button><button type="button" data-view="bot">بوت الفروع</button><button type="button" data-view="telegram">تليجرام</button><button type="button" data-view="system">حالة النظام</button><button type="button" data-view="guide">طريقة الحساب</button></div></nav>
     <div id="dayPicker" class="period" hidden>
       <div class="presets"><button type="button" class="chip" data-range="today">النهارده</button><button type="button" class="chip" data-range="yesterday">امبارح</button><button type="button" class="chip" data-range="week">آخر 7 أيام</button><button type="button" class="chip" data-range="month">الشهر ده</button></div>
       <div class="dates"><button class="ghost small icon" id="dayPrev" title="اليوم اللي قبله" aria-label="اليوم اللي قبله"><svg class="ic" aria-hidden="true"><use href="#i-next"/></svg></button><label>من <input id="day" type="date"></label><label>إلى <input id="dayTo" type="date"></label><button class="ghost small icon" id="dayNext" title="اليوم اللي بعده" aria-label="اليوم اللي بعده"><svg class="ic" aria-hidden="true"><use href="#i-prev"/></svg></button><button class="small" id="applyRange">عرض</button><button class="ghost small" id="dayToday" hidden>النهارده</button></div>
@@ -42,6 +42,18 @@
     <p id="error" class="banner error" hidden></p>
     <div id="breakRequests" aria-live="polite"></div>
 
+    <section id="view-home" class="view page" hidden>
+      <div id="homeParts" class="panel"></div>
+      <article class="panel home-attn"><h2>محتاج تدخل <span id="homeAlertsN" class="badge"></span></h2><div id="homeAlerts"></div></article>
+      <div id="homeGrid" class="home-grid"></div>
+    </section>
+    <section id="view-daily" class="view page" hidden>
+      <p id="dailyNote" class="note"></p>
+      <p><button class="ghost small" data-export="daily">تصدير Excel</button></p>
+      <div id="dailyGroups"></div>
+      <article class="panel"><h2>الفروع</h2><div id="dailyBranches"></div></article>
+      <article class="panel"><h2>ليه أوردرات اتسابت للموظف</h2><div id="dailyReasons"></div></article>
+    </section>
     <section id="view-now" class="view">
       <p id="nowStale" class="stalebar" role="alert" hidden></p>
       <div id="nowArc"></div>
@@ -324,7 +336,7 @@
         <p class="muted">1) اعمل بوت من BotFather وانسخ التوكن. 2) ضيف البوت للجروب وابعت فيه أي رسالة. 3) دوس «دور على الجروب» واختاره واربطه كجروب المكالمات أو الأونلاين وضرب الأوردر أو الفروع.</p>
         <div id="tgStatus" class="tg-groups"></div>
         <form id="tgToken" class="inline"><input aria-label="توكن البوت" name="token" placeholder="توكن البوت" autocomplete="off" required><button type="submit">ربط البوت</button></form>
-        <div class="inline" style="margin-top:8px"><button type="button" id="tgDiscover" class="ghost">دور على الجروب</button><select id="tgChats" aria-label="جروب تليجرام" hidden></select><button type="button" id="tgChoose" hidden>ربطه كجروب المكالمات</button><button type="button" id="tgChooseOnline" hidden>ربطه كجروب الأونلاين وضرب الأوردر</button><button type="button" id="tgChooseBranches" hidden>ربطه كجروب الفروع</button><select id="tgBranchPick" aria-label="الفرع" hidden></select><button type="button" id="tgChooseBranch" hidden>ربطه كجروب الفرع ده</button></div>
+        <div class="inline" style="margin-top:8px"><button type="button" id="tgDiscover" class="ghost">دور على الجروب</button><select id="tgChats" aria-label="جروب تليجرام" hidden></select><button type="button" id="tgChoose" hidden>ربطه كجروب المكالمات</button><button type="button" id="tgChooseOnline" hidden>ربطه كجروب الأونلاين وضرب الأوردر</button><button type="button" id="tgChooseBranches" hidden>ربطه كجروب الفروع</button><button type="button" id="tgChooseManager" hidden>ربطه كجروب المتابعة (ليك لوحدك)</button><select id="tgBranchPick" aria-label="الفرع" hidden></select><button type="button" id="tgChooseBranch" hidden>ربطه كجروب الفرع ده</button></div>
         <div id="tgBranchGroups"></div>
         <form id="tgSettings" class="stack" style="margin-top:10px"><label><input type="checkbox" name="enabled"> التنبيهات شغالة</label><div id="tgRules" class="stack"></div><button type="submit">حفظ</button></form>
         <p id="tgNote" class="muted" role="status"></p>
@@ -468,7 +480,9 @@
 <script src="qa.js?v=1"></script>
 <script src="forecast.js?v=1"></script>
 <script src="transfer-live.js?v=1"></script>
-<script src="app.js?v=52"></script>
+<script src="home.js?v=1"></script>
+<script src="daily.js?v=1"></script>
+<script src="app.js?v=53"></script>
 </body>
 </html>
 

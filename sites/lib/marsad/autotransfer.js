@@ -276,8 +276,12 @@ function setup(app) {
   }
   app.route('GET', '/api/transfer/live', async ctx => {
     await app.requireAdmin(ctx);
-    const now = ctx.now, day = businessDay(now);
-    const q = await app.transferQueue(day, { now, me: { id: null, name: 'admin', staff: false }, waitUntil: ctx.waitUntil });
+    return app.transferLive(ctx.now, ctx.waitUntil);
+  });
+  // Also the home page's and the manager group's source (Karim 11-14).
+  app.transferLive = async (now, waitUntil) => {
+    const day = businessDay(now);
+    const q = await app.transferQueue(day, { now, me: { id: null, name: 'admin', staff: false }, waitUntil });
     const notes = new Map((await db.prepare('SELECT source, ref, decision, reasons, first_at FROM auto_transfer_log WHERE day = ?').all(day)).map(r => [r.source + ':' + r.ref, r]));
     const jobs = new Map((await db.prepare('SELECT source, ref, state, employee_name, at, result FROM transfer_jobs WHERE day = ?').all(day)).map(j => [j.source + ':' + j.ref, j]));
     const apex = await apexEntries(day, now);
@@ -301,7 +305,7 @@ function setup(app) {
     const writerSeen = Number(await setting('apex_writer_seen')) || null;
     return { serverNow: iso(now), day, stale: q?.stale === true, autoMode: await mode(), writerMode: await setting('apex_bridge_mode') || 'shadow',
       parts: { writerSeen: iso(writerSeen), apexPush: iso(apex.pushedAt), talabatScreen: q?.liveScreen === true }, list };
-  });
+  };
   app.route('GET', '/api/auto-transfer/report', async ctx => {
     await app.requireAdmin(ctx);
     const to = /^\d{4}-\d{2}-\d{2}$/.test(String(ctx.query.to || '')) ? ctx.query.to : businessDay(ctx.now);

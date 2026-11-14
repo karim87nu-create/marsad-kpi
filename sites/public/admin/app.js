@@ -94,7 +94,7 @@
   const rankList = (list, value, show, color) => { const max = Math.max(1, ...list.map(value)); return h('div', { className: 'ranks' }, ...list.map(x => h('div', { className: 'r' }, h('span', { textContent: x.name }), h('b', { textContent: show(x) }), C.meter(value(x), max, color)))); };
 
   // ---------- state ----------
-  const state = { view: 'now', day: cairoToday(), to: cairoToday(), employees: [], names: new Map(), live: null, queue: null, day_: {}, requests: null };
+  const state = { view: 'home', day: cairoToday(), to: cairoToday(), employees: [], names: new Map(), live: null, queue: null, day_: {}, requests: null };
   const name = id => state.names.get(Number(id)) || 'موظف #' + id;
   async function loadEmployees() {
     const d = await api('/api/employees');
@@ -129,6 +129,8 @@
   const SITE = window.MarsadSite({ api, h, $, table, kpi, pill, serverNow, state, showError, exportRows, canWrite: () => canWrite(), extensionCall: (...a) => extensionCall(...a), review: () => INS });
   const setRange = (from, to) => { $('day').value = from; $('dayTo').value = to; $('applyRange').click(); };
   const TL = window.MarsadTransferLive({ api, h, $, table, pill, kpi });
+  const HOME = window.MarsadHome({ api, h, $, pill, kpi, dur, show: v => show(v) });
+  const DAILY = window.MarsadDaily({ api, h, $, table, kpi, dur, exportRows: (...a) => exportRows(...a) });
   const BOT = window.MarsadBot({ api, h, $, table, pill, state, canWrite: () => canWrite(), showError: x => showError(x) });
   const ROSTER = window.MarsadRoster({ api, h, $, canWrite: () => canWrite(), showError: x => showError(x), cairoToday: () => cairoToday() });
   const QA = window.MarsadQa({ api, h, $, table, pill, canWrite: () => canWrite(), showError: x => showError(x), cairoToday: () => cairoToday() });
@@ -872,6 +874,7 @@
     $('tgStatus').replaceChildren(h('p', {}, !t.configured ? 'البوت مش مربوط.' : 'البوت: @' + t.botName + ' · ' + (t.enabled ? 'التنبيهات شغالة' : 'التنبيهات متوقفة')),
       group('جروب الكول سنتر — المكالمات', t.chat, 'main', 'المكالمات والانتظار والموظفين وتغيّر حالة تنبيهاتهم.'),
       group('جروب الكول سنتر — الأونلاين وضرب الأوردر', t.onlineChat, 'online', 'أخطاء الضرب والتكرار والخصومات وتأخير الضرب وتغيّر حالتها. لازم يتربط عشان يستقبل التنبيهات.'),
+      group('جروب المتابعة (ليك لوحدك)', t.managerChat, 'manager', 'ملخص آخر اليوم مع المقارنة بالأسبوع اللي فات، والحاجات اللي محتاجة تدخل منك: أوردر ماتسجلش، أوردر مستني ١٠ دقايق، فرع متأخر جداً، جزء من النظام واقف.'),
       group('جروب إدارات الفروع', t.branchChat, 'branches', t.branchChat ? 'تأخير خروج الأوردرات وكل الإلغاءات.' : 'تنبيهات الفروع بتنتظر لحد ربط جروبها؛ مش بتروح للكول سنتر.'));
     // One group per branch: each branch's delays and cancellations also go to its own group.
     const bg = t.branchGroups || {}, names = [...new Set([...(t.branchNames || []), ...Object.keys(bg)])].sort();
@@ -890,19 +893,19 @@
       { title: 'اتبعت', get: x => x.sentAt ? 'أيوه' : 'لأ' + (x.error ? ' — ' + x.error : '') }], log, { empty: 'مفيش تنبيهات النهارده', limit: 100 });
   }
   let tgBranchNames = [];
-  async function tgTest(target) { try { await api('/api/telegram', { method: 'POST', body: { action: 'test', target } }); say('tgNote', 'اتبعتت رسالة تجربة لجروب ' + (target === 'branches' ? 'الفروع' : target === 'online' ? 'الأونلاين وضرب الأوردر' : 'المكالمات') + '.'); } catch (x) { say('tgNote', x.message); } }
+  async function tgTest(target) { try { await api('/api/telegram', { method: 'POST', body: { action: 'test', target } }); say('tgNote', 'اتبعتت رسالة تجربة لجروب ' + (target === 'branches' ? 'الفروع' : target === 'online' ? 'الأونلاين وضرب الأوردر' : target === 'manager' ? 'المتابعة' : 'المكالمات') + '.'); } catch (x) { say('tgNote', x.message); } }
   $('tgToken').onsubmit = async e => { e.preventDefault(); try { const r = await api('/api/telegram', { method: 'POST', body: { action: 'token', token: e.target.elements.token.value.trim() } }); e.target.reset(); say('tgNote', 'اتربط البوت @' + r.botName + '. ضيفه للجروب وابعت رسالة، وبعدين دوس «دور على الجروب».'); renderTelegram(); } catch (x) { say('tgNote', x.message); } };
   $('tgDiscover').onclick = async () => {
     try { const { chats } = await api('/api/telegram', { method: 'POST', body: { action: 'discover' } });
       if (!chats.length) return say('tgNote', 'البوت مش شايف أي جروب لسه. ضيفه للجروب وابعت فيه رسالة وجرب تاني.');
-      $('tgChats').replaceChildren(...chats.map(c => h('option', { value: c.id, textContent: c.title }))); $('tgChats').hidden = $('tgChoose').hidden = $('tgChooseOnline').hidden = $('tgChooseBranches').hidden = false;
+      $('tgChats').replaceChildren(...chats.map(c => h('option', { value: c.id, textContent: c.title }))); $('tgChats').hidden = $('tgChoose').hidden = $('tgChooseOnline').hidden = $('tgChooseBranches').hidden = $('tgChooseManager').hidden = false;
       $('tgBranchPick').replaceChildren(...tgBranchNames.map(n => h('option', { value: n, textContent: n }))); $('tgBranchPick').hidden = $('tgChooseBranch').hidden = !tgBranchNames.length; say('tgNote', 'اختار الجروب وحدد: المكالمات، الأونلاين وضرب الأوردر، أو الفروع.');
     } catch (x) { say('tgNote', x.message); }
   };
-  const tgChoose = target => async () => { const o = $('tgChats').selectedOptions[0]; if (!o) return; try { await api('/api/telegram', { method: 'POST', body: { action: 'chat', chatId: o.value, title: o.textContent, target } }); say('tgNote', 'اتربط «' + o.textContent + '» كجروب ' + (target === 'branches' ? 'إدارات الفروع' : target === 'online' ? 'الأونلاين وضرب الأوردر' : 'المكالمات') + ' وجاتلكم رسالة تأكيد.'); $('tgChats').hidden = $('tgChoose').hidden = $('tgChooseOnline').hidden = $('tgChooseBranches').hidden = $('tgBranchPick').hidden = $('tgChooseBranch').hidden = true; renderTelegram(); } catch (x) { say('tgNote', x.message); } };
+  const tgChoose = target => async () => { const o = $('tgChats').selectedOptions[0]; if (!o) return; try { await api('/api/telegram', { method: 'POST', body: { action: 'chat', chatId: o.value, title: o.textContent, target } }); say('tgNote', 'اتربط «' + o.textContent + '» كجروب ' + (target === 'branches' ? 'إدارات الفروع' : target === 'online' ? 'الأونلاين وضرب الأوردر' : target === 'manager' ? 'المتابعة' : 'المكالمات') + ' وجاتلكم رسالة تأكيد.'); $('tgChats').hidden = $('tgChoose').hidden = $('tgChooseOnline').hidden = $('tgChooseBranches').hidden = $('tgChooseManager').hidden = $('tgBranchPick').hidden = $('tgChooseBranch').hidden = true; renderTelegram(); } catch (x) { say('tgNote', x.message); } };
   $('tgChooseBranch').onclick = async () => { const o = $('tgChats').selectedOptions[0], n = $('tgBranchPick').value; if (!o || !n) return;
     try { await api('/api/telegram', { method: 'POST', body: { action: 'chat', chatId: o.value, title: o.textContent, target: 'branch', branch: n } }); say('tgNote', 'اتربط «' + o.textContent + '» كجروب فرع ' + n + ' وجاتلكم رسالة تأكيد.'); $('tgChats').hidden = $('tgChoose').hidden = $('tgChooseOnline').hidden = $('tgChooseBranches').hidden = $('tgBranchPick').hidden = $('tgChooseBranch').hidden = true; renderTelegram(); } catch (x) { say('tgNote', x.message); } };
-  $('tgChooseOnline').onclick = tgChoose('online'); $('tgChoose').onclick = tgChoose('main'); $('tgChooseBranches').onclick = tgChoose('branches');
+  $('tgChooseManager').onclick = tgChoose('manager'); $('tgChooseOnline').onclick = tgChoose('online'); $('tgChoose').onclick = tgChoose('main'); $('tgChooseBranches').onclick = tgChoose('branches');
   $('tgSettings').onsubmit = async e => { e.preventDefault(); const f = e.target, rules = Object.fromEntries([...f.querySelectorAll('[name=rule]')].map(i => [i.value, i.checked]));
     try { await api('/api/telegram', { method: 'POST', body: { action: 'settings', enabled: f.elements.enabled.checked, rules } }); say('tgNote', 'اتحفظ.'); renderTelegram(); } catch (x) { say('tgNote', x.message); } };
 
@@ -932,6 +935,7 @@
     if (!kind) return;
     try {
       if (kind === 'priceDiffs') return exportRows('فروق-الأسعار', priceDiffColumns, priceDiffRows);
+      if (kind === 'daily') return DAILY.export();
       if (kind === 'autoReasons') return exportRows('اسباب-التحويل-اليدوي', autoReasonColumns, autoReasonRows);
       if (kind === 'closures') return exportRows('إغلاق-الفروع', closureColumns, closureRows);
       if (OR.exportKind(kind) || SITE.exportKind(kind) || INS.exportKind(kind)) return;
@@ -953,7 +957,7 @@
 
   // ---------- navigation ----------
   // Seven sections across the top; each has its own pages as tabs under it. One period (from–to) for every page that has one.
-  const VIEWS = { now: ['الآن', null],
+  const VIEWS = { home: ['الرئيسية', null], daily: ['تقرير اليوم', () => DAILY.render(state.to)], now: ['الكول سنتر الآن', null],
     day: ['الكول سنتر: اليوم', () => Promise.all([renderDay(), renderHours()])], team: ['أداء الموظفين', renderTeam], profile: ['ملف الموظف', renderProfile],
     breaks: ['البريك والحضور ونهاية الشيفت', () => Promise.all([refreshRequests(), renderAttendance(), renderShifts()])], calls: ['المكالمات', renderCalls], missed: ['المكالمات الفائتة', renderMissed], roster: ['جدول مواعيد الموظفين', () => ROSTER.render()], forecast: ['التوقع والاحتياج', () => FC.render()],
     branchesNow: ['الفروع الآن', null], transferLive: ['التحويلات لايف', () => TL.refresh()], transfer: ['تحويل الأوردرات: طلبات والموقع', () => Promise.all([renderPriceDiffs(), renderAutoReasons(), SITE.renderTalabat(), SITE.renderTransfer()])], entry: ['ضرب الأوردرات', () => OR.renderEntry()],
@@ -964,22 +968,23 @@
     auto: ['التشغيل الآلي', renderAuto], system: ['حالة النظام', renderSystem], guide: ['طريقة حساب الأرقام', async () => {}] };
   // Old page names (links, other parts of the page) open the page they are part of now.
   const ALIAS = { hours: 'day', requests: 'breaks', attendance: 'breaks', shifts: 'breaks', talabat: 'transfer', siteTransfer: 'transfer', siteBranches: 'branches', branchFile: 'branches', manage: 'people' };
-  const DAY_VIEWS = ['day', 'team', 'profile', 'breaks', 'calls', 'missed', 'followup', 'bot', 'entry', 'transfer', 'sales', 'branches', 'cancels', 'kpi'];
+  const DAY_VIEWS = ['daily', 'day', 'team', 'profile', 'breaks', 'calls', 'missed', 'followup', 'bot', 'entry', 'transfer', 'sales', 'branches', 'cancels', 'kpi'];
   const SECTION_OF = {};
   for (const t of document.querySelectorAll('#nav .tabset')) for (const b of t.querySelectorAll('[data-view]')) SECTION_OF[b.dataset.view] = t.dataset.sec;
-  SECTION_OF.now = 'now';
-  const lastIn = { now: 'now', calls: 'day', orders: 'branchesNow', reports: 'sales', kpi: 'kpi', followup: 'followup', settings: 'people' };
+  SECTION_OF.home = 'home';
+  // Karim 11-14: home first, then orders; reports with the KPIs and follow-up; the team's pages together.
+  const lastIn = { home: 'home', orders: 'transferLive', calls: 'now', reports: 'daily', team: 'roster', settings: 'auto' };
   function setSection(sec) {
     state.section = sec;
     for (const b of document.querySelectorAll('#sections [data-section]')) { const on = b.dataset.section === sec; b.classList.toggle('active', on); b.setAttribute('aria-current', on ? 'true' : 'false'); }
     for (const n of document.querySelectorAll('#nav .tabset')) n.hidden = n.dataset.sec !== sec;
-    $('subbar').classList.toggle('empty', sec === 'now');
+    $('subbar').classList.toggle('empty', sec === 'home');
   }
   $('sections').onclick = e => { const sec = e.target.closest('[data-section]')?.dataset.section; if (sec) show(lastIn[sec]); };
   const periodText = () => state.day === state.to ? 'يوم ' + state.day : 'من ' + state.day + ' إلى ' + state.to;
   async function show(view, force = false) {
     view = ALIAS[view] || view;
-    if (!VIEWS[view]) view = 'now';
+    if (!VIEWS[view]) view = 'home';
     state.view = view;
     const sec = SECTION_OF[view] || 'calls'; lastIn[sec] = view; if (sec !== state.section) setSection(sec);
     for (const b of document.querySelectorAll('#nav [data-view]')) { const on = b.dataset.view === view; b.classList.toggle('active', on); b.setAttribute('aria-current', on ? 'page' : 'false'); }
@@ -988,11 +993,12 @@
     const dated = DAY_VIEWS.includes(view);
     $('dayPicker').hidden = !dated; $('period').textContent = dated ? periodText() : '';
     for (const c of document.querySelectorAll('[data-range]')) c.classList.toggle('on', rangeOf(c.dataset.range).join() === [state.day, state.to].join());
-    $('top').hidden = view === 'now' || view === 'branchesNow' || view === 'transferLive';
+    $('top').hidden = view === 'now' || view === 'branchesNow' || view === 'transferLive' || view === 'home';
     try { history.replaceState(null, '', '#' + view); } catch {}
     showError(null);
     refreshRequests();
     if (view === 'now') return tick();
+    if (view === 'home') return HOME.refresh().then(() => syncStatus(true)).catch(e => { syncStatus(false); showError(e); });
     if (view === 'branchesNow') { OR.drawBoard(); return OR.refreshBoard().then(() => syncStatus(true)).catch(e => { syncStatus(false); showError(e); }); }
     try { syncStatus(true, 'جارٍ التحميل…'); if (force) cache.delete(rangeKey()); await VIEWS[view][1](); syncStatus(true); } catch (e) { syncStatus(false); showError(e); }
   }
@@ -1029,6 +1035,13 @@
     boardBusy = true; boardAt = Date.now();
     OR.refreshBoard().then(() => { if (state.view === 'branchesNow') { syncStatus(true); showError(null); } }).catch(() => { if (state.view === 'branchesNow') syncStatus(false); }).finally(() => { boardBusy = false; });
   }, 1000);
+  // الرئيسية: every 5 seconds.
+  let homeAt = 0;
+  setInterval(() => {
+    if (!token || document.hidden || state.view !== 'home' || Date.now() - homeAt < 5000) return;
+    homeAt = Date.now();
+    HOME.refresh().then(() => { syncStatus(true); showError(null); }).catch(() => syncStatus(false));
+  }, 1000);
   // التحويلات لايف: the clocks every second, the list every 5 seconds.
   let tlAt = 0;
   setInterval(() => {
@@ -1054,7 +1067,7 @@
     $('dayTo').value = state.to; $('dayTo').max = cairoToday(); $('day').value = state.day; $('day').max = cairoToday(); $('dayNext').disabled = true;
     await loadEmployees();
     refreshRequests();
-    show(decodeURIComponent(location.hash.slice(1)) || 'now');
+    show(decodeURIComponent(location.hash.slice(1)) || 'home');
   }
   function logout(message = '') {
     if (token) fetch(API + '/api/admin-access', { method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-password': token }, body: JSON.stringify({ action: 'logout' }), keepalive: true }).catch(() => {});

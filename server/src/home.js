@@ -1,0 +1,109 @@
+// الرئيسية (Karim 11-14 «عايزين نغير الاداره بتقاريرها بكل حاجه تناسب الي وصلنالو» — «لوحة واحدة لكل حاجة لايف»):
+// the branches' board, the transfers and what needs a person, in one small answer for the home page (every 5 s) and for
+// the manager's Telegram group. The calls come from /api/live, as on the call-center screen.
+import { businessDay, iso, isOperating, cairoParts } from './time.js';
+import { dailyReport, dailyText } from './daily.js';
+import { parseJson } from './order-match.js';
+
+const minsSince = (t, now) => Number.isFinite(t) ? Math.max(0, Math.floor((now - t) / 60000)) : null;
+
+function setup(app) {
+  const { db } = app;
+  const setting = async k => (await db.prepare('SELECT value FROM settings WHERE key = ?').get(k))?.value ?? null;
+
+  // The board's day (the monitor's latest push), read at most every 10 s: it is a large JSON.
+  let board = null, boardAt = 0, boardKey = '';
+  async function boardNow(now) {
+    if (board && now - boardAt < 10000) return board;
+    const row = await db.prepare('SELECT day, received_at FROM orders_days ORDER BY received_at DESC LIMIT 1').get();
+    const key = row ? row.day + '|' + row.received_at : '';
+    if (key !== boardKey) {
+      const full = row ? parseJson((await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(row.day))?.data, null) : null;
+      const t = full?.totals || {};
+      board = { day: row?.day || null, receivedAt: row?.received_at || null,
+        totals: { orders: t.orders ?? null, sales: t.sales ?? null, open: t.open ?? null, late: t.late ?? null, avgOut: t.avgOut ?? null, outCount: t.outCount ?? null, outLate: t.outLate ?? null,
+          cancels: t.cancels ?? null, cancelSales: t.cancelSales ?? null, discounts: t.discounts ?? null, issues: t.issues ?? null, kinds: t.kinds || null },
+        settings: full?.settings || { late: 30, veryLate: 45 },
+        branches: (full?.branches || []).map(b => ({ no: b.no, name: b.name, orders: b.orders, sales: b.sales, open: b.open, late: b.late, veryLate: b.veryLate, avgOut: b.avgOut, outCount: b.outCount, outLate: b.outLate, cancels: b.cancels })) };
+      boardKey = key;
+    }
+    boardAt = now;
+    return board;
+  }
+
+  // What needs a person now, most urgent first. Each item has a stable key (for Telegram: told once).
+  app.homeAttention = async (now, t, b) => {
+    const out = [], add = (key, level, text, view) => out.push({ key, level, text, view });
+    const open = isOperating(now);
+    for (const x of t.list) {
+      const tag = (x.source === 'talabat' ? 'طلبات #' : 'الموقع #') + (x.code || x.ref) + (x.branch ? ' — ' + x.branch : '');
+      if (x.state === 'failed') add('tfail:' + x.source + ':' + x.ref, 'bad', 'ماتسجلش على Apex: ' + tag + (x.why ? ' (' + x.why + ')' : ''), 'transferLive');
+      const m = minsSince(Date.parse(x.at), now);
+      if ((x.state === 'waiting' || x.state === 'claimed') && m != null && m >= 5 && m < 240)
+        add('twait:' + x.source + ':' + x.ref, m >= 10 ? 'bad' : 'warn', tag + ' مستني التسجيل على Apex من ' + m + ' دقيقة' + (x.state === 'claimed' ? ' (مع ' + x.by + ')' : '') + (x.why ? ' — ' + x.why : ''), 'transferLive');
+    }
+    for (const br of b?.branches || []) if (br.veryLate > 0 || br.late > 0)
+      add('late:' + br.no + ':' + (br.veryLate > 0 ? 'v' : 'l'), br.veryLate > 0 ? 'bad' : 'warn', 'فرع ' + br.name + ': ' + br.late + ' أوردر متأخر' + (br.veryLate ? ' (منهم ' + br.veryLate + ' متأخر جداً)' : ''), 'branchesNow');
+    const day = businessDay(now);
+    for (const c of await db.prepare("SELECT order_no, sn, branch, state, result FROM apex_cancels WHERE day = ? AND state IN ('manual', 'failed', 'withPilot')").all(day).catch(() => []))
+      add('cancel:' + c.order_no + ':' + c.state, 'warn', 'أوردر ' + (c.sn || c.order_no) + (c.branch ? ' — ' + c.branch : '') + ' مكتوب إنه ملغي ' + (c.state === 'withPilot' ? 'وخرج مع الطيار' : c.state === 'failed' ? 'والمرصد ماقدرش يلغيه' + (c.result ? ': ' + c.result : '') : 'ولسه على Apex'), 'auto');
+    if (open) {
+      const w = minsSince(Date.parse(t.parts.writerSeen), now), a = minsSince(Date.parse(t.parts.apexPush), now);
+      if (w == null || w >= 5) add('part:writer', 'bad', 'كاتب Apex مش شغال' + (w != null ? ' من ' + w + ' دقيقة' : ''), 'system');
+      if (a == null || a >= 5) add('part:apex', 'bad', 'المرصد مش بيقرا من Apex' + (a != null ? ' من ' + a + ' دقيقة' : ''), 'system');
+      if (!t.parts.talabatScreen) add('part:talabat', 'warn', 'شاشة لايف طلبات مش مفتوحة — أوردرات طلبات مش بتوصل', 'transferLive');
+    }
+    const rank = { bad: 0, warn: 1 };
+    return out.sort((x, y) => rank[x.level] - rank[y.level]);
+  };
+
+  app.homeNow = async (now, waitUntil) => {
+    const [t, b] = await Promise.all([app.transferLive(now, waitUntil), boardNow(now)]);
+    const L = t.list, by = st => L.filter(x => x.state === st);
+    const waiting = [...by('waiting'), ...by('claimed')], onApex = by('apex'), auto = onApex.filter(x => x.how === 'auto');
+    const took = onApex.map(x => (Date.parse(x.enteredAt) - Date.parse(x.at)) / 60000).filter(v => Number.isFinite(v) && v >= 0 && v < 180);
+    const oldest = waiting.reduce((m, x) => Math.max(m, minsSince(Date.parse(x.at), now) || 0), 0);
+    const src = s => ({ all: L.filter(x => x.source === s).length, apex: onApex.filter(x => x.source === s).length, auto: auto.filter(x => x.source === s).length });
+    return {
+      serverNow: iso(now), autoMode: t.autoMode, writerMode: t.writerMode, parts: t.parts,
+      transfers: { waiting: waiting.length, oldest, writing: by('writing').length, failed: by('failed').length, onApex: onApex.length, auto: auto.length,
+        avg: took.length ? Math.round(took.reduce((x, y) => x + y, 0) / took.length * 10) / 10 : null, talabat: src('talabat'), site: src('site') },
+      board: b ? { ...b, receivedAt: iso(b.receivedAt), ageSeconds: b.receivedAt ? Math.round((now - b.receivedAt) / 1000) : null } : null,
+      attention: await app.homeAttention(now, t, b)
+    };
+  };
+
+  app.route('GET', '/api/home', async ctx => {
+    await app.requireAdmin(ctx);
+    return app.homeNow(ctx.now, ctx.waitUntil);
+  });
+  app.homeSetting = setting;
+
+  // جروب المتابعة (Karim 11-14): what needs him, once each, and the day's report after the day ends (2:15 ص).
+  // Only things that stayed: an order waiting 10+ minutes, a failed write, a very late branch, a part down.
+  const HOUR = 3600000;
+  let lastRun = 0;
+  const tell = async (key, kind, text, now) => db.prepare("INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, sent_at, target, branch) VALUES (?, ?, NULL, ?, ?, NULL, 'manager', NULL)").run(key, kind, text, now);
+  app.managerTick = async (now, { force = false } = {}) => {
+    if (!force && now - lastRun < 60000) return; lastRun = now;
+    if (!await setting('telegram_manager_chat_id')) return;
+    const rules = parseJson((await db.prepare('SELECT rules FROM telegram_config WHERE id = 1').get().catch(() => null))?.rules, {}) || {};
+    const day = businessDay(now), p = cairoParts(new Date(now));
+    if (rules.managerDaily !== false && (p.hour > 2 || p.hour === 2 && p.minute >= 15) && p.hour < 9) {
+      const key = 'mgrDaily:' + day;
+      if (!await db.prepare('SELECT 1 FROM telegram_log WHERE key = ?').get(key)) await tell(key, 'managerDaily', dailyText(await dailyReport(app, day, now)), now);
+    }
+    if (rules.managerAttention === false || !isOperating(now)) return;
+    const h = await app.homeNow(now);
+    const slot = Math.floor(now / HOUR);
+    for (const a of h.attention) {
+      if (a.key.startsWith('twait:') && !/من (?:1\d|[2-9]\d|\d{3,}) دقيقة/.test(a.text)) continue;   // 10 minutes and more only
+      if (a.key.startsWith('late:') && !a.key.endsWith(':v')) continue;                                  // very late only
+      const once = a.key.startsWith('late:') || a.key.startsWith('part:') ? a.key + ':' + slot : a.key + ':' + day;  // a state: once an hour; an order: once
+      await tell('mgr:' + once, 'managerAttention', (a.level === 'bad' ? '🔴 ' : '🟠 ') + a.text, now);
+    }
+  };
+  app.afterRequest(async now => { try { await app.managerTick(now); } catch {} });
+}
+
+export { setup };

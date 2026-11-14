@@ -11,7 +11,7 @@ test('admin from/to selection loads the selected period in summary and followup'
   dom=new JSDOM(fs.readFileSync(path.join(root,'index.html'),'utf8'),{url:'http://localhost/admin/',runScripts:'outside-only',pretendToBeVisual:true});
   const w=dom.window;w.sessionStorage.setItem('marsadAdminToken',token);w.MARSAD_API=t.base;w.fetch=(url,opts)=>{requests.push(String(url));return fetch(url,opts)};
   w.confirm=()=>false;w.alert=x=>{throw Error(x)};
-  for(const f of ['charts.js','xlsx.js','orders.js','site.js','insights.js','kpi.js','bot.js','roster.js','qa.js','forecast.js','transfer-live.js','app.js'])w.eval(fs.readFileSync(path.join(root,f),'utf8'));
+  for(const f of ['charts.js','xlsx.js','orders.js','site.js','insights.js','kpi.js','bot.js','roster.js','qa.js','forecast.js','transfer-live.js','home.js','daily.js','app.js'])w.eval(fs.readFileSync(path.join(root,f),'utf8'));
   const until=async f=>{for(let i=0;i<200;i++){if(f())return;await new Promise(r=>setTimeout(r,10));}throw Error('UI did not finish: '+w.document.getElementById('error').textContent)};
   await until(()=>!w.document.getElementById('app').hidden && requests.some(x=>x.endsWith('/api/live'))); await new Promise(r=>setTimeout(r,150));
   assert.equal(w.document.getElementById('breakRequests').closest('.view'),null,'pending banner is visible across sections');
@@ -29,9 +29,9 @@ test('admin from/to selection loads the selected period in summary and followup'
   await until(()=>requests.some(x=>x.endsWith('/api/reviews?from=2026-10-20&to=2026-10-21')));
   w.document.getElementById('dayTo').value='2026-10-19';w.document.getElementById('applyRange').click();assert.equal(w.document.getElementById('error').hidden,false);
   // مؤشرات الأداء: its own section, the period presets, the scorecards and both tables.
-  w.document.querySelector('[data-section="kpi"]').click();
+  w.document.querySelector('[data-view="kpi"]').click();
   await until(()=>requests.some(x=>x.includes('/api/kpi?from=')) && w.document.querySelector('#kpiEmployees table') && w.document.querySelector('#kpiBranches table'));
-  assert.equal(w.document.querySelector('#nav .tabset[data-sec="kpi"]').hidden,false);
+  assert.equal(w.document.querySelector('#nav .tabset[data-sec="reports"]').hidden,false);
   assert.match(w.document.getElementById('kpiTeamCards').textContent,/الرد خلال 10 ثواني/);
   w.document.querySelector('[data-range="week"]').click();
   await until(()=>/آخر|الفترة/.test(w.document.getElementById('kpiPeriod').textContent) && w.document.getElementById('day').value!==w.document.getElementById('dayTo').value);
