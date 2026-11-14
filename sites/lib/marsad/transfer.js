@@ -7,17 +7,22 @@
 // The employee claims an order (so two people do not enter it twice) and marks it entered; the order then
 // turns «في Apex» only when the monitor actually sees it on Apex. Automatic transfer to Apex stays off until
 // the bridge is proven (numbering under live work and the branch delivery); this page never writes to Apex.
-import { businessDay, iso, validDate, addDays } from './time.js';
+import { businessDay, dayWindow, iso, validDate, addDays } from './time.js';
+import { takeTransferBuildLease, waitForTransferBuild } from './transfer-build-lease.js';
+import { CANCELLED_SQL, isCancelled, sourceCanTransfer, handoffPending } from './transfer-cancellation.js';
 import { parseJson } from './order-match.js';
-import { deliveryPhone, deliveryLabel, deliveryAddress, splitDeliveryAddress, deliveryMark, stripPlatformNotes } from './delivery-fields.js';
+import { deliveryPhone, deliveryLabel, deliveryAddress, splitDeliveryAddress, deliveryMark, compactDeliveryComment, deliveryNotes } from './delivery-fields.js';
 import { parseApexCustomerNote, normArabic, guessApexItem } from './apex-customer-notes.js';
 import { knownNos, itemKey } from './items.js';
 import { APEX_NAMES, APEX_PRICES } from './menu-seed.js';
 import { APEX_SECTIONS } from './apex-sections.js';
 import { siteApexItems } from './site-items.js';
 import { canonicalStore } from './store-names.js';
+import { sitePaymentChoice } from './site-payment-choice.js';
 const APEX_ITEM_LIST = Object.entries(APEX_NAMES).map(([no, name]) => ({ no, name, price: APEX_PRICES[no] ?? null }));
 import { sha256, randomToken } from './security.js';
+
+const orderDay = row => row?.scheduled_at ? businessDay(Number(row.scheduled_at)) : row?.day;
 
 const TOKEN_MS = 12 * 3600000;
 const CLAIM_MS = 10 * 60000;               // a claim left untouched for 10 minutes is free again
@@ -108,10 +113,10 @@ function apexBranchOf(name) {
 
 function setup(app) {
   const { db, fail } = app;
-  const queueCache = new Map(), QUEUE_CACHE_MS = 8000;
+  const queueCache = new Map(), QUEUE_CACHE_MS = 4000;
   // Anything that changes the orders (a push from a screen or the monitor, a link, a claim, the writer's answer) rebuilds it.
   // The Talabat screens and the cashier PC push every few seconds: clearing on each push meant every employee's refresh
-  // rebuilt the whole day (Karim 01-11: «الصفحة تقيلة»). The orders are now at most 8 s old; only the page's own actions
+  // rebuilt the whole day (Karim 01-11: «الصفحة تقيلة»). Completed builds are reused for 4 seconds; only the page's own actions
   // (claim, entered, auto) and the writer's answers are shown at once (claims are read fresh on every request anyway).
   // ---- alerts for the automatic transfer (call center group) ----
   // Apex's English errors in the words the employee needs (same as the transfer page).
@@ -135,7 +140,7 @@ function setup(app) {
   let lastStuck = 0;
   app.afterRequest(async now => {
     if (now - lastStuck < 60000) return; lastStuck = now;
-    const rows = await db.prepare("SELECT source, ref, at, payload FROM transfer_jobs WHERE state IN ('auto_pending', 'auto_sending') AND at < ? AND at > ?").all(now - 3 * 60000, now - 6 * 3600000);
+    const rows = await db.prepare("SELECT source, ref, at, payload FROM transfer_jobs WHERE state IN ('auto_pending', 'auto_sending', 'auto_retry_pending') AND at < ? AND at > ?").all(now - 3 * 60000, now - 6 * 3600000);
     for (const j of rows) {
       const p = parseJson(j.payload, {}); if (p.db !== 'live') continue;
       await transferAlert('transfer:stuck:' + j.source + ':' + j.ref, p, j.source, j.ref, 'مستني من ' + Math.round((now - j.at) / 60000) + ' دقيقة وكاتب Apex على جهاز الكاشير مارد', now);
@@ -187,6 +192,26 @@ function setup(app) {
     const day = validDate(String(ctx.query.day || '')) ? ctx.query.day : businessDay(ctx.now);
     return queueFor(day, { now: ctx.now, me, have: ctx.query.have, waitUntil: ctx.waitUntil });
   });
+  // A staff-triggered refresh syncs the website once, then rebuilds the transfer list from the latest server snapshots.
+  // Talabat remains sourced from its signed-in monitor; this route never clicks or changes orders on either platform.
+  const refreshes = new Map();
+  app.route('POST', '/api/transfer/refresh', async ctx => {
+    const me = await who(ctx), day = businessDay(ctx.now), refreshKey = String(me.id ?? 'admin');
+    const last = refreshes.get(refreshKey) || 0;
+    if (ctx.now - last < 10000) fail(429, 'استنى 10 ثواني قبل التحديث مرة تانية');
+    refreshes.set(refreshKey, ctx.now);
+    for (const [key, at] of refreshes) if (ctx.now - at > 60000) refreshes.delete(key);
+
+    let site = null;
+    if (app.siteSyncNow) {
+      try { site = await app.siteSyncNow(ctx.now); }
+      catch { site = { error: true }; }
+    }
+    const x = S(day); x.dirty = true; queueCache.delete(day);
+    const base = await rebuild(day), now = app.now();
+    const fresh = await queueFor(day, { now, me, waitUntil: ctx.waitUntil });
+    return { ...fresh, manualRefresh: { at: iso(now), siteOk: !!site && !site.error && !site.skipped, queueAt: iso(base.at) } };
+  });
   // The page's list, also read by the automatic transfer (autotransfer.js) with no employee.
   async function queueFor(day, ctx) {
     const me = ctx.me || { id: null, name: 'المرصد آلي', staff: false };
@@ -194,6 +219,10 @@ function setup(app) {
     // only the claims (who has which order) are read fresh for each request.
     const base = await baseFor(day, ctx.now, ctx.cachedOnly ? { cachedOnly: true } : { allowStale: true });
     if (!base) return null;
+    // Cancellation is authoritative even when a completed queue snapshot is reused.
+    const window = dayWindow(day), cancelled = new Set();
+    for (const r of await db.prepare(`SELECT id FROM talabat_orders WHERE day=? AND ${CANCELLED_SQL}`).all(day)) cancelled.add('talabat:' + r.id);
+    for (const r of await db.prepare(`SELECT id FROM site_orders WHERE (day=? OR (scheduled_at>=? AND scheduled_at<?)) AND ${CANCELLED_SQL}`).all(day,window.start,window.end)) cancelled.add('site:' + r.id);
     const snap = { locations: base.locations };
     const jobs = new Map((await db.prepare('SELECT * FROM transfer_jobs WHERE day = ?').all(day)).map(j => [j.source + ':' + j.ref, j]));
     const customerNotes = new Map((await db.prepare('SELECT source, ref, cust_no, note, status, checked_at, phone_hash FROM apex_customer_notes WHERE day = ?').all(day)).map(n => [
@@ -213,7 +242,7 @@ function setup(app) {
     const slim = o => ({ source: o.source, ref: o.ref, code: o.code, at: o.at, status: o.status, out: o.out, branch: o.branch, apexBranch: o.apexBranch, total: o.total, apex: o.apex, done: true });
     // The automatic transfer's word on each waiting order (autotransfer.js): sent by itself, would be (trial), or why not.
     const autoNotes = app.autoTransferNotes && ctx.me ? await app.autoTransferNotes(day) : new Map();
-    const list = base.list.map(o0 => {
+    const list = base.list.filter(o => !cancelled.has(o.source + ':' + o.ref)).map(o0 => {
       // An order the Apex writer wrote is on Apex, with its number, even before matching finds it (11-11).
       const j0 = jobOf(o0.source, String(o0.ref)), o = !o0.apex && j0?.state === 'auto_done' && j0.result?.orderNo ? { ...o0, apex: { no: j0.result.orderNo, sn: j0.result.shiftSerial ?? null, user: null, how: 'job' } } : o0;
       const note = customerNotes.get(o.source + ':' + o.ref);
@@ -242,8 +271,9 @@ function setup(app) {
     // English typed by the customer (address, name, comments) shown and sent in Arabic (Karim 01-11); the original is kept.
     if (app.toArabic) {
       const open = list.filter(o => !o.done), texts = [];
-      for (const o of open) texts.push(o.customer?.name, o.customer?.address, o.customer?.area, o.note, ...(o.items || []).flatMap(i => [i.note, ...(i.freeOptions || [])]));
+      for (const o of open) texts.push(o.customer?.name, o.customer?.area, o.note, ...(o.items || []).flatMap(i => [i.note, ...(i.freeOptions || [])]));
       const ar = await app.toArabic(texts.filter(Boolean), { waitUntil: ctx.waitUntil }).catch(() => new Map());
+      for (const [original,address] of app.toArabicAddress?.(open.map(o => o.customer?.address)) || []) ar.set(original,address);
       const tr = v => (v && ar.get(v)) || v, changed = v => v && ar.get(v) && ar.get(v) !== v;
       for (let i = 0; i < list.length; i++) {
         const o = list[i]; if (o.done) continue;
@@ -277,15 +307,25 @@ function setup(app) {
     const x = S(day);
     if (db.kind !== 'd1' && x.run) return x.run;
     const run = (async () => {
-      let base, passes = 0;
-      do {
-        x.dirty = false;
-        base = await buildBase(day, app.now());
-        queueCache.set(day, base);
-      } while (x.dirty && ++passes < 2);
-      const keep = { at: base.at, locations: base.locations, list: base.list.map(o => o.apex || o.out ? { source: o.source, ref: o.ref, code: o.code, at: o.at, status: o.status, out: o.out, branch: o.branch, apexBranch: o.apexBranch, total: o.total, apex: o.apex } : o) };
-      await db.prepare('INSERT INTO transfer_cache (day, at, data) VALUES (?,?,?) ON CONFLICT(day) DO UPDATE SET at = excluded.at, data = excluded.data').run(day, base.at, JSON.stringify(keep)).catch(() => {});
-      return base;
+      const release = db.kind === 'd1' ? await takeTransferBuildLease(db, day, app.now()) : null;
+      if (db.kind === 'd1' && !release) fail(503, 'قائمة التحويل بتتحدّث؛ حاول بعد ثواني');
+      try {
+        // Another request may have completed between the cache read and the lease.
+        const latest = await db.prepare('SELECT at, data FROM transfer_cache WHERE day = ?').get(day);
+        if (!x.dirty && latest && app.now() - latest.at < QUEUE_CACHE_MS) {
+          const saved = parseJson(latest.data, null);
+          if (saved) { queueCache.set(day, saved); return saved; }
+        }
+        let base, passes = 0;
+        do {
+          x.dirty = false;
+          base = await buildBase(day, app.now());
+          queueCache.set(day, base);
+        } while (x.dirty && ++passes < 2);
+        const keep = { at: base.at, locations: base.locations, list: base.list.map(o => o.apex || o.out ? { source: o.source, ref: o.ref, code: o.code, at: o.at, status: o.status, out: o.out, branch: o.branch, apexBranch: o.apexBranch, total: o.total, apex: o.apex } : o) };
+        await db.prepare('INSERT INTO transfer_cache (day, at, data) VALUES (?,?,?) ON CONFLICT(day) DO UPDATE SET at = excluded.at, data = excluded.data WHERE excluded.at >= transfer_cache.at').run(day, base.at, JSON.stringify(keep)).catch(() => {});
+        return base;
+      } finally { if (release) await release().catch(() => {}); }
     })().finally(() => { if (x.run === run) x.run = null; });
     // Worker I/O belongs to its initiating request: never await another request's
     // in-flight promise. Only completed data can be shared between requests.
@@ -311,11 +351,18 @@ function setup(app) {
     if (!x.dirty && r && r.at > (b?.at || 0) && now - r.at < QUEUE_CACHE_MS) { const d = parseJson(r.data, null); if (d) { queueCache.set(day, d); x.dirty = false; return d; } }
     try { return await rebuild(day); }
     catch (error) {
+      if (error.status === 503 && !allowStale) {
+        const completed = await waitForTransferBuild(db, day, Math.max(r?.at || 0,b?.at || 0));
+        if (completed) { queueCache.set(day,completed); return completed; }
+      }
       // Only the read-only queue may show a recent completed snapshot when matching or D1 is slow.
       // Actions still require a successful fresh build, so a stale order cannot be claimed or entered.
       if (allowStale) {
         const persisted = r && parseJson(r.data, null);
         const saved = persisted?.at > (b?.at || 0) ? persisted : (b || persisted);
+        // A busy builder is not a failed sync. Keep a very recent completed view
+        // without tearing down the employee's editor; write actions still fail closed.
+        if (error.status === 503 && saved && Array.isArray(saved.list) && now - saved.at <= 9000) return saved;
         if (saved && Array.isArray(saved.list) && Number.isFinite(saved.at) && now - saved.at <= 15 * 60000)
           return { ...saved, stale: true };
       }
@@ -325,7 +372,9 @@ function setup(app) {
   // Reconcile against the current Apex snapshot again at the moment an employee submits an action.
   // The queue can be open in a stale browser tab after Apex has already received the order.
   async function assertNotAlreadyOnApex(source, ref, day, now) {
+    if (!await sourceCanTransfer(db, source, ref)) fail(409, 'الأوردر اتلغى أو مش موجود — مش هيتحوّل');
     const base = await baseFor(day, now);
+    if (!await sourceCanTransfer(db, source, ref)) fail(409, 'الأوردر اتلغى أثناء التحديث — مش هيتحوّل');
     const found = base?.list?.find(o => o.source === source && String(o.ref) === String(ref));
     if (found?.apex) fail(409, 'الأوردر موجود على Apex بالفعل — مش هيتسجل مرة تانية');
   }
@@ -337,7 +386,7 @@ function setup(app) {
     // The page's own actions (claim, entered, auto) and the writer's answers: shown at once.
     if (/^\/api\/(?:apex-writer\/result|transfer\/(?:job|selection))$/.test(path || '')) { x.dirty = true; return rebuild(day).catch(() => {}); }
     // High-frequency source pushes must NOT rebuild the full day's matching on every request.
-    // A completed build is reusable for eight seconds, including across Cloudflare isolates via D1.
+    // A completed build is reusable for four seconds, including across Cloudflare isolates via D1.
     // The next queue read refreshes it after the window; explicit staff actions still rebuild immediately.
     if (/^\/api\/(?:talabat|orders|site)\/push$/.test(path || '')) {
       const b = queueCache.get(day);
@@ -361,6 +410,7 @@ function setup(app) {
       const learned = new Map();
       if (app.learn) for (const [n, m] of await app.learn.pairs('match-v2:item:talabat')) { const ok = new Map([...m].filter(([, c]) => c >= 2)); if (ok.size) learned.set(n, ok); }
       const itemHistory = app.learn ? await itemsLearned() : new Map();
+      const siteItemHistory = app.learn ? await app.learn.pairs('transfer:item:site') : new Map();
       // Apex items for a Talabat name: the item map first; else (live orders name add-ons in Arabic, «ممبار») the Apex item
       // with exactly that name, or the only one whose name holds it.
       const arKey = v => String(v || '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/[ًٌٍَُِّْ]/g, '').replace(/\s+/g, ' ').trim();
@@ -409,6 +459,12 @@ function setup(app) {
             if (unit && nos.length === 1 && Number(APEX_PRICES[nos[0]]) > 0 && Math.abs(APEX_PRICES[nos[0]] * 1.14 - unit) > unit * 0.2) nos = [];
             apex = nos.map(no => ({ no, name: apexName.get(no) || null }));
             apexPick = nos.length === 1 ? nos[0] : null;
+            if (!apexPick && apex.length > 1) {
+              const seen = siteItemHistory.get(lineKey(x));
+              const ranked = seen && [...seen].filter(([no]) => apex.some(a => a.no === no)).sort((a, b) => b[1] - a[1]);
+              const total = ranked?.reduce((sum, [, count]) => sum + count, 0) || 0;
+              if (ranked?.[0] && ranked[0][1] >= 2 && ranked[0][1] >= total * 0.7) apexPick = ranked[0][0];
+            }
           }
         }
         if (withApex && !apex.length && !inTable) {
@@ -446,10 +502,10 @@ function setup(app) {
       const list = [];
 
       // Talabat
-      const tm = app.talabat ? await app.talabat.matchDay(day) : { rows: [], matches: new Map(), states: new Map() };
+      const tm = app.talabat ? await app.talabat.matchDay(day, { fresh: true }) : { rows: [], matches: new Map(), states: new Map() };
       const tProfiles = new Map((await db.prepare("SELECT ref, data FROM match_profiles WHERE source = 'talabat' AND ref IN (SELECT id FROM talabat_orders WHERE day = ?)").all(day)).map(x => [x.ref, parseJson(x.data, {})]));
       for (const o of tm.rows) {
-        if (TALABAT_DONE.has(o.status)) continue;
+        if (isCancelled(o.status)) continue;
         const p = tProfiles.get(o.id) || {}, a = tm.matches.get(o.id), bill = p.bill || [];
         const items = parseJson(o.items, []).map(x => itemOut(x, true));
         // The bill's discount lines are the order's total; the lines under the dishes count only when the bill shows none (never both).
@@ -470,17 +526,22 @@ function setup(app) {
       }
 
       // Website
-      const sRows = await db.prepare('SELECT * FROM site_orders WHERE day = ?').all(day);
+      const siteWindow = dayWindow(day);
+      const sRows = await db.prepare('SELECT * FROM site_orders WHERE (scheduled_at IS NULL AND day = ?) OR (scheduled_at >= ? AND scheduled_at < ?)').all(day, siteWindow.start, siteWindow.end);
       const sm = app.site && sRows.length ? await app.site.apexMatch(day, sRows) : { matches: new Map(), states: new Map() };
-      const sProfiles = new Map((await db.prepare("SELECT ref, data FROM match_profiles WHERE source = 'site' AND ref IN (SELECT CAST(id AS TEXT) FROM site_orders WHERE day = ?)").all(day)).map(x => [x.ref, parseJson(x.data, {})]));
+      const sProfiles = new Map();
+      for (let i = 0; i < sRows.length; i += 90) {
+        const part = sRows.slice(i, i + 90), qs = part.map(() => '?').join(',');
+        for (const x of await db.prepare(`SELECT ref, data FROM match_profiles WHERE source = 'site' AND ref IN (${qs})`).all(...part.map(o => String(o.id)))) sProfiles.set(x.ref, parseJson(x.data, {}));
+      }
       for (const o of sRows) {
-        if (SITE_DONE.has(o.status)) continue;
+        if (isCancelled(o.status)) continue;
         const p = sProfiles.get(String(o.id)) || {}, pay = p.payment || null, a = sm.matches.get(o.id);
         const discounts = pay ? [...(pay.coupons || []).map(c => ({ text: 'كوبون ' + c.code, amount: c.amount, who: 'restaurant' })),
           ...(!pay.coupons?.length && pay.discount ? [{ text: 'خصم الموقع', amount: pay.discount, who: 'restaurant' }] : [])] : [];
-        list.push({ source: 'site', ref: String(o.id), code: String(p.panel?.number || o.id).replace(/\D/g, '') || String(o.id), at: iso(o.created_at), status: o.status, out: !!o.out_at || !!o.delivered_at || o.status === 'completed', sentToBranch: !!o.transfer_at, branch: o.branch || null, apexBranch: apexBranchOf(o.branch), scheduled: !!o.scheduled,
+        list.push({ source: 'site', ref: String(o.id), code: String(p.panel?.number || o.id).replace(/\D/g, '') || String(o.id), at: iso(o.scheduled_at || o.created_at), status: o.status, out: !!o.out_at || !!o.delivered_at || o.status === 'completed', sentToBranch: !!o.transfer_at, branch: o.branch || null, apexBranch: apexBranchOf(o.branch), scheduled: !!o.scheduled && (!o.scheduled_at || Number(o.scheduled_at) > now),
           customer: { name: p.customer?.name || null, phone: phoneOut(p.customer?.phoneDisplay || p.customer?.phone || p.customer?.mobileDisplay || p.customer?.mobile), address: p.customer?.address || null, ...(p.customer?.area ? { siteArea: p.customer.area } : {}) },
-          target: o.total ?? null, payment: sitePayment(pay), paymentTitle: pay?.title || null, note: pay?.note || null, discounts, fees: pay?.fees || [], shipping: pay?.shipping ?? null, total: o.total ?? null,
+          target: o.total ?? null, payment: sitePayment(pay), paymentMethod: pay?.method || null, paymentTitle: pay?.title || null, note: pay?.note || null, scheduledAt: iso(o.scheduled_at), discounts, fees: pay?.fees || [], shipping: pay?.shipping ?? null, total: o.total ?? null,
           fulfillment: o.fulfillment || null, ...(o.fulfillment === 'pickup' && PICKUP_AREAS[apexBranchOf(o.branch)] ? { areaGuess: { ...PICKUP_AREAS[apexBranchOf(o.branch)], how: 'pickup' } } : {}), items: (p.items || []).map(x => itemOut(x, 'site')), detailRead: !!p.items?.length,
           apex: a ? { no: a.no, sn: a.sn ?? null, user: a.user || null, how: a.how || null } : null, matching: sm.states?.get(o.id) || null, job: null });
       }
@@ -565,15 +626,40 @@ function setup(app) {
       if (confirmed) await app.learn.record('transfer:area-confirmed', normArabic(area).slice(0, 120), String(locationNo), evidence).catch(() => {});
     }
   }
+  // Learn only from a transfer Apex actually accepted. A queued job or a failed write
+  // is not evidence that the selected item/area was correct.
+  async function learnSuccessfulTransfer(source, ref, payload, now) {
+    if (!app.learn || !payload || payload.source !== source || String(payload.ref) !== String(ref)) return;
+    const chosen = new Set((payload.items || []).filter(x => !x.free).map(x => String(x.itemNo)));
+    if (chosen.size) {
+      const row = await db.prepare(source === 'talabat' ? 'SELECT day, items FROM talabat_orders WHERE id = ?' : 'SELECT day, scheduled_at FROM site_orders WHERE id = ?').get(ref);
+      if (row) {
+        const order = (await baseFor(orderDay(row), now)).list.find(o => o.source === source && String(o.ref) === String(ref));
+        if (order) {
+          const raw = source === 'talabat' ? parseJson(row.items, [])
+            : parseJson((await db.prepare("SELECT data FROM match_profiles WHERE source = 'site' AND ref = ?").get(ref))?.data, {}).items || [];
+          const facts = [];
+          for (let i = 0; i < Math.min(raw.length, order.items.length); i++) {
+            const line = order.items[i], candidates = new Set((line.apex || []).map(a => String(a.no)));
+            const hit = [...candidates].filter(no => chosen.has(no));
+            if (hit.length === 1) facts.push([lineKey(raw[i]), hit[0]]);
+          }
+          const kind = source === 'talabat' ? 'transfer:item' : 'transfer:item:site';
+          for (let i = 0; i < facts.length; i++) await app.learn.record(kind, facts[i][0], facts[i][1], source + ':' + ref + ':' + i, null, now).catch(() => {});
+        }
+      }
+    }
+    if (!payload.pickup) await learnTransferArea(source, ref, payload.locationNo, true);
+  }
   app.route('POST', '/api/transfer/selection', async ctx => {
     const me = await who(ctx), b = ctx.body;
     const source = ['talabat', 'site'].includes(b.source) ? b.source : null, ref = String(b.ref || '');
     if (!source || !/^\d{1,20}$/.test(ref)) fail(400, 'أوردر غير صحيح');
-    const row = await db.prepare(source === 'talabat' ? 'SELECT day FROM talabat_orders WHERE id = ?' : 'SELECT day FROM site_orders WHERE id = ?').get(ref);
+    const row = await db.prepare(source === 'talabat' ? 'SELECT day FROM talabat_orders WHERE id = ?' : 'SELECT day, scheduled_at FROM site_orders WHERE id = ?').get(ref);
     if (!row) fail(404, 'الأوردر مش موجود');
     const job = await db.prepare('SELECT * FROM transfer_jobs WHERE source = ? AND ref = ?').get(source, ref);
     if (job && !['released', 'auto_failed', 'auto_preview'].includes(job.state) && !(job.state === 'claimed' && ctx.now - job.at > CLAIM_MS) && (job.employee_id !== me.id || job.state !== 'claimed')) fail(409, 'الأوردر محجوز أو اتبعت بالفعل');
-    const order = (await baseFor(row.day, ctx.now)).list.find(o => o.source === source && String(o.ref) === ref);
+    const dueDay = orderDay(row), order = (await baseFor(dueDay, ctx.now)).list.find(o => o.source === source && String(o.ref) === ref);
     if (!order || order.apex || order.out) fail(409, 'الأوردر مش متاح للاختيار');
     const lines = order.items.flatMap(i => [i, ...(i.addons || [])]);
     const line = Number.isInteger(b.line) ? lines[b.line] : null, itemNo = String(b.itemNo || '');
@@ -585,19 +671,21 @@ function setup(app) {
       db.prepare("INSERT INTO learned (kind,a,b,ref,value,at) VALUES ('transfer-item-choice',?,?,?,?,?)").bind(line.choiceKey,itemNo,evidence,me.name,ctx.now)
     ]);
     await app.audit('transfer_item_selected', me.staff ? me.id : null, { actor: me.name, source, ref, line: b.line + 1, sourceItem: line.name, itemNo, itemName: APEX_NAMES[itemNo] });
-    S(row.day).dirty = true;
+    S(dueDay).dirty = true;
     return { ok: true };
   });
 
   // Automatic transfer: the employee (or the automatic transfer, autotransfer.js) confirms the Apex items, branch and payment;
   // the order is frozen and handed to the Apex writer on the restaurant PC.
-  async function autoJob({ me, b, source, ref, row, cur, othersClaim, payment, note, now }) {
+  async function autoJob({ me, b, source, ref, row, cur, othersClaim, payment, note, now, manual = false }) {
+      if (!await sourceCanTransfer(db, source, ref)) fail(409, 'الأوردر اتلغى أو مش موجود — مش هيتحوّل');
       // Automatic transfer: the employee confirms the Apex items, branch and payment; the order is frozen
       // and handed to the Apex writer on the restaurant PC. Off until an admin turns it on (test first).
       const mode = await setting('apex_bridge_mode') || 'shadow';
+      const dueDay = orderDay(row);
       if (!['shadow', 'test', 'live'].includes(mode)) fail(409, 'التحويل الآلي مقفول — سجّل على Apex بإيدك');
       if (othersClaim) fail(409, 'الأوردر مع ' + (cur.employee_name || 'حد تاني'));
-      if (cur && /^auto_(?:pending|sending|done|preview)$/.test(cur.state)) fail(409, 'الأوردر اتبعت للتحويل الآلي بالفعل');
+      if (cur && /^auto_(?:pending|sending|retry_pending|done|preview)$/.test(cur.state)) fail(409, 'الأوردر اتبعت للتحويل الآلي بالفعل');
       // Cash, or prepaid (Apex: Ledge with the amount on the customer's ledger, like every prepaid Talabat order there).
       if (payment !== 'cash' && payment !== 'paid') fail(400, 'حدد: كاش ولا مدفوع');
       const branchNo = Number(b.branchNo);
@@ -606,13 +694,13 @@ function setup(app) {
       if (!items.length || items.length > 40) fail(400, 'اختار أصناف Apex');
       const clean = items.map(x => ({ itemNo: String(x?.itemNo || '').trim(), qty: Number(x?.qty), note: x?.note ? String(x.note).slice(0, 60) : '' }));
       if (clean.some(x => !/^\d{1,10}$/.test(x.itemNo) || !(x.qty > 0 && x.qty <= 50))) fail(400, 'فيه صنف لسه مااتختارش أو عدده مش مظبوط');   // Apex offers have short numbers (111, 218, 315)
-      // Website orders (11-11): only what the panel says for sure is written by itself.
+      // Unattended transfers follow the source. Staff may explicitly confirm a correction.
+      let paymentOverride = null;
       if (source === 'site') {
         const sp = parseJson((await db.prepare("SELECT data FROM match_profiles WHERE source = 'site' AND ref = ?").get(ref))?.data, {}), m = sp.payment?.method, so = await db.prepare('SELECT fulfillment, branch FROM site_orders WHERE id = ?').get(Number(ref));
-        if (m === 'mixed') fail(409, 'جزء مدفوع أونلاين والباقي كاش — سجّله على Apex بإيدك');
-        if (m === 'online-unpaid') fail(409, 'الدفع الأونلاين لسه ما اكتملش على الموقع — استنى لحد ما يتدفع أو سجّله بإيدك');
-        if (m === 'cod' && payment !== 'cash') fail(409, 'الموقع بيقول كاش عند الاستلام');
-        if (m === 'online' && payment !== 'paid') fail(409, 'الموقع بيقول مدفوع أونلاين');
+        const decision = sitePaymentChoice(m, payment, b.paymentOverride, manual);
+        if (decision.error) fail(409, decision.error);
+        if (decision.override) paymentOverride = { ...decision.override, by: me.name, employeeId: me.id, at: now };
         const siteBranch = apexBranchOf(so?.branch);
         if (so?.branch && siteBranch && siteBranch !== Number(b.branchNo)) fail(409, 'الأوردر على الموقع متحوّل لفرع ' + so.branch + ' — غيّر الفرع هنا أو على الموقع الأول');
       }
@@ -678,16 +766,20 @@ function setup(app) {
       // Karim 10-11: the customer-card note is the call center's, not the kitchen's — it is not written in the order's
       // comment (which prints in the branch). What it gave shows on Apex by itself: the discount field, or the gift
       // lines named «هدية بدل خصم بطاقة العميل» / «مستحق من ملاحظة العميل».
-      const safeRemarks = b.note ? String(b.note).split(/\s*\|\s*/).map(stripPlatformNotes).filter(Boolean).join(' | ') : '';
-      if (safeRemarks.length > 200) fail(409, 'ملاحظات الأوردر مع بطاقة العميل أطول من مساحة APEX — راجعها قبل التسجيل');
+      // Kitchen comments are compacted for both Talabat and website orders; a long comment
+      // must never block an otherwise valid transfer.
+      const sourceNote = source === 'site' ? parseJson((await db.prepare("SELECT data FROM match_profiles WHERE source='site' AND ref=?").get(ref))?.data,{}).payment?.note : '';
+      const sourceBooking = deliveryNotes(sourceNote,row.scheduled_at);
+      const booking = sourceBooking.appointment ? sourceBooking : deliveryNotes(b.note,row.scheduled_at);
+      const safeRemarks = compactDeliveryComment(deliveryNotes(b.note,row.scheduled_at).note, 200);
       // Karim 11-11: a website pickup goes to the branch's «استلام فرع» area, with no address, floor or flat.
       let pickup = false;
-      if (source === 'site') { const so = await db.prepare('SELECT fulfillment, branch FROM site_orders WHERE id = ?').get(Number(ref)); pickup = so?.fulfillment === 'pickup'; }
+      if (source === 'site') { const so = await db.prepare('SELECT fulfillment FROM site_orders WHERE id = ?').get(Number(ref)); pickup = so?.fulfillment === 'pickup'; }
       if (pickup && !PICKUP_AREAS[Number(b.branchNo)]) fail(400, 'اختار فرع Apex');
       const locationNo = pickup ? PICKUP_AREAS[Number(b.branchNo)].no : Number(b.locationNo);
       if (!Number.isInteger(locationNo) || locationNo < 1) fail(400, 'اختار منطقة العميل على Apex');
       // The area's own delivery charge on Apex (as the read-only monitor sent it), for an area nobody ordered to today.
-      const daySnap = parseJson((await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(row.day))?.data, {});
+      const daySnap = parseJson((await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(dueDay))?.data, {});
       const areas = (Array.isArray(daySnap.locations) ? daySnap.locations : []).filter(l => l?.no === locationNo);
       // The area decides the branch, as on Apex (Karim 01-11: a Nasr City area was sent to Tagamoa).
       const owners = [...new Set(areas.map(l => l.branch).filter(x => x != null).map(Number))];
@@ -697,10 +789,9 @@ function setup(app) {
       }
       const area = areas.find(l => l.branch === branchNo) || areas.find(l => l.branch == null) || areas[0];
       const areaService = pickup ? 0 : Number.isFinite(Number(area?.service)) && area?.service !== null ? Number(area.service) : null;
-      if (!pickup && areaService === 0 && b.confirmFreeArea !== true) fail(409, 'رسوم المنطقة على Apex صفر — راجع العنوان وأكد اختيار المنطقة قبل التسجيل');
       // The source's platform discount is a separate fact from any Apex price adjustment.
       // A stale browser or an empty sign must never erase a known Talabat discount.
-      const sourceOrder = (await baseFor(row.day, now)).list.find(o => o.source === source && String(o.ref) === ref) || null;
+      const sourceOrder = (await baseFor(dueDay, now)).list.find(o => o.source === source && String(o.ref) === ref) || null;
       const sourceDiscounts = sourceOrder?.discounts || [];
       // A discount Talabat does not say who pays for: the employee's split (read on Talabat), never a guess. Paid: all of it
       // comes off on Apex either way, so it counts as Talabat's for the special mark.
@@ -725,47 +816,42 @@ function setup(app) {
       const serverTarget = Number(sourceOrder?.target) > 0
         ? Math.round((payment === 'paid' ? sourceOrder.target - knownPlat : sourceOrder.target + splitPlat) * 100) / 100 : null;
       const expectedTotal = Number(b.expectedTotal) || null, targetTotal = serverTarget ?? (Number(b.targetTotal) > 0 ? Math.round(Number(b.targetTotal) * 100) / 100 : null);
-      if (safeRemarks.length > 200) fail(400, 'الملاحظات أطول من مساحة Apex (٢٠٠ حرف) — اختصرها مع الاحتفاظ بالمقصود');
-      const texts = [b.customer?.name, b.customer?.address, safeRemarks].filter(Boolean);
+      const texts = [b.customer?.name, safeRemarks].filter(Boolean);
       const arabic = app.toArabic ? await app.toArabic(texts, { wait: true }) : new Map();
       const translatedName = arabic.get(b.customer?.name) || b.customer?.name;
       // What the employee wrote over the automatic Arabic is learned for next time (Karim 11-11).
-      if (app.learnArabic) for (const [en, ar] of [[b.customer?.nameEn, b.customer?.name], [b.customer?.addressEn, b.customer?.address]]) if (en && ar) await app.learnArabic(en, ar).catch(() => {});
-      const translatedAddress = arabic.get(b.customer?.address) || b.customer?.address;
-      const translatedNote = arabic.get(safeRemarks) || safeRemarks;
-      if (translatedNote.length > 200) fail(400, 'الملاحظات بعد الترجمة أطول من مساحة Apex — اختصرها');
+      if (app.learnArabic) for (const [en, ar] of [[b.customer?.nameEn, b.customer?.name]]) if (en && ar) await app.learnArabic(en, ar).catch(() => {});
+      const rawAddress = b.customer?.addressEdited === true ? b.customer.address : sourceOrder?.customer?.address || b.customer?.addressEn || b.customer?.address;
+      const translatedAddress = app.toArabicAddress?.([rawAddress]).get(rawAddress) || rawAddress;
+      const translatedNote = compactDeliveryComment(arabic.get(safeRemarks) || safeRemarks, 200);
       const address = pickup ? { street: '', floor: '', flat: '' } : deliveryAddress(translatedAddress, [area?.name, sourceOrder?.customer?.talabatArea, sourceOrder?.customer?.siteArea, b.customer?.area]);
       const addressLine = splitDeliveryAddress(address.street), sign = deliveryMark(signBase, addressLine.extra);
       if (sign == null) fail(409, 'تكملة العنوان أكبر من مساحة العلامة المميزة — اختصر العنوان قبل التسجيل');
       const deliveryFields = { address: addressLine.main, floor: address.floor, flat: address.flat };
-      const payload = { v: 1, source, ref, code: String(b.code || '').replace(/[^\d]/g, '').slice(0, 10) || null, db: mode, branchNo, locationNo, payment,
-        label: deliveryLabel(translatedName, source, payment, b.code), customer: { name: String(translatedName || '').slice(0, 80), phone: deliveryPhone(b.customer?.phone), address: pickup ? '' : String(b.customer?.address || '').slice(0, 360), ...deliveryFields }, ...(pickup ? { pickup: true } : {}),
+      const payload = { v: 1, source, ref, code: String(b.code || '').replace(/[^\d]/g, '').slice(0, 10) || null, db: mode, branchNo, locationNo, payment, ...(paymentOverride ? { paymentOverride } : {}),
+        label: deliveryLabel(translatedName, source, payment, b.code, booking.appointment), customer: { name: String(translatedName || '').slice(0, 80), phone: deliveryPhone(b.customer?.phone), address: pickup ? '' : String(b.customer?.address || '').slice(0, 360), ...deliveryFields }, ...(pickup ? { pickup: true } : {}),
         sign, platformDiscount, note: translatedNote, items: [...clean, ...noteItems], apexCustomerBenefit: noteBenefit,
         restaurantDiscount, expectedTotal, targetTotal, areaService, by: me.name, at: now };
-      await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at, payload, result) VALUES (?,?,?,'auto_pending',?,?,?,?,?,?,NULL)
-        ON CONFLICT(source, ref) DO UPDATE SET state = 'auto_pending', employee_id = excluded.employee_id, employee_name = excluded.employee_name, payment = excluded.payment, note = excluded.note, at = excluded.at, payload = excluded.payload, result = NULL`)
-        .run(source, ref, row.day, me.id, me.name, payment, note, now, JSON.stringify(payload));
-      if (source === 'talabat' && app.learn) {
-        const t = await db.prepare('SELECT items FROM talabat_orders WHERE id = ?').get(ref), chosen = new Set(clean.map(x => String(x.itemNo)));
-        const facts = itemFacts(parseJson(t?.items, []), chosen, await talabatLearned());
-        for (let i = 0; i < facts.length; i++) await app.learn.record('transfer:item', facts[i][0], facts[i][1], ref + ':' + i).catch(() => {});
-      }
-      // The Apex area chosen for this Talabat area teaches the next order of the same area (Karim 10-11).
-      if (!pickup) await learnTransferArea(source, ref, locationNo, true);
+      const queued = await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at, payload, result) VALUES (?,?,?,'auto_pending',?,?,?,?,?,?,NULL)
+        ON CONFLICT(source, ref) DO UPDATE SET state = 'auto_pending', employee_id = excluded.employee_id, employee_name = excluded.employee_name, payment = excluded.payment, note = excluded.note, at = excluded.at, payload = excluded.payload, result = NULL
+        WHERE transfer_jobs.state IN ('released', 'auto_failed') OR (transfer_jobs.state = 'claimed' AND (transfer_jobs.employee_id IS excluded.employee_id OR transfer_jobs.at < ?))`)
+        .run(source, ref, dueDay, me.id, me.name, payment, note, now, JSON.stringify(payload), now - CLAIM_MS);
+      if (!queued.changes) fail(409, 'الأوردر بيتسجل بالفعل');
   }
   // The automatic transfer (11-11): the same checks and job as the page's button, as «المرصد آلي». Never over a claim.
   app.transferAutoJob = async (b, now) => {
     const me = { id: null, name: 'المرصد آلي', staff: false };
     const source = b.source, ref = String(b.ref);
-    const row = source === 'talabat' ? await db.prepare('SELECT day FROM talabat_orders WHERE id = ?').get(ref) : await db.prepare('SELECT day FROM site_orders WHERE id = ?').get(Number(ref));
+    const row = source === 'talabat' ? await db.prepare('SELECT day FROM talabat_orders WHERE id = ?').get(ref) : await db.prepare('SELECT day, scheduled_at FROM site_orders WHERE id = ?').get(Number(ref));
     if (!row) fail(404, 'الأوردر مش موجود');
-    await assertNotAlreadyOnApex(source, ref, row.day, now);
+    const dueDay = orderDay(row);
+    await assertNotAlreadyOnApex(source, ref, dueDay, now);
     const cur = await db.prepare('SELECT * FROM transfer_jobs WHERE source = ? AND ref = ?').get(source, ref);
     if (cur && !(cur.state === 'claimed' && now - cur.at > CLAIM_MS)) fail(409, 'الأوردر مع ' + (cur.employee_name || 'حد'));
     const payment = ['cash', 'paid'].includes(b.payment) ? b.payment : null, note = b.note ? String(b.note).slice(0, 300) : null;
     await autoJob({ me, b, source, ref, row, cur, othersClaim: false, payment, note, now });
-    S(row.day).dirty = true;
-    await app.audit('transfer_auto', null, { actor: me.name, source, ref, payment, branch: b.branchNo, location: b.locationNo, items: b.items, automatic: true });
+    S(dueDay).dirty = true;
+    await app.audit('transfer_auto', null, { actor: me.name, source, ref, payment, branch: b.branchNo, location: b.locationNo, items: b.items, automatic: true }).catch(() => {});
     return { ok: true };
   };
 
@@ -773,9 +859,10 @@ function setup(app) {
     const me = await who(ctx);
     const b = ctx.body, source = b.source === 'talabat' || b.source === 'site' ? b.source : null, ref = String(b.ref || '').slice(0, 40);
     if (!source || !/^\d{1,20}$/.test(ref)) fail(400, 'أوردر غير صحيح');
-    const row = source === 'talabat' ? await db.prepare('SELECT day FROM talabat_orders WHERE id = ?').get(ref) : await db.prepare('SELECT day FROM site_orders WHERE id = ?').get(Number(ref));
+    const row = source === 'talabat' ? await db.prepare('SELECT day FROM talabat_orders WHERE id = ?').get(ref) : await db.prepare('SELECT day, scheduled_at FROM site_orders WHERE id = ?').get(Number(ref));
     if (!row) fail(404, 'الأوردر مش موجود');
-    if (['claim', 'entered', 'auto'].includes(b.action)) await assertNotAlreadyOnApex(source, ref, row.day, ctx.now);
+    const dueDay = orderDay(row);
+    if (['claim', 'entered', 'auto'].includes(b.action)) await assertNotAlreadyOnApex(source, ref, dueDay, ctx.now);
     const payment = ['cash', 'paid'].includes(b.payment) ? b.payment : null, note = b.note ? String(b.note).slice(0, 300) : null;
     const cur = await db.prepare('SELECT * FROM transfer_jobs WHERE source = ? AND ref = ?').get(source, ref);
     // Whose order it is: the one who claimed it (10 minutes), entered it, or sent it to the writer. A failed or preview-only
@@ -783,7 +870,7 @@ function setup(app) {
     const free = !cur || ['released', 'auto_failed', 'auto_preview'].includes(cur.state) || (cur.state === 'claimed' && ctx.now - cur.at > CLAIM_MS);
     const othersClaim = !free && cur.employee_id !== me.id;
     // Already on Apex or on its way there: nobody (the same employee included) sends or claims it again.
-    if (cur && (/^auto_(?:sending|done)$/.test(cur.state) || (cur.state === 'auto_pending' && b.action !== 'release'))) fail(409, cur.state === 'auto_done' ? 'الأوردر اتسجل على Apex بالفعل (آلي)' : 'الأوردر بيتسجل على Apex دلوقتي');
+    if (cur && (/^auto_(?:sending|done)$/.test(cur.state) || (['auto_pending', 'auto_retry_pending'].includes(cur.state) && b.action !== 'release'))) fail(409, cur.state === 'auto_done' ? 'الأوردر اتسجل على Apex بالفعل (آلي)' : 'الأوردر بيتسجل على Apex دلوقتي');
     if (cur?.state === 'entered') fail(409, 'الأوردر اتسجل بالفعل — مستني تأكيد ظهوره على Apex');
     if (b.action === 'claim') {
       if (othersClaim) fail(409, (cur.employee_name || 'حد تاني') + (cur.state === 'entered' ? ' سجله بالفعل' : ' شغال عليه دلوقتي'));
@@ -791,7 +878,7 @@ function setup(app) {
       const r = await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at) VALUES (?,?,?,'claimed',?,?,?,?,?)
         ON CONFLICT(source, ref) DO UPDATE SET state = 'claimed', employee_id = excluded.employee_id, employee_name = excluded.employee_name, at = excluded.at
         WHERE transfer_jobs.state IN ('released', 'auto_failed', 'auto_preview') OR (transfer_jobs.employee_id IS excluded.employee_id AND transfer_jobs.state = 'claimed') OR (transfer_jobs.state = 'claimed' AND transfer_jobs.at < ?)`)
-        .run(source, ref, row.day, me.id, me.name, payment, note, ctx.now, ctx.now - CLAIM_MS);
+        .run(source, ref, dueDay, me.id, me.name, payment, note, ctx.now, ctx.now - CLAIM_MS);
       if (!r.changes) fail(409, 'حد تاني لسه ماسكه');
     } else if (b.action === 'entered') {
       if (othersClaim) fail(409, 'الأوردر مع ' + (cur.employee_name || 'حد تاني'));
@@ -799,20 +886,19 @@ function setup(app) {
       const branchNo = Number(b.branchNo), selectedLocation = Number(b.locationNo);
       if (!Number.isInteger(branchNo) || branchNo < 1 || branchNo > 99) fail(400, 'اختار فرع Apex');
       if (!Number.isInteger(selectedLocation) || selectedLocation < 1) fail(400, 'اختار منطقة العميل على Apex');
-      const siteOrder = source === 'site' ? await db.prepare('SELECT fulfillment FROM site_orders WHERE id = ?').get(Number(ref)) : null;
+      const siteOrder = source === 'site' ? await db.prepare('SELECT fulfillment, branch FROM site_orders WHERE id = ?').get(Number(ref)) : null;
       const assignedBranch = apexBranchOf(siteOrder?.branch);
       if (assignedBranch && assignedBranch !== branchNo) fail(409, 'الأوردر على الموقع متحوّل لفرع تاني — غيّر الفرع قبل التأكيد');
       const pickup = siteOrder?.fulfillment === 'pickup';
       const locationNo = pickup ? PICKUP_AREAS[branchNo]?.no : selectedLocation;
       if (!locationNo) fail(400, 'اختار منطقة Apex الخاصة بالفرع');
-      const daySnap = parseJson((await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(row.day))?.data, {});
+      const daySnap = parseJson((await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(dueDay))?.data, {});
       const areas = (Array.isArray(daySnap.locations) ? daySnap.locations : []).filter(l => Number(l?.no) === locationNo);
       const owners = [...new Set(areas.map(l => l.branch).filter(x => x != null).map(Number))];
       if (owners.length && !owners.includes(branchNo)) fail(400, 'المنطقة دي تبع فرع تاني على Apex — غيّر الفرع');
       const area = areas.find(l => Number(l.branch) === branchNo) || areas.find(l => l.branch == null) || areas[0];
       const areaService = pickup ? 0 : Number.isFinite(Number(area?.service)) && area?.service !== null ? Number(area.service) : null;
       if (!pickup && (!area || areaService == null)) fail(400, 'المنطقة مش موجودة أو سعر توصيلها مش ظاهر على Apex');
-      if (!pickup && areaService === 0 && b.confirmFreeArea !== true) fail(409, 'رسوم المنطقة على Apex صفر — راجع العنوان وأكد اختيار المنطقة قبل التسجيل');
       const profile = parseJson((await db.prepare('SELECT data FROM match_profiles WHERE source = ? AND ref = ?').get(source, ref))?.data, {});
       const phone = source === 'talabat' ? (profile.phoneDisplay || profile.phone || profile.mobileDisplay || profile.mobile) : (profile.customer?.phoneDisplay || profile.customer?.phone || profile.customer?.mobileDisplay || profile.customer?.mobile);
       const address = source === 'talabat' ? profile.address : profile.customer?.address;
@@ -820,13 +906,14 @@ function setup(app) {
         customer: { phone: deliveryPhone(phone), address: String(address || '').slice(0, 360) } });
       await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at, payload, result) VALUES (?,?,?,'entered',?,?,?,?,?,?,NULL)
         ON CONFLICT(source, ref) DO UPDATE SET state = 'entered', employee_id = excluded.employee_id, employee_name = excluded.employee_name, payment = excluded.payment, note = excluded.note, at = excluded.at, payload = excluded.payload, result = NULL`)
-        .run(source, ref, row.day, me.id, me.name, payment, note, ctx.now, payload);
+        .run(source, ref, dueDay, me.id, me.name, payment, note, ctx.now, payload);
+      // The employee's «سجلته على Apex» action is a confirmed area choice, so it must win over inferred mappings.
       if (!pickup) await learnTransferArea(source, ref, locationNo, true);
     } else if (b.action === 'release') {
       if (othersClaim) fail(409, 'الأوردر مع ' + (cur.employee_name || 'حد تاني'));
       await db.prepare("UPDATE transfer_jobs SET state = 'released', at = ? WHERE source = ? AND ref = ?").run(ctx.now, source, ref);
     } else if (b.action === 'auto') {
-      await autoJob({ me, b, source, ref, row, cur, othersClaim, payment, note, now: ctx.now });
+      await autoJob({ me, b, source, ref, row, cur, othersClaim, payment, note, now: ctx.now, manual: true });
     } else fail(400, 'invalid_action');
     await app.audit('transfer_' + b.action, me.staff ? me.id : null, { actor: me.name, source, ref, payment, ...(b.action === 'auto' ? { branch: b.branchNo, location: b.locationNo, items: b.items, customerName: b.customer?.name, address: b.customer?.address, note: b.note } : {}) });
     return { ok: true };
@@ -841,11 +928,19 @@ function setup(app) {
     if (!given || !hashes.includes(sha256(given))) fail(401, 'مفتاح كاتب Apex غير صحيح');
   };
   app.apexWriterAuth = writer;
+  const isCashierDbConnectionFailure = r => !r?.ok && r?.db == null && !r?.orderNo && /cannot connect to rest(?:aurant|urant)/i.test(String(r?.error || ''));
   // The on-premises read-only Apex login is the only source of customer-card notes.
   // Staff see these on the transfer page BEFORE they choose to submit an order.
-  const profilePhone = (source, p) => deliveryPhone(source === 'talabat'
-    ? (p.phoneDisplay || p.phone || p.mobileDisplay || p.mobile)
-    : (p.customer?.phoneDisplay || p.customer?.phone || p.customer?.mobileDisplay || p.customer?.mobile));
+  // Use the same Egypt mobile format that the transfer page displays and hashes.
+  // Some source profiles store 1xxxxxxxxx while the displayed phone is 01xxxxxxxxx;
+  // reading Apex with the short form then hashing the displayed form left the card
+  // lookup unlinked, so the transfer page kept saying it was still waiting.
+  const profilePhone = (source, p) => {
+    const raw = source === 'talabat'
+      ? (p.phoneDisplay || p.phone || p.mobileDisplay || p.mobile)
+      : (p.customer?.phoneDisplay || p.customer?.phone || p.customer?.mobileDisplay || p.customer?.mobile);
+    return deliveryPhone(phoneOut(deliveryPhone(raw)));
+  };
   app.route('POST', '/api/apex-writer/customer-notes/pending', async ctx => {
     await writer(ctx);
     const day = businessDay(ctx.now), due = ctx.now - 5 * 60000, out = [];
@@ -856,21 +951,38 @@ function setup(app) {
       const terminal = source === 'talabat'
         ? "AND UPPER(COALESCE(o.status,'')) NOT IN ('CANCELLED','REJECTED','DELIVERED','COMPLETED','PICKED_UP','IN_DELIVERY')"
         : "AND LOWER(COALESCE(o.status,'')) NOT IN ('cancelled','failed','wallet-failed','refunded','completed')";
-      const rows = await db.prepare(`SELECT p.ref, p.data, n.checked_at, n.phone_hash FROM ${orderTable} o
+      const dayFilter = source === 'site'
+        ? "((o.scheduled_at IS NULL AND o.day = ?) OR (o.scheduled_at >= ? AND o.scheduled_at < ?))"
+        : 'o.day = ?';
+      const rows = await db.prepare(`SELECT p.ref, p.data, n.checked_at, n.phone_hash, o.day, ${source === 'site' ? 'o.scheduled_at' : 'NULL AS scheduled_at'} FROM ${orderTable} o
         JOIN match_profiles p ON p.source = ? AND ${join}
         LEFT JOIN apex_customer_notes n ON n.source = p.source AND n.ref = p.ref
-        WHERE o.day = ? ${terminal} ORDER BY o.id DESC LIMIT 35`).all(source, day);
+        WHERE ${dayFilter} ${terminal} ORDER BY o.id DESC LIMIT 35`).all(...(source === 'site' ? [source, day, dayWindow(day).start, dayWindow(day).end] : [source, day]));
       for (const row of rows) {
         const phone = profilePhone(source, parseJson(row.data, {}));
         if (!phone || sent.has(source + ':' + row.ref)) continue;
         if (row.phone_hash === sha256(phone) && Number(row.checked_at) >= due) continue;
-        out.push({ source, ref: row.ref, day, phone, last: row.phone_hash === sha256(phone) ? Number(row.checked_at) || 0 : 0 });
+        out.push({ source, ref: row.ref, day: source === 'site' && row.scheduled_at ? businessDay(Number(row.scheduled_at)) : day, phone, last: row.phone_hash === sha256(phone) ? Number(row.checked_at) || 0 : 0 });
       }
     }
     // 11-11: Talabat's 35 always filled the 25 places, so a website order's card was never read again. Orders already
     // on their way to Apex are skipped; never read first, then the longest ago, whichever platform.
-    out.sort((a, b) => a.last - b.last);
-    return { pending: out.slice(0, 25).map(({ last, ...x }) => x) };
+    // Merge the two platform queues by oldest card read. For equal timestamps (especially never-read cards where
+    // last=0), alternate platforms; a plain stable sort kept Talabat first and could starve website orders forever.
+    const queues = Object.fromEntries(['talabat', 'site'].map(source => [source, out.filter(x => x.source === source).sort((a, b) => a.last - b.last)]));
+    const pending = [];
+    let tie = 'talabat';
+    while (pending.length < 25 && (queues.talabat.length || queues.site.length)) {
+      const t = queues.talabat[0], s = queues.site[0];
+      let source;
+      if (!t) source = 'site';
+      else if (!s) source = 'talabat';
+      else if (t.last < s.last) source = 'talabat';
+      else if (s.last < t.last) source = 'site';
+      else { source = tie; tie = tie === 'talabat' ? 'site' : 'talabat'; }
+      pending.push(queues[source].shift());
+    }
+    return { pending: pending.map(({ last, ...x }) => x) };
   });
   app.route('POST', '/api/apex-writer/customer-notes/result', async ctx => {
     await writer(ctx);
@@ -882,14 +994,15 @@ function setup(app) {
       const profile = await db.prepare('SELECT data FROM match_profiles WHERE source = ? AND ref = ?').get(source, ref);
       if (!profile || profilePhone(source, parseJson(profile.data, {})) !== deliveryPhone(x.phone)) continue;
       const orderTable = source === 'talabat' ? 'talabat_orders' : 'site_orders', pk = source === 'talabat' ? 'id' : 'id';
-      const dayRow = await db.prepare(`SELECT day FROM ${orderTable} WHERE ${pk} = ?`).get(source === 'talabat' ? ref : Number(ref));
-      if (!dayRow || dayRow.day !== x.day) continue;
+      const dayRow = await db.prepare(`SELECT day${source === 'site' ? ', scheduled_at' : ''} FROM ${orderTable} WHERE ${pk} = ?`).get(source === 'talabat' ? ref : Number(ref));
+      const effectiveDay = source === 'site' && dayRow?.scheduled_at ? businessDay(Number(dayRow.scheduled_at)) : dayRow?.day;
+      if (!dayRow || effectiveDay !== x.day) continue;
       const status = x.status === 'found' && x.custNo ? 'found' : x.status === 'none' ? 'none' : 'error';
       const note = status === 'found' ? String(x.note || '').slice(0, 1000) : '';
       await db.prepare(`INSERT INTO apex_customer_notes(source,ref,day,phone_last4,phone_hash,cust_no,note,checked_at,status)
         VALUES (?,?,?,?,?,?,?,?,?)
         ON CONFLICT(source,ref) DO UPDATE SET day=excluded.day,phone_last4=excluded.phone_last4,phone_hash=excluded.phone_hash,cust_no=excluded.cust_no,note=excluded.note,checked_at=excluded.checked_at,status=excluded.status`)
-        .run(source, ref, dayRow.day, String(x.phone).slice(-4), sha256(deliveryPhone(x.phone)), status === 'found' ? String(x.custNo).slice(0, 30) : null, note, ctx.now, status);
+        .run(source, ref, effectiveDay, String(x.phone).slice(-4), sha256(deliveryPhone(x.phone)), status === 'found' ? String(x.custNo).slice(0, 30) : null, note, ctx.now, status);
       updated++;
     }
     return { updated };
@@ -922,11 +1035,43 @@ function setup(app) {
     const stuck = await db.prepare("SELECT source, ref, payload FROM transfer_jobs WHERE state = 'auto_sending' ORDER BY at LIMIT 1").get();
     if (stuck) return { mode, job: { ...parseJson(stuck.payload, {}), resume: true } };   // finish (or confirm) the one in flight first
     const j = await db.prepare("SELECT source, ref, payload FROM transfer_jobs WHERE state = 'auto_pending' ORDER BY at LIMIT 1").get();
-    if (!j) return { mode, job: null };
-    const job = parseJson(j.payload, {});
-    if (job.db !== mode) { await db.prepare("UPDATE transfer_jobs SET state = 'auto_failed', result = ? WHERE source = ? AND ref = ?").run(JSON.stringify({ ok: false, error: 'وضع التحويل اتغير؛ ابعته تاني' }), j.source, j.ref); return { mode, job: null }; }
-    const r = await db.prepare("UPDATE transfer_jobs SET state = 'auto_sending', at = ? WHERE source = ? AND ref = ? AND state = 'auto_pending'").run(ctx.now, j.source, j.ref);
-    return { mode, job: r.changes ? job : null };
+    if (j) {
+      if (!await sourceCanTransfer(db, j.source, j.ref)) {
+        await db.prepare("UPDATE transfer_jobs SET state='auto_cancelled', result=? WHERE source=? AND ref=? AND state='auto_pending'").run(JSON.stringify({ok:false,error:'الأوردر اتلغى قبل الإرسال'}),j.source,j.ref);
+        return {mode,job:null};
+      }
+      const job = parseJson(j.payload, {});
+      if (job.db !== mode) { await db.prepare("UPDATE transfer_jobs SET state = 'auto_failed', result = ? WHERE source = ? AND ref = ?").run(JSON.stringify({ ok: false, error: 'وضع التحويل اتغير؛ ابعته تاني' }), j.source, j.ref); return { mode, job: null }; }
+      const r = await handoffPending(db, j.source, j.ref, 'auto_pending', ctx.now);
+      return { mode, job: r.changes ? job : null };
+    }
+    // A known pre-connection failure is safe to retry: no order could have been written.
+    // The writer resumes through its marker check, so a lost response cannot duplicate an Apex order.
+    const retry = await db.prepare("SELECT source, ref, payload FROM transfer_jobs WHERE state = 'auto_retry_pending' AND at <= ? ORDER BY at LIMIT 1").get(ctx.now);
+    if (retry) {
+      if (!await sourceCanTransfer(db, retry.source, retry.ref)) {
+        await db.prepare("UPDATE transfer_jobs SET state='auto_cancelled', result=? WHERE source=? AND ref=? AND state='auto_retry_pending'").run(JSON.stringify({ok:false,error:'الأوردر اتلغى قبل إعادة المحاولة'}),retry.source,retry.ref);
+        return {mode,job:null};
+      }
+      const retryJob = parseJson(retry.payload, {});
+      if (retryJob.db !== mode) { await db.prepare("UPDATE transfer_jobs SET state = 'auto_failed', result = ? WHERE source = ? AND ref = ?").run(JSON.stringify({ ok: false, error: 'وضع التحويل اتغير؛ ابعته تاني' }), retry.source, retry.ref); return { mode, job: null }; }
+      const claimed = await handoffPending(db, retry.source, retry.ref, 'auto_retry_pending', ctx.now);
+      if (claimed.changes) return { mode, job: { ...retryJob, resume: true } };
+    }
+    // Recover connection failures already shown to the team before this retry was deployed.
+    // Reconcile against the latest Apex snapshot first; never resend an order that is already there.
+    const failed = await db.prepare("SELECT source, ref, day, payload, result, at FROM transfer_jobs WHERE day = ? AND state = 'auto_failed' ORDER BY at LIMIT 20").all(businessDay(ctx.now));
+    for (const f of failed) {
+      const oldResult = parseJson(f.result, {});
+      if (!isCashierDbConnectionFailure(oldResult) || Number(oldResult.retryCount) > 0) continue;
+      try { await assertNotAlreadyOnApex(f.source, f.ref, f.day, ctx.now); } catch { continue; }
+      const retryAt = ctx.now + 15000;
+      const savedResult = { ...oldResult, retryCount: 1, retryAt };
+      const queued = await db.prepare("UPDATE transfer_jobs SET state = 'auto_retry_pending', result = ?, at = ? WHERE source = ? AND ref = ? AND state = 'auto_failed' AND at = ?")
+        .run(JSON.stringify(savedResult), retryAt, f.source, f.ref, f.at);
+      if (queued.changes) return { mode, job: null };
+    }
+    return { mode, job: null };
   });
   // Admin: the orders the writer saved with a price difference, and the ones it could not save, for a period.
   // Apex's delivery charge taken off when Talabat delivered for free is how staff enter them too: shown, not counted.
@@ -1000,10 +1145,26 @@ function setup(app) {
       gap: Number(b.gap) || 0, short: Number(b.short) || 0, before: Number(b.before) || null, service: Number.isFinite(Number(b.service)) ? Number(b.service) : null, target: Number(b.target) || null,
       cardDiscount: Number(b.cardDiscount) || 0, cardNoteCleared: b.cardNoteCleared === true };
     // A shadow preview writes nothing: the employee still enters the order by hand; the preview is kept for comparison.
-    const state = result.preview ? 'auto_preview' : result.ok ? 'auto_done' : 'auto_failed';
+    const previous = await db.prepare("SELECT result FROM transfer_jobs WHERE source = ? AND ref = ? AND state = 'auto_sending'").get(source, ref);
+    const retryCount = Number(parseJson(previous?.result, {})?.retryCount) || 0;
+    const canRetryConnection = isCashierDbConnectionFailure(result);
+    const shouldRetry = canRetryConnection && retryCount < 2;
+    const retryAt = shouldRetry ? ctx.now + (retryCount === 0 ? 15000 : 45000) : null;
+    if (canRetryConnection) { result.retryCount = Math.min(2, retryCount + 1); if (retryAt) result.retryAt = retryAt; }
+    const state = result.preview ? 'auto_preview' : result.ok ? 'auto_done' : shouldRetry ? 'auto_retry_pending' : 'auto_failed';
     const r = await db.prepare("UPDATE transfer_jobs SET state = ?, result = ?, at = ? WHERE source = ? AND ref = ? AND state = 'auto_sending'")
-      .run(state, JSON.stringify(result), ctx.now, source, ref);
+      .run(state, JSON.stringify(result), retryAt || ctx.now, source, ref);
     if (!r.changes) fail(409, 'الأوردر مش في حالة إرسال');
+    if (state === 'auto_done') {
+      // The durable result is already saved. Optional learning must never turn
+      // an accepted Apex write into an HTTP failure reported by the cashier.
+      const learnWork = (async () => {
+        const job = await db.prepare('SELECT payload FROM transfer_jobs WHERE source = ? AND ref = ?').get(source, ref);
+        await learnSuccessfulTransfer(source, ref, parseJson(job?.payload, {}), ctx.now);
+      })().catch(error => console.error('Transfer learning failed', error?.message));
+      if (db.kind === 'd1') ctx.waitUntil(learnWork);
+      else await learnWork;
+    }
     if (state === 'auto_done' && result.db === 'live' && result.cardNoteCleared) {
       // The APEX transaction already cleared the exact one-off note; remove it from
       // the current transfer card, retaining the frozen job payload for order audit.
@@ -1014,7 +1175,7 @@ function setup(app) {
     }
     await app.audit('apex_writer_result', null, { source, ref, ...result });
     // Karim 01-11 (#53 stayed «ماتسجلش» for 3 hours): a failed automatic transfer is told to the call center at once.
-    if (state === 'auto_failed' && result.db === 'live') {
+    if (state === 'auto_failed' && (result.db === 'live' || canRetryConnection)) {
       const job = await db.prepare('SELECT payload FROM transfer_jobs WHERE source = ? AND ref = ?').get(source, ref);
       await transferAlert('transfer:failed:' + source + ':' + ref, parseJson(job?.payload, {}), source, ref, 'ماتسجلش على Apex — ' + plainError(result.error), ctx.now);
     }

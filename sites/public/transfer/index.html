@@ -113,6 +113,7 @@ main{max-width:1100px;margin:0 auto;padding:16px}
     <h1>تحويل أوردرات طلبات والموقع</h1>
     <span id="auto" class="pill off" title="الصفحة دي مش بتكتب على Apex">جاري تحميل حالة التحويل…</span>
     <span id="me" class="pill"></span>
+    <button class="ghost" id="refreshQueue" title="يسحب أحدث بيانات الموقع ويعيد بناء قائمة التحويل من السيرفر">🔄 تحديث السيرفر</button>
     <button class="ghost" id="mineBtn">📊 أرقامي</button>
     <button class="ghost" id="out">خروج</button>
   </header>
@@ -139,7 +140,7 @@ main{max-width:1100px;margin:0 auto;padding:16px}
 </div>
 <div id="toast"></div>
 <script type="module">
-import { deliveryLabel, deliveryAddress, splitDeliveryAddress, deliveryMark, deliveryComment } from "./delivery-fields.js";
+import { deliveryLabel, deliveryAddress, splitDeliveryAddress, deliveryMark, deliveryComment, deliveryNotes } from "./delivery-fields.js";
 'use strict';
 const API = '';
 let token = null, data = null, filter = 'todo', source = '', choice = {}, picks = {}, branchPick = '';
@@ -152,7 +153,8 @@ const time = s => s ? new Date(s).toLocaleTimeString('ar-EG-u-nu-latn', { hour: 
 function toast(t) { const el = $('toast'); el.textContent = t; el.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(() => el.style.display = 'none', 4000); }
 async function api(method, path, body) {
   // A request that never answers (weak mobile data) ends after 25 s with a message instead of waiting forever.
-  const ctl = typeof AbortController === 'function' ? new AbortController() : null, stop = ctl && setTimeout(() => ctl.abort(), 25000);
+  const timeout = path === '/api/transfer/refresh' ? 90000 : 25000;
+  const ctl = typeof AbortController === 'function' ? new AbortController() : null, stop = ctl && setTimeout(() => ctl.abort(), timeout);
   let r;
   try { r = await fetch(API + path, { method, signal: ctl?.signal, headers: { 'content-type': 'application/json', ...(token ? { 'x-transfer-session': token } : {}) }, body: body ? JSON.stringify(body) : undefined }); }
   catch (e) { throw new Error(e?.name === 'AbortError' ? 'السيرفر اتأخر في الرد — جاري إعادة المحاولة' : 'تعذّر الوصول للموقع — حاول مرة تانية'); }
@@ -186,7 +188,7 @@ document.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { filter = 
 $('branchBar').addEventListener('click', e => { const b = e.target.closest('[data-b]'); if (!b) return; branchPick = b.dataset.b; try { localStorage.setItem('marsadTransferBranch', branchPick); } catch {} render(true); });
 document.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { source = b.dataset.s; document.querySelectorAll('[data-s]').forEach(x => x.className = x === b ? 'on' : 'ghost'); render(true); });
 
-const fullLabel = (o, pay) => deliveryLabel(o.customer?.name, o.source, pay, o.code);
+const fullLabel = (o, pay) => deliveryLabel(o.customer?.name, o.source, pay, o.code, deliveryNotes(o.note,o.scheduledAt).appointment);
 const key = o => o.source + ':' + o.ref;
 // What went wrong, in the words staff use (the writer reports Apex's technical message).
 function plain(e) {
@@ -205,6 +207,7 @@ function stateOf(o) {
   const r = o.job?.result;
   if (o.job?.state === 'auto_pending') return { cls: 'wait', text: 'بيتبعت لـ Apex…' };
   if (o.job?.state === 'auto_sending') return { cls: 'wait', text: 'بيتكتب على Apex…' };
+  if (o.job?.state === 'auto_retry_pending') return { cls: 'wait', text: 'اتصال الكاشير بالمطعم فشل — هنجرب تاني تلقائيًا' };
   if (o.job?.state === 'auto_done') return { cls: 'in', text: 'اتسجل على Apex ✓' + (r?.db === 'test' ? ' (تجربة)' : '') + ' رقم ' + (r?.shiftSerial ?? r?.orderNo ?? '') + (r?.error ? ' — ' + plain(r.error) : '') };
   if (o.job?.state === 'auto_failed') return { cls: 'other', text: 'ماتسجلش: ' + plain(r?.error) + ' — صلّحها وابعته تاني، أو سجله بإيدك' };
   if (o.job?.state === 'auto_preview') return { cls: r?.ok ? 'wait' : 'other', text: 'تجربة بس، ماتسجلش (كان هيطلع ' + money(r?.total) + ')' + (r?.error ? ' — ' + plain(r.error) : '') + ' — سجله بإيدك' };
@@ -282,6 +285,14 @@ const payOf = o => choice[key(o)] || o.job?.payment || (o.payment === 'cash' || 
 const discountSum = (o, who) => (o.discounts || []).filter(d => d.who === who).reduce((a, d) => a + (Number(d.amount) || 0), 0);
 // Floor and flat as Talabat writes them in the address («— الدور: 4 — الشقة: 403»); the address without them.
 const addressParts = deliveryAddress;
+function specialMarkFor(o, p, platformAmount) {
+  const cu = o.customer || {}, addressRaw = p?.arabic?.address || cu.address;
+  const ad = addressParts(addressRaw, [
+    (data.locations || []).find(l => String(l.no) === String(p?.loc))?.name, cu.talabatArea, cu.siteArea, cu.area
+  ]);
+  const addressLine = splitDeliveryAddress(ad.street);
+  return deliveryMark(platformAmount > 0 ? 'خصم طلبات ' + money(platformAmount) : '', addressLine.extra);
+}
 const copyBtn = text => text ? '<button class="cp" data-copytext="' + esc(text) + '" aria-label="نسخ">نسخ</button>' : '';
 const field = (label, value, copy, extra) => '<div class="f"><span class="fl">' + label + '</span><span class="fv">' + (value || '<span class="warn">مش ظاهر</span>') + (extra || '') + '</span>' + (copy ? copyBtn(copy) : '<span></span>') + '</div>';
 
@@ -394,7 +405,7 @@ function card(o) {
   // On Apex or out with the rider: one line.
   if (o.done) return '<div class="card done" data-k="' + esc(key(o)) + '"><div class="head"><span class="src ' + o.source + '">' + (o.source === 'talabat' ? 'طلبات' : 'الموقع') + '</span><span class="code">' + (o.code ? '#' + esc(o.code) : esc(o.ref)) + '</span><span class="when">' + time(o.at) + ' ' + esc(o.branch || '') + '</span><span class="state ' + st.cls + '">' + esc(st.text) + '</span></div></div>';
   const pay = payOf(o), fl = flatLines(o), k = key(o);
-  const mode = data.autoTransfer, auto = !!mode && mode !== 'off' && !o.apex && !/^auto_(?:pending|sending|done|preview)$/.test(o.job?.state || '');
+  const mode = data.autoTransfer, auto = !!mode && mode !== 'off' && !o.apex && !/^auto_(?:pending|sending|retry_pending|done|preview)$/.test(o.job?.state || '');
   const p = picks[k] || (picks[k] = { branch: o.apexBranch || '', items: fl.map(firstPick) });
   const signature = JSON.stringify(fl.map(i => [i.choiceKey, i.qty]));
   if (p.signature && p.signature !== signature) { p.items = fl.map(firstPick); p.edit = {}; }
@@ -404,18 +415,16 @@ function card(o) {
   const c = ticketCalc(o, fl, p);
   const cu = o.customer || {}, addressRaw = p.arabic?.address || cu.address, ad = addressParts(addressRaw, [
     (data.locations || []).find(l => String(l.no) === String(p.loc))?.name, cu.talabatArea, cu.siteArea, cu.area
-  ]), addressLine = splitDeliveryAddress(ad.street), specialMark = deliveryMark(c.plat > 0 ? 'خصم طلبات ' + money(c.plat) : '', addressLine.extra);
+  ]), addressLine = splitDeliveryAddress(ad.street), specialMark = specialMarkFor(o, p, c.plat);
   // Branch and area: the area decides the branch (Apex's own rule); the list shows the chosen branch's areas.
   let branchSel = '', areaSel = '', areaNote = '';
   if (auto || mineOrFree) {
     const all = areaList();
     const zeroFee = l => l.service != null && Number.isFinite(Number(l.service)) && Number(l.service) === 0;
-    const deliveryArea = l => o.fulfillment === 'pickup' || !zeroFee(l);
+    const deliveryArea = () => true;
     // Karim 10-11: the Apex area chosen before for the same Talabat area comes first.
     if (!p.loc && !p.locTried && o.areaGuess && all.some(l => String(l.no) === String(o.areaGuess.no) && deliveryArea(l))) {
       p.locTried = true; pickArea(p, String(o.areaGuess.no)); p.locGuess = o.areaGuess.how === 'pickup' ? 'pickup' : 'learned';
-    } else if (!p.loc && !p.locTried && o.fulfillment !== 'pickup' && o.areaGuess && all.some(l => String(l.no) === String(o.areaGuess.no) && zeroFee(l))) {
-      p.locTried = true; p.zeroFeeGuess = true;
     }
     if (!p.loc && !p.locTried && (cu.address || cu.area || cu.talabatArea)) {
       p.locTried = true;
@@ -429,7 +438,7 @@ function card(o) {
     const areas = all.filter(l => !p.branch || !l.branches.length || l.branches.some(b => String(b) === String(p.branch)));
     areaSel = '<select data-pick="loc" aria-label="المنطقة على Apex"><option value="">اختار المنطقة…</option>' + areas.map(l => '<option value="' + l.no + '"' + (String(p.loc) === String(l.no) ? ' selected' : '') + '>' + esc(l.name) + (zeroFee(l) && o.fulfillment !== 'pickup' ? ' — رسوم التوصيل 0 ج' : '') + '</option>').join('') + '</select>';
     const selectedArea = all.find(l => String(l.no) === String(p.loc));
-    areaNote = o.fulfillment === 'pickup' ? '<div class="warn">استلام من الفرع — بيتسجل على «استلام فرع» بتاع الفرع اللي تختاره، من غير عنوان ولا دور ولا شقة</div>' : selectedArea && zeroFee(selectedArea) ? '<div class="warn">رسوم المنطقة على Apex صفر. راجع إنها منطقة عنوان العميل وليست توصيلًا مجانيًا قبل التسجيل.</div>' : p.zeroFeeGuess ? '<div class="warn">اتوقف الاختيار التلقائي لأن المنطقة المتعلمة رسومها صفر. اختار منطقة العميل يدويًا.</div>' : p.moved ? '<div class="warn">الفرع اتغير لـ ' + esc(bname(p.branch)) + ' عشان المنطقة تبعه</div>' : p.locGuess === 'learned' ? '<div class="muted">اتختارت من الأوردرات اللي فاتت لنفس منطقة طلبات' + (cu.talabatArea ? ' («' + esc(cu.talabatArea) + '»)' : '') + ' — اتأكد منها</div>' : p.locGuess ? '<div class="muted">اتختارت من العنوان — اتأكد منها</div>' : '';
+    areaNote = o.fulfillment === 'pickup' ? '<div class="warn">استلام من الفرع — بيتسجل على «استلام فرع» بتاع الفرع اللي تختاره، من غير عنوان ولا دور ولا شقة</div>' : selectedArea && zeroFee(selectedArea) ? '<div class="muted">المنطقة المختارة هتتسجل كما هي، حتى لو رسوم التوصيل على Apex صفر.</div>' : p.moved ? '<div class="warn">الفرع اتغير لـ ' + esc(bname(p.branch)) + ' عشان المنطقة تبعه</div>' : p.locGuess === 'learned' ? '<div class="muted">اتختارت تلقائيًا من الأوردرات السابقة لنفس المنطقة' + (cu.talabatArea ? ' («' + esc(cu.talabatArea) + '»)' : '') + ' — تقدر تغيّرها لو لزم</div>' : p.locGuess ? '<div class="muted">اتختارت من العنوان — تقدر تغيّرها لو لزم</div>' : '';
   }
   const label = fullLabel(o, pay);
   const actLabel = mode === 'shadow' ? 'جرّب التسجيل (مش هيتسجل)' : mode === 'test' ? 'سجّل على نسخة التجربة' : 'سجّل على Apex';
@@ -521,7 +530,19 @@ function card(o) {
     '</div>' +
   '</div>';
 }
-let apexNames = new Map(), apexPrices = new Map(), lastDraw = '';
+let apexNames = new Map(), apexPrices = new Map(), lastDraw = '', lastQueueKey = '';
+function queueKey(d) {
+  // Queue data is polled while this page is open. Avoid rebuilding every order card when the server
+  // returned the same orders; still redraw when an order, card read, job, mode, or live screen changes.
+  return [d.staticKey, d.me?.name, d.autoTransfer, d.stale, d.liveScreen, Math.floor((Date.parse(d.serverNow) || Date.now()) / 60000), JSON.stringify(d.orders || [])].join('|');
+}
+function renderQueueIfChanged() {
+  if (!data) return;
+  const next = queueKey(data);
+  if (next === lastQueueKey) return;
+  lastQueueKey = next;
+  render();
+}
 function render(force) {
   if (!data) return;
   // The Apex item names for the search box: one list for the whole page, built once.
@@ -557,10 +578,22 @@ function render(force) {
   const html = list.length ? list.map(card).join('') : '<div class="empty">مفيش أوردرات هنا دلوقتي</div>';
   const drawKey = (data.stale ? 'stale:' : 'fresh:') + html;
   if (drawKey === lastDraw) return;   // nothing changed: the page is not rebuilt
-  // Someone is choosing or typing in an order: the list waits until they leave the field (Karim 01-11: a new order
-  // used to rebuild the page under them and they lost the order they were on).
+  // Preserve only the card being edited. New orders must remain visible while staff type.
   const act = document.activeElement;
-  if (!force && act && $('list').contains(act) && /^(INPUT|SELECT|TEXTAREA)$/.test(act.tagName)) { render.pending = true; return; }
+  if (!force && act && $('list').contains(act) && /^(INPUT|SELECT|TEXTAREA)$/.test(act.tagName) && !data.stale) {
+    const active = act.closest('.card'), template = document.createElement('template');
+    template.innerHTML = html;
+    const incoming = [...template.content.children], wanted = new Set(incoming.map(el => el.dataset.k));
+    const existing = new Map([...$('list').children].map(el => [el.dataset.k, el]));
+    for (const el of incoming) {
+      const old = existing.get(el.dataset.k);
+      if (old === active && !el.classList.contains('done')) continue;
+      if (!old) $('list').appendChild(el);
+      else if (old.outerHTML !== el.outerHTML) old.replaceWith(el);
+    }
+    for (const old of existing.values()) if (!wanted.has(old.dataset.k)) old.remove();
+    render.pending = true; return;
+  }
   // The order at the top of the screen stays where it is when new orders come in above it.
   const cards = [...$('list').querySelectorAll('.card')], anchor = cards.find(c => c.getBoundingClientRect().bottom > 80);
   const was = anchor ? { k: anchor.dataset.k, top: anchor.getBoundingClientRect().top } : null;
@@ -583,13 +616,11 @@ $('list').addEventListener('click', async e => {
   if (b.dataset.pay) { choice[key(o)] = b.dataset.pay; render(true); return; }
   if (b.dataset.act === 'auto') {
     const p = picks[key(o)] || {}, pay = choice[key(o)] || o.job?.payment || (o.payment === 'cash' || o.payment === 'paid' ? o.payment : null);
-    if (specialMark == null) { toast('تكملة العنوان أكبر من مساحة العلامة المميزة — اختصر العنوان قبل التسجيل'); return; }
+    const cc = ticketCalc(o, flatLines(o), p);
+    if (specialMarkFor(o, p, cc.plat) == null) { toast('تكملة العنوان أكبر من مساحة العلامة المميزة — اختصر العنوان قبل التسجيل'); return; }
     if (!pay) { toast('حدد الأول: كاش ولا مدفوع'); return; }
     if (!p.branch) { toast('اختار الفرع'); return; }
     if (!p.loc) { toast('اختار منطقة العميل'); return; }
-    const chosenArea = areaList().find(l => String(l.no) === String(p.loc));
-    const confirmFreeArea = o.fulfillment !== 'pickup' && chosenArea?.service != null && Number.isFinite(Number(chosenArea.service)) && Number(chosenArea.service) === 0;
-    if (confirmFreeArea && !confirm('رسوم المنطقة المختارة على Apex صفر. اتأكد إنها منطقة العميل فعلًا وليست توصيلًا مجانيًا. تكمل؟')) return;
     if (p.saving) { toast('استنى حفظ اختيار الصنف'); return; }
     const missingAt = flatLines(o).findIndex((i, n) => !/^\d{1,10}$/.test(String(p.items?.[n] || '')));
     if (missingAt >= 0) { toast('اختار الصنف على Apex لـ: ' + flatLines(o)[missingAt].name); return; }
@@ -614,12 +645,23 @@ $('list').addEventListener('click', async e => {
     }
     if (o.source === 'talabat' && o.items.some(i => !i.modifiersComplete)) { toast('الإضافات مش ظاهرة كاملة — سجله بإيدك'); return; }
     if (o.items.some(i => (i.addons || []).some(a => a.qty == null))) { toast('عدد إضافة مش واضح — سجله بإيدك'); return; }
-    const cc = ticketCalc(o, flatLines(o), p);
     const rest = cc.rest, platSum = cc.plat;
+    let paymentOverride = null;
+    if (o.source === 'site') {
+      const method = o.paymentMethod || ({ cash: 'cod', paid: 'online', unpaid: 'online-unpaid', mixed: 'mixed' })[o.payment];
+      if (method === 'mixed') { toast('الدفع المختلط محتاج تسجيل منفصل على Apex'); return; }
+      const expected = method === 'cod' ? 'cash' : method === 'online' ? 'paid' : null;
+      if ((expected && expected !== pay) || method === 'online-unpaid') {
+        const original = method === 'cod' ? 'كاش عند الاستلام' : method === 'online' ? 'مدفوع أونلاين' : 'أونلاين لم يكتمل';
+        const selected = pay === 'paid' ? 'مدفوع — تأكد إن المبلغ اتحصل بالفعل' : 'كاش — المندوب هيحصّل المبلغ من العميل';
+        if (!confirm('الموقع مسجل: ' + original + '\nهتسجل على Apex: ' + selected + '\nهل راجعت الدفع مع العميل وبتؤكد التغيير؟')) return;
+        paymentOverride = { from: method, to: pay, confirmed: true };
+      }
+    }
     // Price differences are recorded for follow-up after the Apex write; they do not stop an otherwise verified transfer.
     b.disabled = true;
     try {
-      await api('POST', '/api/transfer/job', { source: o.source, ref: o.ref, action: 'auto', payment: pay, branchNo: Number(p.branch), locationNo: Number(p.loc), confirmFreeArea, code: o.code,
+      await api('POST', '/api/transfer/job', { source: o.source, ref: o.ref, action: 'auto', payment: pay, paymentOverride, branchNo: Number(p.branch), locationNo: Number(p.loc), code: o.code,
         items: flatLines(o).map((i, n) => ({ itemNo: p.items[n], qty: i.qty, note: '' })),
         apexNote: cardNote?.status === 'found' ? { approved: !!p.apexNoteApproved || (!contacted && giftsChosen) || cardSelf(cardNote, pay), note: cardNote.text, custNo: cardNote.custNo, items: noteItems,
           resolution: contacted ? 'contacted' : giftsChosen ? 'gift' : null, gifts: !contacted && giftsChosen ? Object.entries(p.cardGifts).map(([itemNo, qty]) => ({ itemNo, qty })) : null } : null,
@@ -627,7 +669,7 @@ $('list').addEventListener('click', async e => {
         note: p.arabic?.note || deliveryComment(o),
         // Paid (Karim 01-11): the whole discount comes off on Apex, so the Ledge equals what the customer paid.
         // Cash: the restaurant's comes off. Either way the special mark shows Talabat's discount only.
-        label: fullLabel(o, pay), customer: { ...(o.customer || {}), ...(p.arabic?.name ? { name: p.arabic.name } : {}), ...(p.arabic?.address ? { address: p.arabic.address } : {}) },
+        label: fullLabel(o, pay), customer: { ...(o.customer || {}), ...(p.arabic?.name ? { name: p.arabic.name } : {}), ...(p.arabic?.address ? { address: p.arabic.address, addressEdited: true } : {}) },
         sign: platSum > 0 ? 'خصم طلبات ' + money(platSum) : '',   // Karim 01-11: the special mark shows Talabat's discount only
         discountSplit: (o.discounts || []).map((d, i) => (d.who && !d.unclear) || p.split?.[i] == null ? null : { text: d.text, amount: d.amount, restaurant: p.split[i] }),
         restaurantDiscount: pay === 'paid' ? rest + platSum : rest, expectedTotal: (o.subtotal ?? o.total ?? 0) - rest - (pay === 'paid' ? platSum : 0), targetTotal: cc.want });   // paid: what the customer paid (Talabat's discount off too)
@@ -637,18 +679,15 @@ $('list').addEventListener('click', async e => {
   }
   if (b.dataset.act) {
     const pay = choice[key(o)] || o.job?.payment || (o.payment === 'cash' || o.payment === 'paid' ? o.payment : null);
-    if (b.dataset.act === 'entered' && specialMark == null) { toast('تكملة العنوان أكبر من مساحة العلامة المميزة — اختصر العنوان قبل التسجيل'); return; }
     if (b.dataset.act === 'entered' && !pay) { toast('حدد الأول: كاش ولا مدفوع'); return; }
     const p = picks[key(o)] || {};
+    if (b.dataset.act === 'entered' && specialMarkFor(o, p, ticketCalc(o, flatLines(o), p).plat) == null) { toast('تكملة العنوان أكبر من مساحة العلامة المميزة — اختصر العنوان قبل التسجيل'); return; }
     if (b.dataset.act === 'entered' && !p.branch) { toast('حدد فرع Apex عشان التأكيد يتعلم الاختيار'); return; }
     if (b.dataset.act === 'entered' && !p.loc) { toast('حدد منطقة Apex عشان التأكيد يتعلم الاختيار'); return; }
     if (b.dataset.act === 'entered' && o.discounts?.some(d => !d.who) && !confirm('فيه خصم مش واضح مين ممول له. متأكد إنك سجلته صح؟')) return;
-    const selectedArea = areaList().find(l => String(l.no) === String(p.loc));
-    const confirmFreeArea = o.fulfillment !== 'pickup' && selectedArea?.service != null && Number.isFinite(Number(selectedArea.service)) && Number(selectedArea.service) === 0;
-    if (b.dataset.act === 'entered' && confirmFreeArea && !confirm('رسوم المنطقة المختارة على Apex صفر. اتأكد إنها منطقة العميل فعلًا وليست توصيلًا مجانيًا. تكمل؟')) return;
     b.disabled = true;
     try { await api('POST', '/api/transfer/job', { source: o.source, ref: o.ref, action: b.dataset.act, payment: pay,
-      ...(b.dataset.act === 'entered' ? { branchNo: Number(p.branch), locationNo: Number(p.loc), confirmFreeArea } : {}) }); await load(); }
+      ...(b.dataset.act === 'entered' ? { branchNo: Number(p.branch), locationNo: Number(p.loc) } : {}) }); await load(); }
     catch (err) { toast(err.message); b.disabled = false; }
   }
 });
@@ -712,8 +751,9 @@ $('list').addEventListener('change', async e => {
 $('list').addEventListener('input', e => { const field = e.target.dataset.arabic; if (!field) return; const p = picks[e.target.closest('.card').dataset.k]; if (p) (p.arabic ||= {})[field] = e.target.value; });
 $('list').addEventListener('focusout', () => setTimeout(() => { if (render.pending && !$('list').contains(document.activeElement)) render(); }, 0));
 $('list').addEventListener('toggle', e => { const d = e.target.closest?.('[data-pick-box]'); if (d) { const p = picks[d.closest('.card').dataset.k]; if (p && p.open !== d.open) { p.open = d.open; if (d.open) render(true); } } }, true);
-let loadingQueue = null;
+let loadingQueue = null, queueRetryAfter = 0, queueBackoff = 0;
 function load() {
+  if (Date.now() < queueRetryAfter) return Promise.resolve();
   if (loadingQueue) return loadingQueue;
   loadingQueue = loadQueue().finally(() => { loadingQueue = null; });
   return loadingQueue;
@@ -723,9 +763,26 @@ async function loadQueue() {
     // The Apex items and areas come once (and again only when they change): the page stays light.
     const prev = data, d = await api('GET', '/api/transfer/queue' + (prev?.staticKey ? '?have=' + encodeURIComponent(prev.staticKey) : ''));
     if (!d.apexItems && prev) { d.apexItems = prev.apexItems; d.locations = prev.locations; d.sections = prev.sections; }
-    data = d; $('queueStatus').textContent = d.stale ? '⚠️ أحدث تحديث فشل — دي آخر بيانات محفوظة، والتحويل متوقف مؤقتًا لحد ما التحديث يرجع.' : ''; $('me').textContent = data.me.name; const a = $('auto'); a.textContent = { off: 'التحويل الآلي متوقف — سجّل على Apex بإيدك', shadow: 'التحويل الآلي: معاينة بس — سجّل بإيدك', test: 'التحويل الآلي: تجربة على قاعدة الاختبار — سجّل بإيدك', live: 'التحويل الآلي شغال' }[data.autoTransfer] || ''; a.className = 'pill' + (data.autoTransfer === 'live' ? '' : ' off'); render(); }
-  catch (e) { if (token) { $('queueStatus').textContent = 'تعذّر تحديث الطلبات: ' + e.message + ' — جاري إعادة المحاولة'; if (!data) $('auto').textContent = 'حالة التحويل لم تصل بعد'; toast(e.message); } }
+    queueBackoff = 0; queueRetryAfter = 0;
+    data = d; $('queueStatus').textContent = d.stale ? '⚠️ أحدث تحديث فشل — دي آخر بيانات محفوظة، والتحويل متوقف مؤقتًا لحد ما التحديث يرجع.' : ''; $('me').textContent = data.me.name; const a = $('auto'); a.textContent = { off: 'التحويل الآلي متوقف — سجّل على Apex بإيدك', shadow: 'التحويل الآلي: معاينة بس — سجّل بإيدك', test: 'التحويل الآلي: تجربة على قاعدة الاختبار — سجّل بإيدك', live: 'التحويل الآلي شغال' }[data.autoTransfer] || ''; a.className = 'pill' + (data.autoTransfer === 'live' ? '' : ' off'); renderQueueIfChanged(); }
+  catch (e) { queueBackoff = Math.min(60000, queueBackoff ? queueBackoff * 2 : 10000); queueRetryAfter = Date.now() + queueBackoff; if (token) { $('queueStatus').textContent = 'تعذّر تحديث الطلبات: ' + e.message + ' — هنهدّي إعادة المحاولة شوية'; if (!data) $('auto').textContent = 'حالة التحويل لم تصل بعد'; toast(e.message); } }
 }
+$('refreshQueue').onclick = async () => {
+  const button = $('refreshQueue');
+  if (button.disabled) return;
+  button.disabled = true; button.textContent = 'جاري التحديث…';
+  try {
+    if (loadingQueue) await loadingQueue;
+    const previous = data, d = await api('POST', '/api/transfer/refresh');
+    if (!d.apexItems && previous) { d.apexItems = previous.apexItems; d.locations = previous.locations; d.sections = previous.sections; }
+    queueBackoff = 0; queueRetryAfter = 0; data = d; renderQueueIfChanged();
+    $('queueStatus').textContent = d.manualRefresh?.siteOk === false
+      ? 'اتحدثت بيانات السيرفر، لكن تعذّر تحديث بيانات الموقع الخارجي. طلبات اتراجعت من آخر بيانات وصلته من شاشة طلبات.'
+      : 'تم تحديث السيرفر والطلبات الساعة ' + time(d.manualRefresh?.at);
+    toast(d.manualRefresh?.siteOk === false ? 'السيرفر اتحدث؛ راجع اتصال الموقع الخارجي' : 'تم تحديث الطلبات من السيرفر');
+  } catch (e) { queueBackoff = Math.min(60000, queueBackoff ? queueBackoff * 2 : 10000); queueRetryAfter = Date.now() + queueBackoff; toast(e.message); $('queueStatus').textContent = 'فشل تحديث السيرفر: ' + e.message; }
+  finally { button.disabled = false; button.textContent = '🔄 تحديث السيرفر'; }
+};
 // Calls the branches asked for through the bot (Karim 11-11): the call center makes the call and records what the
 // customer said; the bot tells the branch.
 let calls = [], callsKey = '', callsSeen = new Set(), callsBusy = false;
@@ -796,7 +853,9 @@ $('mineBtn').onclick = () => { $('mine').hidden = !$('mine').hidden; if (!$('min
 $('mine').addEventListener('click', e => { const r = e.target.dataset.mine; if (!r) return; mineRange = r; for (const b of document.querySelectorAll('[data-mine]')) b.className = b.dataset.mine === r ? 'on' : 'ghost'; loadMine(); });
 function boot() { $('login').hidden = true; $('app').hidden = false; load(); loadCalls(); }
 if (token) boot(); else logout();
-setInterval(() => { if (token && !document.hidden) { load(); loadCalls(); } }, 5000);
+setInterval(() => { if (token && !document.hidden) load(); }, 5000);
+document.addEventListener('visibilitychange', () => { if (token && !document.hidden) load(); });
+setInterval(() => { if (token && !document.hidden) loadCalls(); }, 20000);
 </script>
 </body>
 </html>

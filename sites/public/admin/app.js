@@ -698,8 +698,38 @@
     SITE.renderTalabatKey(isAdmin()).catch(e => say('talKeyNote', e.message));
     SITE.renderWhatsApp(isAdmin()).catch(e => say('waNote', e.message));
     SITE.renderApexWriter(isAdmin()).catch(e => say('apexWriterNote', e.message));
+    $('apexCancelPanel').hidden = !isAdmin();
+    if (isAdmin()) renderApexCancel().catch(e => say('apexCancelNote', e.message));
     $('linkCollector').hidden = !canWrite();
   }
+  async function renderApexCancel() {
+    const d = await api('/api/apex-cancel');
+    $('apexCancelStatus').textContent = d.mode === 'on'
+      ? '✅ الإلغاء التلقائي شغال: الأوردر غير الخارج مع الطيار يتلغى بعد ٥ دقايق من التعليق.'
+      : '⏸️ الإلغاء التلقائي مقفول: بعد ٥ دقايق هيوصل تنبيه للفريق بالإلغاء اليدوي.';
+    const state = { pending: 'مستني الكاتب', sending: 'جاري الإلغاء', done: 'اتلغى تلقائي', gone: 'مش موجود على Apex', failed: 'فشل — راجع النتيجة', manual: 'اترسل تنبيه يدوي', withPilot: 'خرج مع الطيار — يدوي' };
+    const rows = (d.list || []).map(x => ({ ...x, orderLabel: x.sn ? x.sn + ' (' + x.orderNo + ')' : x.orderNo, stateLabel: state[x.state] || x.state }));
+    table('apexCancelTable', [
+      { title: 'الأوردر', get: x => x.orderLabel }, { title: 'الفرع', get: x => x.branch || '—' },
+      { title: 'التعليق', get: x => x.text, cls: () => 'wrap' }, { title: 'الحالة', get: x => x.stateLabel },
+      { title: 'النتيجة', get: x => x.result || '—', cls: () => 'wrap' }
+    ], rows, { empty: 'مفيش تعليقات إلغاء مسجلة النهارده' });
+  }
+  $('apexCancelOn').onclick = async () => {
+    $('apexCancelOn').disabled = true;
+    try {
+      await api('/api/apex-cancel', { method: 'POST', body: { mode: 'on', confirm: 'ON' } });
+      say('apexCancelNote', 'اتشغل الإلغاء التلقائي بعد ٥ دقايق. الأوردرات اللي عليها تنبيه يدوي ولسه ماخرجتش هتدخل مسار الإلغاء مع التحديث القادم.');
+      await renderApexCancel();
+    } catch (e) { say('apexCancelNote', e.message); }
+    finally { $('apexCancelOn').disabled = false; }
+  };
+  $('apexCancelOff').onclick = async () => {
+    $('apexCancelOff').disabled = true;
+    try { await api('/api/apex-cancel', { method: 'POST', body: { mode: 'off' } }); say('apexCancelNote', 'اتوقف الإلغاء التلقائي.'); await renderApexCancel(); }
+    catch (e) { say('apexCancelNote', e.message); }
+    finally { $('apexCancelOff').disabled = false; }
+  };
   // Every automatic part: working, or stopped since when and what to do (the same check that sends the Telegram alert).
   async function renderWatch(box) {
     if (!isAdmin()) return $(box).replaceChildren(h('p', { className: 'muted', textContent: 'للمدير بس' }));
@@ -943,13 +973,13 @@
   }
   // One draw per second: fetch, then draw (timers keep counting from the last good data).
   setInterval(() => { tick(); if (state.view === 'now' && Date.now() - (state.drawnAt || 0) > 900) { renderNow(); state.drawnAt = Date.now(); } }, 1000);
-  setInterval(() => { if (token && !document.hidden) refreshRequests(); }, 10000);
+  setInterval(() => { if (token && !document.hidden) refreshRequests(); }, 30000);
   // الفروع الآن: timers every second, the summary every 5 seconds; elsewhere only the late badge, every 30 seconds.
   let boardBusy = false, boardAt = 0;
   setInterval(() => {
     if (!token || document.hidden) return;
     if (state.view === 'branchesNow') OR.tickBoard();
-    const every = state.view === 'branchesNow' ? 5000 : 60000;
+    const every = state.view === 'branchesNow' ? 10000 : 60000;
     if (boardBusy || Date.now() - boardAt < every) return;
     boardBusy = true; boardAt = Date.now();
     OR.refreshBoard().then(() => { if (state.view === 'branchesNow') { syncStatus(true); showError(null); } }).catch(() => { if (state.view === 'branchesNow') syncStatus(false); }).finally(() => { boardBusy = false; });

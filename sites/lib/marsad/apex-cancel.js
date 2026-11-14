@@ -32,7 +32,14 @@ function setup(app) {
     for (const x of list.slice(0, 50)) {
       const no = Number(x?.no), seen = Date.parse(x?.seenAt || '');
       if (!Number.isFinite(no) || no <= 0 || !Number.isFinite(seen) || now - seen < WAIT_MS) continue;
-      if (await db.prepare('SELECT 1 FROM apex_cancels WHERE order_no = ?').get(no)) continue;
+      const previous = await db.prepare('SELECT state FROM apex_cancels WHERE order_no = ?').get(no);
+      if (previous) {
+        // If auto-cancel is enabled after a manual reminder was already sent, pick up
+        // that still-open order on the next monitor push instead of leaving it stranded.
+        if (on === 'on' && previous.state === 'manual' && !x.out)
+          await db.prepare("UPDATE apex_cancels SET state = 'pending', at = ? WHERE order_no = ? AND state = 'manual'").run(now, no);
+        continue;
+      }
       const r = { order_no: no, sn: x.sn ?? null, branch: String(x.branch || '').slice(0, 60) || null, text: String(x.text || '').replace(/\s+/g, ' ').slice(0, 300) };
       const state = x.out ? 'withPilot' : on === 'on' ? 'pending' : 'manual';
       await db.prepare('INSERT OR IGNORE INTO apex_cancels (order_no, day, sn, branch, text, seen_at, state, at) VALUES (?,?,?,?,?,?,?,?)').run(no, businessDay(now), r.sn, r.branch, r.text, seen, state, now);
@@ -82,3 +89,4 @@ function setup(app) {
 }
 
 export { setup };
+

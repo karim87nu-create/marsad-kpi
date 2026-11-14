@@ -400,8 +400,6 @@ window.MarsadSite = function MarsadSite(ctx) {
     renderTalabatActions().catch(e => { $('talActNote').textContent = e.message; });
     renderStock().catch(e => { $('stockNote').textContent = e.message; });
     $('autoTransferPanel').hidden = false;
-    $('apexCancelPanel').hidden = false;
-    renderApexCancel().catch(e => { $('apexCancelNote').textContent = e.message; });
     renderAutoTransfer().catch(e => { $('autoTransferNote').textContent = e.message; });
     const s = await api('/api/apex-writer');
     const seen = s.lastSeen ? (Date.now() - s.lastSeen < 120000 ? 'الكاتب شغال (آخر سؤال ' + t12(new Date(s.lastSeen).toISOString()) + ')' : 'الكاتب واقف (آخر سؤال ' + t12(new Date(s.lastSeen).toISOString()) + ')') : (s.linked ? 'الكاتب لسه ماشتغلش' : 'مفيش مفتاح للكاتب');
@@ -414,23 +412,6 @@ window.MarsadSite = function MarsadSite(ctx) {
     if (mode === 'live' && !confirm('التشغيل هيكتب أوردرات حقيقية على Apex. اتأكدت من المعاينة والتجربة؟')) return;
     try { await api('/api/apex-writer', { method: 'POST', body: { action: 'mode', mode, confirm: mode === 'live' ? 'LIVE' : undefined } }); $('apexWriterNote').textContent = 'الوضع بقى: ' + APX[mode]; renderApexWriter(true); }
     catch (e) { $('apexWriterNote').textContent = e.message; }
-  });
-  // The automatic cancel on Apex (11-11): its switch and today's orders whose comment said cancelled.
-  const CX = { done: 'اتلغى تلقائي', pending: 'مستني الكاتب', sending: 'عند الكاتب', manual: 'اتبعت للفرع يلغيه', withPilot: 'خرج مع الطيار — اتبعت للفرع', failed: 'ماتلغاش — للفرع', gone: 'كان اتلغى قبل كده' };
-  async function renderApexCancel() {
-    const s = await api('/api/apex-cancel');
-    $('apexCancelStatus').replaceChildren(pill(s.mode === 'on' ? 'الإلغاء التلقائي شغال' : 'متوقف — تنبيه بس', s.mode === 'on' ? 'ok' : 'warn'));
-    table('apexCancelTable', [
-      { title: 'الأوردر', get: r => r.sn ? r.sn + ' (' + r.orderNo + ')' : String(r.orderNo) }, { title: 'الفرع', get: r => r.branch || '' },
-      { title: 'التعليق', get: r => r.text || '' }, { title: 'اتشاف', get: r => r.seenAt, show: r => t12(r.seenAt) },
-      { title: 'النتيجة', get: r => r.state, show: r => pill(CX[r.state] || r.state, r.state === 'done' || r.state === 'gone' ? 'ok' : 'warn') }, { title: 'ملاحظة', get: r => r.result || '' },
-    ], s.list, { empty: 'مفيش أوردرات مكتوب عليها ملغي النهارده' });
-  }
-  document.querySelectorAll('[data-cancel-mode]').forEach(b => b.onclick = async () => {
-    const mode = b.dataset.cancelMode;
-    if (mode === 'on' && !confirm('المرصد هيلغي على Apex أي أوردر مكتوب في تعليقه إنه ملغي بعد 5 دقايق. متأكد؟')) return;
-    try { await api('/api/apex-cancel', { method: 'POST', body: { mode, confirm: mode === 'on' ? 'ON' : undefined } }); renderApexCancel(); }
-    catch (e) { $('apexCancelNote').textContent = e.message; }
   });
   // The full automatic transfer (11-11): its mode and today's orders — sent by itself, would be (trial), or why not.
   const AUTO = { off: 'متوقف', trial: 'تجربة: بيسجل بس كان هيحوّل إيه', on: 'شغال: بيحوّل لوحده' };
@@ -460,4 +441,5 @@ window.MarsadSite = function MarsadSite(ctx) {
 
   return { renderBranches, renderTransfer, renderTalabat, renderBranchTalabatCancels, renderTalabatKey, exportKind, renderKey, renderWhatsApp, renderApexWriter, branchRows, transferRows, perBranch };
 };
+
 
