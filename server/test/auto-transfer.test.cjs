@@ -142,6 +142,12 @@ test('auto transfer: trial only records, on sends as «المرصد آلي», a 
     const q9 = (await as('GET', '/api/transfer/queue?day=2026-10-22')).body.orders.find(x => x.ref === ids[0]);
     assert.equal(q9.apex.no, 701631); assert.equal(q9.done, true);
     assert.equal(t.app.db.raw.prepare('SELECT COUNT(*) n FROM transfer_jobs WHERE ref = ?').get(ids[1]).n, 0);
+    // Karim 11-14 «لايف للتحويلات»: where each order is now.
+    const live = (await admin("GET", "/api/transfer/live")).body, lv = id => live.list.find(x => x.ref === id);
+    assert.equal(lv(ids[0]).state, 'apex'); assert.equal(lv(ids[0]).how, 'auto'); assert.equal(lv(ids[0]).by, 'آلي'); assert.equal(lv(ids[0]).apexNo, 701631);
+    assert.equal(lv(ids[2]).state, 'claimed'); assert.equal(lv(ids[3]).state, 'writing');
+    assert.equal(lv(ids[1]).state, 'waiting'); assert.match(lv(ids[1]).why, /مش واضحة/);
+    assert.equal(live.autoMode, 'on');
 
     // Still waiting after 2 minutes: once to the call center group, with the reason.
     t.advance(3 * 60000);

@@ -128,6 +128,7 @@
   const OR = window.MarsadOrders({ api, h, $, table, kpi, pill, C, exportRows, serverNow, cairoToday, state, hm: v => hm(v), showError, review: () => INS });
   const SITE = window.MarsadSite({ api, h, $, table, kpi, pill, serverNow, state, showError, exportRows, canWrite: () => canWrite(), extensionCall: (...a) => extensionCall(...a), review: () => INS });
   const setRange = (from, to) => { $('day').value = from; $('dayTo').value = to; $('applyRange').click(); };
+  const TL = window.MarsadTransferLive({ api, h, $, table, pill, kpi });
   const BOT = window.MarsadBot({ api, h, $, table, pill, state, canWrite: () => canWrite(), showError: x => showError(x) });
   const ROSTER = window.MarsadRoster({ api, h, $, canWrite: () => canWrite(), showError: x => showError(x), cairoToday: () => cairoToday() });
   const QA = window.MarsadQa({ api, h, $, table, pill, canWrite: () => canWrite(), showError: x => showError(x), cairoToday: () => cairoToday() });
@@ -955,7 +956,7 @@
   const VIEWS = { now: ['الآن', null],
     day: ['الكول سنتر: اليوم', () => Promise.all([renderDay(), renderHours()])], team: ['أداء الموظفين', renderTeam], profile: ['ملف الموظف', renderProfile],
     breaks: ['البريك والحضور ونهاية الشيفت', () => Promise.all([refreshRequests(), renderAttendance(), renderShifts()])], calls: ['المكالمات', renderCalls], missed: ['المكالمات الفائتة', renderMissed], roster: ['جدول مواعيد الموظفين', () => ROSTER.render()], forecast: ['التوقع والاحتياج', () => FC.render()],
-    branchesNow: ['الفروع الآن', null], transfer: ['تحويل الأوردرات: طلبات والموقع', () => Promise.all([renderPriceDiffs(), renderAutoReasons(), SITE.renderTalabat(), SITE.renderTransfer()])], entry: ['ضرب الأوردرات', () => OR.renderEntry()],
+    branchesNow: ['الفروع الآن', null], transferLive: ['التحويلات لايف', () => TL.refresh()], transfer: ['تحويل الأوردرات: طلبات والموقع', () => Promise.all([renderPriceDiffs(), renderAutoReasons(), SITE.renderTalabat(), SITE.renderTransfer()])], entry: ['ضرب الأوردرات', () => OR.renderEntry()],
     sales: ['المبيعات', () => INS.renderSales()], branches: ['تقرير الفروع', () => Promise.all([renderClosures(), OR.renderBranches(), INS.renderBranch(), SITE.renderBranches()])],
     cancels: ['الإلغاءات', () => Promise.all([OR.renderCancels(), SITE.renderBranchTalabatCancels(), INS.renderCancelOwners()])],
     kpi: ['مؤشرات الأداء: الموظفين والفروع', () => KPI.render()], followup: ['المتابعة والاستثناءات', renderFollowup], bot: ['بوت الفروع', () => BOT.render()], qa: ['الجودة: تقييم المكالمات', () => QA.render()],
@@ -987,7 +988,7 @@
     const dated = DAY_VIEWS.includes(view);
     $('dayPicker').hidden = !dated; $('period').textContent = dated ? periodText() : '';
     for (const c of document.querySelectorAll('[data-range]')) c.classList.toggle('on', rangeOf(c.dataset.range).join() === [state.day, state.to].join());
-    $('top').hidden = view === 'now' || view === 'branchesNow';
+    $('top').hidden = view === 'now' || view === 'branchesNow' || view === 'transferLive';
     try { history.replaceState(null, '', '#' + view); } catch {}
     showError(null);
     refreshRequests();
@@ -1027,6 +1028,15 @@
     if (boardBusy || Date.now() - boardAt < every) return;
     boardBusy = true; boardAt = Date.now();
     OR.refreshBoard().then(() => { if (state.view === 'branchesNow') { syncStatus(true); showError(null); } }).catch(() => { if (state.view === 'branchesNow') syncStatus(false); }).finally(() => { boardBusy = false; });
+  }, 1000);
+  // التحويلات لايف: the clocks every second, the list every 5 seconds.
+  let tlAt = 0;
+  setInterval(() => {
+    if (!token || document.hidden || state.view !== 'transferLive') return;
+    TL.tick();
+    if (Date.now() - tlAt < 5000) return;
+    tlAt = Date.now();
+    TL.refresh().then(() => { syncStatus(true); showError(null); }).catch(() => syncStatus(false));
   }, 1000);
   // The day picker's latest day follows the 9am change.
   setInterval(() => { const t = cairoToday(); if ($('day').max !== t) { $('day').max = t; $('dayTo').max = t; $('dayNext').disabled = state.to >= t; } }, 60000);

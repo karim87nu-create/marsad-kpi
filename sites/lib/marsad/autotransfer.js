@@ -263,6 +263,45 @@ function setup(app) {
   });
   // Karim 11-14 «اعمل التقرير اليومي»: why orders were left to staff, per reason, for a day or a period — the list of what
   // still stops the automatic transfer (unknown items and areas named, so each can be taught once).
+  // Karim 11-14 «عايز لايف في الادمن للتحويلات زي المكالمات»: every order of the day where it is now — waiting (and why),
+  // with an employee, being written, on Apex (by whom, how long it took), failed — and the parts it depends on.
+  let snapAt = 0, snapDay = '', entered = new Map();
+  async function apexEntries(day, now) {
+    if (snapDay === day && now - snapAt < 15000) return entered;
+    const row = await db.prepare('SELECT data, received_at FROM orders_days WHERE day = ?').get(day).catch(() => null);
+    const d = parseJson(row?.data, {}) || {};
+    entered = new Map((d.online || []).filter(a => a?.no).map(a => [String(a.no), { at: a.at || null, user: a.user || null }]));
+    entered.pushedAt = row?.received_at || null; snapAt = now; snapDay = day;
+    return entered;
+  }
+  app.route('GET', '/api/transfer/live', async ctx => {
+    await app.requireAdmin(ctx);
+    const now = ctx.now, day = businessDay(now);
+    const q = await app.transferQueue(day, { now, me: { id: null, name: 'admin', staff: false }, waitUntil: ctx.waitUntil });
+    const notes = new Map((await db.prepare('SELECT source, ref, decision, reasons, first_at FROM auto_transfer_log WHERE day = ?').all(day)).map(r => [r.source + ':' + r.ref, r]));
+    const jobs = new Map((await db.prepare('SELECT source, ref, state, employee_name, at, result FROM transfer_jobs WHERE day = ?').all(day)).map(j => [j.source + ':' + j.ref, j]));
+    const apex = await apexEntries(day, now);
+    const setting = async k => (await db.prepare('SELECT value FROM settings WHERE key = ?').get(k))?.value ?? null;
+    const list = [];
+    for (const o of q?.orders || []) {
+      const k = o.source + ':' + o.ref, j = jobs.get(k), n = notes.get(k), res = parseJson(j?.result, null) || {};
+      const x = { source: o.source, ref: String(o.ref), code: o.code || null, branch: o.branch || BRANCH_NAME[o.apexBranch] || null, at: o.at || null,
+        name: o.customer?.name ? String(o.customer.name).slice(0, 40) : null, total: o.total ?? o.target ?? null, payment: o.payment || null, scheduled: !!o.scheduled };
+      if (o.apex?.no) {
+        const e = apex.get(String(o.apex.no)) || {}, auto = j?.employee_name === 'المرصد آلي' && j.state === 'auto_done';
+        Object.assign(x, { state: 'apex', apexNo: o.apex.no, sn: o.apex.sn ?? null, by: auto ? 'آلي' : j?.state === 'auto_done' ? j.employee_name : (o.apex.user || e.user || 'بإيد على Apex'),
+          how: auto ? 'auto' : j?.state === 'auto_done' ? 'page' : 'hand', enteredAt: e.at || (j?.state === 'auto_done' ? iso(j.at) : null), out: !!o.out });
+      } else if (o.out) Object.assign(x, { state: 'out' });
+      else if (j?.state === 'auto_failed') Object.assign(x, { state: 'failed', by: j.employee_name, why: res.error || 'ماتسجلش' });
+      else if (j && ['auto_pending', 'auto_sending'].includes(j.state)) Object.assign(x, { state: 'writing', by: j.employee_name === 'المرصد آلي' ? 'آلي' : j.employee_name, since: iso(j.at) });
+      else if (j?.state === 'claimed' && now - j.at < 15 * 60000) Object.assign(x, { state: 'claimed', by: j.employee_name, since: iso(j.at), why: n?.decision === 'wait' ? n.reasons : null });
+      else Object.assign(x, { state: 'waiting', why: n ? (n.decision === 'wait' ? n.reasons : n.decision === 'would' ? 'كان هيتحوّل (تجربة)' : '') : 'لسه ما اتراجعش' });
+      list.push(x);
+    }
+    const writerSeen = Number(await setting('apex_writer_seen')) || null;
+    return { serverNow: iso(now), day, stale: q?.stale === true, autoMode: await mode(), writerMode: await setting('apex_bridge_mode') || 'shadow',
+      parts: { writerSeen: iso(writerSeen), apexPush: iso(apex.pushedAt), talabatScreen: q?.liveScreen === true }, list };
+  });
   app.route('GET', '/api/auto-transfer/report', async ctx => {
     await app.requireAdmin(ctx);
     const to = /^\d{4}-\d{2}-\d{2}$/.test(String(ctx.query.to || '')) ? ctx.query.to : businessDay(ctx.now);
