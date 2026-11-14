@@ -45,6 +45,7 @@ export function reasonKind(r) {
   let m = /^(صنف (?:مش معروف على Apex|ليه أكتر من اختيار على Apex)):\s*(.+?)(?:\s*\(\+\d+\))?$/.exec(s); if (m) return [m[1], m[2]];
   if ((m = /^منطقة «(.+)» لسه ما اتعلمتش على Apex$/.exec(s))) return ['منطقة لسه ما اتعلمتش على Apex', m[1]];
   if (/^هاشتاج طلبات لسه ماظهرش/.test(s)) return ['هاشتاج طلبات لسه ماظهرش', null];
+  if ((m = /^خصم مش واضح مين بيدفعه(?::\s*(.+))?$/.exec(s))) return ['خصم مش واضح مين بيدفعه', m[1] || null];
   return [s.length > 120 ? s.slice(0, 120) + '…' : s, null];
 }
 export function autoReport(rows) {
@@ -126,7 +127,11 @@ export function decide(o, x) {
     if (rows.length && service == null) why.push('المنطقة ملهاش سعر توصيل على Apex');
   } else service = 0;
   // Discounts: who pays each one (a paid order: all of it comes off on Apex anyway).
-  if (pay !== 'paid' && (o.discounts || []).some(d => !d.who || d.unclear)) why.push('خصم مش واضح مين بيدفعه');
+  if (pay !== 'paid' && (o.discounts || []).some(d => !d.who || d.unclear)) {
+    // Karim 11-14 «راجع السجلات»: the line as Talabat sent it is kept, so the report shows which words were not understood.
+    const d = (o.discounts || []).find(d => !d.who || d.unclear);
+    why.push('خصم مش واضح مين بيدفعه: ' + String(d.text || 'خصم').replace(/\s*\|.*$/, '').replace(/\s+/g, ' ').slice(0, 60));
+  }
   // The customer's card on Apex.
   const card = o.apexCustomerNote;
   const fresh = card && card.checkedAt && x.now - Date.parse(card.checkedAt) <= 10 * 60000;
