@@ -332,7 +332,7 @@ function setup(app) {
     const sections = items.length ? APEX_SECTIONS.map(x => ({ name: x.name, items: x.items.filter(no => APEX_NAMES[no]) })).filter(x => x.items.length) : [];
     const staticKey = 's' + sections.length + ':' + items.length + ':' + locations.length + ':' + locations.reduce((a, l) => a + l.no * (l.branch || 1) + (Number(l.service) || 0), 0).toFixed(2);
     const fresh = String(ctx.have || '') !== staticKey;
-    return { day, me: { name: me.name, staff: me.staff }, serverNow: iso(ctx.now), stale: base.stale === true, liveScreen: ctx.now - (liveNow._screen || 0) < 3 * 60000, autoTransfer: mode, branches: APEX_BRANCHES, staticKey,
+    return { day, me: { name: me.name, staff: me.staff }, serverNow: iso(ctx.now), stale: base.stale === true, liveScreen: ctx.now - (liveNow._screen || 0) < 3 * 60000, screensStalled: app.talabatScreensStalled ? await app.talabatScreensStalled(ctx.now).catch(() => []) : [], autoTransfer: mode, branches: APEX_BRANCHES, staticKey,
       ...(fresh ? { locations, apexItems: items, sections } : {}), orders: list };
   }
   app.transferQueue = queueFor;

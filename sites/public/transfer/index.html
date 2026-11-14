@@ -541,7 +541,7 @@ let apexNames = new Map(), apexPrices = new Map(), lastDraw = '', lastQueueKey =
 function queueKey(d) {
   // Queue data is polled while this page is open. Avoid rebuilding every order card when the server
   // returned the same orders; still redraw when an order, card read, job, mode, or live screen changes.
-  return [d.staticKey, d.me?.name, d.autoTransfer, d.stale, d.liveScreen, Math.floor((Date.parse(d.serverNow) || Date.now()) / 60000), JSON.stringify(d.orders || [])].join('|');
+  return [d.staticKey, d.me?.name, d.autoTransfer, d.stale, d.liveScreen, JSON.stringify(d.screensStalled || []), Math.floor((Date.parse(d.serverNow) || Date.now()) / 60000), JSON.stringify(d.orders || [])].join('|');
 }
 function renderQueueIfChanged() {
   if (!data) return;
@@ -586,6 +586,7 @@ function render(force) {
   const todo = data.orders.filter(waiting).length;
   $('count').textContent = 'لسه: ' + todo + ' · الكل: ' + data.orders.length;
   if (data.liveScreen === false) $('count').textContent += ' · ⚠️ مفيش شاشة لايف طلبات شغالة دلوقتي';
+  for (const x of data.screensStalled || []) $('count').textContent += ' · ⚠️ شاشة طلبات' + (x.branch ? ' بتاعة ' + x.branch : '') + ' واقفة من ' + x.minutes + ' دقيقة — أوردراتها الجديدة مش هتظهر هنا، تابعها على طلبات';
   const html = list.length ? list.map(card).join('') : '<div class="empty">مفيش أوردرات هنا دلوقتي</div>';
   const drawKey = (data.stale ? 'stale:' : 'fresh:') + html;
   if (drawKey === lastDraw) return;   // nothing changed: the page is not rebuilt

@@ -59,6 +59,8 @@ function setup(app) {
       if (w == null || w >= 5) add('part:writer', 'bad', 'كاتب Apex مش شغال' + (w != null ? ' من ' + w + ' دقيقة' : ''), 'system');
       if (a == null || a >= 5) add('part:apex', 'bad', 'المرصد مش بيقرا من Apex' + (a != null ? ' من ' + a + ' دقيقة' : ''), 'system');
       if (!t.parts.talabatScreen) add('part:talabat', 'warn', 'شاشة لايف طلبات مش مفتوحة — أوردرات طلبات مش بتوصل', 'transferLive');
+      for (const x of app.talabatScreensStalled ? await app.talabatScreensStalled(now).catch(() => []) : [])
+        add('part:talabatScreen:' + x.id, 'bad', 'شاشة لايف طلبات' + (x.branch ? ' بتاعة ' + x.branch : '') + ' وقفت من ' + x.minutes + ' دقيقة — أوردراتها الجديدة مش بتظهر في التحويل؛ شوف الجهاز ده (نايم؟ التاب اتقفل؟ طلبات خرّجه؟)', 'transferLive');
     }
     const rank = { bad: 0, warn: 1 };
     return out.sort((x, y) => rank[x.level] - rank[y.level]);

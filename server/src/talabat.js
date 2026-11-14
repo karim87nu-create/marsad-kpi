@@ -3,7 +3,7 @@ import { talabatReference } from './order-identifiers.js';
 // every branch) reads Order History and each order's details, and pushes them here. Per order we keep the times
 // (received, accepted and how fast, picked up, delivered, cancelled), the cancellation owner and reason, the items and
 // the subtotal. Customer matching fields are kept separately, for matching only. Each order is then tied to its Apex order (who entered it and when).
-import { businessDay, iso, validDate } from './time.js';
+import { businessDay, iso, validDate, isOperating } from './time.js';
 import { sha256, randomToken } from './security.js';
 import { compareItems, itemKey, SEED } from './items.js';
 import { resolveOrders, customerOf, parseJson } from './order-match.js';
@@ -358,6 +358,14 @@ function setup(app) {
         out.push({ key: 'talabat:cancel:' + o.id, kind: 'talabatCancel', target: 'branches', branch: m.matches.get(o.id)?.branch || o.store || null, text: '🛵 طلبات | ❌ أوردر اتلغى على طلبات\n' + talabatReference(o) + store + '\nاتلغى الساعة ' + clock(o.cancelled_at) + (o.cancel_owner ? '\nالإلغاء على: ' + o.cancel_owner : '') + (o.cancel_reason ? '\nالسبب: ' + o.cancel_reason : '') + (o.subtotal ? '\nقيمة الأوردر: ' + Math.round(o.subtotal) + ' ج' : '') +
           (m.matches.get(o.id) ? det.extra(m.matches.get(o.id).no) : '') });
     }
+    // Karim 11-14: a branch's live screen stopped (its orders do not reach the transfer page): the online group hears it at
+    // once, and again when it is back.
+    const stalled = app.talabatScreensStalled ? await app.talabatScreensStalled(now).catch(() => []) : [];
+    for (const x of stalled) out.push({ key: 'talabat:screen:' + x.id + ':' + x.since, kind: 'talabatScreen', target: 'online',
+      text: '🛵 طلبات | ⚠️ شاشة لايف طلبات' + (x.branch ? ' بتاعة ' + x.branch : '') + ' واقفة من ' + clock(x.since) + ' (' + x.minutes + ' دقيقة)\nأوردرات ' + (x.branch || 'الفرع ده') + ' الجديدة مش هتظهر في صفحة التحويل — تابعوها على طلبات وسجلوها بإيد\nشوفوا الجهاز ده: نايم؟ فايرفوكس اتقفل؟ طلبات خرّج الحساب؟' });
+    const still = new Set(stalled.map(x => 'talabat:screen:' + x.id + ':' + x.since));
+    for (const r of await db.prepare("SELECT l.key FROM telegram_log l WHERE l.key LIKE 'talabat:screen:%' AND l.created_at >= ? AND NOT EXISTS (SELECT 1 FROM telegram_log x WHERE x.key = 'resolved:' || l.key)").all(now - 12 * 3600000))
+      if (!still.has(r.key) && now - Number(parseJson(await setting('talabat_screens'), {})[r.key.split(':')[2]]?.at || 0) < 4 * 60000) out.push({ key: 'resolved:' + r.key, kind: 'talabatScreen', target: 'online', replyTo: r.key, text: '🛵 طلبات | ✅ شاشة اللايف رجعت تبعت الساعة ' + clock(now) });
     // «Accepted and not on Apex»: answered when it is entered on Apex, or cancelled on Talabat first.
     const open = new Set((await db.prepare("SELECT l.key FROM telegram_log l WHERE l.key LIKE 'talabat:notEntered:%' AND l.created_at >= ? AND NOT EXISTS (SELECT 1 FROM telegram_log x WHERE x.key = 'resolved:' || l.key)").all(now - 12 * 3600000)).map(x => x.key));
     for (const o of m.rows) {
@@ -430,6 +438,21 @@ function setup(app) {
   }
 
   // ---- the admin page ----
+  // Karim 11-14 «كان فيه ٢٨ طلب مكنوش ظاهرين في التحويلات وظهرو متأخر»: one branch's live screen (#3054…#3063, التجمع,
+  // 16:53–17:08) stopped sending while the others went on, and the check only asked «is any screen alive». Each screen that
+  // was sending in the last 90 minutes and is silent 4 minutes or more is named, with the branch of the last order it read.
+  app.talabatScreensStalled = async now => {
+    const screens = Object.entries(parseJson(await setting('talabat_screens'), {}));
+    const out = [];
+    for (const [id, x] of screens) {
+      const silent = now - Number(x.at || 0);
+      if (!(silent >= 4 * 60000 && silent < 90 * 60000) || !isOperating(now) || (x.kind === 'device' && !(Number(x.live) > 0))) continue;
+      const code = String(x.readCode || '').replace(/\D/g, '');
+      const row = code ? await db.prepare('SELECT store FROM talabat_orders WHERE code = ? AND day >= ? ORDER BY first_seen DESC LIMIT 1').get(code, businessDay(now - 86400000)).catch(() => null) : null;
+      out.push({ id, branch: row?.store ? storeName(row.store) : null, minutes: Math.floor(silent / 60000), since: Number(x.at) });
+    }
+    return out;
+  };
   app.talabat = { matchDay, alerts, invalidate: day => { matchRevision++; matchCache.delete(day); } };
   app.route('GET', '/api/talabat/day', async ctx => {
     await app.requireAdmin(ctx);
