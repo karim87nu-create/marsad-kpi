@@ -197,8 +197,11 @@ function setup(app) {
       const { deliveryPhone } = await import('./delivery-fields.js');
       const x = { now, locations: q.locations || [], groups: areaGroups(q.locations || [], (await app.apexAreaRules?.()) || {}), customerArea: o => areas.get(deliveryPhone(o.customer?.phone) + '|' + normAddress(o.customer?.address)) || null };
       const seen = new Map((await db.prepare('SELECT source, ref, decision, reasons, alerted, first_at FROM auto_transfer_log WHERE day = ?').all(day)).map(r => [r.source + ':' + r.ref, r]));
-      const jobs = new Map((await db.prepare("SELECT source, ref, state, employee_name, result FROM transfer_jobs WHERE day = ?").all(day))
-        .map(j => [j.source + ':' + j.ref, j]));
+      const jobRows = await db.prepare("SELECT source, ref, state, employee_name, result, at FROM transfer_jobs WHERE day = ?").all(day);
+      const jobs = new Map(jobRows.map(j => [j.source + ':' + j.ref, j]));
+      // Karim 11-14 (11-12 ليلاً the writer could not log in to Apex for two hours): while orders already handed to the
+      // writer wait 4+ minutes, no new one is handed to it — they stay for the staff.
+      const writerStuck = jobRows.some(j => ['auto_pending', 'auto_sending'].includes(j.state) && now - j.at >= 4 * 60000);
       const out = [];
       for (const o of q.orders || []) {
         const k = o.source + ':' + o.ref, prev = seen.get(k);
@@ -216,7 +219,8 @@ function setup(app) {
         }
         const d = decide(o, x); if (!d) continue;
         let decision = d.ok ? (m === 'on' ? 'sent' : 'would') : 'wait', reasons = (d.ok ? d.warnings : d.why).join(' · ');
-        if (d.ok && m === 'on') {
+        if (d.ok && m === 'on' && writerStuck) { decision = 'wait'; reasons = 'كاتب Apex مش بيسجل دلوقتي (أوردرات مستنياه من 4 دقايق) — سجّله بإيد'; }
+        else if (d.ok && m === 'on') {
           try { await app.transferAutoJob(d.body, now); }
           catch (e) {
             const committed = await db.prepare('SELECT state, employee_name FROM transfer_jobs WHERE source = ? AND ref = ?').get(o.source, String(o.ref)).catch(() => null);

@@ -57,3 +57,13 @@ test('daily report: why orders were left to staff, by reason, with the dishes an
   // «sent to the branch» counts only when nothing else stopped the order.
   assert.equal(r.reasons.find(x => x.reason === 'اتحوّل للفرع على الموقع — غالباً اتسجل بإيد').orders, 1);
 });
+
+// Karim 11-14 (11-12 ليلاً the cashier PC restarted and the writer could not log in to Apex for two hours).
+test('a writer that takes orders but does not write them: no new order is handed to it, and it is flagged', async () => {
+  const { decide } = await import('../src/autotransfer.js');
+  assert.equal(typeof decide, 'function');
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/autotransfer.js'), 'utf8');
+  assert.match(src, /writerStuck/);
+  const home = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/home.js'), 'utf8');
+  assert.match(home, /part:writerStuck/);
+});

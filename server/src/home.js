@@ -42,6 +42,13 @@ function setup(app) {
       if ((x.state === 'waiting' || x.state === 'claimed') && m != null && m >= 5 && m < 240)
         add('twait:' + x.source + ':' + x.ref, m >= 10 ? 'bad' : 'warn', tag + ' مستني التسجيل على Apex من ' + m + ' دقيقة' + (x.state === 'claimed' ? ' (مع ' + x.by + ')' : '') + (x.why ? ' — ' + x.why : ''), 'transferLive');
     }
+    // Karim 11-14 (11-12 ليلاً: the PC restarted and the writer could not log in to Apex for 2 hours while it kept talking
+    // to the server, so it looked alive): orders handed to the writer and still not written after 4 minutes = the writer is stuck.
+    const stuck = t.list.filter(x => x.state === 'writing' && minsSince(Date.parse(x.since), now) >= 4);
+    if (stuck.length) {
+      const m = Math.max(...stuck.map(x => minsSince(Date.parse(x.since), now)));
+      add('part:writerStuck', 'bad', 'كاتب Apex مش بيسجل: ' + stuck.length + ' أوردر مستنيه من ' + m + ' دقيقة — غالباً مش قادر يدخل على Apex (اتعمل ريستارت للجهاز؟)، سجّلوهم بإيد', 'transferLive');
+    }
     for (const br of b?.branches || []) if (br.veryLate > 0 || br.late > 0)
       add('late:' + br.no + ':' + (br.veryLate > 0 ? 'v' : 'l'), br.veryLate > 0 ? 'bad' : 'warn', 'فرع ' + br.name + ': ' + br.late + ' أوردر متأخر' + (br.veryLate ? ' (منهم ' + br.veryLate + ' متأخر جداً)' : ''), 'branchesNow');
     const day = businessDay(now);
