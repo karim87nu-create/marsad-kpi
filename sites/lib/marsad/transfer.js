@@ -13,7 +13,7 @@ import { CANCELLED_SQL, isCancelled, sourceCanTransfer, handoffPending } from '.
 import { parseJson } from './order-match.js';
 import { deliveryPhone, deliveryLabel, deliveryAddress, splitDeliveryAddress, deliveryMark, compactDeliveryComment, deliveryNotes, apexText } from './delivery-fields.js';
 import { parseApexCustomerNote, normArabic, guessApexItem } from './apex-customer-notes.js';
-import { areaGroups, areaKey } from './apex-areas.js';
+import { areaGroups, areaKey, areaInAddress } from './apex-areas.js';
 import { knownNos, itemKey } from './items.js';
 import { APEX_NAMES, APEX_PRICES } from './menu-seed.js';
 import { APEX_SECTIONS } from './apex-sections.js';
@@ -285,6 +285,10 @@ function setup(app) {
     }
     const oneArea = set => set?.size && new Set([...set].map(n => groups.get(n) ?? n)).size === 1;
     for (let i = 0; i < list.length; i++) {
+      if (!list[i].done && !list[i].areaGuess && list[i].source === 'site' && list[i].customer?.address) {
+        const no = areaInAddress(list[i].customer.address, base.locations, list[i].apexBranch, groups);
+        if (no) { list[i] = { ...list[i], areaGuess: { no, seen: 0, how: 'address' } }; continue; }
+      }
       const o = list[i], words = !o.done && !o.areaGuess && (o.customer?.talabatArea || o.customer?.siteArea), k = words && normArabic(words).slice(0, 120);
       if (!k) continue;
       const seen = areaPairs.get(k);

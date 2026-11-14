@@ -90,3 +90,23 @@ function setup(app) {
   });
 }
 export { setup };
+
+// Karim 11-14 (website orders all went to «شارع الطاقة» while the address said «مكرم عبيد», «الحي العاشر», «الحديقة
+// الدولية»): the website's area is one broad name for a branch, so the Apex area written in the customer's address is the
+// better one. The longest Apex area name (of that branch) found in the address as whole words; nothing when two different
+// areas match equally or none does. Names under 4 letters are not looked for.
+const words = v => normArabic(String(v || '').replace(/[.\-–_/\\|,،:؛()]+/g, ' ')).replace(/[^\u0621-\u064a0-9 ]+/g, ' ').split(' ').filter(Boolean);
+export function areaInAddress(address, locations, branch, groups) {
+  const text = ' ' + words(address).join(' ') + ' ';
+  if (text.trim().length < 3) return null;
+  let best = null, tie = false;
+  for (const l of locations || []) {
+    const no = Number(l?.no); if (!Number.isInteger(no)) continue;
+    if (branch != null && l.branch != null && Number(l.branch) !== Number(branch)) continue;
+    const w = words(l.name).filter(x => x !== 'طلبات'); const name = w.join(' ');
+    if (name.replace(/ /g, '').length < 4 || !text.includes(' ' + name + ' ')) continue;
+    if (!best || name.length > best.len) { best = { no, len: name.length }; tie = false; }
+    else if (name.length === best.len && (groups?.get(no) ?? no) !== (groups?.get(best.no) ?? best.no)) tie = true;
+  }
+  return best && !tie ? best.no : null;
+}

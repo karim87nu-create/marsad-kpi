@@ -109,6 +109,7 @@ export function decide(o, x) {
   // Learned: chosen 2+ times and at least 80% of the times (one area name staff put on two Apex areas is not certain).
   else if (o.areaGuess && Number(o.areaGuess.seen) >= 2 && !(o.areaGuess.share < 0.8)) { loc = Number(o.areaGuess.no); locHow = 'learned'; }
   else if (o.areaGuess?.how === 'name') { loc = Number(o.areaGuess.no); locHow = 'name'; }
+  else if (o.areaGuess?.how === 'address') { loc = Number(o.areaGuess.no); locHow = 'address'; }
   else { const c = x.customerArea?.(o); if (c) { loc = Number(c); locHow = 'customer'; } }
   let service = null;
   if (!loc) why.push(o.areaGuess && Number(o.areaGuess.seen) >= 2 ? 'المنطقة دي الموظفين اختاروا لها أكتر من منطقة على Apex'

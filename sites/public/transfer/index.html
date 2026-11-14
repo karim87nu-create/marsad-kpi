@@ -84,6 +84,7 @@ main{max-width:1100px;margin:0 auto;padding:16px}
 .num{font-variant-numeric:tabular-nums;white-space:nowrap}
 .ti{padding:6px 0;border-bottom:1px dashed var(--line)}
 .ti.addon{padding-inline-start:14px}
+.qty{width:3.6em;padding:2px 4px;font-weight:700;text-align:center}.qty.need{outline:2px solid #f59e0b}
 .tsrc{color:var(--muted);font-size:12px} .tsrc.warn{color:var(--warn)}
 .ticket .tr:not(.big){padding:3px 0}
 .tag{color:var(--muted);font-size:12px}
@@ -253,11 +254,13 @@ function giftTotal(p) { return Object.entries(p.cardGifts || {}).reduce((sum, [n
 const GIFT_ROOM = worth => worth * 1.25 + 5;
 // One candidate, or the one the orders already on Apex used most for this dish (Karim 10-11).
 const firstPick = i => i.apex?.length === 1 ? i.apex[0].no : i.apexPick && (i.apex || []).some(a => a.no === i.apexPick) ? i.apexPick : '';
+// Karim 11-14: the count on each line can be typed by hand (a wrong or unclear count never stops the order).
+const qtyOf = (p, i, n) => { const v = p?.qty?.[n]; if (v != null && v !== '') return Number(v); return i.qty === '?' || i.qty == null ? null : Number(i.qty); };
 function flatLines(o) {
   const out = [];
   for (const i of o.items || []) {
     out.push({ choiceKey: i.choiceKey, kind: 'item', apexPick: i.apexPick || null, qty: i.qty, name: i.name, label: i.name + (i.sizeOption ? ' — ' + i.sizeOption : '') + ((i.freeOptions || []).length ? ' (' + i.freeOptions.join('، ') + ')' : '') + (i.note ? ' ✎ ' + i.note : ''), apex: i.apex || [], note: (i.freeOptions || []).join('، ').slice(0, 60) });
-    for (const a of i.addons || []) out.push({ choiceKey: a.choiceKey, kind: 'addon', qty: a.qty ?? '?', name: a.name, label: '+ ' + a.name + ' (' + money(a.price) + ') — إضافة بفلوس على ' + i.name, apex: a.apex || [], note: '' });
+    for (const a of i.addons || []) out.push({ choiceKey: a.choiceKey, kind: 'addon', qty: a.qty ?? '?', name: a.name, label: '+ ' + a.name + ' — إضافة على ' + i.name + (Number(i.qty) > 1 ? ' (الصنف ' + i.qty + '×)' : '') + ' · طلبات حاسباها ' + money(a.price) + (a.qty == null ? ' — العدد مش واضح، اكتبه' : ''), apex: a.apex || [], note: '' });
   }
   return out;
 }
@@ -323,7 +326,7 @@ function ticketCalc(o, fl, p) {
   // o.target = what the customer pays + Talabat's known share. Paid: what was paid; cash: plus all of Talabat's share.
   const want = o.target == null ? null : paid ? r2(o.target - discountSum(o, 'platform')) : r2(o.target + sp.plat);
   let items = 0, missing = 0;
-  fl.forEach((i, n) => { const pr = apexPrices.get(p.items?.[n]); if (pr == null) missing++; else items += pr * (Number(i.qty) || 1); });
+  fl.forEach((i, n) => { const pr = apexPrices.get(p.items?.[n]); if (pr == null) missing++; else items += pr * (qtyOf(p, i, n) || 1); });
   const fee = o.source === 'talabat' ? (apexPrices.get('0114006') || 7.02) : 0;
   const loc = (data.locations || []).find(l => String(l.no) === String(p.loc) && (l.branch == null || String(l.branch) === String(p.branch))) || (data.locations || []).find(l => String(l.no) === String(p.loc));
   const service = loc?.service ?? null, off = rest + (paid ? plat : 0);
@@ -346,10 +349,10 @@ function ticketHtml(o, p, fl, c, auto) {
   if (!o.items?.length) return '<div class="ticket"><div class="warn">' + (o.detailRead ? 'مفيش أصناف' : 'تفاصيل الأوردر لسه ماوصلتش — بص عليه في ' + (o.source === 'talabat' ? 'طلبات' : 'الموقع')) + '</div></div>';
   fl.forEach((i, n) => {
     const no = p.items?.[n], name = no ? (nameOf(no) || (i.apex || []).find(a => a.no === no)?.name || 'صنف ' + no) : '';
-    const price = no && apexPrices.get(no) != null ? money(T(apexPrices.get(no) * (Number(i.qty) || 1))) : '';
-    const src = esc(i.qty) + '× ' + esc(i.label);
+    const q = qtyOf(p, i, n), price = no && apexPrices.get(no) != null ? money(T(apexPrices.get(no) * (q || 1))) : '';
+    const src = (i.kind === 'addon' || i.qty === '?' || i.qty == null ? '' : esc(i.qty) + '× ') + esc(i.label);
     h += '<div class="ti' + (i.kind === 'addon' ? ' addon' : '') + '">' +
-      '<div class="tr"><span><b>' + esc(i.qty) + '×</b> ' + (name ? esc(name) : auto ? '<span class="warn">اختار الصنف على Apex</span>' : (i.apex || []).length ? (i.apex || []).map(a => esc(a.name || a.no)).join(' أو ') + (i.apex.length > 1 ? ' <span class="warn">— اختار الحجم</span>' : '') : '<span class="warn">مش معروف على Apex — دوّر عليه بالاسم</span>') + '</span><span class="num">' + price + '</span></div>' +
+      '<div class="tr"><span>' + (auto ? '<input class="qty' + (q ? '' : ' need') + '" data-qty="' + n + '" type="number" min="0.25" max="50" step="any" value="' + (q ?? '') + '" placeholder="؟" aria-label="العدد">× ' : '<b>' + esc(q ?? '؟') + '×</b> ') + (name ? esc(name) : auto ? '<span class="warn">اختار الصنف على Apex</span>' : (i.apex || []).length ? (i.apex || []).map(a => esc(a.name || a.no)).join(' أو ') + (i.apex.length > 1 ? ' <span class="warn">— اختار الحجم</span>' : '') : '<span class="warn">مش معروف على Apex — دوّر عليه بالاسم</span>') + '</span><span class="num">' + price + '</span></div>' +
       '<div class="tsrc">' + (o.source === 'talabat' ? 'طلبات: ' : 'الموقع: ') + src + (auto && no && !p.edit?.[n] ? ' <button class="link" data-edit="' + n + '">تغيير الصنف</button>' : '') + '</div>';
     if (auto && (!no || p.edit?.[n])) {
       h += '<div class="pick">' +
@@ -411,7 +414,7 @@ function card(o) {
   const mode = data.autoTransfer, auto = !!mode && mode !== 'off' && !o.apex && !/^auto_(?:pending|sending|retry_pending|done|preview)$/.test(o.job?.state || '');
   const p = picks[k] || (picks[k] = { branch: o.apexBranch || '', items: fl.map(firstPick) });
   const signature = JSON.stringify(fl.map(i => [i.choiceKey, i.qty]));
-  if (p.signature && p.signature !== signature) { p.items = fl.map(firstPick); p.edit = {}; }
+  if (p.signature && p.signature !== signature) { p.items = fl.map(firstPick); p.edit = {}; p.qty = {}; }
   p.signature = signature;
   fl.forEach((i, n) => { if (!p.items[n]) p.items[n] = firstPick(i); });
   const freeJob = !o.job || ['released', 'auto_failed', 'auto_preview'].includes(o.job.state), mineOrFree = freeJob || o.job.mine;
@@ -650,8 +653,8 @@ $('list').addEventListener('click', async e => {
       }
       noteItems.push({ itemNo: String(x.no), qty: Number(x.qty), free: true });
     }
-    if (o.source === 'talabat' && o.items.some(i => !i.modifiersComplete)) { toast('الإضافات مش ظاهرة كاملة — سجله بإيدك'); return; }
-    if (o.items.some(i => (i.addons || []).some(a => a.qty == null))) { toast('عدد إضافة مش واضح — سجله بإيدك'); return; }
+    if (flatLines(o).some((i, n) => !(qtyOf(p, i, n) > 0 && qtyOf(p, i, n) <= 50))) { toast('اكتب العدد في الخانة اللي عليها ؟'); return; }
+    if (o.source === 'talabat' && o.items.some(i => !i.modifiersComplete) && !confirm('الإضافات مش ظاهرة كاملة هنا.\nراجعتها على طلبات والأعداد اللي هنا صح؟')) return;
     const rest = cc.rest, platSum = cc.plat;
     let paymentOverride = null;
     if (o.source === 'site') {
@@ -669,7 +672,7 @@ $('list').addEventListener('click', async e => {
     b.disabled = true;
     try {
       await api('POST', '/api/transfer/job', { source: o.source, ref: o.ref, action: 'auto', payment: pay, paymentOverride, branchNo: Number(p.branch), locationNo: Number(p.loc), code: o.code,
-        items: flatLines(o).map((i, n) => ({ itemNo: p.items[n], qty: i.qty, note: '' })),
+        items: flatLines(o).map((i, n) => ({ itemNo: p.items[n], qty: qtyOf(p, i, n), note: '' })),
         apexNote: cardNote?.status === 'found' ? { approved: !!p.apexNoteApproved || (!contacted && giftsChosen) || cardSelf(cardNote, pay), note: cardNote.text, custNo: cardNote.custNo, items: noteItems,
           resolution: contacted ? 'contacted' : giftsChosen ? 'gift' : null, gifts: !contacted && giftsChosen ? Object.entries(p.cardGifts).map(([itemNo, qty]) => ({ itemNo, qty })) : null } : null,
         // Free choices and the customer's note go in the order comment on Apex (تعليقات الطلب), as the staff do.
@@ -731,6 +734,11 @@ $('list').addEventListener('change', async e => {
     }
     render(true);
     return;
+  }
+  if (e.target.dataset.qty !== undefined) {
+    const k = e.target.closest('.card').dataset.k, p = picks[k] = picks[k] || {}, v = e.target.value === '' ? null : Number(e.target.value);
+    p.qty = p.qty || {}; if (v == null || !(v > 0)) delete p.qty[e.target.dataset.qty]; else p.qty[e.target.dataset.qty] = Math.round(v * 100) / 100;
+    render(true); return;
   }
   const el = e.target.closest('[data-pick]'); if (!el) return;
   const c = el.closest('.card'), p = picks[c.dataset.k]; if (!p) return;
