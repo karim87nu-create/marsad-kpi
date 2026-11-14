@@ -521,6 +521,12 @@ function setup(app) {
             }
           }
         }
+        // A website line not in the table (a priced choice like «بلدي» under a dish = «سلطة بلدى» 0101002, order 31112 on
+        // 11-14): what staff chose for this same line before (2+ times, 70%+ of the time), as for Talabat.
+        if (isSite && !inTable && !apex.length) {
+          const seen = siteItemHistory.get(lineKey(x)), top = seen && [...seen].sort((u, v) => v[1] - u[1]), all = top ? top.reduce((t, c) => t + c[1], 0) : 0;
+          if (top?.length && top[0][1] >= 2 && top[0][1] >= all * 0.7 && apexName.has(top[0][0])) { apex = [{ no: top[0][0], name: apexName.get(top[0][0]) }]; apexPick = top[0][0]; inTable = true; }
+        }
         if (withApex && !apex.length && !inTable) {
           const g = guessApexItem([x.nameShown, x.name].find(n => /[\u0600-\u06ff]/.test(n || '')) || '', 2);
           // A guessed item must be the dish's size when a size was chosen (11-11: «الكفته / نص كيلو» never guessed as a quarter).
@@ -697,7 +703,7 @@ function setup(app) {
         const order = (await baseFor(orderDay(row), now)).list.find(o => o.source === source && String(o.ref) === String(ref));
         if (order) {
           const raw = source === 'talabat' ? parseJson(row.items, [])
-            : parseJson((await db.prepare("SELECT data FROM match_profiles WHERE source = 'site' AND ref = ?").get(ref))?.data, {}).items || [];
+            : siteLines(parseJson((await db.prepare("SELECT data FROM match_profiles WHERE source = 'site' AND ref = ?").get(ref))?.data, {}).items || []);   // the lines as the page showed them
           const facts = [];
           for (let i = 0; i < Math.min(raw.length, order.items.length); i++) {
             const line = order.items[i], candidates = new Set((line.apex || []).map(a => String(a.no)));
