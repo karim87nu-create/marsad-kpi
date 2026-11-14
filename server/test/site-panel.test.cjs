@@ -117,8 +117,9 @@ test('website central panel, real orders 11-11: payment from the panel\'s words,
     // The safety checks on the automatic transfer.
     const auto = (ref, extra) => t.call('POST', '/api/transfer/job', { headers: { 'x-transfer-session': sara }, body: { action: 'auto', source: 'site', ref: String(ref), branchNo: 2, locationNo: 1, items: [{ itemNo: '111', qty: 1 }], customer: {}, ...extra } });
     const msg = r => r.body?.error || r.body?.message || JSON.stringify(r.body);
-    assert.match(msg(await auto(30830, { payment: 'paid', branchNo: 1 })), /الدفع الأونلاين لسه ما اكتملش/);
-    assert.match(msg(await auto(30831, { payment: 'paid' })), /كاش عند الاستلام/);
+    // 11-13 (ChatGPT, site-payment-choice): any payment different from the website's is stopped until staff confirm it.
+    assert.match(msg(await auto(30830, { payment: 'paid', branchNo: 1 })), /الدفع الأونلاين لسه ما اكتملش|طريقة الدفع مختلفة عن الموقع/);
+    assert.match(msg(await auto(30831, { payment: 'paid' })), /كاش عند الاستلام|طريقة الدفع مختلفة عن الموقع/);
     assert.match(msg(await auto(30831, { payment: 'cash', branchNo: 1 })), /متحوّل لفرع مدينة نصر/);
   } finally { await t.close(); }
 });

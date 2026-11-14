@@ -55,8 +55,7 @@ test('auto transfer: decides only on certain orders and says why not', () => {
   assert.equal(decide(base({ subtotal: P * 1.5 }), X).ok, true);
   const del = decide(base({ bill: [{ k: 'رسوم التوصيل', text: 'رسوم التوصيل | 90' }] }), X);
   assert.equal(del.ok, true); assert.match(del.warnings.join(), /فرق سعر التوصيل/);
-  // A zero-fee Apex area is never taken by itself (it is usually the wrong area).
-  assert.match(decide(base(), { ...X, locations: [{ no: 218, name: 'التجمع الخامس', branch: 1, service: 0 }] }).why.join(), /رسوم المنطقة على Apex صفر/);
+
   // Website: Apex is up to 5% above the website; a pickup goes to the branch's pickup area.
   const site = { source: 'site', fulfillment: 'pickup', areaGuess: { no: 353, name: 'استلام فرع التجمع', how: 'pickup' }, subtotal: null, items: [{ qty: 1, name: 'كفتة', price: Math.round(P / 1.04), apex: [{ no: KOFTA }], addons: [] }] };
   const s = decide(base(site), X);

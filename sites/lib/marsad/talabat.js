@@ -231,7 +231,7 @@ function setup(app) {
   let matchRevision = 0;
   async function matchDay(day, options = {}) {
     const teach = !!options.teach, cached = matchCache.get(day);
-    if (!teach && cached && Date.now() - cached.at < 8000) return cached.value;
+    if (!teach && !options.fresh && cached && Date.now() - cached.at < 8000) return cached.value;
     const running = db.kind === 'd1' ? null : matchFlights.get(day);
     if (running) { await running; if (!teach) return matchDay(day, options); }
     const revision = matchRevision;

@@ -26,7 +26,7 @@ test('English addresses, names and comments shown and sent in Arabic (dictionary
     };
     await q(); await new Promise(r => setTimeout(r, 50));
     o = await q();
-    assert.ok(asked >= 2);
+    assert.ok(asked >= 1);   // 11-13 (ChatGPT): addresses are never guessed by the model, only the name/comment
     assert.equal(o.customer.name, 'إسماعيل بركة');
     if (o.note) assert.equal(o.note, 'كلمني لما توصل');
     const n = asked; await q(); await new Promise(r => setTimeout(r, 30)); assert.equal(asked, n, 'translated once');

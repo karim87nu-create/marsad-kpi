@@ -33,6 +33,9 @@ test('transfer: the Apex area chosen for a Talabat area is suggested for the nex
     const r = await as('POST', '/api/transfer/job', { source: 'talabat', ref: '3977900021', action: 'auto', payment: 'cash', branchNo: 1, locationNo: 301,
       items: [{ itemNo: '0108004', qty: 1 }], expectedTotal: 300, code: '21', label: 'x' });
     assert.equal(r.status, 200, JSON.stringify(r.body));
+    // 11-13 (ChatGPT): the area is learned once Apex has the order (the writer's result), not when it is only sent.
+    await w('/api/apex-writer/next');
+    assert.equal((await w('/api/apex-writer/result', { source: 'talabat', ref: '3977900021', ok: true, db: 'test', orderNo: 801, shiftSerial: 9, branchOrderNo: 1, total: 300 })).status, 200);
     t.advance(9000);
     q = (await as('GET', '/api/transfer/queue?day=2026-10-22')).body;
     assert.deepEqual(q.orders.find(o => o.ref === '3977900022').areaGuess, { no: 301, seen: 1, share: 1 }, 'same area, an invisible mark more');

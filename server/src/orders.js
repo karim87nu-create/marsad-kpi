@@ -119,6 +119,9 @@ function setup(app) {
       .run(b.day, data, ctx.now, existing?.data ?? null);
     if (!stored.changes) fail(409, 'snapshot_changed_retry');
     if (!replay) await put('orders_last_push', ctx.now);
+    // The cashier monitor includes notes that say an Apex order is cancelled. Keep this
+    // path connected so apex-cancel.js can start the five-minute timer and notify/cancel it.
+    if (!replay && Array.isArray(b.cancelNotes)) await app.apexCancelNotes?.(b.cancelNotes, ctx.now);
     // Karim 10-11: an order the Marsad put on Apex that someone changed by hand afterwards is written in the Marsad's
     // log (الإدارة ← التشغيل التلقائي ← سجل الأخطاء) the moment the cashier PC sees it — once per change.
     if (!replay && Array.isArray(b.fixes) && b.fixes.length) {
@@ -239,8 +242,6 @@ function setup(app) {
     }
     await queue(alerts, ctx.now);
     await put(stateKey, JSON.stringify(states));
-    // Orders whose comment says cancelled (Karim 11-11): the automatic cancel on Apex (apex-cancel.js).
-    if (!replay && app.apexCancelNotes) { try { await app.apexCancelNotes(ctx.body?.cancelNotes, ctx.now); } catch (e) { console.error('apex cancel', e); } }
     // Payment / service / platform values the admin marked as officer: the monitor keeps them out of every total.
     let officer = []; try { officer = JSON.parse(await setting('officer_values') || '[]'); } catch {}
     // follow: this server answers warnings from the monitor's follow-ups (status changes, reminders).

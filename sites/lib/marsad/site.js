@@ -4,7 +4,7 @@ import { siteReference } from './order-identifiers.js';
 // delivered) plus the branch and driver names. Matching fields are stored separately for order reconciliation.
 // The two reports («تقرير أداء الموقع للفروع» and «تقرير أداء الكول سنتر») are drawn from these rows on the admin page.
 import { resolveOrders, customerOf, parseJson } from './order-match.js';
-import { businessDay, iso, validDate } from './time.js';
+import { businessDay, addDays, cairoToUtc, dayWindow, iso, validDate } from './time.js';
 import { sha256Bytes, randomBytes, b64, fromB64 } from './security.js';
 
 const SYNC_MS = 60000, FIRST_HOURS = 36, NOTES_PER_RUN = 30, OPEN_HOURS = 14;
@@ -12,12 +12,58 @@ const EXCLUDED = new Set(['cancelled', 'failed', 'wallet-failed']);
 const PREP_MIN = 30, DELIVERY_MIN = 30, TRANSFER_MIN = 5;
 const KINDS = ['sitePrep', 'siteTransfer'];
 
+const westernDigits = value => String(value ?? '').replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 0x0660)).replace(/[۰-۹]/g, d => String(d.charCodeAt(0) - 0x06f0));
+function scheduledAtFrom(value, anchor = Date.now()) {
+  if (value == null || value === '') return null;
+  if (typeof value === 'number' || /^\d{10,13}$/.test(String(value).trim())) {
+    const n = Number(value); if (Number.isFinite(n)) return n < 1e12 ? n * 1000 : n;
+  }
+  const text = westernDigits(typeof value === 'object' ? JSON.stringify(value) : value).replace(/[،]/g, ' ').trim();
+  const exact = Date.parse(text);
+  if (/^\d{4}-\d{2}-\d{2}T/.test(text) && Number.isFinite(exact)) return exact;
+  const months = new Map([['يناير',1],['فبراير',2],['مارس',3],['ابريل',4],['أبريل',4],['مايو',5],['يونيو',6],['يونيه',6],['يوليو',7],['أغسطس',8],['اغسطس',8],['سبتمبر',9],['أكتوبر',10],['اكتوبر',10],['نوفمبر',11],['ديسمبر',12]]);
+  let y, m, d, hit = text.match(/\b(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})\b/);
+  if (hit) [, y, m, d] = hit.map(Number);
+  else if ((hit = text.match(/\b(\d{1,2})[-/.](\d{1,2})[-/.](20\d{2})\b/))) { d = Number(hit[1]); m = Number(hit[2]); y = Number(hit[3]); }
+  else if ((hit = text.match(/\b(\d{1,2})\s+([\u0600-\u06ff]+)\s+(20\d{2})\b/))) { d = Number(hit[1]); m = months.get(hit[2]); y = Number(hit[3]); }
+  const withoutDate = hit ? text.replace(hit[0], ' ') : text;
+  const tm = withoutDate.match(/(?:الساعة\s*|\b)(\d{1,2})(?:[:٫](\d{2}))\s*(صباح(?:اً|ا)?|مساء(?:اً|ا)?|ص|م|am|pm)?|الساعة\s*(\d{1,2})\s*(صباح(?:اً|ا)?|مساء(?:اً|ا)?|ص|م|am|pm)/i);
+  let hour = tm ? Number(tm[1] || tm[4]) : 12, minute = tm?.[2] ? Number(tm[2]) : 0;
+  const meridiem = String(tm?.[3] || tm?.[5] || '').toLowerCase();
+  if (/(?:م|مساء|pm)/i.test(meridiem) && hour < 12) hour += 12;
+  if (/(?:ص|صباح|am)/i.test(meridiem) && hour === 12) hour = 0;
+  if (hour > 23 || minute > 59) { hour = 12; minute = 0; }
+  if (!hit) {
+    const baseDay = businessDay(anchor);
+    const offset = /بعد\s*(?:بكرة|غد)/.test(text) ? 2 : /بكرة|غد(?:اً|ا)?/.test(text) ? 1 : /اليوم/.test(text) ? 0 : null;
+    if (offset === null) return null;
+    [y, m, d] = addDays(baseDay, offset).split('-').map(Number);
+  }
+  const day = y && m && d ? `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}` : '';
+  if (!validDate(day)) return null;
+  return cairoToUtc(y, m, d, hour, minute);
+}
+function scheduledOrderAt(order, anchor = Date.now()) {
+  for (const key of ['scheduledAt','scheduled_at','scheduledFor','scheduled_for','scheduleAt','schedule_at','scheduleDate','schedule_date','deliveryAt','delivery_at','deliveryDate','delivery_date','deliveryTime','delivery_time','appointmentAt','appointment_at','dateForDelivery','date_for_delivery','موعد_التوصيل','موعد التوصيل']) {
+    const at = scheduledAtFrom(order?.[key], anchor); if (at) return at;
+  }
+  for (const meta of order?.meta_data || []) if (/(?:schedule|appointment|delivery.*(?:date|time)|(?:date|time).*delivery|موعد|تاريخ.*توصيل)/i.test(String(meta?.key || ''))) {
+    const at = scheduledAtFrom(meta?.value, anchor); if (at) return at;
+  }
+  return null;
+}
+function isScheduledOrder(order) {
+  if (order?.scheduled === true || order?.isScheduled === true || order?.is_scheduled === true) return true;
+  return (order?.meta_data || []).some(meta => /(?:schedule|appointment|موعد)/i.test(String(meta?.key || '')) && meta?.value !== false && meta?.value !== '');
+}
+
 // The rules of the daily reports, applied to the order notes (exact seconds).
 function readNotes(notes) {
   const list = notes.map(n => ({ at: Date.parse(String(n.date_created_gmt || n.date_created || '').replace(/Z?$/, 'Z')), text: String(n.note || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() }))
     .filter(n => Number.isFinite(n.at)).sort((a, b) => a.at - b.at);
   const first = f => list.find(f)?.at ?? null, last = f => [...list].reverse().find(f);
   const transferNote = last(n => n.text.includes('تم إرسال الطلب إلى')), outNote = last(n => n.text.includes('خرج الطلب للتوصيل'));
+  const scheduledNote = last(n => n.text.includes('موعد التوصيل'));
   return {
     received: first(n => n.text.includes('to تم الاستلام') && !n.text.includes('من الفرع')),
     transfer: first(n => n.text.includes('تم إرسال الطلب إلى')),
@@ -25,7 +71,8 @@ function readNotes(notes) {
     out: first(n => n.text.includes('خرج الطلب للتوصيل')),
     driver: outNote?.text.match(/مع (.*?)\. وقت/)?.[1]?.trim() || null,
     delivered: first(n => /أكد المندوب تسليم|تم التوصيل/.test(n.text)),
-    scheduled: list.some(n => n.text.includes('موعد التوصيل')),
+    scheduled: !!scheduledNote,
+    scheduledAt: scheduledNote ? scheduledAtFrom(scheduledNote.text, scheduledNote.at) : null,
     // Sent to more than one branch (moved between branches): how many different branches it went to.
     transfers: new Set(list.filter(n => n.text.includes('تم إرسال الطلب إلى')).map(n => n.text.match(/إلى (?:فرع )?(.*?) (?:من )?لوحة/)?.[1]?.trim() || n.text)).size,
   };
@@ -79,6 +126,8 @@ function setup(app) {
       const done = !cancelled && (stage >= 4 || /complete|deliver/i.test(status) || /تم التوصيل|تم التسليم/.test(label));
       const old = olds.get(id) || null;
       const assigned = Number(o.branchAssignedAt) > 1e9 ? Number(o.branchAssignedAt) * 1000 : null;
+      const scheduledAt = scheduledOrderAt(o, created) || old?.scheduled_at || null;
+      const scheduled = isScheduledOrder(o) || !!scheduledAt || !!old?.scheduled ? 1 : 0;
       const outAt = old?.out_at || (stage >= 3 || o.driver ? now : null), deliveredAt = old?.delivered_at || (done ? now : null);
       const f = o.financial || {}, rows = Array.isArray(f.rows) ? f.rows : [];
       const onlinePaid = num(f.onlinePaid) || 0, due = num(f.due) ?? num(o.total) ?? 0;
@@ -117,13 +166,14 @@ function setup(app) {
       const transfers = old?.branch && branch && old.branch !== branch ? (old.transfers || 1) + 1 : (assigned ? 1 : 0);
       const orderChanged = !old || old.day !== day || old.status !== nextStatus || old.fulfillment !== fulfillment || old.total !== total || old.modified_at !== modified ||
         old.received_at == null || (assigned != null && old.transfer_at == null) || (branch != null && old.branch !== branch) || old.out_at !== outAt || old.driver !== driver ||
-        old.delivered_at !== deliveredAt || Number(old.transfers || 0) !== Number(transfers || 0);
-      if (profileChanged || orderChanged) writes.push(db.prepare(`INSERT INTO site_orders (id, day, status, fulfillment, total, created_at, modified_at, notes_at, received_at, transfer_at, branch, out_at, driver, delivered_at, scheduled, transfers)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?) ON CONFLICT(id) DO UPDATE SET status = excluded.status, fulfillment = excluded.fulfillment, total = excluded.total, modified_at = excluded.modified_at,
+        old.delivered_at !== deliveredAt || Number(old.scheduled || 0) !== scheduled || Number(old.scheduled_at || 0) !== Number(scheduledAt || 0) || Number(old.transfers || 0) !== Number(transfers || 0);
+      if (profileChanged || orderChanged) writes.push(db.prepare(`INSERT INTO site_orders (id, day, status, fulfillment, total, created_at, modified_at, notes_at, received_at, transfer_at, branch, out_at, driver, delivered_at, scheduled, scheduled_at, transfers)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status = excluded.status, fulfillment = excluded.fulfillment, total = excluded.total, modified_at = excluded.modified_at,
         notes_at = excluded.notes_at, received_at = COALESCE(site_orders.received_at, excluded.received_at), transfer_at = COALESCE(site_orders.transfer_at, excluded.transfer_at),
         branch = COALESCE(excluded.branch, site_orders.branch), out_at = COALESCE(site_orders.out_at, excluded.out_at), driver = COALESCE(excluded.driver, site_orders.driver),
-        delivered_at = COALESCE(site_orders.delivered_at, excluded.delivered_at), transfers = MAX(site_orders.transfers, excluded.transfers)`)
-        .bind(id, day, nextStatus, fulfillment, total, created, modified, now, created, assigned, branch, outAt, driver, deliveredAt, transfers));
+        delivered_at = COALESCE(site_orders.delivered_at, excluded.delivered_at), scheduled = MAX(site_orders.scheduled, excluded.scheduled),
+        scheduled_at = COALESCE(excluded.scheduled_at, site_orders.scheduled_at), transfers = MAX(site_orders.transfers, excluded.transfers)`)
+        .bind(id, day, nextStatus, fulfillment, total, created, modified, now, created, assigned, branch, outAt, driver, deliveredAt, scheduled, scheduledAt, transfers));
     }
     // The central board lists every open order: one that was out with a driver and is gone from it was delivered.
     if (ctx.body?.board === 'central' && list.length) {
@@ -133,7 +183,9 @@ function setup(app) {
       // Apex, the branch and the online group are told to void it there (once).
       // Drive all missing-order checks from the recent indexed order rows, joining profiles by their primary key.
       // The old IN(subquery) form scanned the full profile table on each minute's central-board refresh.
-      const recent = await db.prepare("SELECT id, fulfillment, out_at, delivered_at, status, gone_at, branch, total, transfers, scheduled FROM site_orders WHERE created_at >= ? AND delivered_at IS NULL AND status NOT IN ('cancelled','failed','wallet-failed')").all(now - 14 * 3600000);
+      const today = businessDay(now), window = dayWindow(today);
+      const recent = await db.prepare("SELECT id, fulfillment, out_at, delivered_at, status, gone_at, branch, total, transfers, scheduled, scheduled_at FROM site_orders WHERE (created_at >= ? OR (scheduled_at >= ? AND scheduled_at < ?)) AND delivered_at IS NULL AND status NOT IN ('cancelled','failed','wallet-failed')")
+        .all(now - 14 * 3600000, window.start, window.end);
       const recentProfiles = new Map(), recentIds = recent.map(r => Number(r.id)).filter(n => Number.isInteger(n) && n > 0);
       for (let i = 0; i < recentIds.length; i += 90) {
         const part = recentIds.slice(i, i + 90), qs = part.map(() => '?').join(',');
@@ -145,7 +197,7 @@ function setup(app) {
         if ((r.fulfillment === 'pickup' && Number(panel.stage) >= 2) || r.out_at != null) {
           writes.push(db.prepare("UPDATE site_orders SET delivered_at = ?, status = 'completed' WHERE id = ? AND delivered_at IS NULL").bind(now, r.id)); continue;
         }
-        if (r.status === 'completed' || r.scheduled || panel.number == null) continue;
+        if (r.status === 'completed' || (r.scheduled && (!r.scheduled_at || r.scheduled_at > now)) || panel.number == null) continue;
         if (!r.gone_at) { writes.push(db.prepare('UPDATE site_orders SET gone_at = ? WHERE id = ?').bind(now, r.id)); continue; }
         if (now - r.gone_at < 3 * 60000) continue;
         writes.push(db.prepare("UPDATE site_orders SET status = 'cancelled' WHERE id = ?").bind(r.id));
@@ -238,8 +290,10 @@ function setup(app) {
         const created = Date.parse(String(o.date_created_gmt) + 'Z');
         if (!Number.isFinite(created)) continue;
         const modified = Date.parse(String(o.date_modified_gmt).replace(/Z?$/, 'Z')) || created;
-        const saved = await db.prepare('SELECT modified_at FROM site_orders WHERE id = ?').get(o.id);
+        const saved = await db.prepare('SELECT modified_at, scheduled, scheduled_at FROM site_orders WHERE id = ?').get(o.id);
         if (saved?.modified_at > modified) continue;
+        const scheduledAt = scheduledOrderAt(o, created) || saved?.scheduled_at || null;
+        const scheduled = isScheduledOrder(o) || !!scheduledAt || !!saved?.scheduled ? 1 : 0;
         const b = o.billing || {}, sh = o.shipping || {};
         const name = [sh.first_name || b.first_name, sh.last_name || b.last_name].filter(Boolean).join(' ');
         const customer = customerOf({ name, phone: b.phone, mobile: sh.phone,
@@ -260,18 +314,19 @@ function setup(app) {
         const profile = { customer: { ...(old.customer || {}) }, items: Array.isArray(o.line_items) ? items : old.items || [], payment: 'payment_method' in o || 'discount_total' in o ? pay : old.payment || null };
         for (const [k, v] of Object.entries(customer)) if (v) profile.customer[k] = v;
         upsert.push(db.prepare("INSERT INTO match_profiles (source, ref, data) SELECT 'site',?,? WHERE NOT EXISTS (SELECT 1 FROM site_orders WHERE id=? AND modified_at>?) ON CONFLICT(source, ref) DO UPDATE SET data = excluded.data").bind(String(o.id), JSON.stringify(profile),o.id,modified));
-        upsert.push(db.prepare('INSERT INTO site_orders (id, day, status, fulfillment, total, created_at, modified_at, notes_at) VALUES (?,?,?,?,?,?,?,NULL) ON CONFLICT(id) DO UPDATE SET status = CASE WHEN site_orders.gone_at IS NOT NULL AND site_orders.status = \'cancelled\' THEN site_orders.status ELSE excluded.status END, fulfillment = excluded.fulfillment, total = excluded.total, modified_at = excluded.modified_at, notes_at = CASE WHEN excluded.modified_at > IFNULL(site_orders.modified_at, 0) THEN NULL ELSE site_orders.notes_at END WHERE COALESCE(site_orders.modified_at,0) <= excluded.modified_at')
-          .bind(o.id, businessDay(created), String(o.status), ful ? String(ful) : null, Number(o.total) || null, created, Date.parse(String(o.date_modified_gmt) + 'Z') || created));
+        upsert.push(db.prepare('INSERT INTO site_orders (id, day, status, fulfillment, total, created_at, modified_at, notes_at, scheduled, scheduled_at) VALUES (?,?,?,?,?,?,?,NULL,?,?) ON CONFLICT(id) DO UPDATE SET status = CASE WHEN site_orders.gone_at IS NOT NULL AND site_orders.status = \'cancelled\' THEN site_orders.status ELSE excluded.status END, fulfillment = excluded.fulfillment, total = excluded.total, modified_at = excluded.modified_at, notes_at = CASE WHEN excluded.modified_at > IFNULL(site_orders.modified_at, 0) THEN NULL ELSE site_orders.notes_at END, scheduled = MAX(site_orders.scheduled, excluded.scheduled), scheduled_at = COALESCE(excluded.scheduled_at, site_orders.scheduled_at) WHERE COALESCE(site_orders.modified_at,0) <= excluded.modified_at')
+          .bind(o.id, businessDay(created), String(o.status), ful ? String(ful) : null, Number(o.total) || null, created, modified, scheduled, scheduledAt));
       }
       if (upsert.length) await db.batch(upsert);
       // Notes: orders never read since they changed first, then open orders (their notes change without a status change).
-      const due = await db.prepare(`SELECT id FROM site_orders WHERE created_at >= ? AND status NOT IN ('cancelled','failed','wallet-failed') AND (notes_at IS NULL OR (delivered_at IS NULL AND notes_at < ?))
-        ORDER BY notes_at IS NOT NULL, notes_at, created_at LIMIT ?`).all(now - OPEN_HOURS * 3600000, now - 50000, NOTES_PER_RUN);
+      const due = await db.prepare(`SELECT id FROM site_orders WHERE status NOT IN ('cancelled','failed','wallet-failed') AND
+        ((created_at >= ? AND (notes_at IS NULL OR (delivered_at IS NULL AND notes_at < ?))) OR (scheduled = 1 AND scheduled_at IS NULL AND (notes_at IS NULL OR notes_at < ?)))
+        ORDER BY notes_at IS NOT NULL, notes_at, created_at LIMIT ?`).all(now - OPEN_HOURS * 3600000, now - 50000, now - 50000, NOTES_PER_RUN);
       for (const { id } of due) {
         const notes = await wc(c, 'orders/' + id + '/notes', { per_page: 100, _fields: 'date_created_gmt,note' });
         const x = readNotes(Array.isArray(notes) ? notes : []);
-        await db.prepare('UPDATE site_orders SET received_at = ?, transfer_at = ?, branch = ?, out_at = ?, driver = ?, delivered_at = ?, scheduled = ?, transfers = ?, notes_at = ? WHERE id = ?')
-          .run(x.received, x.transfer, x.branch, x.out, x.driver, x.delivered, x.scheduled ? 1 : 0, x.transfers, now, id);
+        await db.prepare('UPDATE site_orders SET received_at = ?, transfer_at = ?, branch = ?, out_at = ?, driver = ?, delivered_at = ?, scheduled = MAX(scheduled, ?), scheduled_at = COALESCE(?, scheduled_at), transfers = ?, notes_at = ? WHERE id = ?')
+          .run(x.received, x.transfer, x.branch, x.out, x.driver, x.delivered, x.scheduled ? 1 : 0, x.scheduledAt, x.transfers, now, id);
       }
       // A bounded run is not a completed window. Resume its remaining pages after restart.
       if (nextPage !== null) await put('site_sync_cursor', JSON.stringify({ after, until, page: nextPage }));
@@ -292,12 +347,15 @@ function setup(app) {
 
   // ---- alerts: prep over 30 min to the branches, transfer over 5 min to the call center's online group ----
   async function alerts(now) {
-    const rows = await db.prepare(`SELECT * FROM site_orders WHERE created_at >= ? AND status NOT IN ('cancelled','failed','wallet-failed') AND delivered_at IS NULL AND scheduled = 0`).all(now - OPEN_HOURS * 3600000);
+    const day = businessDay(now), window = dayWindow(day);
+    const rows = await db.prepare(`SELECT * FROM site_orders WHERE status NOT IN ('cancelled','failed','wallet-failed') AND delivered_at IS NULL
+      AND ((created_at >= ? AND scheduled = 0) OR (scheduled_at >= ? AND scheduled_at < ? AND scheduled_at <= ?))`)
+      .all(now - OPEN_HOURS * 3600000, window.start, window.end, now);
     const c = await db.prepare('SELECT rules FROM telegram_config WHERE id = 1').get();
     let r = {}; try { r = JSON.parse(c?.rules || '{}'); } catch {}
     const list = [], clock = ms => new Date(ms).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit' });
     // Keep the linked Apex number, area and comments; Apex status summaries belong only in Apex messages.
-    const day = businessDay(now), det = app.apexDetails ? await app.apexDetails(day) : { extra: () => '' };
+    const det = app.apexDetails ? await app.apexDetails(day) : { extra: () => '' };
     let mt = new Map(); try { mt = (await apexMatch(day, rows, { teach: true })).matches; } catch {}
     const more = o => { const a = mt.get(o.id);
       return (o.total ? '\nقيمة الأوردر: ' + Math.round(o.total) + ' ج' : '') +
@@ -378,11 +436,19 @@ function setup(app) {
     let d = null; try { d = r ? JSON.parse(r.data) : null; } catch {}
     const apex = (d?.online || []).filter(a => a.kind === 'الموقع' && a.at).map(a => ({ ...a, t: Date.parse(a.at) }));
     const names = app.apexNameMap ? await app.apexNameMap() : {};
-    const profiles = new Map((await db.prepare("SELECT ref, data FROM match_profiles WHERE source = 'site' AND ref IN (SELECT CAST(id AS TEXT) FROM site_orders WHERE day = ?)").all(day)).map(x => [x.ref, parseJson(x.data, {})]));
-    const manual = new Map((await db.prepare('SELECT site_id, apex_no FROM site_links WHERE day = ?').all(day)).map(x => [x.site_id, x.apex_no]));
+    const profiles = new Map(), ids = rows.map(o => Number(o.id)).filter(n => Number.isInteger(n) && n > 0);
+    for (let i = 0; i < ids.length; i += 90) {
+      const part = ids.slice(i, i + 90), qs = part.map(() => '?').join(',');
+      for (const x of await db.prepare(`SELECT ref, data FROM match_profiles WHERE source = 'site' AND ref IN (${qs})`).all(...part.map(String))) profiles.set(x.ref, parseJson(x.data, {}));
+    }
+    const manual = new Map();
+    for (let i = 0; i < ids.length; i += 90) {
+      const part = ids.slice(i, i + 90), qs = part.map(() => '?').join(',');
+      for (const x of await db.prepare(`SELECT site_id, apex_no FROM site_links WHERE site_id IN (${qs})`).all(...part)) manual.set(x.site_id, x.apex_no);
+    }
     const learned = app.learn ? await app.learn.pairs('match-v2:branch:site') : new Map();
     const branchOk = (s, b) => { const k = learned.get(s); return k && [...k.values()].reduce((x, y) => x + y, 0) >= 3 ? k.has(b) : sameBranch(s, b); };
-    const decision = resolveOrders(rows.map(o => ({ ...o, source: 'site', anchor: o.transfer_at || o.received_at || o.created_at,
+    const decision = resolveOrders(rows.map(o => ({ ...o, source: 'site', anchor: o.scheduled_at || o.transfer_at || o.received_at || o.created_at,
       amount: o.total, ...profiles.get(String(o.id)), excluded: EXCLUDED.has(o.status) })), apex, { manual, branchOk, windowFor: () => 90 * 60000 });
     const matches = new Map();
     for (const [id, a] of decision.matches) {
@@ -428,6 +494,8 @@ function setup(app) {
       rules: { prep: PREP_MIN, delivery: DELIVERY_MIN, transfer: TRANSFER_MIN }, serverNow: iso(ctx.now) };
   });
   app.siteSync = sync;
+  // The transfer page's manual refresh asks for a fresh site snapshot without admin credentials.
+  app.siteSyncNow = syncNow;
 }
 
 export { setup, readNotes, KINDS };

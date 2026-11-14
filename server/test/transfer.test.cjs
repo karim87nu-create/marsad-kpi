@@ -408,7 +408,8 @@ test('worker queue does not await I/O owned by a different request', async () =>
       admin('GET', '/api/transfer/queue'),
       new Promise((_, reject) => setTimeout(() => reject(new Error('queue waited on another request')), 1500))
     ]);
-    assert.equal(independent.status, 200);
+    // 11-13 (ChatGPT, transfer-build-lease): another request never waits — it gets the list or a quick «بتتحدّث» (503).
+    assert.ok([200, 503].includes(independent.status), String(independent.status));
     release();
     assert.equal((await pending).status, 200);
   } finally { release?.(); await t.close(); }

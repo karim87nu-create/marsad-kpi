@@ -50,22 +50,24 @@ const RX = WORDS.map(([en, ar]) => [new RegExp('(^|[^A-Za-z])' + en.replace(/ /g
 
 // Words still in English after the dictionary: what staff taught (learned), a known name, else spelled out in Arabic
 // (Karim 11-11 «اي الصعب في تعريب الاسم والعنوان تلقائي»). Acronyms (AUC, CFC) and codes with digits (B12) stay.
-function arabizeRest(s, learned) {
+function arabizeRest(s, learned, preserveUnknown = false) {
   return s.replace(/[A-Za-z][A-Za-z0-9']*/g, (w, at, all) => {
     const k = w.toLowerCase().replace(/'/g, '');
     let v = learned?.get(k) || NAMES[k];
     if (!v) { const franco = /[a-z]{2,}/i.test(w) && /[a-z][2356789]|[2356789][a-z]/i.test(w) && !/^[A-Za-z]{1,2}\d+$/.test(w);
-      if ((/\d/.test(w) && !franco) || (/^[A-Z]{2,4}$/.test(w)) || w.length < 2) return w; v = translit(w); }
+      if (preserveUnknown || (/\d/.test(w) && !franco) || (/^[A-Z]{2,4}$/.test(w)) || w.length < 2) return w; v = translit(w); }
     return all.slice(Math.max(0, at - 2), at) === 'ال' && v.startsWith('ال') ? v.slice(2) : v;
   });
 }
 
-function dictionary(text, learned) {
+function dictionary(text, learned, preserveUnknown = false) {
   let s = String(text).replace(/\bno\.?\s*(?=\d)/gi, 'رقم ');
   // Phrases and words first (longest first), so «El Banafseg» / «Ahmed El Zomor» are taken whole.
   for (const [rx, ar] of RX) s = s.replace(rx, (m, pre, at, all) => pre + (all.slice(Math.max(0, at + pre.length - 2), at + pre.length) === 'ال' && ar.startsWith('ال') ? ar.slice(2) : ar));
   s = s.replace(/\b(?:El|Al)[-\s](?=[A-Za-z])/gi, 'ال');
-  s = arabizeRest(s, learned).replace(/الال/g, 'ال');
+  s = arabizeRest(s, learned, preserveUnknown).replace(/الال/g, 'ال');
+  // An unknown place name kept in English keeps its own «El» (11-14: Apex showed «الHelmiya»).
+  if (preserveUnknown) s = s.replace(/ال(?=[A-Za-z])/g, 'El ');
   // «مكرم عبيد شارع» / «… ش» → «شارع …» (the word before the name, as in Arabic), segment by segment.
   s = s.split(/\s*[,،]\s*/).map(seg => { const m = seg.match(/^(.+?)\s+(شارع|ش|طريق|محور)$/); return m && !/^(?:شارع|طريق|محور)\s/.test(m[1]) ? (m[2] === 'ش' ? 'شارع' : m[2]) + ' ' + m[1] : seg; }).join('، ');
   return s.replace(/\s{2,}/g, ' ').replace(/\s+([،,])/g, '$1').trim();
@@ -79,6 +81,9 @@ export function setup(app) {
   const { db } = app;
   const key = () => app.config.openaiKey || null;
   const memo = new Map();   // this instance's answers (the table keeps them for every instance)
+  // Delivery addresses must not be guessed from spelling or old automatic translations.
+  // Known place words remain Arabic; unknown place names and building codes stay intact.
+  app.toArabicAddress = texts => new Map(texts.filter(Boolean).map(t => [t,dictionary(t,null,true)]));
 
   async function cached(texts) {
     const out = new Map(), want = [...new Set(texts.filter(t => t && LATIN.test(t)))];

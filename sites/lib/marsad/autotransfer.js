@@ -86,7 +86,6 @@ export function decide(o, x) {
     const area = rows.find(l => Number(l.branch) === branch) || rows.find(l => l.branch == null) || rows[0];
     service = area && area.service != null && Number.isFinite(Number(area.service)) ? Number(area.service) : null;
     if (rows.length && service == null) why.push('المنطقة ملهاش سعر توصيل على Apex');
-    else if (rows.length && service === 0) why.push('رسوم المنطقة على Apex صفر — لازم الموظف يراجع منطقة العميل');
   } else service = 0;
   // Discounts: who pays each one (a paid order: all of it comes off on Apex anyway).
   if (pay !== 'paid' && (o.discounts || []).some(d => !d.who || d.unclear)) why.push('خصم مش واضح مين بيدفعه');
@@ -160,15 +159,34 @@ function setup(app) {
       const areas = await customerAreas(day);
       const { deliveryPhone } = await import('./delivery-fields.js');
       const x = { now, locations: q.locations || [], customerArea: o => areas.get(deliveryPhone(o.customer?.phone) + '|' + normAddress(o.customer?.address)) || null };
-      const seen = new Map((await db.prepare('SELECT source, ref, decision, reasons, alerted FROM auto_transfer_log WHERE day = ?').all(day)).map(r => [r.source + ':' + r.ref, r]));
+      const seen = new Map((await db.prepare('SELECT source, ref, decision, reasons, alerted, first_at FROM auto_transfer_log WHERE day = ?').all(day)).map(r => [r.source + ':' + r.ref, r]));
+      const jobs = new Map((await db.prepare("SELECT source, ref, state, employee_name, result FROM transfer_jobs WHERE day = ?").all(day))
+        .map(j => [j.source + ':' + j.ref, j]));
       const out = [];
       for (const o of q.orders || []) {
-        const d = decide(o, x); if (!d) continue;
         const k = o.source + ':' + o.ref, prev = seen.get(k);
+        // A queue snapshot can be older than another Worker isolate's job insert. Reconcile the durable job first;
+        // never leave a stale «won't transfer» decision beside a job that is already queued or written.
+        const currentJob = jobs.get(k);
+        if (currentJob?.employee_name === 'المرصد آلي' && ['auto_pending', 'auto_sending', 'auto_done'].includes(currentJob.state)) {
+          const decision = 'sent', reasons = '';
+          if (!prev || prev.decision !== decision || prev.reasons !== reasons)
+            await db.prepare(`INSERT INTO auto_transfer_log (source, ref, day, code, decision, reasons, at, first_at, alerted) VALUES (?,?,?,?,?,?,?,?,0)
+              ON CONFLICT(source, ref) DO UPDATE SET decision = excluded.decision, reasons = excluded.reasons, at = excluded.at, code = excluded.code`)
+              .run(o.source, String(o.ref), day, o.code || null, decision, reasons, now, prev?.first_at || now);
+          out.push({ key: k, decision, reasons });
+          continue;
+        }
+        const d = decide(o, x); if (!d) continue;
         let decision = d.ok ? (m === 'on' ? 'sent' : 'would') : 'wait', reasons = (d.ok ? d.warnings : d.why).join(' · ');
         if (d.ok && m === 'on') {
           try { await app.transferAutoJob(d.body, now); }
-          catch (e) { decision = 'wait'; reasons = String(e?.message || e).slice(0, 200); }
+          catch (e) {
+            const committed = await db.prepare('SELECT state, employee_name FROM transfer_jobs WHERE source = ? AND ref = ?').get(o.source, String(o.ref)).catch(() => null);
+            if (committed?.employee_name === 'المرصد آلي' && ['auto_pending', 'auto_sending', 'auto_done'].includes(committed.state)) {
+              decision = 'sent'; reasons = '';
+            } else { decision = 'wait'; reasons = String(e?.message || e).slice(0, 200); }
+          }
         }
         if (!prev || prev.decision !== decision || prev.reasons !== reasons)
           await db.prepare(`INSERT INTO auto_transfer_log (source, ref, day, code, decision, reasons, at, first_at, alerted) VALUES (?,?,?,?,?,?,?,?,0)

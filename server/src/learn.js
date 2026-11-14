@@ -20,8 +20,10 @@ function setup(app) {
   }
   async function readRows(kind) {
     const scope = kind?.startsWith('match-v2:') ? kind.split(':').at(-1) : null;
-    const legacy = await db.prepare("SELECT * FROM learned WHERE (? IS NULL OR kind = ?) AND NOT EXISTS (SELECT 1 FROM learning_evidence e WHERE e.ref = learned.ref AND learned.kind LIKE 'match-v2:%:' || e.source)").all(kind || null, kind || null);
-    const active = await db.prepare('SELECT * FROM learning_evidence WHERE ? IS NULL OR source = ?').all(scope, scope);
+    // Keep kind/source predicates indexable. The nullable OR scanned the entire
+    // history for every kind, including transfer kinds with no active evidence.
+    const legacy = await db.prepare("SELECT * FROM learned WHERE " + (kind ? "kind = ? AND " : "") + "NOT EXISTS (SELECT 1 FROM learning_evidence e WHERE e.ref = learned.ref AND learned.kind LIKE 'match-v2:%:' || e.source)").all(...(kind ? [kind] : []));
+    const active = kind && !scope ? [] : await db.prepare('SELECT * FROM learning_evidence' + (scope ? ' WHERE source = ?' : '')).all(...(scope ? [scope] : []));
     for (const row of active) for (const f of JSON.parse(row.facts)) if (!kind || f.kind === kind) legacy.push({ ...f, ref: row.ref, at: row.at });
     return legacy;
   }
