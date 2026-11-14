@@ -323,6 +323,14 @@
         // branch and payment from the page's data.
         const byId = new Map((live || []).map(o => [String(o.externalId), o]));
         const codes = readCodes().map(c => { const o = byId.get(c.id); return o ? { ...c, code: String(o.shortCode || c.code), ...(o.vendorName ? { store: o.vendorName } : {}), ...(o.payment?.paymentType ? { pay: String(o.payment.paymentType).slice(0, 40) } : {}) } : c; });
+        // Karim 11-14 (#4720240053 came with no hashtag and was missing from «لسه ماتسجلش»): a live order whose card the
+        // page did not draw (scrolled away, collapsed) was never read. The page's own data has its #code: added from there,
+        // for the orders still running (not cancelled, rejected or delivered).
+        for (const o of live || []) {
+          const id = String(o.externalId || ''), code = String(o.shortCode || '').replace(/\D/g, '');
+          if (!id || !code || codes.some(c => c.id === id) || /CANCEL|REJECT|DELIVER|COMPLETE|PICKED_UP|FINISH/i.test(o.state || '')) continue;
+          codes.push({ id, code, ...(o.vendorName ? { store: o.vendorName } : {}), ...(o.payment?.paymentType ? { pay: String(o.payment.paymentType).slice(0, 40) } : {}), fromData: true });
+        }
         const avail = availability();
         const key = JSON.stringify([codes, avail?.map(x => [x.outlet, x.state, JSON.stringify(x.raw)])]);   // a branch closing or opening is sent at once
         // From the page's data: each live order's full details, sent again only when something in it changed.
@@ -349,7 +357,7 @@
         const nd = newOrderDialog();
         if (nd) sendUi('new', nd);   // the new-order window: read only (accepting is built once its controls are known)
         else for (const o of actions?.onTheWay || []) {
-          if (tried.get(o.id) > Date.now() - 10 * 60000 || !codes.some(c => c.id === o.id)) continue;
+          if (tried.get(o.id) > Date.now() - 10 * 60000 || !codes.some(c => c.id === o.id && !c.fromData)) continue;
           tried.set(o.id, Date.now());
           const r = await pressOnTheWay(o.id);
           await bg({ type: 'TALABAT_ACTION_RESULT', body: { id: o.id, action: 'onTheWay', ok: r.ok, note: r.note } }).catch(() => null);
