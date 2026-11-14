@@ -112,6 +112,23 @@ function apexBranchOf(name) {
   return hits.length === 1 ? hits[0] : null;
 }
 
+// Karim 11-14 (a website order showed «اختار الصنف على Apex ×4 — الموقع: 4× ↳ بلدي»): the website lists a dish's choice as a
+// line of its own under the dish («↳ بلدي» under «صدور مشوية», with the dish as its parent). A choice with no price is the
+// dish's choice — it goes with the dish (and picks its Apex item: «بلدي» = the plain sandwich), never a dish to pick on Apex;
+// a choice that costs money stays an add-on line of its own, named without the arrow.
+function siteLines(items) {
+  const out = [], clean = t => String(t || '').replace(/^[\s↳└⤷→\-–—>•]+/u, '').trim();
+  for (const x of items) {
+    const sub = !!x?.parent || /^\s*[↳└⤷]/u.test(String(x?.name || ''));
+    if (!sub || !out.length) { out.push({ ...x, name: clean(x?.name) || x?.name, modifiers: [...(x?.modifiers || [])], options: [...(x?.options || [])] }); continue; }
+    const name = clean(x.name), want = clean(x.parent);
+    const dish = (want && [...out].reverse().find(d => !d.addon && (d.name === want || want.startsWith(d.name) || d.name.startsWith(want.split(/\s+[—–-]\s+/)[0])))) || [...out].reverse().find(d => !d.addon);
+    if (!(Number(x.price) > 0) && dish) { dish.modifiers.push(name); dish.options.push({ name, price: 0 }); continue; }
+    out.push({ ...x, name, addon: true, parent: dish?.name || want || null });
+  }
+  return out;
+}
+
 function setup(app) {
   const { db, fail } = app;
   const queueCache = new Map(), QUEUE_CACHE_MS = 4000;
@@ -585,7 +602,7 @@ function setup(app) {
         list.push({ source: 'site', ref: String(o.id), code: String(p.panel?.number || o.id).replace(/\D/g, '') || String(o.id), at: iso(o.scheduled_at || o.created_at), status: o.status, out: !!o.out_at || !!o.delivered_at || o.status === 'completed', sentToBranch: !!o.transfer_at, branch: o.branch || null, apexBranch: apexBranchOf(o.branch), scheduled: !!o.scheduled && (!o.scheduled_at || Number(o.scheduled_at) > now),
           customer: { name: p.customer?.name || null, phone: phoneOut(p.customer?.phoneDisplay || p.customer?.phone || p.customer?.mobileDisplay || p.customer?.mobile), address: p.customer?.address || null, ...(p.customer?.area ? { siteArea: p.customer.area } : {}) },
           target: o.total ?? null, payment: sitePayment(pay), paymentMethod: pay?.method || null, paymentTitle: pay?.title || null, note: pay?.note || null, scheduledAt: iso(o.scheduled_at), discounts, fees: pay?.fees || [], shipping: pay?.shipping ?? null, total: o.total ?? null,
-          fulfillment: o.fulfillment || null, ...(o.fulfillment === 'pickup' && PICKUP_AREAS[apexBranchOf(o.branch)] ? { areaGuess: { ...PICKUP_AREAS[apexBranchOf(o.branch)], how: 'pickup' } } : {}), items: (p.items || []).map(x => itemOut(x, 'site')), detailRead: !!p.items?.length,
+          fulfillment: o.fulfillment || null, ...(o.fulfillment === 'pickup' && PICKUP_AREAS[apexBranchOf(o.branch)] ? { areaGuess: { ...PICKUP_AREAS[apexBranchOf(o.branch)], how: 'pickup' } } : {}), items: siteLines(p.items || []).map(x => itemOut(x, 'site')), detailRead: !!p.items?.length,
           apex: a ? { no: a.no, sn: a.sn ?? null, user: a.user || null, how: a.how || null } : null, matching: sm.states?.get(o.id) || null, job: null });
       }
       // Explicit staff choices are separate from inferred matches and scoped to source,
@@ -1245,4 +1262,4 @@ function setup(app) {
   });
 }
 
-export { setup, talabatPayment, talabatDiscounts, sitePayment, apexBranchOf };
+export { setup, talabatPayment, talabatDiscounts, sitePayment, apexBranchOf, siteLines };
