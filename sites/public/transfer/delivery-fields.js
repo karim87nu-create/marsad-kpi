@@ -64,7 +64,9 @@ export function apexText(value) {
 //  - floor and flat in their own fields, never their empty labels («الدور:، الشقة:») in the address;
 //  - no city / governorate / the Apex area's own name, no repeated parts, no lone numbers left from a split area name.
 const BUILDING = /(?:عمار[ةه]|فيلا|ڤيلا|مجموع[ةه]|بلوك|برج|مبنى|مبني|building|bldg|villa|block|tower)/i;
-const LANDMARK = /^(?:بجوار|جنب|امام|أمام|قدام|خلف|ورا|وراء|بعد|قبل|بالقرب|قريب|عند|في\s+وش|near|next\s+to|behind|in\s+front|opposite|beside)/i;
+const LANDMARK = /^(?:بجوار|بجانب|جانب|جنب|امام|أمام|قدام|خلف|ورا|وراء|بعد|قبل|بالقرب|قريب|عند|في\s+وش|near|next\s+to|behind|in\s+front|opposite|beside)/i;
+const PLACE = /(?:^|\s)(?:كمباوند|كومباوند|كمبوند|كومبوند|compound|مول|mall|ابراج|أبراج|دار\s+مصر|سكن\s+مصر|سكان\s+مصر|مساكن|مدين[ةه]|حي|الحي|مجاور[ةه]|المجاور[ةه]|المحلي[ةه]|محلي[ةه]|منطق[ةه]|المنطق[ةه]|مرحل[ةه]|المرحل[ةه]|عمارات|تاون|town|ريزيدنس|residence|بارك|park|هايتس|heights|فيلدج|village|قري[ةه]|كومباوند|جاردن|gardens?|سيتي|city|بلازا|plaza)(?:\s|$)/i;
+const MAIN_ROAD = /(?:^|\s)(?:التسعين|الدائري|المحور|محور|الطريق|الكورنيش|كورنيش|ميدان)(?:\s|$)/;
 const STREET = /(?:^|\s)(?:شارع|ش\.?|طريق|محور|street|st\.?|road|rd\.?)(?:\s|$)/i;
 const FLOOR_WORDS = '(?:الأرضي|الارضي|الارضى|أرضي|ارضي|ارضى|البيزمنت|بيزمنت|بدروم|البدروم|الروف|روف|الاول|الأول|الثاني|التاني|الثالث|التالت|الرابع|الخامس|السادس|السابع|الثامن|التامن|التاسع|العاشر)';
 export function deliveryAddress(value, zone = '') {
@@ -111,8 +113,11 @@ export function deliveryAddress(value, zone = '') {
     kept.push(p);
   }
   const order = new Map(parts.map((p, i) => [p, i]));
-  // Talabat's «مبنى:» part is the building even without a number («مبنى: سكان مصر»).
-  const rank = p => LANDMARK.test(p.seg) ? 0 : (BUILDING.test(p.seg) || p.building) && /[\d٠-٩]/.test(p.seg) ? 3 : p.building ? 2.5 : /^[\d٠-٩]/.test(p.seg) ? 2 : STREET.test(p.seg) ? 1.5 : 1;
+  // Karim 11-14: first the place inside the Apex area (a compound, a district, a mall…) or the main street, then the building,
+  // then the rest; landmarks («بجوار…») last.
+  const rank = p => LANDMARK.test(p.seg) ? 0 : PLACE.test(p.seg) ? 4 : STREET.test(p.seg) || MAIN_ROAD.test(p.seg) ? 3
+    // A name with no number and no building word is usually the street or the place («عبد الرحمن صدقي، مبنى: 31»).
+    : (BUILDING.test(p.seg) || p.building) && /[\d٠-٩]/.test(p.seg) ? 2 : !/[\d٠-٩]/.test(p.seg) && !BUILDING.test(p.seg) ? 2.5 : p.building ? 1.5 : /^[\d٠-٩]/.test(p.seg) ? 1.5 : 1;
   kept.sort((a, b) => rank(b) - rank(a) || order.get(a) - order.get(b));
   return { floor: apexText(floor), flat: apexText(flat), street: kept.map(p => p.seg).join('، ') };
 }

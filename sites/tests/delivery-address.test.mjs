@@ -6,8 +6,8 @@ import { setup } from '../lib/marsad/translate.js';
 test('observed address retains the building instead of moving it into a truncated landmark',()=>{
  const p=deliveryAddress('سكن مصر مسلسل 8، بجانب نادى المهندسين، القاهرة، مبنى: عماره 20 — الدور: 3 — الشقة: 13');
  assert.equal(p.floor,'3');assert.equal(p.flat,'13');assert.ok(!p.street.includes('القاهرة'));
- // Karim 11-14: the building first — the start of the address is what the branch sees.
- assert.match(p.street,/^عماره 20، /);const s=splitDeliveryAddress(p.street);assert.equal(s.extra,'');assert.equal(s.main,p.street);
+ // Karim 11-14: the place first (here «سكن مصر»), then the building, the landmark last.
+ assert.equal(p.street,'سكن مصر مسلسل 8، عماره 20، بجانب نادى المهندسين');const s=splitDeliveryAddress(p.street);assert.equal(s.extra,'');assert.equal(s.main,p.street);
 });
 test('addresses use 100 characters and overflow is retained without cutting words',()=>{
  const input='شارع طويل بجوار المدرسة الجديدة مبنى 123 بوابة 4 '.repeat(3).trim();

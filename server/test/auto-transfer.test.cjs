@@ -203,3 +203,27 @@ test('talabat: a hashtag missing from the branch sequence is told to the branch 
     assert.equal(gaps().length, 2);
   } finally { await t.close(); }
 });
+
+// Karim 11-14, order #2946: «حمام محشو أرز ×2» with «ممبار ×2» (212 ج) and «محشي مشكل ×2» (274 ج) went to Apex as 1 each.
+test('add-on count: a dish ordered twice — the count comes from the line\'s price, else per dish × dishes', async () => {
+  const t0 = cairoToUtc(2026, 11, 13, 22, 0, 0), at = m => new Date(t0 + m * 60000).toISOString();
+  const t = await start({ at: t0 + 5 * 60000 });
+  try {
+    const admin = await t.admin();
+    await t.employee(admin, { name: 'سارة', code: 'E1', pin: '1111' });
+    const sara = (await t.call('POST', '/api/transfer/login', { body: { pin: '1111' } })).body.token;
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const store = 'الدهان، التجمع الخامس - البنفسج';
+    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { codes: [{ id: '4800002946', code: '2946', store }], orders: [{ id: '4800002946', store, status: 'ACCEPTED', placedAt: at(0), total: 1206,
+      detail: { subtotal: 1206, customer: { name: 'يسري', phone: '01004015095', area: 'التجمع', address: 'حي 3' }, bill: [],
+        items: [{ qty: 2, name: 'حمام محشو أرز - قطعة', price: 508, modifierRead: true, modifierComplete: true,
+          options: [{ qty: 1, name: 'ممبار', price: 212 }, { qty: 1, name: 'محاشي مشكل', price: 274 }, { qty: 1, name: 'إضافة غريبة', price: 30 }] }] } }] } });
+    await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'test' });
+    t.advance(9000);
+    const o = (await t.call('GET', '/api/transfer/queue?day=2026-11-13', { headers: { 'x-transfer-session': sara } })).body.orders.find(x => x.ref === '4800002946');
+    const count = name => o.items[0].addons.find(a => a.name === name)?.qty;
+    assert.equal(count('ممبار'), 2, '212 ج at 112 a piece');
+    assert.equal(count('محاشي مشكل'), 2, '274 ج at 143 a piece');
+    assert.equal(count('إضافة غريبة'), null, 'no Apex price to tell: a person picks the count');
+  } finally { await t.close(); }
+});

@@ -511,8 +511,14 @@ function setup(app) {
         // The weight is the size, never an add-on, even when it carries the dish's price («1 كيلو» 1,509).
         const isWeight = o => WEIGHTS.some(w => w[0].test(wName(o.name)));
         const sizeOpt = opts.find(o => isWeight(o) && Number(o.price) > 0) || opts.find(isWeight) || null;
-        const addons = opts.filter(o => o !== sizeOpt && !isWeight(o) && Number(o.price) > 0).map(o => ({ name: o.name, qty: Number(o.qty) > 0 ? Number(o.qty) : null, price: Number(o.price),   // the count shown is for all the dishes together
-          apex: (withApex ? suggest(o.name) : []).map(no => ({ no, name: apexName.get(no) || null })) }));
+        // Karim 11-14 (#2946: «حمام محشو ×2» with «ممبار ×2» 212 ج and «محشي مشكل ×2» 274 ج went to Apex as 1 each): for
+        // a dish ordered more than once, Talabat's count of an add-on is sometimes per dish and sometimes for the line. Its
+        // price is for the line, so with one Apex item for it the count is the price over Apex's price; when the price
+        // cannot tell, the count is left to a person.
+        const addons = opts.filter(o => o !== sizeOpt && !isWeight(o) && Number(o.price) > 0).map(o => {
+          const apex = (withApex ? suggest(o.name) : []).map(no => ({ no, name: apexName.get(no) || null }));
+          return { name: o.name, qty: addonCount(o, Number(x.qty) || 1, apex), price: Number(o.price), apex };
+        });
         const free = opts.filter(o => o !== sizeOpt && !(Number(o.price) > 0)).map(o => (Number(o.qty) > 1 ? o.qty + '× ' : '') + o.name);
         return { qty: x.qty, name: x.name, price: x.price ?? null, ...(x.note ? { note: x.note } : {}), modifiers: x.modifiers || [], modifiersComplete: x.modifierComplete === true || !withApex || isSite, size: size ? size[2] : null, apex, ...(apexPick ? { apexPick } : {}),
           // The size picks the Apex item itself (ربع كيلو نيفة): it is neither an add-on nor a comment.
@@ -669,6 +675,21 @@ function setup(app) {
       }
     }
     if (!payload.pickup) await learnTransferArea(source, ref, payload.locationNo, true);
+  }
+  function addonCount(o, dishes, apex) {
+    const n = Number(o.qty) > 0 ? Number(o.qty) : null, price = Number(o.price);
+    // Every suggested Apex item whose price fits a whole count; taken when they all say the same count.
+    const fits = new Set();
+    for (const c of apex.slice(0, 6)) {
+      const unit = Number(APEX_PRICES[c.no]) * 1.14; if (!(unit > 0 && price > 0)) continue;
+      const k = Math.round(price / unit);
+      if (k >= 1 && k <= 50 && Math.abs(k * unit - price) <= Math.max(0.12 * price, 10)) fits.add(k);
+    }
+    if (fits.size === 1) return [...fits][0];
+    if (n == null) return null;
+    // Two dishes or more and the price cannot tell: the screens disagree (a count per dish or for the line), so a person
+    // picks it (the page asks «عدد إضافة مش واضح»; the automatic transfer leaves it).
+    return dishes > 1 ? null : n;
   }
   app.route('POST', '/api/transfer/selection', async ctx => {
     const me = await who(ctx), b = ctx.body;

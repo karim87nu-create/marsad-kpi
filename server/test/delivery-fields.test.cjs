@@ -96,13 +96,16 @@ test('website comment (Karim 11-11): no «مصدر الطلب: موقع الده
 test('address on Apex: the building first, no empty floor/flat labels, no repeats, Apex-safe letters', async () => {
   const { deliveryAddress } = await import('../src/delivery-fields.js');
   const assert = require('node:assert/strict');
-  assert.deepEqual(deliveryAddress('طريق بدون اسم، مبنى: ڤيلا 205، الدور: الارضي، الشقة: البيزمنت'), { floor: 'الارضي', flat: 'البيزمنت', street: 'فيلا 205، طريق بدون اسم' });
-  assert.deepEqual(deliveryAddress('المحلية السادسة، مبنى: عمارة 19، الدور:، الشقة:'), { floor: '', flat: '', street: 'عمارة 19، المحلية السادسة' });
+  assert.deepEqual(deliveryAddress('طريق بدون اسم، مبنى: ڤيلا 205، الدور: الارضي، الشقة: البيزمنت'), { floor: 'الارضي', flat: 'البيزمنت', street: 'طريق بدون اسم، فيلا 205' });
+  assert.deepEqual(deliveryAddress('المحلية السادسة، مبنى: عمارة 19، الدور:، الشقة:'), { floor: '', flat: '', street: 'المحلية السادسة، عمارة 19' });
   assert.equal(deliveryAddress('هاى تاون 1 ب، مبنى: هاى تاون 1 ب، الدور: الارضى').street, 'هاى تاون 1 ب');
   assert.equal(deliveryAddress('165، - البنفسج 1، 2، 3، 4، مبنى: 165 البنفسج 4', 'البنفسج 1').street, 'عمارة 165 البنفسج 4');
   const w = deliveryAddress('التسعين الجنوبي ، كمباوند سوديك ايست تاون، عمارة 32C، الدور 2، شقة 21، التجمع الخامس.', 'التجمع الخامس');
-  assert.deepEqual(w, { floor: '2', flat: '21', street: 'عمارة 32C، التسعين الجنوبي، كمباوند سوديك ايست تاون' });
-  assert.match(deliveryAddress('‏الأندلس، مبنى: ‏سكان مصر').street, /^سكان مصر، الأندلس$/);
+  // Karim 11-14: the compound / place in the area or the main street first, then the building, landmarks last.
+  assert.deepEqual(w, { floor: '2', flat: '21', street: 'كمباوند سوديك ايست تاون، التسعين الجنوبي، عمارة 32C' });
+  assert.equal(deliveryAddress('عبد الرحمن صدقي، مبنى: 31').street, 'عبد الرحمن صدقي، عمارة 31');
+  assert.equal(deliveryAddress('سكن مصر مسلسل 8، بجانب نادى المهندسين، مبنى: عماره 20').street, 'سكن مصر مسلسل 8، عماره 20، بجانب نادى المهندسين');
+
 });
 test('comment on Apex: no choice-group headings or «(ضمن الوجبة)», website meta lines dropped, dish names', async () => {
   const { deliveryComment, deliveryLabel } = await import('../src/delivery-fields.js');
