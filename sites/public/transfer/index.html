@@ -240,9 +240,12 @@ function cardWorth(o, p, n) {
   const base = flatLines(o).reduce((sum, i, k) => sum + (Number(apexPrices.get(String(p.items?.[k] || ''))) || 0) * (Number(i.qty) || 1), 0);
   return Math.round(base * m[0].value) / 100;
 }
+// Karim 11-14 (Talabat #5233 got «عرض وجبة حواوشي موقعنا»): a gift is a plain dish — never the website's or Talabat's own
+// offers, an offer or a combo, or the service line.
+const NOT_GIFT = /خدم|موقع|طلبات|عرض|اوفر|أوفر|كومبو|combo|offer/i;
 function giftChoices(worth) {
   if (!(worth > 0)) return [];
-  return (data.apexItems || []).filter(a => a.price > 0 && a.price <= worth * 1.25 + 5 && !/خدم|الموقع|طلبات/.test(a.name))
+  return (data.apexItems || []).filter(a => a.price > 0 && a.price <= worth * 1.25 + 5 && !NOT_GIFT.test(a.name))
     .sort((a, b) => Math.abs(a.price - worth) - Math.abs(b.price - worth)).slice(0, 10);
 }
 // Karim 10-11: more than one gift item (and more than one of each) until the total is near the discount.
@@ -505,7 +508,7 @@ function card(o) {
                   const total = giftTotal(p), over = total > GIFT_ROOM(worth);
                   return list.map(g => '<label style="display:block"><input type="checkbox" style="display:inline;width:auto;margin:0 0 0 6px;vertical-align:middle" data-card-gift="' + esc(g.no) + '" ' + (chosen[g.no] ? 'checked ' : '') + '> ' + esc(g.name) + ' — ' + money(g.price) + ' ج' +
                       (chosen[g.no] ? ' × <input type="number" min="1" max="9" value="' + chosen[g.no] + '" data-card-gift-qty="' + esc(g.no) + '" style="width:3.5em">' : '') + '</label>').join('') +
-                    (() => { const left = GIFT_ROOM(worth) - total, more = (data.apexItems || []).filter(a => a.price > 0 && a.price <= left && !chosen[a.no] && !list.some(g => g.no === a.no) && !/خدم|الموقع|طلبات/.test(a.name)).sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+                    (() => { const left = GIFT_ROOM(worth) - total, more = (data.apexItems || []).filter(a => a.price > 0 && a.price <= left && !chosen[a.no] && !list.some(g => g.no === a.no) && !NOT_GIFT.test(a.name)).sort((a, b) => a.name.localeCompare(b.name, 'ar'));
                       return more.length ? '<select data-card-gift-add style="margin-top:4px"><option value="">+ صنف تاني طلبه العميل…</option>' + more.map(a => '<option value="' + esc(a.no) + '">' + esc(a.name) + ' — ' + money(a.price) + ' ج</option>').join('') + '</select>' : ''; })() +
                     (total ? '<div style="font-weight:600;color:' + (over ? '#dc2626' : '#15803d') + '">الهدايا ' + money(total) + ' ج من ' + money(worth) + ' ج' + (over ? ' — أكتر من حقه، شيل صنف' : '') + '</div>' : '');
                 })() +
