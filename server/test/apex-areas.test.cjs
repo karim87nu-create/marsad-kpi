@@ -41,3 +41,19 @@ test('auto-transfer takes the branch\'s copy of a duplicated area', async () => 
   assert.ok(!d.why.some(w => /فرع تاني/.test(w)), d.why.join(' | '));
   assert.ok(d.ok, d.why.join(' | ')); assert.equal(d.body.locationNo, 370);
 });
+
+test('daily report: why orders were left to staff, by reason, with the dishes and areas named', async () => {
+  const { autoReport } = await import('../src/autotransfer.js');
+  const r = autoReport([
+    { source: 'talabat', ref: '1', code: '751', decision: 'sent', reasons: '' },
+    { source: 'talabat', ref: '2', code: '752', decision: 'wait', reasons: 'صنف مش معروف على Apex: كبدة (+1) · منطقة «الرحاب 1» لسه ما اتعلمتش على Apex' },
+    { source: 'site', ref: '3', code: '31001', decision: 'wait', reasons: 'اتحوّل للفرع على الموقع — غالباً اتسجل بإيد · صنف مش معروف على Apex: كبدة' },
+    { source: 'site', ref: '4', code: '31002', decision: 'wait', reasons: 'لسه واصل · اتحوّل للفرع على الموقع — غالباً اتسجل بإيد' }]);
+  assert.deepEqual(r.totals.talabat, { all: 2, auto: 1, would: 0, staff: 1 });
+  assert.equal(r.totals.site.staff, 2);
+  const item = r.reasons.find(x => x.reason === 'صنف مش معروف على Apex');
+  assert.equal(item.orders, 2); assert.deepEqual(item.details, [{ name: 'كبدة', n: 2 }]);
+  assert.equal(r.reasons.find(x => x.reason === 'منطقة لسه ما اتعلمتش على Apex').details[0].name, 'الرحاب 1');
+  // «sent to the branch» counts only when nothing else stopped the order.
+  assert.equal(r.reasons.find(x => x.reason === 'اتحوّل للفرع على الموقع — غالباً اتسجل بإيد').orders, 1);
+});

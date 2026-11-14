@@ -36,6 +36,40 @@ const pickOf = i => (i.apex || []).length === 1 ? i.apex[0].no : i.apexPick && (
 // Whether an order can be sent by itself, and the body for /api/transfer/job (the same the page sends).
 // `x`: { now, locations, customerArea(o) → locationNo|null }. Returns null for an order that is not waiting (done, on
 // Apex, with somebody), else { ok, why[], quiet, body }.
+// The reasons of the orders left to staff, counted. A reason that names a dish or an area («صنف مش معروف على Apex: X»,
+// «منطقة «X» لسه ما اتعلمتش») is counted once under its kind, with the names it gave. Reasons that only say the order was
+// handled by a person first («لسه واصل», «أوردر قديم», «اتحوّل للفرع») count only when nothing else stopped it.
+const BEFORE = new Set(['لسه واصل', 'أوردر قديم — غالباً اتسجل بإيد', 'اتحوّل للفرع على الموقع — غالباً اتسجل بإيد']);
+export function reasonKind(r) {
+  const s = String(r || '').trim();
+  let m = /^(صنف (?:مش معروف على Apex|ليه أكتر من اختيار على Apex)):\s*(.+?)(?:\s*\(\+\d+\))?$/.exec(s); if (m) return [m[1], m[2]];
+  if ((m = /^منطقة «(.+)» لسه ما اتعلمتش على Apex$/.exec(s))) return ['منطقة لسه ما اتعلمتش على Apex', m[1]];
+  if (/^هاشتاج طلبات لسه ماظهرش/.test(s)) return ['هاشتاج طلبات لسه ماظهرش', null];
+  return [s.length > 120 ? s.slice(0, 120) + '…' : s, null];
+}
+export function autoReport(rows) {
+  const by = { talabat: { all: 0, auto: 0, would: 0, staff: 0 }, site: { all: 0, auto: 0, would: 0, staff: 0 } }, reasons = new Map();
+  for (const r of rows) {
+    const t = by[r.source] || (by[r.source] = { all: 0, auto: 0, would: 0, staff: 0 });
+    t.all++;
+    if (r.decision === 'sent') { t.auto++; continue; }
+    if (r.decision === 'would') { t.would++; continue; }
+    t.staff++;
+    const all = String(r.reasons || '').split(' · ').map(x => x.trim()).filter(Boolean);
+    const real = all.filter(x => !BEFORE.has(x)), use = real.length ? real : all.length ? [all.find(x => x !== 'لسه واصل') || all[0]] : ['غير معروف'];
+    for (const x of new Set(use)) {
+      const [kind, detail] = reasonKind(x), e = reasons.get(kind) || { reason: kind, orders: 0, talabat: 0, site: 0, details: new Map(), codes: [] };
+      e.orders++; e[r.source] = (e[r.source] || 0) + 1;
+      if (detail) e.details.set(detail, (e.details.get(detail) || 0) + 1);
+      if (e.codes.length < 8) e.codes.push((r.source === 'talabat' ? 'طلبات #' : 'الموقع #') + (r.code || r.ref));
+      reasons.set(kind, e);
+    }
+  }
+  const staff = Object.values(by).reduce((n, t) => n + t.staff, 0);
+  return { totals: by, staff, reasons: [...reasons.values()].sort((a, b) => b.orders - a.orders).map(e => ({ ...e, share: staff ? Math.round(e.orders / staff * 100) : 0,
+    details: [...e.details].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([name, n]) => ({ name, n })) })) };
+}
+
 export function decide(o, x) {
   if (!o || o.done || o.apex || o.out) return null;
   if (o.job) return null;
@@ -226,6 +260,15 @@ function setup(app) {
       return { source: r.source, ref: r.ref, code: r.code, decision: r.decision, reasons: r.reasons, at: iso(r.at), firstAt: iso(r.first_at), job: j ? { state: j.state, orderNo: res?.orderNo || null, error: res?.error || null } : null }; });
     const n = k => list.filter(r => r.decision === k).length;
     return { mode: await mode(), day, totals: { sent: n('sent'), would: n('would'), wait: n('wait') }, list };
+  });
+  // Karim 11-14 «اعمل التقرير اليومي»: why orders were left to staff, per reason, for a day or a period — the list of what
+  // still stops the automatic transfer (unknown items and areas named, so each can be taught once).
+  app.route('GET', '/api/auto-transfer/report', async ctx => {
+    await app.requireAdmin(ctx);
+    const to = /^\d{4}-\d{2}-\d{2}$/.test(String(ctx.query.to || '')) ? ctx.query.to : businessDay(ctx.now);
+    const from = /^\d{4}-\d{2}-\d{2}$/.test(String(ctx.query.from || '')) ? ctx.query.from : to;
+    const rows = await db.prepare('SELECT source, ref, day, code, decision, reasons FROM auto_transfer_log WHERE day BETWEEN ? AND ? LIMIT 20000').all(from, to);
+    return { from, to, ...autoReport(rows) };
   });
   app.route('POST', '/api/auto-transfer', async ctx => {
     const who = await app.requireAdmin(ctx, 'admin'), b = ctx.body;

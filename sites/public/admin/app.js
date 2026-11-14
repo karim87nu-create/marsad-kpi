@@ -690,6 +690,26 @@
     table('priceDiffs', priceDiffColumns, d.list, { empty: 'مفيش فروق أسعار ولا أوردرات واقفة في الفترة دي' });
   }
 
+  // ---------- ليه الأوردرات اتسابت للموظف (Karim 11-14) ----------
+  let autoReasonRows = [];
+  const autoReasonColumns = [
+    { title: 'السبب', get: x => x.reason, cls: () => 'wrap' },
+    { title: 'عدد الأوردرات', get: x => x.orders, type: 'number' },
+    { title: 'من اللي اتسابوا للموظف', get: x => x.share, show: x => x.share + '%', type: 'number' },
+    { title: 'طلبات', get: x => x.talabat || 0, type: 'number' },
+    { title: 'الموقع', get: x => x.site || 0, type: 'number' },
+    { title: 'الأصناف / المناطق', get: x => x.details.map(d => d.name + (d.n > 1 ? ' (' + d.n + ')' : '')).join('، '), cls: () => 'wrap' },
+    { title: 'أمثلة', get: x => x.codes.join('، '), cls: () => 'wrap' }];
+  async function renderAutoReasons() {
+    if (!isAdmin()) return;
+    const d = await api('/api/auto-transfer/report?' + periodQuery());
+    autoReasonRows = d.reasons;
+    const card = (label, t) => kpi(label, t.all ? Math.round(t.auto / t.all * 100) + '% آلي' : '—', !t.all ? '' : t.auto / t.all >= 0.8 ? 'good' : t.auto / t.all >= 0.5 ? 'warn' : 'bad',
+      t.all + ' أوردر · آلي ' + t.auto + (t.would ? ' · كان هيتحوّل ' + t.would : '') + ' · للموظف ' + t.staff);
+    $('autoReasonCards').replaceChildren(card('طلبات', d.totals.talabat), card('الموقع', d.totals.site));
+    table('autoReasons', autoReasonColumns, d.reasons, { empty: 'مفيش أوردرات اتسابت للموظف في الفترة دي' });
+  }
+
   // ---------- التشغيل الآلي: Talabat screens, Apex writer, item stops and the links, out of «الإدارة» ----------
   async function renderAuto() {
     renderWatch('autoWatch').catch(e => $('autoWatch').replaceChildren(h('p', { className: 'muted', textContent: e.message })));
@@ -911,6 +931,7 @@
     if (!kind) return;
     try {
       if (kind === 'priceDiffs') return exportRows('فروق-الأسعار', priceDiffColumns, priceDiffRows);
+      if (kind === 'autoReasons') return exportRows('اسباب-التحويل-اليدوي', autoReasonColumns, autoReasonRows);
       if (kind === 'closures') return exportRows('إغلاق-الفروع', closureColumns, closureRows);
       if (OR.exportKind(kind) || SITE.exportKind(kind) || INS.exportKind(kind)) return;
       if (kind === 'queues') exportRows('انواع-الطلبات', queueColumns, (await dayHistory()).queues || []);
@@ -934,7 +955,7 @@
   const VIEWS = { now: ['الآن', null],
     day: ['الكول سنتر: اليوم', () => Promise.all([renderDay(), renderHours()])], team: ['أداء الموظفين', renderTeam], profile: ['ملف الموظف', renderProfile],
     breaks: ['البريك والحضور ونهاية الشيفت', () => Promise.all([refreshRequests(), renderAttendance(), renderShifts()])], calls: ['المكالمات', renderCalls], missed: ['المكالمات الفائتة', renderMissed], roster: ['جدول مواعيد الموظفين', () => ROSTER.render()], forecast: ['التوقع والاحتياج', () => FC.render()],
-    branchesNow: ['الفروع الآن', null], transfer: ['تحويل الأوردرات: طلبات والموقع', () => Promise.all([renderPriceDiffs(), SITE.renderTalabat(), SITE.renderTransfer()])], entry: ['ضرب الأوردرات', () => OR.renderEntry()],
+    branchesNow: ['الفروع الآن', null], transfer: ['تحويل الأوردرات: طلبات والموقع', () => Promise.all([renderPriceDiffs(), renderAutoReasons(), SITE.renderTalabat(), SITE.renderTransfer()])], entry: ['ضرب الأوردرات', () => OR.renderEntry()],
     sales: ['المبيعات', () => INS.renderSales()], branches: ['تقرير الفروع', () => Promise.all([renderClosures(), OR.renderBranches(), INS.renderBranch(), SITE.renderBranches()])],
     cancels: ['الإلغاءات', () => Promise.all([OR.renderCancels(), SITE.renderBranchTalabatCancels(), INS.renderCancelOwners()])],
     kpi: ['مؤشرات الأداء: الموظفين والفروع', () => KPI.render()], followup: ['المتابعة والاستثناءات', renderFollowup], bot: ['بوت الفروع', () => BOT.render()], qa: ['الجودة: تقييم المكالمات', () => QA.render()],
