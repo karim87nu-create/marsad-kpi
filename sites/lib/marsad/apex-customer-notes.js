@@ -14,13 +14,22 @@ export function parseApexCustomerNote(raw) {
   // Karim 09-11, the notes staff really write: «خصم 15% ع الاوردر االقادم و الكومنت يتمسح» (typos included) is for one order;
   // «يتقسمو ع اوردرين» (split over two orders) is not something to guess.
   const nextOrder = /قادم|جا[يى][هة]?(?=$|[\s.,،])|يتمسح|تتمسح|اول\s*[اأ]وردر|(?:^|[\s.])(?:ع|على|علي|عى)\s*(?:ا*ل)?[اأ]?(?:وردر|ورر|ورد)|عال[اأ]?وردر/i.test(t);
-  const split = /(?:يتقسم|تتقسم|مقسم|مقسوم)|(?:[اأ]وردرين|طلبين|اوردارين)|(?:على|علي|ع)\s*(?:[2-9]|10)\s*(?:[اأ]وردرات|طلبات|[اأ]وردر|طلب)/i.test(t);
-  // Over how many orders (Karim 09-11: the first gets its share, the card then says what is left for the next).
+  // Karim 14-11: «على مرتين» is the same as «ع اوردرين».
+  // «لمده اوردرين» is the whole discount on each of them (below), not a split.
+  const split = !/(?:لمد[ةه]|لعدد)\s*(?:[اأ]وردرين|اوردارين|طلبين|مرتين)/.test(t) && /(?:يتقسم|تتقسم|مقسم|مقسوم)|(?:[اأ]وردرين|طلبين|اوردارين)|(?:على|علي|ع)\s*(?:مرتين|دفعتين)|(?:على|علي|ع)\s*(?:[2-9]|10)\s*(?:[اأ]ورد[ا]?رات|طلبات|[اأ]وردر|طلب|مرات)/i.test(t);
+  // The whole discount on each of N orders (real notes 14-11: «خصم 20% لمده 3 اوردارات»): the card counts them down.
   const WORDS = { اتنين: 2, اثنين: 2, تلات: 3, تلاته: 3, تلاتة: 3, ثلاث: 3, ثلاثة: 3, اربع: 4, اربعة: 4, أربع: 4, خمس: 5 };
-  const orders = !split ? 1 : /[اأ]وردرين|طلبين|اوردارين/.test(t) ? 2
-    : (m => m ? Number(m[1]) || WORDS[m[1]] || 0 : 0)(/(\d+|اتنين|اثنين|تلاته?|تلاتة|ثلاثة?|اربعة?|أربع|خمس)\s*(?:[اأ]وردرات|[اأ]وردر|طلبات|طلب)/.exec(t));
+  const repeatM = !split && /(?:لمد[ةه]|لعدد|ل)\s*(?:(\d+|اتنين|اثنين|تلاته?|تلاتة|ثلاثة?|اربعة?|أربع|خمس)\s*(?:[اأ]ورد[ا]?رات|[اأ]وردر|طلبات|طلب|مرات)|(مرتين|[اأ]وردرين|اوردارين|طلبين))/.exec(t);
+  const repeat = !repeatM ? 0 : repeatM[2] ? 2 : Number(repeatM[1]) || WORDS[repeatM[1]] || 0;
+  // «خصم 45% كل اوردر 15%» (real note 14-11): 15% on each of three orders, never 45% at once.
+  const eachM = /كل\s*(?:[اأ]وردر|طلب|مر[ةه])\s*(\d{1,3}(?:\.\d+)?)\s*(?:%|٪)/.exec(t);
+  // Over how many orders (Karim 09-11: the first gets its share, the card then says what is left for the next).
+  // Real note 14-11: «يتقسمو ع اورد» (the word cut off) is over two orders, as nearly every such card says; a bare
+  // «يتقسم» with no orders written stays unclear.
+  const orders = !split ? 1 : /[اأ]وردرين|طلبين|اوردارين|مرتين|دفعتين/.test(t) ? 2
+    : (m => m ? Number(m[1]) || WORDS[m[1]] || 0 : /(?:ع|على|علي)\s*(?:ال)?[اأ]ورد/.test(t) ? 2 : 0)(/(\d+|اتنين|اثنين|تلاته?|تلاتة|ثلاثة?|اربعة?|أربع|خمس)\s*(?:[اأ]ورد[ا]?رات|[اأ]وردر|طلبات|طلب|مرات)/.exec(t));
   const oneTime = nextOrder || /(?:مرة\s*واحدة|مره\s*واحده|للطلب\s*(?:الواحد|القادم|الجاي|الحالي|ده|دا)|للاوردر\s*(?:الحالي|ده|دا)|للأوردر\s*(?:الحالي|ده|دا)|(?:ال)?طلب\s*واحد|المره\s*دي\s*فقط|المرة\s*دي\s*فقط|اوردر\s*(?:واحد|واحده|القادم)|order\s*only|next\s*order|one[ -]?time)/i.test(text);
-  const permanent = /(?:دائم|دايم|كل\s*(?:مرة|مره|طلب|اوردر)|permanent|every\s*order|always)/i.test(text);
+  const permanent = !eachM && !repeat && /(?:دائم|دايم|ثابت|(?:ع|على|علي)\s*طول|كل\s*(?:مرة|مره|طلب|اوردر)|permanent|every\s*order|always)/i.test(text);
   // Lines, and sentences ended by «.» (Karim 10-11: «خصم 15% ع الاوردر القادم. العميل بيحب الشطة» — the second
   // sentence is not part of the discount and stays on the card). A piece that only says «ع الاوردر القادم» or
   // «والكومنت يتمسح» belongs to the sentence before it.
@@ -61,7 +70,19 @@ export function parseApexCustomerNote(raw) {
   }
   let next = null;
   const share = directives.filter(d => d.kind === 'percent' || d.kind === 'amount');
-  if (split && orders >= 2 && orders <= 10 && share.length === 1) {
+  if (!split && share.length === 1 && share[0].kind === 'percent' && eachM) {
+    // «خصم 45% كل اوردر 15%»: this order 15%, the card then says what is left.
+    const d = share[0], each = money(Number(eachM[1])), total = d.value, n = each > 0 ? Math.round(total / each) : 0;
+    if (n >= 2 && n <= 10 && Math.abs(n * each - total) < 0.01) {
+      d.split = { total, orders: n }; d.value = each;
+      next = { sentence: n - 1 === 1 ? 'خصم ' + each + '% ع الاوردر القادم والكومنت يتمسح.' : 'خصم ' + money(total - each) + '% كل اوردر ' + each + '%.', section: d.text };
+    }
+  } else if (!split && share.length === 1 && repeat >= 2 && repeat <= 10) {
+    // «خصم 20% لمده 3 اوردارات»: the whole discount now, and the card counts the orders down.
+    const d = share[0], left = repeat - 1, unit = d.kind === 'percent' ? '%' : ' جنيه';
+    d.repeat = { orders: repeat };
+    next = { sentence: left === 1 ? 'خصم ' + d.value + unit + ' ع الاوردر القادم والكومنت يتمسح.' : 'خصم ' + d.value + unit + ' لمده ' + left + ' اوردرات.', section: d.text };
+  } else if (split && orders >= 2 && orders <= 10 && share.length === 1) {
     const d = share[0], total = d.value, each = Math.round(total / orders * 100) / 100, left = orders - 1;
     d.split = { total, orders }; d.value = each;
     const unit = d.kind === 'percent' ? '%' : ' جنيه';
@@ -76,7 +97,7 @@ export function parseApexCustomerNote(raw) {
     next = { sentence: '', section: '' };
   // The card's whole new text: the used sentence(s) taken out (a split one says what is left), the rest as written.
   if (next) {
-    const used = share.length === 1 && split ? share[0].text : null;
+    const used = share.length === 1 && (split || share[0].split || share[0].repeat) ? share[0].text : null;
     // Taken out of the card's own text, so what stays keeps its words and separators («رأي العميل: كويس | …»).
     let out = text;
     rawSections.forEach((x, i) => {

@@ -48,6 +48,23 @@ test('card notes in any wording: numbers in words, «على N اوردرات», 
   let note = 'خصم 90% على 3 اوردرات', shares = [];
   while (note) { const r = p(note); shares.push(r.directives[0].value); note = r.next?.sentence && r.directives[0].split ? r.next.sentence : ''; }
   assert.deepEqual(shares, [30, 30, 30]);
+  // Karim 14-11 «فيه حاجات اتطبقت مره وحده مع انها علي مرتين» — real cards read 14-11.
+  same('خصم 30% على مرتين', 15, 2, 'خصم 15% ع الاوردر القادم والكومنت يتمسح.');
+  same('خصم 100 جنيه ع مرتين والكومنت يتمسح', 50, 2, 'خصم 50 جنيه ع الاوردر القادم والكومنت يتمسح.');
+  same('..خصم 15 % يتقسمو ع اورد والكومنت يتمسح.', 7.5, 2, 'خصم 7.5% ع الاوردر القادم والكومنت يتمسح.');
+  const each = p('خصم 45% كل اوردر 15%.');
+  assert.equal(each.directives[0].value, 15, 'never 45% at once'); assert.equal(each.permanent, false); assert.equal(each.oneTime, true);
+  assert.equal(each.next.note, 'خصم 30% كل اوردر 15%.');
+  assert.equal(p(each.next.note).next.note, 'خصم 15% ع الاوردر القادم والكومنت يتمسح.');
+  // The whole discount on each of N orders, the card counting down (before: kept on the card for ever).
+  note = 'خصم 20% لمده 3 اوردارات .'; shares = [];
+  while (note) { const r = p(note); shares.push(r.directives[0].value); assert.equal(r.oneTime, true, note); note = r.next ? r.next.note : ''; }
+  assert.deepEqual(shares, [20, 20, 20]);
+  assert.equal(p('خصم 20% لمده اوردرين').directives[0].value, 20);
+  assert.equal(p('العميل زعلان. خصم 25% لمده 3 اوردرات').next.note, 'العميل زعلان. خصم 25% لمده 2 اوردرات.');
+  for (const n of ['خصم 10% ثابت.', '..خصم 10 % ثابت لحد 12/31.', '.يكون بعلم استاذ محمود/خصم 15% ع طول هام جدا .']) {
+    const r = p(n); assert.equal(r.permanent, true, n); assert.equal(r.oneTime, false, n); assert.equal(r.next, null, n);
+  }
 
   const item = n => p(n).directives.filter(d => d.kind === 'item').map(d => (d.suggest[0]?.sure ? '✔' : '✋') + (d.suggest[0]?.name || ''));
   assert.deepEqual(item('العميل له ورق عنب وطحينة فري'), ['✔ورق عنب', '✔سلطة طحينة'], 'two dishes in one line');
