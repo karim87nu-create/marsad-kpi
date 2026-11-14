@@ -303,6 +303,23 @@ function setup(app) {
   // employee waited). The page reads the last build; only one older than a minute is rebuilt while it waits.
   // Per day: the last build, whether something changed since (a push), and the build running now.
   const st = new Map(), S = day => st.get(day) || (st.set(day, { dirty: false, run: null }), st.get(day));
+  // Karim 11-14 «الاوردرات بتاخد وقت عقبال ما تظهر في صفحه التحويلات»: how long a build takes and how long after it
+  // arrived an order first appears in one (this instance), in /api/health/errors → transferBuilds.
+  const buildStats = { n: 0, totalMs: 0, maxMs: 0, lastMs: 0, lastAt: null, shown: 0, lagTotal: 0, lagMax: 0, lagLast: [] }, firstShown = new Map();
+  function noteBuild(base, ms) {
+    Object.assign(buildStats, { n: buildStats.n + 1, totalMs: buildStats.totalMs + ms, maxMs: Math.max(buildStats.maxMs, ms), lastMs: ms, lastAt: iso(app.now()) });
+    for (const o of base.list || []) {
+      const k = o.source + ':' + o.ref; if (firstShown.has(k)) continue;
+      firstShown.set(k, base.at);
+      const lag = base.at - Date.parse(o.at || 0);
+      if (o.apex || o.out || !(lag >= 0 && lag < 3600000)) continue;
+      buildStats.shown++; buildStats.lagTotal += lag; buildStats.lagMax = Math.max(buildStats.lagMax, lag);
+      buildStats.lagLast = [{ order: k, seconds: Math.round(lag / 1000) }, ...buildStats.lagLast].slice(0, 10);
+    }
+    if (firstShown.size > 5000) firstShown.clear();
+  }
+  app.transferBuildStats = () => ({ builds: buildStats.n, avgMs: buildStats.n ? Math.round(buildStats.totalMs / buildStats.n) : null, maxMs: buildStats.maxMs, lastMs: buildStats.lastMs, lastAt: buildStats.lastAt,
+    newOrders: buildStats.shown, avgShowSeconds: buildStats.shown ? Math.round(buildStats.lagTotal / buildStats.shown / 1000) : null, maxShowSeconds: Math.round(buildStats.lagMax / 1000), last: buildStats.lagLast });
   function rebuild(day) {
     const x = S(day);
     if (db.kind !== 'd1' && x.run) return x.run;
@@ -317,11 +334,13 @@ function setup(app) {
           if (saved) { queueCache.set(day, saved); return saved; }
         }
         let base, passes = 0;
+        const t0 = Date.now();
         do {
           x.dirty = false;
           base = await buildBase(day, app.now());
           queueCache.set(day, base);
         } while (x.dirty && ++passes < 2);
+        noteBuild(base, Date.now() - t0);
         const keep = { at: base.at, locations: base.locations, list: base.list.map(o => o.apex || o.out ? { source: o.source, ref: o.ref, code: o.code, at: o.at, status: o.status, out: o.out, branch: o.branch, apexBranch: o.apexBranch, total: o.total, apex: o.apex } : o) };
         await db.prepare('INSERT INTO transfer_cache (day, at, data) VALUES (?,?,?) ON CONFLICT(day) DO UPDATE SET at = excluded.at, data = excluded.data WHERE excluded.at >= transfer_cache.at').run(day, base.at, JSON.stringify(keep)).catch(() => {});
         return base;
