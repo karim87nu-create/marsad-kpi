@@ -11,6 +11,11 @@ const WORDS = [
   ['in front of', 'أمام'], ['infront of', 'أمام'], ['in-front of', 'أمام'], ['opposite to', 'أمام'], ['opposite', 'أمام'], ['next to', 'بجوار'], ['beside', 'بجوار'],
   ['behind', 'خلف'], ['near', 'بالقرب من'], ['close to', 'بالقرب من'], ['above', 'فوق'], ['beneath', 'تحت'], ['corner of', 'ناصية'], ['corner', 'ناصية'],
   ['ground floor', 'الدور الأرضي'], ['first floor', 'الدور الأول'], ['second floor', 'الدور الثاني'], ['third floor', 'الدور الثالث'],
+  // Karim 11-14 (Talabat addresses as Apex showed them): Franco / transliterated address words.
+  ['bedon esm', 'بدون اسم'], ['bdon esm', 'بدون اسم'], ['without name', 'بدون اسم'], ['tariaq', 'طريق'], ['tariq', 'طريق'], ['tarik', 'طريق'], ['tare2', 'طريق'],
+  ['magmou3a', 'مجموعة'], ['magmo3a', 'مجموعة'], ['magmoua', 'مجموعة'], ['mgmo3a', 'مجموعة'], ['3emara', 'عمارة'], ['emara', 'عمارة'], ['3omara', 'عمارة'],
+['helmiya', 'حلمية'], ['helmeya', 'حلمية'], ['dobaet', 'ضباط'], ['dobbat', 'ضباط'], ['atteya', 'عطية'], ['attia', 'عطية'], ['batal', 'بطل'],
+    ['7ay', 'حي'], ['7ai', 'حي'], ['hay', 'حي'], ['zhraa', 'الزهراء'], ['msaken', 'مساكن'], ['masaken', 'مساكن'],
   ['street', 'شارع'], ['st\\.', 'ش'], ['st', 'ش'], ['road', 'طريق'], ['rd', 'طريق'], ['avenue', 'شارع'], ['ave', 'شارع'], ['axis', 'محور'], ['square', 'ميدان'],
   ['building', 'عمارة'], ['bldg', 'عمارة'], ['bld', 'عمارة'], ['tower', 'برج'], ['villa', 'فيلا'], ['house', 'بيت'], ['compound', 'كمبوند'], ['gate', 'بوابة'],
   ['entrance', 'مدخل'], ['block', 'بلوك'], ['zone', 'منطقة'], ['district', 'حي'], ['neighborhood', 'حي'], ['neighbourhood', 'حي'], ['area', 'منطقة'], ['sector', 'قطاع'],
@@ -49,7 +54,8 @@ function arabizeRest(s, learned) {
   return s.replace(/[A-Za-z][A-Za-z0-9']*/g, (w, at, all) => {
     const k = w.toLowerCase().replace(/'/g, '');
     let v = learned?.get(k) || NAMES[k];
-    if (!v) { if (/\d/.test(w) || (/^[A-Z]{2,4}$/.test(w)) || w.length < 2) return w; v = translit(w); }
+    if (!v) { const franco = /[a-z]{2,}/i.test(w) && /[a-z][2356789]|[2356789][a-z]/i.test(w) && !/^[A-Za-z]{1,2}\d+$/.test(w);
+      if ((/\d/.test(w) && !franco) || (/^[A-Z]{2,4}$/.test(w)) || w.length < 2) return w; v = translit(w); }
     return all.slice(Math.max(0, at - 2), at) === 'ال' && v.startsWith('ال') ? v.slice(2) : v;
   });
 }

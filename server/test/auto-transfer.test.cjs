@@ -36,6 +36,7 @@ test('auto transfer: decides only on certain orders and says why not', () => {
   assert.match(why({ items: [{ qty: 1, name: 'Kofta', price: P, modifiersComplete: false, apex: [{ no: KOFTA }], addons: [] }] }), /الإضافات مش ظاهرة/);
   assert.match(why({ payment: 'mixed' }), /كاش ولا مدفوع/);
   assert.match(why({ apexBranch: null }), /الفرع/);
+  assert.match(why({ code: null }), /هاشتاج طلبات لسه ماظهرش/, 'Karim 11-14: never without the hashtag');
   assert.match(why({ areaGuess: { no: 218, seen: 1 } }), /لسه ما اتعلمتش/);
   assert.match(why({ areaGuess: { no: 300, seen: 4 } }), /فرع تاني/);
   assert.match(why({ discounts: [{ text: 'خصم', amount: 20, who: null }] }), /خصم مش واضح/);
@@ -84,6 +85,8 @@ test('auto transfer: trial only records, on sends as «المرصد آلي», a 
     const { token } = (await admin('POST', '/api/talabat/token')).body;
     const store = 'الدهان، التجمع الخامس - البنفسج';
     const ids = ['3977900051', '3977900052', '3977900053', '3977900054'], areas = ['البنفسج 5', 'البنفسج 5', 'الرحاب 2', 'البنفسج 5'];
+    // The hashtags as the Live Orders screen reads them (Karim 11-14: never written without one).
+    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { codes: ids.map((id, i) => ({ id, code: '5' + i, store })) } });
     await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: ids.map((id, i) => ({ id, code: '5' + i, store, status: 'ACCEPTED', placedAt: at(i), total: P,
       detail: { subtotal: P, customer: { name: 'عميل', phone: '0100000005' + i, area: areas[i], address: 'شارع 90، ' + areas[i] },
         items: [{ qty: 1, name: 'Kofta', price: P, modifierRead: true, modifierComplete: true, options: [] }], bill: [{ k: 'مجموع', text: 'مجموع | ' + P }, { k: 'payment', text: 'Cash' }] } })) } });

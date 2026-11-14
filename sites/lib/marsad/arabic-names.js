@@ -67,6 +67,11 @@ const consRun = (w, i) => { let n = 0; while (i < w.length && !VOW.includes(w[i]
 export function translit(word) {
   let w = String(word).toLowerCase().replace(/[^a-z0-9]/g, '');
   if (!w || /^\d+$/.test(w)) return word;
+  // Franco-Arabic (Karim 11-14: «Magmou3a 124» stayed in English): a digit between letters is an Arabic letter.
+  if (/[a-z]/.test(w) && /[2356789]/.test(w)) w = w.replace(/(?<=[a-z])3|3(?=[a-z])/g, '\u0639').replace(/(?<=[a-z])7|7(?=[a-z])/g, '\u062d').replace(/(?<=[a-z])5|5(?=[a-z])/g, '\u062e')
+    .replace(/(?<=[a-z])2|2(?=[a-z])/g, '\u0621').replace(/(?<=[a-z])8|8(?=[a-z])/g, '\u063a').replace(/(?<=[a-z])9|9(?=[a-z])/g, '\u0642').replace(/(?<=[a-z])6|6(?=[a-z])/g, '\u0637');
+  // «Elbatal», «Elatti»: ال + the rest, also when the rest is not a known name.
+  const el = w.match(/^[ae]l([a-z\u0600-\u06ff]{3,})$/); if (el && !NAMES[w]) return 'ال' + (NAMES[el[1]] || translit(el[1])).replace(/^ال/, '');
   // «Abdelghany» → عبد + ال + …, «Elsayed» → ال + …
   const ab = w.match(/^abd[eu]?l(.{2,})$/); if (ab) return 'عبدال' + (NAMES[ab[1]] || translit(ab[1])).replace(/^ال/, '');
   const al = w.match(/^[ae]l(.{3,})$/); if (al && NAMES[al[1]]) return 'ال' + NAMES[al[1]].replace(/^ال/, '');
@@ -77,6 +82,7 @@ export function translit(word) {
     if (pair && !(/\d/.test(two[0]) && i === 0 && /^\d+$/.test(w))) { out += pair[1]; i += 2; continue; }
     const ch = w[i], first = i === 0, last = i === w.length - 1;
     if (/\d/.test(ch)) { out += ch; i++; continue; }
+    if (/[\u0600-\u06ff]/.test(ch)) { out += ch; i++; continue; }
     if ('aeiou'.includes(ch)) {
       if (first) out += ch === 'e' || ch === 'i' ? 'إ' : ch === 'o' || ch === 'u' ? 'أ' : 'ا';
       else if (last) out += ch === 'a' ? 'ة' : ch === 'e' ? '' : ch === 'i' || ch === 'y' ? 'ي' : 'و';
