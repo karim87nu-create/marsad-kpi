@@ -1038,6 +1038,7 @@
   // الرئيسية: every 5 seconds.
   let homeAt = 0;
   setInterval(() => {
+    if (token && !document.hidden && state.view === 'home') HOME.tick();
     if (!token || document.hidden || state.view !== 'home' || Date.now() - homeAt < 5000) return;
     homeAt = Date.now();
     HOME.refresh().then(() => { syncStatus(true); showError(null); }).catch(() => syncStatus(false));

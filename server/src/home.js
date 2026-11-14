@@ -69,6 +69,9 @@ function setup(app) {
       transfers: { waiting: waiting.length, oldest, writing: by('writing').length, failed: by('failed').length, onApex: onApex.length, auto: auto.length,
         avg: took.length ? Math.round(took.reduce((x, y) => x + y, 0) / took.length * 10) / 10 : null, talabat: src('talabat'), site: src('site') },
       board: b ? { ...b, receivedAt: iso(b.receivedAt), ageSeconds: b.receivedAt ? Math.round((now - b.receivedAt) / 1000) : null } : null,
+      // The orders not yet on Apex, oldest first (failed first of all): the queue in the middle of the room.
+      waitingList: [...by('failed'), ...[...waiting, ...by('writing')].sort((x, y) => (Date.parse(x.at) || 0) - (Date.parse(y.at) || 0))].slice(0, 12)
+        .map(x => ({ source: x.source, ref: x.ref, code: x.code, branch: x.branch, at: x.at, state: x.state, by: x.by || null, why: x.why ? String(x.why).slice(0, 160) : null })),
       attention: await app.homeAttention(now, t, b)
     };
   };
