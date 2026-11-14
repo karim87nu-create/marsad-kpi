@@ -821,7 +821,7 @@ function setup(app) {
         // One gift or several (Karim 10-11), each with its count, up to about the discount.
         const asked = Array.isArray(clientCard.gifts) ? clientCard.gifts : clientCard.gift ? [{ itemNo: clientCard.gift.itemNo, qty: 1 }] : [];
         const gifts = asked.slice(0, 10).map(x => ({ itemNo: String(x?.itemNo || '').trim(), qty: Math.round(Number(x?.qty) || 0) }));
-        if (gifts.some(x => /خدم|موقع|طلبات|عرض|اوفر|أوفر|كومبو|combo|offer/i.test(APEX_NAMES[x.itemNo] || ''))) fail(409, 'الهدية لازم تكون صنف عادي — مش عرض ولا صنف خاص بالموقع أو طلبات');
+        if (gifts.some(x => /خدم|موقع|طلبات|عرض|اوفر|أوفر|offer/i.test(APEX_NAMES[x.itemNo] || ''))) fail(409, 'الهدية لازم تكون صنف عادي — مش عرض ولا صنف خاص بالموقع أو طلبات');
         if (!gifts.length || gifts.some(x => !APEX_NAMES[x.itemNo] || !(Number(APEX_PRICES[x.itemNo]) > 0) || x.qty < 1 || x.qty > 9)) fail(409, 'اختار أصناف الهدية من القائمة');
         const total = Math.round(gifts.reduce((sum, x) => sum + Number(APEX_PRICES[x.itemNo]) * x.qty, 0) * 100) / 100;
         if (total > discountWorth * 1.25 + 5) fail(409, 'مجموع الهدايا (' + total + ' ج) أكبر من قيمة الخصم (' + discountWorth + ' ج)');

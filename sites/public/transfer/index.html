@@ -240,9 +240,9 @@ function cardWorth(o, p, n) {
   const base = flatLines(o).reduce((sum, i, k) => sum + (Number(apexPrices.get(String(p.items?.[k] || ''))) || 0) * (Number(i.qty) || 1), 0);
   return Math.round(base * m[0].value) / 100;
 }
-// Karim 11-14 (Talabat #5233 got «عرض وجبة حواوشي موقعنا»): a gift is a plain dish — never the website's or Talabat's own
-// offers, an offer or a combo, or the service line.
-const NOT_GIFT = /خدم|موقع|طلبات|عرض|اوفر|أوفر|كومبو|combo|offer/i;
+// Karim 11-14 (Talabat #5233 got «عرض وجبة حواوشي موقعنا»): a gift is a dish or a combo — never the website's or Talabat's own
+// items, an offer, or the service line (Karim 11-14: «سيب الكومبو»).
+const NOT_GIFT = /خدم|موقع|طلبات|عرض|اوفر|أوفر|offer/i;
 function giftChoices(worth) {
   if (!(worth > 0)) return [];
   return (data.apexItems || []).filter(a => a.price > 0 && a.price <= worth * 1.25 + 5 && !NOT_GIFT.test(a.name))
