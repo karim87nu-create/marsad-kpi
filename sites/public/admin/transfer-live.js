@@ -66,6 +66,6 @@ window.MarsadTransferLive = function MarsadTransferLive(ctx) {
     ], last, { empty: 'مفيش أوردرات اتسجلت آخر ساعتين' });
   }
   // The clocks move every second without asking the server.
-  function tick() { for (const b of document.querySelectorAll('#view-transferLive .tl-age')) b.textContent = age(b.dataset.at); }
+  function tick() { for (const b of document.querySelectorAll('#tlBody .tl-age')) b.textContent = age(b.dataset.at); }
   return { refresh, tick, draw };
 };

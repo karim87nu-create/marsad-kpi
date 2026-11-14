@@ -990,6 +990,7 @@
     state.view = view;
     const sec = SECTION_OF[view] || 'calls'; lastIn[sec] = view; if (sec !== state.section) setSection(sec);
     for (const b of document.querySelectorAll('#nav [data-view]')) { const on = b.dataset.view === view; b.classList.toggle('active', on); b.setAttribute('aria-current', on ? 'page' : 'false'); }
+    placeLive(view);
     for (const s of document.querySelectorAll('.view')) s.hidden = s.id !== 'view-' + view;
     $('title').textContent = VIEWS[view][0];
     const dated = DAY_VIEWS.includes(view);
@@ -1000,6 +1001,7 @@
     showError(null);
     refreshRequests();
     if (view === 'now') return tick();
+    if (view === 'home') { tick(); OR.drawBoard(); OR.refreshBoard().catch(() => {}); TL.refresh().catch(() => {}); }
     if (view === 'home') return HOME.refresh().then(() => syncStatus(true)).catch(e => { syncStatus(false); showError(e); });
     if (view === 'branchesNow') { OR.drawBoard(); return OR.refreshBoard().then(() => syncStatus(true)).catch(e => { syncStatus(false); showError(e); }); }
     try { syncStatus(true, 'جارٍ التحميل…'); if (force) cache.delete(rangeKey()); await VIEWS[view][1](); syncStatus(true); } catch (e) { syncStatus(false); showError(e); }
@@ -1018,24 +1020,34 @@
   for (const id of ['callSearch', 'callEmployee', 'callStatus']) $(id).addEventListener('input', () => renderCalls().catch(showError));
   $('missedClass').onchange = () => renderMissed().catch(showError);
 
+  // Karim 11-14 «عايز الرئيسيه اول صفحه فيها كل اللايفات»: the home page shows the three live screens as they are —
+  // the same elements, moved into it while it is open and back to their own pages after.
+  const liveOn = v => state.view === v || state.view === 'home';
+  const LIVE = [[['nowStale', 'nowArc'], 'view-now', 'homeCalls'], [['tlBody'], 'view-transferLive', 'homeTransfers'], [['boardRoot'], 'view-branchesNow', 'homeBranches']];
+  function placeLive(view) {
+    for (const [ids, own, slot] of LIVE) {
+      const to = view === 'home' ? $(slot) : $(own), els = ids.map(id => $(id)).filter(Boolean);
+      if (els.length && els[0].parentNode !== to) to.prepend(...els);
+    }
+  }
   let ticking = false;
   async function tick() {
-    if (!token || state.view !== 'now' || document.hidden || ticking) return;
+    if (!token || !liveOn('now') || document.hidden || ticking) return;
     ticking = true;
     try { await refreshNow(); syncStatus(true); showError(null); } catch (e) { syncStatus(false); } finally { ticking = false; }
   }
   // One draw per second: fetch, then draw (timers keep counting from the last good data).
-  setInterval(() => { tick(); if (state.view === 'now' && Date.now() - (state.drawnAt || 0) > 900) { renderNow(); state.drawnAt = Date.now(); } }, 1000);
+  setInterval(() => { tick(); if (liveOn('now') && Date.now() - (state.drawnAt || 0) > 900) { renderNow(); state.drawnAt = Date.now(); } }, 1000);
   setInterval(() => { if (token && !document.hidden) refreshRequests(); }, 30000);
   // الفروع الآن: timers every second, the summary every 5 seconds; elsewhere only the late badge, every 30 seconds.
   let boardBusy = false, boardAt = 0;
   setInterval(() => {
     if (!token || document.hidden) return;
-    if (state.view === 'branchesNow') OR.tickBoard();
-    const every = state.view === 'branchesNow' ? 10000 : 60000;
+    if (liveOn('branchesNow')) OR.tickBoard();
+    const every = liveOn('branchesNow') ? 10000 : 60000;
     if (boardBusy || Date.now() - boardAt < every) return;
     boardBusy = true; boardAt = Date.now();
-    OR.refreshBoard().then(() => { if (state.view === 'branchesNow') { syncStatus(true); showError(null); } }).catch(() => { if (state.view === 'branchesNow') syncStatus(false); }).finally(() => { boardBusy = false; });
+    OR.refreshBoard().then(() => { if (liveOn('branchesNow')) { syncStatus(true); showError(null); } }).catch(() => { if (state.view === 'branchesNow') syncStatus(false); }).finally(() => { boardBusy = false; });
   }, 1000);
   // الرئيسية: every 5 seconds.
   let homeAt = 0;
@@ -1048,7 +1060,7 @@
   // التحويلات لايف: the clocks every second, the list every 5 seconds.
   let tlAt = 0;
   setInterval(() => {
-    if (!token || document.hidden || state.view !== 'transferLive') return;
+    if (!token || document.hidden || !liveOn('transferLive')) return;
     TL.tick();
     if (Date.now() - tlAt < 5000) return;
     tlAt = Date.now();

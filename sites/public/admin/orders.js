@@ -220,7 +220,7 @@ window.MarsadOrders = function MarsadOrders(ctx) {
     const d = await api('/api/orders/live?day=latest', { timeout: 6000 });
     B.live = d; B.at = Date.now();
     badge(d);
-    if (state.view === 'branchesNow') drawBoard();
+    if (state.view === 'branchesNow' || state.view === 'home') drawBoard();
   }
   function badge(d) { const n = d?.data && (d.ageSeconds ?? 999) < 120 ? (d.data.totals?.late || 0) : 0; $('lateBadge').hidden = !n; $('lateBadge').textContent = n; }
 

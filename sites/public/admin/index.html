@@ -4,7 +4,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>مرصد الدهان — الإدارة</title>
 <link rel="preload" href="fonts/plex-arabic-arabic-400.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="style.css?v=26">
+<link rel="stylesheet" href="style.css?v=27">
 </head>
 <body>
 <!-- Icons: drawn in one stroke style (after Lucide, ISC license). -->
@@ -42,7 +42,12 @@
     <p id="error" class="banner error" hidden></p>
     <div id="breakRequests" aria-live="polite"></div>
 
-    <section id="view-home" class="view" hidden><div id="homeRoot"></div></section>
+    <section id="view-home" class="view" hidden>
+      <div id="homeRoot"></div>
+      <h2 class="home-sec"><a href="#now">الكول سنتر لايف</a></h2><div id="homeCalls" class="home-live"></div>
+      <h2 class="home-sec"><a href="#transferLive">التحويلات لايف</a></h2><div id="homeTransfers" class="home-live page"></div>
+      <h2 class="home-sec"><a href="#branchesNow">الفروع لايف</a></h2><div id="homeBranches" class="home-live orders-now"></div>
+    </section>
     <section id="view-daily" class="view page" hidden>
       <p id="dailyNote" class="note"></p>
       <p><button class="ghost small" data-export="daily">تصدير Excel</button></p>
@@ -180,10 +185,12 @@
 
     <section id="view-branchesNow" class="view orders-now" hidden><div id="boardRoot"></div></section>
     <section id="view-transferLive" class="view page" hidden>
+      <div id="tlBody">
       <div id="tlParts" class="panel"></div>
       <div id="tlCards" class="cards"></div>
       <article class="panel"><h2>مستني دلوقتي</h2><p class="muted">أوردرات طلبات والموقع اللي لسه مااتسجلتش على Apex، وجنب كل واحد بقاله قد إيه، وليه المرصد ماحوّلوش لوحده. الأخضر أقل من دقيقتين، الأصفر لحد ٥، الأحمر أكتر.</p><div id="tlNow"></div></article>
       <article class="panel"><h2>اتسجل على Apex آخر ساعتين</h2><div id="tlDone"></div></article>
+      </div>
     </section>
 
     <section id="view-sales" class="view page" hidden>
@@ -483,11 +490,11 @@
 <script src="roster.js?v=1"></script>
 <script src="qa.js?v=1"></script>
 <script src="forecast.js?v=1"></script>
-<script src="transfer-live.js?v=1"></script>
-<script src="home.js?v=3"></script>
+<script src="transfer-live.js?v=2"></script>
+<script src="home.js?v=4"></script>
 <script src="daily.js?v=3"></script>
 <script src="trend.js?v=2"></script>
-<script src="app.js?v=55"></script>
+<script src="app.js?v=56"></script>
 </body>
 </html>
 
