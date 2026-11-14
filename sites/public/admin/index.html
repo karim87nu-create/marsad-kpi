@@ -341,6 +341,13 @@
         <div class="table-wrap"><table id="autoTransferTable"></table></div>
         <p id="autoTransferNote" class="muted" role="status"></p>
       </article>
+      <article class="panel" id="apexAreasPanel" hidden><h2>مناطق متكررة على Apex</h2>
+        <p class="muted">المناطق اللي مكتوبة على Apex أكتر من مرة بنفس الاسم تقريبًا (زي «مدينتي» و«مدنتى»، أو «التجمع الخامس» و«التجمع الخامس طلبات») وليها نفس سعر التوصيل، المرصد بيعتبرها منطقة واحدة وهو بيتعلم وبيختار، وبياخد منها اللي تبع فرع الأوردر. لو منطقتين هنا مش نفس المكان افصلهم، ولو فيه منطقتين نفس المكان ومش ظاهرين هنا ضمّهم.</p>
+        <div class="table-wrap"><table id="apexAreasTable"></table></div>
+        <div class="row"><select id="apexAreaA"></select> <select id="apexAreaB"></select> <button type="button" id="apexAreaJoin" class="secondary">دول نفس المنطقة</button></div>
+        <div id="apexAreaRules" class="muted"></div>
+        <p id="apexAreasNote" class="muted" role="status"></p>
+      </article>
       <article class="panel" id="apexCancelPanel" hidden><h2>إلغاء أوردر مكتوب في تعليقه «لاغي» على Apex</h2>
         <p class="muted">بعد مرور ٥ دقايق من وقت التعليق، المرصد يلغي الأوردر على Apex تلقائيًا لو لسه موجود وماخرجش مع الطيار. لو خرج مع الطيار، يبعت تنبيه للفريق للتصرف يدويًا.</p>
         <p id="apexCancelStatus"></p>
@@ -453,7 +460,7 @@
 <script src="roster.js?v=1"></script>
 <script src="qa.js?v=1"></script>
 <script src="forecast.js?v=1"></script>
-<script src="app.js?v=49"></script>
+<script src="app.js?v=50"></script>
 </body>
 </html>
 

@@ -17,6 +17,7 @@ import { businessDay, iso } from './time.js';
 import { parseJson } from './order-match.js';
 import { deliveryComment } from './delivery-fields.js';
 import { normArabic } from './apex-customer-notes.js';
+import { areaGroups, areaForBranch } from './apex-areas.js';
 import { APEX_PRICES } from './menu-seed.js';
 
 export const MODES = ['off', 'trial', 'on'];
@@ -79,6 +80,8 @@ export function decide(o, x) {
   if (!loc) why.push(o.areaGuess && Number(o.areaGuess.seen) >= 2 ? 'المنطقة دي الموظفين اختاروا لها أكتر من منطقة على Apex'
     : (o.customer?.talabatArea || o.customer?.siteArea) ? 'منطقة «' + (o.customer.talabatArea || o.customer.siteArea) + '» لسه ما اتعلمتش على Apex' : 'منطقة العميل مش ظاهرة في الأوردر');
   else if (!pickup) {
+    // Karim 11-14: an area Apex has twice — the one this branch serves («مدينتي» 361 is listed for another branch, «مدنتى» 370 for Madinaty).
+    if (x.groups && branch) loc = areaForBranch(loc, branch, x.locations, x.groups);
     const rows = (x.locations || []).filter(l => Number(l.no) === loc);
     const owners = [...new Set(rows.map(l => l.branch).filter(v => v != null).map(Number))];
     if (!rows.length) why.push('المنطقة مش في قائمة Apex');
@@ -158,7 +161,7 @@ function setup(app) {
       if (!q) return { mode: m, skipped: 'no recent build' };
       const areas = await customerAreas(day);
       const { deliveryPhone } = await import('./delivery-fields.js');
-      const x = { now, locations: q.locations || [], customerArea: o => areas.get(deliveryPhone(o.customer?.phone) + '|' + normAddress(o.customer?.address)) || null };
+      const x = { now, locations: q.locations || [], groups: areaGroups(q.locations || [], (await app.apexAreaRules?.()) || {}), customerArea: o => areas.get(deliveryPhone(o.customer?.phone) + '|' + normAddress(o.customer?.address)) || null };
       const seen = new Map((await db.prepare('SELECT source, ref, decision, reasons, alerted, first_at FROM auto_transfer_log WHERE day = ?').all(day)).map(r => [r.source + ':' + r.ref, r]));
       const jobs = new Map((await db.prepare("SELECT source, ref, state, employee_name, result FROM transfer_jobs WHERE day = ?").all(day))
         .map(j => [j.source + ':' + j.ref, j]));

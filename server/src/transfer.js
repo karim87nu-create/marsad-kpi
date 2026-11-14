@@ -13,6 +13,7 @@ import { CANCELLED_SQL, isCancelled, sourceCanTransfer, handoffPending } from '.
 import { parseJson } from './order-match.js';
 import { deliveryPhone, deliveryLabel, deliveryAddress, splitDeliveryAddress, deliveryMark, compactDeliveryComment, deliveryNotes, apexText } from './delivery-fields.js';
 import { parseApexCustomerNote, normArabic, guessApexItem } from './apex-customer-notes.js';
+import { areaGroups, areaKey } from './apex-areas.js';
 import { knownNos, itemKey } from './items.js';
 import { APEX_NAMES, APEX_PRICES } from './menu-seed.js';
 import { APEX_SECTIONS } from './apex-sections.js';
@@ -257,16 +258,33 @@ function setup(app) {
     // Website orders too (Karim 11-11 «المناطق معروفه»): the area the customer chose on the website, by the same learning
     // (the same words mean the same Apex area whichever platform wrote them), else an Apex area of exactly that name.
     const areaPairs = app.learn ? await areaLearned() : new Map();
+    // Karim 11-14: one area written twice on Apex («مدينتي» / «مدنتى», «التجمع الخامس» / «… طلبات») counts as one: what
+    // staff chose is counted per area, not per Apex number, and a name matches whichever spelling Apex has.
+    const groups = areaGroups(base.locations || [], (await app.apexAreaRules?.()) || {});
     const byName = new Map();
-    for (const l of base.locations || []) { const k = normArabic(String(l?.name || '')).slice(0, 120); if (k && Number.isInteger(l.no)) byName.set(k, (byName.get(k) || new Set()).add(l.no)); }
+    for (const l of base.locations || []) {
+      if (!Number.isInteger(l?.no)) continue;
+      for (const k of new Set([normArabic(String(l.name || '')).slice(0, 120), areaKey(l.name)])) if (k) byName.set(k, (byName.get(k) || new Set()).add(l.no));
+    }
+    const oneArea = set => set?.size && new Set([...set].map(n => groups.get(n) ?? n)).size === 1;
     for (let i = 0; i < list.length; i++) {
       const o = list[i], words = !o.done && !o.areaGuess && (o.customer?.talabatArea || o.customer?.siteArea), k = words && normArabic(words).slice(0, 120);
       if (!k) continue;
       const seen = areaPairs.get(k);
       if (seen?.size) {
-        const top = [...seen].sort((x, y) => y[1] - x[1]), all = top.reduce((t, c) => t + c[1], 0);
-        list[i] = { ...o, areaGuess: { no: Number(top[0][0]), seen: top[0][1], share: Math.round(top[0][1] / all * 100) / 100 } };
-      } else if (byName.get(k)?.size === 1) list[i] = { ...o, areaGuess: { no: [...byName.get(k)][0], seen: 0, how: 'name' } };
+        const per = new Map();
+        for (const [no, n] of seen) { const g = groups.get(Number(no)) ?? Number(no), x = per.get(g) || { n: 0, best: no, bestN: -1 }; x.n += n; if (n > x.bestN) { x.best = no; x.bestN = n; } per.set(g, x); }
+        const top = [...per.values()].sort((x, y) => y.n - x.n), all = top.reduce((t, c) => t + c.n, 0);
+        list[i] = { ...o, areaGuess: { no: Number(top[0].best), seen: top[0].n, share: Math.round(top[0].n / all * 100) / 100 } };
+      } else {
+        const named = byName.get(k)?.size ? byName.get(k) : byName.get(areaKey(words));
+        // Several Apex numbers of one area: the spelling the platform's own orders use («… طلبات») for Talabat, else the plain one.
+        if (oneArea(named)) {
+          const nos = [...named].sort((a, b) => a - b), nameOf = n => (base.locations.find(l => l.no === n)?.name || '');
+          const pick = nos.find(n => /طلبات/.test(nameOf(n)) === (o.source === 'talabat')) ?? nos[0];
+          list[i] = { ...o, areaGuess: { no: pick, seen: 0, how: 'name' } };
+        }
+      }
     }
     // English typed by the customer (address, name, comments) shown and sent in Arabic (Karim 01-11); the original is kept.
     if (app.toArabic) {

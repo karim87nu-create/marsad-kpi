@@ -34,7 +34,8 @@ import * as qa from './qa.js';
 import * as forecast from './forecast.js';
 import * as autotransfer from './autotransfer.js';
 import * as apexCancel from './apex-cancel.js';
+import * as apexAreas from './apex-areas.js';
 
-const MODULES = [translate, admin, employees, sessions, dashboard, breaks, messages, shifts, history, engine, telegram, importRows, ops, range, orders, names, learn, reviews, site, talabat, cancels, whatsapp, transfer, talabatActions, systemWatch, backup, archive, kpi, branchClosures, branchBot, perf, qa, forecast, autotransfer, apexCancel];
+const MODULES = [translate, admin, employees, sessions, dashboard, breaks, messages, shifts, history, engine, telegram, importRows, ops, range, orders, names, learn, reviews, site, talabat, cancels, whatsapp, transfer, talabatActions, systemWatch, backup, archive, kpi, branchClosures, branchBot, perf, qa, forecast, autotransfer, apexCancel, apexAreas];
 export { MODULES };
 

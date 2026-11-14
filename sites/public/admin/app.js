@@ -700,8 +700,31 @@
     SITE.renderApexWriter(isAdmin()).catch(e => say('apexWriterNote', e.message));
     $('apexCancelPanel').hidden = !isAdmin();
     if (isAdmin()) renderApexCancel().catch(e => say('apexCancelNote', e.message));
+    $('apexAreasPanel').hidden = !isAdmin();
+    if (isAdmin()) renderApexAreas().catch(e => say('apexAreasNote', e.message));
     $('linkCollector').hidden = !canWrite();
   }
+  // Karim 11-14: one area written twice on Apex counts as one (مدينتي / مدنتى).
+  async function areaRule(action, a, b) { await api('/api/apex-areas', { method: 'POST', body: { action, a, b } }); }
+  async function renderApexAreas() {
+    const d = await api('/api/apex-areas'), BR = { 1: 'التجمع', 2: 'مدينة نصر', 3: 'مدينتي' };
+    const label = x => x.no + ' — ' + x.name + (x.service != null ? ' (' + x.service + ' ج)' : '') + (x.branches.length ? ' · ' + x.branches.map(b => BR[b] || b).join('، ') : '');
+    table('apexAreasTable', [
+      { title: 'المنطقة على Apex بأكتر من اسم', get: g => g.map(label).join(' | '), show: g => h('span', { className: 'inline', style: 'flex-wrap:wrap;gap:6px' },
+        ...g.map(x => h('span', { className: 'inline', style: 'gap:4px' }, h('span', { textContent: label(x) }),
+          h('button', { type: 'button', className: 'ghost', textContent: 'افصلها', title: 'دي مش نفس المنطقة', onclick: async () => {
+            try { for (const y of g) if (y.no !== x.no) await areaRule('apart', x.no, y.no); say('apexAreasNote', 'اتفصلت ' + x.name); await renderApexAreas(); } catch (e) { say('apexAreasNote', e.message); } } })))) }
+    ], d.groups || [], { empty: 'مفيش مناطق متكررة' });
+    const opts = () => (d.areas || []).map(a => h('option', { value: a.no, textContent: a.name + ' (' + a.no + ')' }));
+    $('apexAreaA').replaceChildren(...opts()); $('apexAreaB').replaceChildren(...opts());
+    const rule = (r, kind) => h('div', { className: 'inline', style: 'gap:6px' }, h('span', { textContent: (kind === 'apart' ? 'مفصولين: ' : 'مضمومين: ') + r.aName + ' (' + r.a + ') و ' + r.bName + ' (' + r.b + ')' }),
+      h('button', { type: 'button', className: 'ghost', textContent: 'رجّعها', onclick: async () => { try { await areaRule('undo', r.a, r.b); await renderApexAreas(); } catch (e) { say('apexAreasNote', e.message); } } }));
+    $('apexAreaRules').replaceChildren(...(d.together || []).map(r => rule(r, 'together')), ...(d.apart || []).map(r => rule(r, 'apart')));
+  }
+  $('apexAreaJoin').onclick = async () => {
+    try { await areaRule('together', Number($('apexAreaA').value), Number($('apexAreaB').value)); say('apexAreasNote', 'اتضموا'); await renderApexAreas(); }
+    catch (e) { say('apexAreasNote', e.message); }
+  };
   async function renderApexCancel() {
     const d = await api('/api/apex-cancel');
     $('apexCancelStatus').textContent = d.mode === 'on'
