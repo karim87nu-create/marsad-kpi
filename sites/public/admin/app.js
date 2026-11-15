@@ -716,7 +716,6 @@
 
   // ---------- التشغيل الآلي: Talabat screens, Apex writer, item stops and the links, out of «الإدارة» ----------
   async function renderAuto() {
-    renderWatch('autoWatch').catch(e => $('autoWatch').replaceChildren(h('p', { className: 'muted', textContent: e.message })));
     OR.renderKey(isAdmin()).catch(e => say('ordersKeyNote', e.message));
     SITE.renderKey(isAdmin()).catch(e => say('siteKeyNote', e.message));
     SITE.renderTalabatKey(isAdmin()).catch(e => say('talKeyNote', e.message));
@@ -969,20 +968,21 @@
   const VIEWS = { home: ['الرئيسية', null], daily: ['تقرير اليوم', () => DAILY.render(state.to)], now: ['الكول سنتر الآن', null],
     day: ['الكول سنتر: اليوم', () => Promise.all([renderDay(), renderHours()])], team: ['أداء الموظفين', renderTeam], profile: ['ملف الموظف', renderProfile],
     breaks: ['البريك والحضور ونهاية الشيفت', () => Promise.all([refreshRequests(), renderAttendance(), renderShifts()])], calls: ['المكالمات', renderCalls], missed: ['المكالمات الفائتة', renderMissed], roster: ['جدول مواعيد الموظفين', () => ROSTER.render()], forecast: ['التوقع والاحتياج', () => FC.render()],
-    branchesNow: ['الفروع الآن', null], transferLive: ['التحويلات لايف', () => TL.refresh()], transfer: ['تحويل الأوردرات: طلبات والموقع', () => Promise.all([SITE.renderTalabat(), SITE.renderTransfer()])], transferReport: ['التحويل على Apex', () => Promise.all([renderAutoReasons(), renderPriceDiffs()])], trend: ['على مدار الوقت', () => TREND.render(state.day, state.to)], entry: ['ضرب الأوردرات', () => OR.renderEntry()],
+    branchesNow: ['الفروع الآن', null], transferLive: ['التحويلات لايف', () => TL.refresh()], transfer: ['تحويل وضرب الأوردرات: طلبات والموقع', () => Promise.all([SITE.renderTalabat(), SITE.renderTransfer(), OR.renderEntry()])], transferReport: ['مراجعة التحويل الآلي', () => Promise.all([renderAutoReasons(), renderPriceDiffs()])], trend: ['على مدار الوقت', () => TREND.render(state.day, state.to)],
     sales: ['المبيعات', () => INS.renderSales()], branches: ['الفروع', () => Promise.all([KPI.render(), renderClosures(), OR.renderBranches(), INS.renderBranch(), SITE.renderBranches()])],
     cancels: ['الإلغاءات', () => Promise.all([OR.renderCancels(), SITE.renderBranchTalabatCancels(), INS.renderCancelOwners()])],
-    kpi: ['الموظفين والمشرفين', () => KPI.render()], followup: ['المتابعة والاستثناءات', renderFollowup], bot: ['بوت الفروع', () => BOT.render()], qa: ['الجودة: تقييم المكالمات', () => QA.render()],
+    kpi: ['تقييم الموظفين والمشرفين', () => KPI.render()], followup: ['المتابعة والاستثناءات', renderFollowup], bot: ['بوت الفروع', () => BOT.render()], qa: ['الجودة: تقييم المكالمات', () => QA.render()],
     people: ['الموظفين والمستخدمين', renderManage], messages: ['رسايل للموظفين', renderManage], telegram: ['تنبيهات تليجرام', renderManage],
     auto: ['التشغيل الآلي', renderAuto], system: ['حالة النظام', renderSystem], guide: ['طريقة حساب الأرقام', async () => {}] };
   // Old page names (links, other parts of the page) open the page they are part of now.
-  const ALIAS = { hours: 'day', requests: 'breaks', attendance: 'breaks', shifts: 'breaks', talabat: 'transfer', siteTransfer: 'transfer', siteBranches: 'branches', branchFile: 'branches', manage: 'people' };
-  const DAY_VIEWS = ['daily', 'trend', 'transferReport', 'day', 'team', 'profile', 'breaks', 'calls', 'missed', 'followup', 'bot', 'entry', 'transfer', 'sales', 'branches', 'cancels', 'kpi'];
+  const ALIAS = { hours: 'day', requests: 'breaks', attendance: 'breaks', shifts: 'breaks', talabat: 'transfer', siteTransfer: 'transfer', siteBranches: 'branches', branchFile: 'branches', manage: 'people', entry: 'transfer' };
+  const DAY_VIEWS = ['daily', 'trend', 'transferReport', 'day', 'team', 'profile', 'breaks', 'calls', 'missed', 'followup', 'bot', 'transfer', 'sales', 'branches', 'cancels', 'kpi'];
   const SECTION_OF = {};
   for (const t of document.querySelectorAll('#nav .tabset')) for (const b of t.querySelectorAll('[data-view]')) SECTION_OF[b.dataset.view] = t.dataset.sec;
-  SECTION_OF.home = 'home';
+  // Karim 11-16 «شيل التكرارات»: the three live pages are on home (its headings open them full size).
+  SECTION_OF.home = SECTION_OF.now = SECTION_OF.transferLive = SECTION_OF.branchesNow = 'home';
   // Karim 11-14: home first, then orders; reports with the KPIs and follow-up; the team's pages together.
-  const lastIn = { home: 'home', orders: 'transferLive', calls: 'now', reports: 'daily', team: 'roster', settings: 'auto' };
+  const lastIn = { home: 'home', orders: 'transfer', calls: 'day', reports: 'daily', team: 'roster', settings: 'auto' };
   function setSection(sec) {
     state.section = sec;
     for (const b of document.querySelectorAll('#sections [data-section]')) { const on = b.dataset.section === sec; b.classList.toggle('active', on); b.setAttribute('aria-current', on ? 'true' : 'false'); }

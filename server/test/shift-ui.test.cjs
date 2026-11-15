@@ -15,7 +15,7 @@ test('one monitoring-gap group; ending a stale shift from admin removes that emp
  const row=[...w.document.querySelectorAll('#shiftTable tbody tr')].find(r=>r.textContent.includes('First'));[...row.querySelectorAll('button')].find(b=>b.textContent==='الشيفت خلص').click();
  await until(()=>t.app.db.raw.prepare('SELECT revoked_at FROM employee_sessions WHERE employee_id=?').get(e1.id).revoked_at!=null);
  await until(()=>w.document.getElementById('shiftTable').textContent.includes('الشيفت خلص فعلًا'));
- w.document.querySelector('[data-view="now"]').click();await until(()=>w.document.getElementById('staffNow').textContent.includes('خلص الشيفت'));
+ w.location.hash='now';await until(()=>w.document.getElementById('staffNow').textContent.includes('خلص الشيفت'));
  assert.equal(gaps().length,1);assert.match(gaps()[0].textContent,/1/);assert.equal(w.document.querySelectorAll('#staffNow .tile').length,1);
  }finally{await new Promise(r=>setTimeout(r,150));dom?.window.close();await t.close();}
 });

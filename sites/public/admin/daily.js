@@ -61,8 +61,6 @@ window.MarsadDaily = function MarsadDaily(ctx) {
     const col = (title, k, unit, better) => ({ title, get: b => b[k], show: b => { const c = change(b[k], b.prev[k], better); return h('span', {}, fmt(b[k], unit), c.text ? h('small', { className: 'muted ' + c.tone, textContent: ' ' + (c.pc > 0 ? '▲' : c.pc < 0 ? '▼' : '') + Math.abs(c.pc) + '%' }) : ''); }, type: 'number' });
     table('dailyBranches', [{ title: 'الفرع', get: b => b.name }, col('أوردرات', 'orders', '', 1), col('مبيعات', 'sales', ' ج', 1), col('متوسط الخروج', 'avgOut', ' د', -1),
       col('نسبة التأخير', 'lateRate', '%', -1), col('إلغاءات', 'cancels', '', -1), col('قيمة الإلغاءات', 'cancelSales', ' ج', -1)], branchRows, { empty: 'مفيش بيانات فروع لليوم ده' });
-    table('dailyReasons', [{ title: 'السبب', get: r => r.reason, cls: () => 'wrap' }, { title: 'أوردرات', get: r => r.orders, type: 'number' },
-      { title: 'الأصناف / المناطق', get: r => r.details.map(x => x.name + (x.n > 1 ? ' (' + x.n + ')' : '')).join('، '), cls: () => 'wrap' }], d.cur.transfers.reasons, { empty: 'مفيش أوردرات اتسابت للموظف' });
   }
   const exportColumns = [{ title: 'القسم', get: r => r.group }, { title: 'المؤشر', get: r => r.label }, { title: 'اليوم', get: r => r.a }, { title: 'نفس اليوم الأسبوع اللي فات', get: r => r.b },
     { title: 'التغير %', get: r => change(r.a, r.b, r.better).pc ?? null }];

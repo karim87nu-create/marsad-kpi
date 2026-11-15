@@ -53,13 +53,18 @@ test('money to Apex: every kind of Talabat discount, cash and paid', async () =>
     // 3. «خصم طلبات» (Talabat's).
     r = await run({ bill: B(['خصم طلبات', '-22.00'], total(318)), payment: 'cash' });
     assert.deepEqual([r.rest, r.sign, r.target], [0, 'خصم طلبات 22.00', 340]);
-    // 4. A discount that does not say who: asked on cash (never guessed); the split decides; paid takes all of it off.
+    // 4. Bare «Discount» is Talabat's (Karim 11-16), summed with any other Talabat discount into one mark.
     r = await run({ bill: B(['Discount', '-100'], total(240)), payment: 'cash' });
-    assert.equal(r.status, 400); assert.match(r.error, /حدد الخصم على مين/);
-    r = await run({ bill: B(['Discount', '-100'], total(240)), payment: 'cash', split: 40 });
-    assert.deepEqual([r.rest, r.sign, r.target], [40, 'خصم طلبات 60.00', 300], 'our 40 off, Talabat\'s 60 in the mark');
+    assert.deepEqual([r.rest, r.sign, r.target], [0, 'خصم طلبات 100.00', 340]);
+    r = await run({ bill: B(['Discount', '-100'], ['خصم طلبات', '-22.00'], total(218)), payment: 'cash' });
+    assert.deepEqual([r.rest, r.sign, r.target], [0, 'خصم طلبات 122.00', 340], 'all of Talabat\'s discounts summed');
     r = await run({ bill: B(['Discount', '-100'], total(240)), payment: 'paid' });
     assert.deepEqual([r.rest, r.target], [100, 240]);
+    // A discount that does not say who: still asked on cash; the split decides.
+    r = await run({ bill: B(['خصم 30% على بعض المنتجات', '-100'], total(240)), payment: 'cash' });
+    assert.equal(r.status, 400); assert.match(r.error, /حدد الخصم على مين/);
+    r = await run({ bill: B(['خصم 30% على بعض المنتجات', '-100'], total(240)), payment: 'cash', split: 40 });
+    assert.deepEqual([r.rest, r.sign, r.target], [40, 'خصم طلبات 60.00', 300], 'our 40 off, Talabat\'s 60 in the mark');
     // 5. «خصم 30% على بعض المنتجات | -90»: the money is 90, not 30.
     r = await run({ bill: B(['خصم 30% على بعض المنتجات', '-90.00'], total(250)), payment: 'cash', split: 45 });
     assert.deepEqual([r.rest, r.sign, r.target], [45, 'خصم طلبات 45.00', 295]);

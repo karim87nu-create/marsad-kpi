@@ -77,11 +77,15 @@ function talabatDiscounts(bill) {
     const m = val.match(AMOUNT), amount = m ? Math.abs(Number(m[1].replace(/[^\d.]/g, ''))) || null : null;
     // Karim 31-10 took a bill-summary discount as Talabat's; Karim 10-11 (#655, 30% = 15% ours + 15% Talabat's, all of it
     // taken as Talabat's): a line that does not say who pays is asked (the employee reads «ممول من قبلك» on Talabat).
-    out.push({ text: x.text, amount, who: discountWho(t) });
+    // Karim 11-16: the bare English «Discount» line of the bill is Talabat's («كلمه Discount اه ده خصم علي طلبات»; staff
+    // entered all 6 of 11-15 as «خصم طلبات»). Set after the funded check below, so a total beside its funded parts stays one.
+    const generic = /^\s*discount\s*$/i.test(String(x.text).split('|')[0]) && /^\s*(?:discount)?\s*$/i.test(String(x.k || ''));
+    out.push({ text: x.text, amount, who: discountWho(t), ...(generic ? { generic } : {}) });
   }
   // The total line next to its funded parts («خصم 90.27» with «ممول من قبلك 45.14» + «ممول من قبل Talabat 45.13») is the same money.
   const funded = out.filter(d => d.who && d.amount), sum = funded.reduce((a, d) => a + d.amount, 0);
-  return funded.length ? out.filter(d => d.who || d.amount == null || Math.abs(d.amount - sum) >= 0.05) : out;
+  const kept = funded.length ? out.filter(d => d.who || d.amount == null || Math.abs(d.amount - sum) >= 0.05) : out;
+  return kept.map(({ generic, ...d }) => generic && !d.who ? { ...d, who: 'platform' } : d);
 }
 
 // Phones are kept as their last 10 digits for matching; shown as the employee dials them.

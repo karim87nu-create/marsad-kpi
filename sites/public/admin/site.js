@@ -220,7 +220,6 @@ window.MarsadSite = function MarsadSite(ctx) {
       { title: 'الأصناف', get: x => x.items.reduce((n, i) => n + i.qty, 0), show: x => itemsText(x) || '—', cls: () => 'wrap' },
       { title: 'مطابقة الأصناف مع Apex', get: x => x.apex?.items ? (x.apex.items.ok ? 'مطابقة' : 'مختلفة') : '', show: itemsCell }, { title: 'الإجمالي', get: x => x.subtotal ?? x.total, type: 'number' }],
       [...o].reverse(), { pageSize: 50, empty: d.linked ? 'مفيش أوردرات طلبات لليوم ده' : 'شاشة مراقبة طلبات مش متربطة لسه' });
-    renderTalabatCancels(d, 'talCancels', pick);
   }
   // The dishes in English with what they are on Apex in Arabic (from the comparison), and whether Apex matches.
   function itemsText(x) {

@@ -102,7 +102,9 @@ test('transfer page: payment and discounts only from the source words', () => {
     assert.equal(talabatPayment([], 'Paid'), 'paid', 'live card badge');
     assert.equal(talabatPayment([], 'Cash Online'), null, 'conflicting → for review');
     // Karim 10-11 (#655): a discount that does not say who pays is asked, never guessed as Talabat's.
-    assert.deepEqual(talabatDiscounts([{ k: 'discount', text: 'Discount | -E£ 30' }]), [{ text: 'Discount | -E£ 30', amount: 30, who: null }], 'who pays is asked');
+    assert.deepEqual(talabatDiscounts([{ k: 'discount', text: 'Discount | -E£ 30' }]), [{ text: 'Discount | -E£ 30', amount: 30, who: 'platform' }], 'bare «Discount» is Talabat\'s (Karim 11-16)');
+    assert.equal(talabatDiscounts([{ k: 'خصم', text: 'خصم 30% على بعض المنتجات | -90.00' }])[0].who, null, 'other unclear lines are still asked');
+    assert.deepEqual(talabatDiscounts([{ k: 'Discount', text: 'Discount | -90.00' }, { k: 'خصم ممول من قبلك', text: 'خصم ممول من قبلك | -45.00' }, { k: 'خصم ممول من قبل Talabat', text: 'خصم ممول من قبل Talabat | -45.00' }]).map(d => d.who + d.amount), ['restaurant45', 'platform45'], 'a Discount total beside its funded parts is not counted twice');
     assert.equal(talabatDiscounts([{ k: 'خصم طلبات', text: 'خصم طلبات | -22.00' }])[0].who, 'platform');
     // The total next to its funded parts is the same money (rounded to the piaster).
     assert.deepEqual(talabatDiscounts([{ k: 'خصم', text: 'خصم | -90.27' }, { k: 'خصم ممول من قبلك', text: 'خصم ممول من قبلك | -45.14' }, { k: 'خصم ممول من قبل Talabat', text: 'خصم ممول من قبل Talabat | -45.14' }]).map(d => d.who + d.amount), ['restaurant45.14', 'platform45.14']);

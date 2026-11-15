@@ -38,11 +38,15 @@ test('admin page: مرصد الدهان sections, live branches board, reports, 
     assert.equal(doc.title.includes('مرصد الدهان'), true);
     assert.equal(doc.querySelector('[data-sec="orders"]').hidden, true, 'orders tabs hidden while الآن is open');
 
+    const tt = (await t.call('POST', '/api/talabat/token', { headers: { 'x-admin-password': token } })).body.token;
+    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': tt }, body: { orders: [{ id: '3977407954', store: 'الدهان, مدينتي - ساوث بارك', status: 'CANCELLED', placedAt: ago(40), total: 323,
+      detail: { receivedAt: ago(40), acceptSeconds: 9, acceptedAt: ago(39), pickedUpAt: ago(35), cancelledAt: ago(5), cancelOwner: 'Customer', cancelReason: 'Unable to find or reach customer', items: [{ qty: 1, name: 'Stuffed Pigeon', price: 323 }], subtotal: 323 } }] } });
     // Switching section opens the live board.
-    // Karim 11-14: the orders section opens on «التحويلات لايف»; the branches board is next to it.
+    // Karim 11-16: the live pages are on home (no tabs of their own); the orders section opens on the transfers.
     doc.querySelector('[data-section="orders"]').click();
-    await until(() => doc.getElementById('title').textContent === 'التحويلات لايف', 'orders section');
-    doc.querySelector('[data-view="branchesNow"]').click();
+    await until(() => doc.getElementById('title').textContent === 'تحويل وضرب الأوردرات: طلبات والموقع', 'orders section');
+    assert.equal(doc.querySelector('#nav [data-view="branchesNow"]'), null);
+    w.location.hash = 'branchesNow';
     await until(() => doc.querySelectorAll('#boardRoot .ob-t').length === 3, 'board tickets');
     assert.equal(doc.querySelector('[data-sec="calls"]').hidden, true);
     await until(() => doc.querySelector('#boardRoot .ob-t.red'), 'red ticket');
@@ -66,7 +70,7 @@ test('admin page: مرصد الدهان sections, live branches board, reports, 
     doc.querySelector('[data-view="branches"]').click();
     await until(() => /المبيعات حسب المنصة/.test(doc.getElementById('branchFileBody').textContent), 'branch file');
     // Call center: order entry.
-    doc.querySelector('[data-view="entry"]').click();
+    doc.querySelector('[data-view="transfer"]').click();
     await until(() => doc.getElementById('entryStaff').textContent.includes('أحمد'), 'entry staff');
     assert.match(doc.getElementById('entryIssues').textContent, /TALABAT VISA/);
     // Answer the entry issue «مش غلط — تحويل»: it stops counting.
@@ -87,12 +91,12 @@ test('admin page: مرصد الدهان sections, live branches board, reports, 
     assert.ok(doc.getElementById('tgChooseBranches'));
     assert.ok(doc.getElementById('tgChooseOnline'));
     assert.match(doc.getElementById('tgStatus').textContent, /جروب الكول سنتر — الأونلاين وضرب الأوردر/);
-    const tt = (await t.call('POST', '/api/talabat/token', { headers: { 'x-admin-password': token } })).body.token;
-    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': tt }, body: { orders: [{ id: '3977407954', store: 'الدهان, مدينتي - ساوث بارك', status: 'CANCELLED', placedAt: ago(40), total: 323,
-      detail: { receivedAt: ago(40), acceptSeconds: 9, acceptedAt: ago(39), pickedUpAt: ago(35), cancelledAt: ago(5), cancelOwner: 'Customer', cancelReason: 'Unable to find or reach customer', items: [{ qty: 1, name: 'Stuffed Pigeon', price: 323 }], subtotal: 323 } }] } });
     doc.querySelector('[data-view="transfer"]').click();
-    await until(() => doc.getElementById('talOrders').textContent.includes('3977407954') && doc.getElementById('talCancels').textContent.includes('Unable to find'), 'talabat view');
-    assert.match(doc.getElementById('talCancels').textContent, /العميل/);
+    await until(() => doc.getElementById('talOrders').textContent.includes('3977407954'), 'talabat view');
+    assert.equal(doc.getElementById('talCancels'), null, 'Talabat cancels are on «الإلغاءات» only');
+    doc.querySelector('[data-view="cancels"]').click();
+    await until(() => doc.getElementById('cancelTalabat').textContent.includes('Unable to find'), 'talabat cancels');
+    assert.match(doc.getElementById('cancelTalabat').textContent, /العميل/);
     for (const [v, id, text] of [['transfer', 'siteTTable', 'الموقع مش متربط']]) {
       doc.querySelector('[data-view="' + v + '"]').click();
       await until(() => doc.getElementById(id).textContent.includes(text), v);
