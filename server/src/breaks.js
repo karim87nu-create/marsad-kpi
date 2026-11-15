@@ -102,6 +102,8 @@ function setup(app) {
       return { ...await issuePermission(session, ctx.now, p.nextAllowedSeconds, grace), breakPolicy: p };
     }
     if (b.action === 'request') {
+      // Karim 11-16: management users take calls but are not in the break requests.
+      if (app.isManager && await app.isManager(session.employee_id)) fail(409, 'الحساب ده إداري: مفيش طلبات بريك');
       if (p.regularAvailable) fail(409, 'regular_break_available');
       const id = String(b.id || '');
       if (!/^break-request:[0-9a-f-]{36}$/.test(id)) fail(400, 'invalid_request');

@@ -60,28 +60,43 @@ test('linked KPIs: conversion, FCR, answer wait, missed calls one could have tak
   } finally { await t.close(); }
 });
 
-test('quality review: the week\'s calls (flagged first), the form, the score in the KPI page, calibration, supervisors', async () => {
+test('quality review (Karim 11-16): the sheet\'s 11 items out of 120, any call or a suggested one, managers never picked, the old sheet imported, the KPI page', async () => {
   const day = '2026-11-11', T = (h, m = 0) => cairoToUtc(2026, 11, 11, h, m);
   const t = await start({ at: T(23, 30) });
   try {
     const admin = await t.admin();
     const sara = await t.employee(admin, { name: 'سارة', code: 'E1', pin: '1111' });
-    const calls = Array.from({ length: 8 }, (_, i) => ({ key: day + '|' + sara.id + '|' + T(20, i), employeeId: sara.id, at: T(20, i), durationSeconds: 60 + i, queue: '601', phoneEnd: '22' + i, flags: i === 6 ? ['repeat', 'wentToPlatform'] : i === 3 ? ['complaint'] : [] }));
+    const boss = await t.employee(admin, { name: 'مدير الكول', code: 'E2', pin: '2222' });
+    assert.equal((await admin('PATCH', '/api/employees', { id: boss.id, manager: true })).status, 200);
+    assert.equal((await admin('GET', '/api/employees')).body.employees.find(e => e.id === boss.id).manager, true);
+    const calls = [...Array.from({ length: 8 }, (_, i) => ({ key: day + '|' + sara.id + '|' + T(20, i), employeeId: sara.id, at: T(20, i), durationSeconds: 60 + i, queue: '601', phoneEnd: '22' + i, flags: i === 6 ? ['repeat', 'wentToPlatform'] : i === 3 ? ['complaint'] : [] })),
+      { key: day + '|' + boss.id + '|' + T(21), employeeId: boss.id, at: T(21), durationSeconds: 90, queue: '601', phoneEnd: '9999', flags: ['complaint'] }];
     t.app.perfDay = async d => ({ calls: d === day ? calls : [] });
-    const q = (await admin('GET', '/api/qa?week=' + day)).body;
+    const q = (await admin('GET', '/api/qa?week=' + day + '&from=' + day + '&to=' + day)).body;
     assert.equal(q.week, '2026-11-07');
-    assert.equal(q.calls.length, 5, 'five a week per employee');
+    assert.equal(q.calls.length, 5, 'five a week per employee; the manager is never picked');
+    assert.ok(!q.employees.some(e => e.id === boss.id), 'nor offered in the form');
     assert.deepEqual(q.calls[0].flagLabels, ['العميل اتصل تاني', 'ماطلبش مننا وطلب من طلبات أو الموقع'], 'the most flagged first');
-    assert.equal(q.calls[1].flagLabels[0], 'شكوى');
-    const marks = Object.fromEntries(q.form.map(f => [f.key, 'good'])); marks.upsell = 'bad'; marks.problem = 'na';
-    assert.equal((await admin('POST', '/api/qa', { callKey: q.calls[0].key, marks: { opening: 'good' } })).status, 400, 'every line of the form');
-    const r = await admin('POST', '/api/qa', { callKey: q.calls[0].key, marks, notes: 'اقترح إضافات' });
-    assert.equal(r.body.total, 88.9, 'upsell missed (10 of 90 that apply)');
-    assert.equal((await admin('POST', '/api/qa', { callKey: q.calls[1].key, marks, critical: 'rude' })).body.total, 0, 'a critical error makes it zero');
+    assert.equal(q.form.reduce((n, f) => n + f.max, 0), 120);
+    const full = Object.fromEntries(q.form.map(f => [f.key, f.max]));
+    const base = { day, employeeId: sara.id, phone: '01001234567', time: '20:06', type: 'اوردر', callKey: q.calls[0].key };
+    assert.equal((await admin('POST', '/api/qa', { ...base, scores: { opening: 10 } })).status, 400, 'every item');
+    assert.equal((await admin('POST', '/api/qa', { ...base, scores: { ...full, opening: 11 } })).status, 400, 'never above the item\'s maximum');
+    const r = await admin('POST', '/api/qa', { ...base, scores: { ...full, upsell: 0, pro: 10 }, notes: 'العرض' });
+    assert.deepEqual([r.body.total, r.body.max, r.body.pct, r.body.grade], [100, 120, 83.3, 'جيد جدًا']);
+    assert.equal((await admin('POST', '/api/qa', { ...base, scores: full })).status, 409, 'the same call once');
+    await admin('POST', '/api/qa', { ...base, callKey: null, time: '21:40', type: 'شكوى', scores: { ...full, tone: 0, complaint: 0, policy: 0, pro: 0 } });
+    // The old sheet: out of 100 before «احترافية المكالمة», names written another way, a name not in the Marsad.
+    const imp = (await admin('POST', '/api/qa/import', { rows: [
+      { row: 4, day: '2026-11-10', name: 'ساره ', phone: 1222187805, time: '09:47', type: 'استفساار', scores: [10, 10, 10, 10, 15, 15, 10, 5, 10, 0, null], notes: 'سكوت' },
+      { row: 5, day: '2026-11-10', name: 'حنين مدحت', phone: 1004777775, time: '14:07', type: 'اوردر ', scores: [10, 10, 10, 10, 15, 15, 10, 5, 10, 5, 20] }] })).body;
+    assert.deepEqual([imp.added, imp.unmatched], [2, [{ name: 'حنين مدحت', n: 1 }]]);
+    assert.equal((await admin('POST', '/api/qa/import', { rows: [{ row: 4, day: '2026-11-10', name: 'ساره ', phone: 1222187805, time: '09:47', type: 'استفسار', scores: [10, 10, 10, 10, 15, 15, 10, 5, 10, 0, null] }] })).body.added, 0, 'once');
+    const old = (await admin('GET', '/api/qa?from=2026-11-10&to=2026-11-10')).body.entries;
+    assert.deepEqual(old.map(e => [e.employee, e.pct, e.type]).sort(), [['حنين مدحت', 100, 'اوردر'], ['سارة', 95, 'استفسار']]);
     const k = (await admin('GET', '/api/kpi?from=' + day + '&to=' + day)).body;
     const e = k.employees.find(x => x.id === sara.id);
-    assert.equal(e.qaCount, 2); assert.equal(e.qaScore, 44.5);
-    assert.equal(k.supervisors.find(s => s.name === 'الإدارة').qaDone, 2);
+    assert.equal(e.qaCount, 2); assert.equal(e.qaScore, 68.8, '(83.3 + 54.2) / 2');
     assert.equal((await admin('GET', '/api/qa?week=' + day)).body.calls[0].evaluated, 1);
   } finally { await t.close(); }
 });

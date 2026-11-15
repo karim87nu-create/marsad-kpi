@@ -134,7 +134,10 @@
   const DAILY = window.MarsadDaily({ api, h, $, table, kpi, dur, exportRows: (...a) => exportRows(...a) });
   const BOT = window.MarsadBot({ api, h, $, table, pill, state, canWrite: () => canWrite(), showError: x => showError(x) });
   const ROSTER = window.MarsadRoster({ api, h, $, canWrite: () => canWrite(), showError: x => showError(x), cairoToday: () => cairoToday() });
-  const QA = window.MarsadQa({ api, h, $, table, pill, canWrite: () => canWrite(), showError: x => showError(x), cairoToday: () => cairoToday() });
+  const QA = window.MarsadQa({ api, h, $, table, pill, kpi, state, canWrite: () => canWrite(), isAdmin: () => isAdmin(), showError: x => showError(x), cairoToday: () => cairoToday() });
+  const CS = window.MarsadCs({ api, h, $, table, pill, kpi, state, canWrite: () => canWrite(), showError: x => showError(x), cairoToday: () => cairoToday() });
+  const EXP = window.MarsadExports({ api, h, $, state, showError: x => showError(x) });
+  for (const b of document.querySelectorAll('[data-qa-export]')) b.onclick = () => EXP.RUN.quality().catch(x => showError(x));
   const FC = window.MarsadForecast({ api, h, $, table, pill, kpi, showError: x => showError(x), cairoToday: () => cairoToday() });
   const KPI = window.MarsadKpi({ api, h, $, table, kpi, pill, state, exportSheets: (...a) => exportSheets(...a), setRange, cairoToday });
   INS = window.MarsadInsights({ api, h, $, table, kpi, pill, C, state, exportRows, canWrite: () => canWrite(), isAdmin: () => isAdmin(), showError, rerender: () => rerender(), OR, SITE });
@@ -630,6 +633,9 @@
     const act_ = state.employees.filter(e => e.active).length;
     $('manageCards').replaceChildren(kpi('موظفين نشطين', act_, 'good'), kpi('موقوفين', state.employees.length - act_, state.employees.length - act_ ? 'warn' : ''), kpi('دورك', ROLE[who?.role] || '—', 'info', who?.name || ''));
     table('employeesTable', [{ title: 'الاسم', get: e => e.name }, { title: 'الكود', get: e => e.employeeCode }, { title: 'الحالة', get: e => e.active ? 'نشط' : 'موقوف', show: e => pill(e.active ? 'نشط' : 'موقوف', e.active ? 'ok' : 'warn') },
+      // Karim 11-16: a management user takes calls; no break requests, never picked for QA.
+      { title: 'إداري', get: e => e.manager ? 'إداري' : '', show: e => !isAdmin() ? (e.manager ? pill('إداري', 'info') : '') : (() => { const c = h('input', { type: 'checkbox', checked: !!e.manager, title: 'بياخد مكالمات من غير طلبات بريك ولا تقييم جودة' });
+        c.onchange = () => act('employeeMessage', () => api('/api/employees', { method: 'PATCH', body: { id: e.id, manager: c.checked } }), c.checked ? 'بقى إداري: بياخد مكالمات من غير طلبات بريك ولا جودة' : 'رجع موظف عادي'); return h('label', { className: 'inline' }, c, ' إداري'); })() },
       { title: '', get: () => '', show: e => !isAdmin() ? '' : h('span', { className: 'inline' },
         btn('الباسورد', async () => { const pin = await askPasswords('باسورد جديد لـ ' + e.name); if (pin == null) return; await act('employeeMessage', () => api('/api/employees', { method: 'PATCH', body: { id: e.id, pin, pinConfirmation: pin } }), 'اتغير الباسورد وانتهت جلسته الحالية'); }),
         btn(e.active ? 'إيقاف' : 'تفعيل', () => act('employeeMessage', () => api('/api/employees', { method: 'PATCH', body: { id: e.id, active: !e.active } }), 'اتحفظ'))) }],
@@ -971,12 +977,12 @@
     branchesNow: ['الفروع الآن', null], transferLive: ['التحويلات لايف', () => TL.refresh()], transfer: ['تحويل وضرب الأوردرات: طلبات والموقع', () => Promise.all([SITE.renderTalabat(), SITE.renderTransfer(), OR.renderEntry()])], transferReport: ['مراجعة التحويل الآلي', () => Promise.all([renderAutoReasons(), renderPriceDiffs()])], trend: ['على مدار الوقت', () => TREND.render(state.day, state.to)],
     sales: ['المبيعات', () => INS.renderSales()], branches: ['الفروع', () => Promise.all([KPI.render(), renderClosures(), OR.renderBranches(), INS.renderBranch(), SITE.renderBranches()])],
     cancels: ['الإلغاءات', () => Promise.all([OR.renderCancels(), SITE.renderBranchTalabatCancels(), INS.renderCancelOwners()])],
-    kpi: ['تقييم الموظفين والمشرفين', () => KPI.render()], followup: ['المتابعة والاستثناءات', renderFollowup], bot: ['بوت الفروع', () => BOT.render()], qa: ['الجودة: تقييم المكالمات', () => QA.render()],
+    kpi: ['تقييم الموظفين والمشرفين', () => KPI.render()], followup: ['المتابعة والاستثناءات', renderFollowup], bot: ['بوت الفروع', () => BOT.render()], qa: ['الجودة: تقييم المكالمات', () => QA.render()], cs: ['خدمة العملاء: الشكاوى والتقييمات', () => CS.render()], exports: ['التقارير اليومية Excel', async () => EXP.render(setRange, cairoToday())],
     people: ['الموظفين والمستخدمين', renderManage], messages: ['رسايل للموظفين', renderManage], telegram: ['تنبيهات تليجرام', renderManage],
     auto: ['التشغيل الآلي', renderAuto], system: ['حالة النظام', renderSystem], guide: ['طريقة حساب الأرقام', async () => {}] };
   // Old page names (links, other parts of the page) open the page they are part of now.
   const ALIAS = { hours: 'day', requests: 'breaks', attendance: 'breaks', shifts: 'breaks', talabat: 'transfer', siteTransfer: 'transfer', siteBranches: 'branches', branchFile: 'branches', manage: 'people', entry: 'transfer' };
-  const DAY_VIEWS = ['daily', 'trend', 'transferReport', 'day', 'team', 'profile', 'breaks', 'calls', 'missed', 'followup', 'bot', 'transfer', 'sales', 'branches', 'cancels', 'kpi'];
+  const DAY_VIEWS = ['daily', 'trend', 'transferReport', 'day', 'team', 'profile', 'breaks', 'calls', 'missed', 'followup', 'bot', 'transfer', 'qa', 'cs', 'exports', 'sales', 'branches', 'cancels', 'kpi'];
   const SECTION_OF = {};
   for (const t of document.querySelectorAll('#nav .tabset')) for (const b of t.querySelectorAll('[data-view]')) SECTION_OF[b.dataset.view] = t.dataset.sec;
   // Karim 11-16 «شيل التكرارات»: the three live pages are on home (its headings open them full size).
@@ -1078,7 +1084,7 @@
   // Today's numbers on the open page refresh every minute.
   // Skipped while the supervisor is choosing or typing something on the page, or has a section open, so nothing they picked is lost.
   const busyHere = () => { const a = document.activeElement, v = document.querySelector('.view:not([hidden])'); return !!v && ((a && v.contains(a) && /^(SELECT|INPUT|TEXTAREA)$/.test(a.tagName)) || !!v.querySelector('details[open]')); };
-  setInterval(() => { if (token && DAY_VIEWS.includes(state.view) && state.view !== 'followup' && state.to === cairoToday() && !document.hidden && !busyHere()) show(state.view, true); }, 60000);
+  setInterval(() => { if (token && DAY_VIEWS.includes(state.view) && !['followup', 'qa', 'cs', 'exports'].includes(state.view) && state.to === cairoToday() && !document.hidden && !busyHere()) show(state.view, true); }, 60000);
 
   // ---------- sign in ----------
   async function enter() {

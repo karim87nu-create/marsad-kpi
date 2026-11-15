@@ -37,7 +37,9 @@ import * as apexCancel from './apex-cancel.js';
 import * as apexAreas from './apex-areas.js';
 import * as home from './home.js';
 import * as daily from './daily.js';
+import * as cs from './cs.js';
+import * as reports from './reports.js';
 
-const MODULES = [translate, admin, employees, sessions, dashboard, breaks, messages, shifts, history, engine, telegram, importRows, ops, range, orders, names, learn, reviews, site, talabat, cancels, whatsapp, transfer, talabatActions, systemWatch, backup, archive, kpi, branchClosures, branchBot, perf, qa, forecast, autotransfer, apexCancel, apexAreas, home, daily];
+const MODULES = [translate, admin, employees, sessions, dashboard, breaks, messages, shifts, history, engine, telegram, importRows, ops, range, orders, names, learn, reviews, site, talabat, cancels, whatsapp, transfer, talabatActions, systemWatch, backup, archive, kpi, branchClosures, branchBot, perf, qa, forecast, autotransfer, apexCancel, apexAreas, home, daily, cs, reports];
 export { MODULES };
 

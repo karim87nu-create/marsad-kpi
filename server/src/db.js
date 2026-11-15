@@ -216,6 +216,20 @@ CREATE INDEX IF NOT EXISTS auto_transfer_log_day ON auto_transfer_log (day);
 CREATE TABLE IF NOT EXISTS qa_evals (id INTEGER PRIMARY KEY AUTOINCREMENT, week TEXT NOT NULL, day TEXT NOT NULL, call_key TEXT NOT NULL, employee_id INTEGER NOT NULL, call_at INTEGER, evaluator TEXT NOT NULL, marks TEXT, critical TEXT, total REAL, notes TEXT, created_at INTEGER NOT NULL, UNIQUE(call_key, evaluator));
 CREATE INDEX IF NOT EXISTS qa_evals_day ON qa_evals(day);
 CREATE INDEX IF NOT EXISTS qa_evals_week ON qa_evals(week);
+-- Karim 11-16: QA on the call center's own sheet (11 items out of 120), entered in the Marsad or imported from the sheet.
+CREATE TABLE IF NOT EXISTS qa_scores (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, employee_id INTEGER, employee_name TEXT NOT NULL, phone TEXT, call_time TEXT, call_type TEXT, call_key TEXT, scores TEXT NOT NULL, total REAL NOT NULL, max_total REAL NOT NULL, pct REAL NOT NULL, notes TEXT, evaluator TEXT, source TEXT NOT NULL, ext_key TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS qa_scores_day ON qa_scores(day);
+-- Karim 11-16: a management user takes calls like anyone, but has no break requests and is never picked for QA.
+CREATE TABLE IF NOT EXISTS employee_flags (employee_id INTEGER PRIMARY KEY, manager INTEGER NOT NULL DEFAULT 0, at INTEGER NOT NULL);
+-- Karim 11-16: the customer-service sheet (complaints, comments and ratings from Talabat / the website / calls) and each
+-- branch's rating of the day on Talabat (with the competitor's).
+CREATE TABLE IF NOT EXISTS cs_entries (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, platform TEXT NOT NULL, branch TEXT, customer TEXT, phone TEXT, order_no TEXT, rating INTEGER, comment TEXT, complaint TEXT, reached TEXT, action TEXT, by_name TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS cs_entries_day ON cs_entries(day);
+CREATE TABLE IF NOT EXISTS cs_branch_day (day TEXT NOT NULL, branch TEXT NOT NULL, rating REAL, competitor REAL, by_name TEXT, at INTEGER NOT NULL, PRIMARY KEY(day, branch));
+-- Karim 11-16: a website order came from the app or the website (WooCommerce created_via), for the orders-by-source sheet.
+CREATE TABLE IF NOT EXISTS site_channels (id INTEGER PRIMARY KEY, via TEXT);
+-- Karim 11-16: a finished day's numbers for the daily Excel reports (reports.js), built once.
+CREATE TABLE IF NOT EXISTS report_days (day TEXT PRIMARY KEY, data TEXT NOT NULL, at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS roster (employee_id INTEGER NOT NULL, day TEXT NOT NULL, start TEXT, end TEXT, off INTEGER NOT NULL DEFAULT 0, set_by TEXT, set_at INTEGER, PRIMARY KEY(employee_id, day));
 CREATE INDEX IF NOT EXISTS roster_day ON roster(day);
 CREATE TABLE IF NOT EXISTS bot_cases (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, branch TEXT, chat_id TEXT, kind TEXT NOT NULL, needs TEXT NOT NULL, state TEXT NOT NULL, source TEXT, ref TEXT, code TEXT, text TEXT, from_name TEXT, msg_id INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, claimed_by TEXT, claimed_at INTEGER, outcome TEXT, outcome_note TEXT, done_by TEXT, done_at INTEGER, escalated_at INTEGER, parent_id INTEGER);

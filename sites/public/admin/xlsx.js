@@ -130,5 +130,69 @@ window.MarsadXlsx = (() => {
     setTimeout(() => URL.revokeObjectURL(url), 2000);
     return blob;
   }
-  return { build, book, download, report };
+  // ---- the call center's own daily sheets (Karim 11-16): free layout, merged cells, coloured blocks ----
+  // sheets: [{ name, widths: [n…], rows: [[cell…]], merges: ['A1:F1'…], freeze: rows }]
+  // cell: null | value | { v, s: fill name, b: bold, big: title size, t: 'num'|'pct'|'date'|'time'|'text', f: formula }
+  const GRID_FILLS = { none: null, title: 'F26522', head: 'BDD7EE', sub: 'EFEFEF', yellow: 'FFFF00', blue: 'ADD8E6', orange: 'FF9900', lavender: 'A4C2F4', gray: 'D9D9D9', green: 'D4EDDA', red: 'F8D7DA', amber: 'FFF3CD' };
+  const GRID_FMT = { text: 0, num: 3, dec: 4, pct: 10, date: 164, time: 165 };
+  const fillNames = Object.keys(GRID_FILLS), fmtNames = Object.keys(GRID_FMT);
+  const gridXf = (fill, fmt, bold, big) => 1 + ((fillNames.indexOf(fill) * fmtNames.length + fmtNames.indexOf(fmt)) * 2 + (bold ? 1 : 0)) * 2 + (big ? 1 : 0);
+  const GRID_STYLES = (() => {
+    const xfs = ['<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'];
+    for (const fl of fillNames) for (const fm of fmtNames) for (const b of [0, 1]) for (const big of [0, 1]) {
+      const font = big ? 3 : b ? 1 : 0, fillId = fl === 'none' ? 0 : 2 + fillNames.indexOf(fl) - 1;
+      xfs.push('<xf numFmtId="' + GRID_FMT[fm] + '" fontId="' + font + '" fillId="' + fillId + '" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1" readingOrder="2"/></xf>');
+    }
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="2"><numFmt numFmtId="164" formatCode="yyyy-mm-dd"/><numFmt numFmtId="165" formatCode="h:mm"/></numFmts>'
+      + '<fonts count="4"><font><sz val="11"/><name val="Arial"/></font><font><b/><sz val="11"/><name val="Arial"/></font><font><sz val="11"/><name val="Arial"/></font><font><b/><sz val="16"/><name val="Arial"/></font></fonts>'
+      + '<fills count="' + (2 + fillNames.length - 1) + '"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>'
+      + fillNames.slice(1).map(f => '<fill><patternFill patternType="solid"><fgColor rgb="FF' + GRID_FILLS[f] + '"/><bgColor indexed="64"/></patternFill></fill>').join('') + '</fills>'
+      + '<borders count="2"><border/><border>' + ['left', 'right', 'top', 'bottom'].map(x => '<' + x + ' style="thin"><color rgb="FF888888"/></' + x + '>').join('') + '<diagonal/></border></borders>'
+      + '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="' + xfs.length + '">' + xfs.join('') + '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+  })();
+  const dateSerial = d => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(d)); return m ? (Date.UTC(+m[1], +m[2] - 1, +m[3]) - Date.UTC(1899, 11, 30)) / 86400000 : null; };
+  function gridCell(ref, c) {
+    if (c == null) return '';
+    const x = typeof c === 'object' ? c : { v: c };
+    let t = x.t || (typeof x.v === 'number' ? (Number.isInteger(x.v) ? 'num' : 'dec') : 'text');
+    let v = x.v;
+    if (t === 'date') { v = dateSerial(v); if (v == null) { t = 'text'; v = x.v; } }
+    if (t === 'time' && typeof v === 'string') { const m = /^(\d{1,2}):(\d{2})/.exec(v); v = m ? (+m[1] * 60 + +m[2]) / 1440 : null; }
+    const st = gridXf(x.s || 'none', t, x.b, x.big);
+    if (x.f) return '<c r="' + ref + '" s="' + st + '"><f>' + esc(x.f) + '</f></c>';
+    if (v == null || v === '') return '<c r="' + ref + '" s="' + st + '"/>';
+    if (t !== 'text' && Number.isFinite(Number(v))) return '<c r="' + ref + '" s="' + st + '"><v>' + Number(v) + '</v></c>';
+    return '<c r="' + ref + '" t="inlineStr" s="' + gridXf(x.s || 'none', 'text', x.b, x.big) + '"><is><t xml:space="preserve">' + esc(v) + '</t></is></c>';
+  }
+  function gridSheetXml(x) {
+    const rows = x.rows.map((r, j) => '<row r="' + (j + 1) + '"' + (x.heights?.[j] ? ' ht="' + x.heights[j] + '" customHeight="1"' : '') + '>' + (r || []).map((c, i) => gridCell(col(i) + (j + 1), c)).join('') + '</row>');
+    const fr = x.freeze ? '<pane ySplit="' + x.freeze + '" topLeftCell="A' + (x.freeze + 1) + '" activePane="bottomLeft" state="frozen"/>' : '';
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><sheetViews><sheetView workbookViewId="0" rightToLeft="1">' + fr + '</sheetView></sheetViews>'
+      + '<cols>' + (x.widths || []).map((w, i) => '<col min="' + (i + 1) + '" max="' + (i + 1) + '" width="' + (w || 14) + '" customWidth="1"/>').join('') + '</cols>'
+      + '<sheetData>' + rows.join('') + '</sheetData>' + (x.merges?.length ? '<mergeCells count="' + x.merges.length + '">' + x.merges.map(m => '<mergeCell ref="' + m + '"/>').join('') + '</mergeCells>' : '')
+      + '<pageMargins left="0.3" right="0.3" top="0.4" bottom="0.4" header="0.2" footer="0.2"/><pageSetup orientation="landscape" fitToWidth="1" fitToHeight="0"/></worksheet>';
+  }
+  function grid(name, sheets) {
+    const names = new Set();
+    const list = sheets.map((x, i) => { let n = String(x.name || 'ورقة').replace(/[\\/?*\[\]:]/g, ' ').slice(0, 31); while (names.has(n)) n = n.slice(0, 28) + ' ' + (i + 1); names.add(n); return { ...x, name: n }; });
+    const blob = zip([
+      ['[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+        + list.map((_, i) => '<Override PartName="/xl/worksheets/sheet' + (i + 1) + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join('') + '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>'],
+      ['_rels/.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
+      ['xl/workbook.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView/></bookViews><sheets>'
+        + list.map((x, i) => '<sheet name="' + esc(x.name) + '" sheetId="' + (i + 1) + '" r:id="rId' + (i + 1) + '"/>').join('') + '</sheets><calcPr fullCalcOnLoad="1"/></workbook>'],
+      ['xl/_rels/workbook.xml.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        + list.map((_, i) => '<Relationship Id="rId' + (i + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + (i + 1) + '.xml"/>').join('')
+        + '<Relationship Id="rId' + (list.length + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>'],
+      ['xl/styles.xml', GRID_STYLES],
+      ...list.map((x, i) => ['xl/worksheets/sheet' + (i + 1) + '.xml', gridSheetXml(x)]),
+    ]);
+    if (typeof document === 'undefined' || name === null) return blob;
+    const url = URL.createObjectURL(blob);
+    const a = Object.assign(document.createElement('a'), { href: url, download: name + '.xlsx' });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    return blob;
+  }
+  return { build, book, download, report, grid, col };
 })();

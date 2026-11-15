@@ -3,7 +3,7 @@ import { hashPassword, verifyPassword } from './security.js';
 function setup(app) {
   const { db, fail } = app;
   const pinLookup = pin => app.signer.lookup('pin:' + pin);
-  const shape = e => ({ id: e.id, name: e.name, employeeCode: e.employee_code, active: !!e.active && !e.deleted_at, hasPassword: !!(e.pin_hash || e.legacy_pin_hash) });
+  const shape = e => ({ id: e.id, name: e.name, employeeCode: e.employee_code, active: !!e.active && !e.deleted_at, hasPassword: !!(e.pin_hash || e.legacy_pin_hash), manager: !!e.manager });
   const legacyRows = () => db.prepare('SELECT * FROM employees WHERE legacy_pin_hash IS NOT NULL AND deleted_at IS NULL').all();
 
   async function checkPin(pin, confirmation, exceptId) {
@@ -33,7 +33,7 @@ function setup(app) {
 
   app.route('GET', '/api/employees', async ctx => {
     await app.requireAdmin(ctx);
-    const rows = await db.prepare('SELECT * FROM employees ORDER BY name COLLATE NOCASE').all();
+    const rows = await db.prepare('SELECT e.*, f.manager FROM employees e LEFT JOIN employee_flags f ON f.employee_id = e.id ORDER BY e.name COLLATE NOCASE').all();
     return {
       employees: rows.filter(e => !e.deleted_at).map(shape),
       archivedEmployees: rows.filter(e => e.deleted_at).map(e => ({ ...shape(e), active: false, historyOnly: true })),
@@ -74,8 +74,10 @@ function setup(app) {
       writes.push(db.prepare('UPDATE employees SET active = ? WHERE id = ?').bind(b.active ? 1 : 0, e.id));
       if (!b.active) writes.push(revokeSessions(e.id, 'employee_disabled', ctx.now));
     }
-    await db.batch(writes);
-    await app.audit('employee_changed', e.id, { actor: who.name, name: e.name, employeeCode: e.employee_code, active: b.active, passwordChanged: b.pin !== undefined });
+    // Karim 11-16: a management user takes calls like anyone; no break requests, never picked for QA.
+    if (b.manager !== undefined) writes.push(db.prepare('INSERT INTO employee_flags (employee_id, manager, at) VALUES (?,?,?) ON CONFLICT(employee_id) DO UPDATE SET manager = excluded.manager, at = excluded.at').bind(e.id, b.manager ? 1 : 0, ctx.now));
+    if (writes.length) await db.batch(writes);
+    await app.audit('employee_changed', e.id, { actor: who.name, name: e.name, employeeCode: e.employee_code, active: b.active, passwordChanged: b.pin !== undefined, manager: b.manager });
     return { ok: true };
   });
 

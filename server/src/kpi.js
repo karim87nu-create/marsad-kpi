@@ -160,9 +160,10 @@ function setup(app) {
     for (const e of d.employees) { e.callsVsTeam = avg && e.callsPerDay != null ? Math.round(e.callsPerDay / avg * 100) : null; e.score = empScore(e); }
     const ranked = d.employees.filter(e => e.score != null).sort((a, b) => b.score - a.score || (b.calls || 0) - (a.calls || 0));
     const mine = d.employees.find(e => e.id === me.id) || null, pmine = d.before.employees.find(e => e.id === me.id) || null;
-    let qa = []; try { qa = await db.prepare('SELECT call_at, total, critical, notes, evaluator, created_at FROM qa_evals WHERE employee_id = ? AND day BETWEEN ? AND ? ORDER BY id DESC LIMIT 20').all(me.id, from, today); } catch {}
+    let qa = []; try { qa = (await db.prepare('SELECT call_at, total, critical, notes, evaluator, created_at FROM qa_evals WHERE employee_id = ? AND day BETWEEN ? AND ? ORDER BY id DESC LIMIT 20').all(me.id, from, today)).map(q => ({ callAt: iso(q.call_at), total: q.total, critical: q.critical, notes: q.notes, by: q.evaluator })); } catch {}
+    if (app.qaOf) qa = [...await app.qaOf(me.id, from, today).catch(() => []), ...qa].slice(0, 20);
     return { from, to: today, range, targets: TARGETS, me: mine, before: pmine, rank: mine ? ranked.findIndex(e => e.id === me.id) + 1 || null : null, of: ranked.length,
-      board: ranked.map((e, i) => ({ rank: i + 1, name: e.name, score: e.score, me: e.id === me.id })), qa: qa.map(q => ({ callAt: iso(q.call_at), total: q.total, critical: q.critical, notes: q.notes, by: q.evaluator })) };
+      board: ranked.map((e, i) => ({ rank: i + 1, name: e.name, score: e.score, me: e.id === me.id })), qa };
   });
 
   async function build(from, to, ctx) {

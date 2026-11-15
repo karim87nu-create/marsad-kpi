@@ -278,7 +278,7 @@ function setup(app) {
       const startPage = pending?.page || 1;
       const changed = []; let nextPage = null;
       for (let page = startPage; page < startPage + 6; page++) {
-        const list = await wc(c, 'orders', { per_page: 50, page, modified_after: after, modified_before: until, dates_are_gmt: 'true', orderby: 'modified', order: 'asc', _fields: 'id,status,total,date_created_gmt,date_modified_gmt,meta_data,billing,shipping,line_items,customer_id' });
+        const list = await wc(c, 'orders', { per_page: 50, page, modified_after: after, modified_before: until, dates_are_gmt: 'true', orderby: 'modified', order: 'asc', _fields: 'id,status,total,date_created_gmt,date_modified_gmt,meta_data,billing,shipping,line_items,customer_id,created_via' });
         if (!Array.isArray(list)) throw Error('رد غير متوقع من الموقع');
         changed.push(...list);
         nextPage = list.length < 50 ? null : page + 1;
@@ -314,6 +314,8 @@ function setup(app) {
         const profile = { customer: { ...(old.customer || {}) }, items: Array.isArray(o.line_items) ? items : old.items || [], payment: 'payment_method' in o || 'discount_total' in o ? pay : old.payment || null };
         for (const [k, v] of Object.entries(customer)) if (v) profile.customer[k] = v;
         upsert.push(db.prepare("INSERT INTO match_profiles (source, ref, data) SELECT 'site',?,? WHERE NOT EXISTS (SELECT 1 FROM site_orders WHERE id=? AND modified_at>?) ON CONFLICT(source, ref) DO UPDATE SET data = excluded.data").bind(String(o.id), JSON.stringify(profile),o.id,modified));
+        // Karim 11-16 (orders by source: app / website): how WooCommerce says the order was made.
+        if (o.created_via) upsert.push(db.prepare('INSERT INTO site_channels (id, via) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET via = excluded.via').bind(o.id, String(o.created_via).slice(0, 40)));
         upsert.push(db.prepare('INSERT INTO site_orders (id, day, status, fulfillment, total, created_at, modified_at, notes_at, scheduled, scheduled_at) VALUES (?,?,?,?,?,?,?,NULL,?,?) ON CONFLICT(id) DO UPDATE SET status = CASE WHEN site_orders.gone_at IS NOT NULL AND site_orders.status = \'cancelled\' THEN site_orders.status ELSE excluded.status END, fulfillment = excluded.fulfillment, total = excluded.total, modified_at = excluded.modified_at, notes_at = CASE WHEN excluded.modified_at > IFNULL(site_orders.modified_at, 0) THEN NULL ELSE site_orders.notes_at END, scheduled = MAX(site_orders.scheduled, excluded.scheduled), scheduled_at = COALESCE(excluded.scheduled_at, site_orders.scheduled_at) WHERE COALESCE(site_orders.modified_at,0) <= excluded.modified_at')
           .bind(o.id, businessDay(created), String(o.status), ful ? String(ful) : null, Number(o.total) || null, created, modified, scheduled, scheduledAt));
       }
