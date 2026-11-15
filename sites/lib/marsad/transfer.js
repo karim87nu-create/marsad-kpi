@@ -924,7 +924,9 @@ function setup(app) {
       const translatedAddress = app.toArabicAddress?.([rawAddress]).get(rawAddress) || rawAddress;
       // Karim 11-15: delivery instructions to the order's special mark (up to 100 letters with the rest of the mark), the food to the comment.
       const noteSplit = splitDeliveryComment(arabic.get(safeRemarks) || safeRemarks);
-      const address = pickup ? { street: '', floor: '', flat: '' } : deliveryAddress(translatedAddress, [area?.name, sourceOrder?.customer?.talabatArea, sourceOrder?.customer?.siteArea, b.customer?.area]);
+      // Karim 11-15 «استلام الفرع نكتب صفر في العنوان والدور والشقه عشان ميطبعش بيانات قديمه»: Apex prints the customer's
+      // card, so a pickup writes 0 there (the next delivery order writes its own address back).
+      const address = pickup ? { street: '0', floor: '0', flat: '0' } : deliveryAddress(translatedAddress, [area?.name, sourceOrder?.customer?.talabatArea, sourceOrder?.customer?.siteArea, b.customer?.area]);
       // Karim 11-15: the street and building in the address, what shows the way in the special mark — the address in full
       // when the mark has no room for it.
       const addrSplit = splitAddressLandmark(address.street);
@@ -942,7 +944,7 @@ function setup(app) {
       const code = (String(b.code || '').replace(/[^\d]/g, '') || (source === 'talabat' ? String(sourceOrder?.code || (await db.prepare('SELECT code FROM talabat_orders WHERE id = ?').get(ref))?.code || '').replace(/[^\d]/g, '') : '') || (source === 'site' ? String(ref) : '')).slice(0, 10) || null;
       if (source === 'talabat' && !code) fail(409, 'هاشتاج طلبات لسه ماظهرش للأوردر ده — افتح الأوردر على شاشة لايف طلبات وثواني ويظهر، بعدين سجّله');
       const payload = { v: 1, source, ref, code, db: mode, branchNo, locationNo, payment, ...(paymentOverride ? { paymentOverride } : {}),
-        label: deliveryLabel(translatedName, source, payment, code, booking.appointment), customer: { name: String(translatedName || '').slice(0, 80), phone: deliveryPhone(b.customer?.phone), address: pickup ? '' : String(b.customer?.address || '').slice(0, 360), ...deliveryFields }, ...(pickup ? { pickup: true } : {}),
+        label: deliveryLabel(translatedName, source, payment, code, booking.appointment), customer: { name: String(translatedName || '').slice(0, 80), phone: deliveryPhone(b.customer?.phone), address: pickup ? '0' : String(b.customer?.address || '').slice(0, 360), ...deliveryFields }, ...(pickup ? { pickup: true } : {}),
         sign, signNote, platformDiscount, note: translatedNote, items: [...clean, ...noteItems], apexCustomerBenefit: noteBenefit,
         restaurantDiscount, expectedTotal, targetTotal, areaService, by: me.name, at: now };
       const queued = await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at, payload, result) VALUES (?,?,?,'auto_pending',?,?,?,?,?,?,NULL)
