@@ -304,6 +304,12 @@ function setup(app) {
           const nos = [...named].sort((a, b) => a - b), nameOf = n => (base.locations.find(l => l.no === n)?.name || '');
           const pick = nos.find(n => /طلبات/.test(nameOf(n)) === (o.source === 'talabat')) ?? nos[0];
           list[i] = { ...o, areaGuess: { no: pick, seen: 0, how: 'name' } };
+        } else {
+          // Karim 11-15 «منت عارف مناطق ابيكس»: an Apex area named inside the platform's area («مصر الجديدة - ميدان تريومف» →
+          // «ميدان تريومف», «كومبوند جاردينيا سيتي» → «جاردينيا سيتي»): the longest one, never two different areas; for
+          // Talabat the «… طلبات» spelling when Apex has both.
+          const no = areaInAddress(words, base.locations, o.apexBranch, groups, l => /طلبات/.test(String(l.name || '')) === (o.source === 'talabat'));
+          if (no) list[i] = { ...o, areaGuess: { no, seen: 0, how: 'areaName' } };
         }
       }
     }

@@ -110,6 +110,7 @@ export function decide(o, x) {
   else if (o.areaGuess && Number(o.areaGuess.seen) >= 2 && !(o.areaGuess.share < 0.8)) { loc = Number(o.areaGuess.no); locHow = 'learned'; }
   else if (o.areaGuess?.how === 'name') { loc = Number(o.areaGuess.no); locHow = 'name'; }
   else if (o.areaGuess?.how === 'address') { loc = Number(o.areaGuess.no); locHow = 'address'; }
+  else if (o.areaGuess?.how === 'areaName') { loc = Number(o.areaGuess.no); locHow = 'areaName'; }
   else { const c = x.customerArea?.(o); if (c) { loc = Number(c); locHow = 'customer'; } }
   // Karim 11-15 «تقريبا مفيش ولا اوردر موقع اتحول تلقائي»: a website order has no branch until someone sends it to one on
   // the website (and then it is left to staff) — 144 of 154 waited for «الفرع مش واضح». The Apex area found for it belongs

@@ -24,7 +24,7 @@ test('transfer: the Apex area chosen for a Talabat area is suggested for the nex
     await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'test' });
     t.advance(9000);
     let q = (await as('GET', '/api/transfer/queue?day=2026-10-22')).body;
-    assert.equal(q.orders.find(o => o.ref === '3977900021').areaGuess, undefined, 'nothing learned yet');
+    assert.deepEqual(q.orders.find(o => o.ref === '3977900021').areaGuess, { no: 301, seen: 0, how: 'areaName' }, 'nothing learned yet: the Apex area named inside it (11-15)');
     assert.equal(q.orders.find(o => o.ref === '3977900021').customer.talabatArea, 'الرحاب 1');
     const wt = (await admin('POST', '/api/apex-writer', { action: 'token' })).body.token;
     const w = (path, body) => t.call('POST', path, { body: body || {}, headers: { 'x-apex-writer': wt } });
