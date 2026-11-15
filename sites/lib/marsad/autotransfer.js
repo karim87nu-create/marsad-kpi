@@ -102,8 +102,7 @@ export function decide(o, x) {
   const pay = o.payment === 'cash' || o.payment === 'paid' ? o.payment : null;
   if (!pay) why.push(o.source === 'site' ? 'طريقة الدفع على الموقع مش واضحة أو جزء منها كاش' : 'كاش ولا مدفوع مش واضح');
   // Branch and area.
-  const branch = Number(o.apexBranch) || null;
-  if (!branch) why.push('الفرع مش واضح');
+  let branch = Number(o.apexBranch) || null;
   const pickup = o.source === 'site' && o.fulfillment === 'pickup';
   let loc = null, locHow = null;
   if (pickup) { loc = o.areaGuess?.how === 'pickup' ? Number(o.areaGuess.no) : null; locHow = 'pickup'; }
@@ -112,6 +111,14 @@ export function decide(o, x) {
   else if (o.areaGuess?.how === 'name') { loc = Number(o.areaGuess.no); locHow = 'name'; }
   else if (o.areaGuess?.how === 'address') { loc = Number(o.areaGuess.no); locHow = 'address'; }
   else { const c = x.customerArea?.(o); if (c) { loc = Number(c); locHow = 'customer'; } }
+  // Karim 11-15 «تقريبا مفيش ولا اوردر موقع اتحول تلقائي»: a website order has no branch until someone sends it to one on
+  // the website (and then it is left to staff) — 144 of 154 waited for «الفرع مش واضح». The Apex area found for it belongs
+  // to one branch on Apex: that is its branch (never when the area is listed for two branches).
+  if (!branch && o.source === 'site' && loc && !pickup) {
+    const owners = [...new Set((x.locations || []).filter(l => Number(l.no) === loc).map(l => l.branch).filter(v => v != null).map(Number))];
+    if (owners.length === 1) branch = owners[0];
+  }
+  if (!branch) why.push('الفرع مش واضح');
   let service = null;
   if (!loc) why.push(o.areaGuess && Number(o.areaGuess.seen) >= 2 ? 'المنطقة دي الموظفين اختاروا لها أكتر من منطقة على Apex'
     : (o.customer?.talabatArea || o.customer?.siteArea) ? 'منطقة «' + (o.customer.talabatArea || o.customer.siteArea) + '» لسه ما اتعلمتش على Apex' : 'منطقة العميل مش ظاهرة في الأوردر');

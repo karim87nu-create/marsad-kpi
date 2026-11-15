@@ -67,3 +67,19 @@ test('a writer that takes orders but does not write them: no new order is handed
   const home = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/home.js'), 'utf8');
   assert.match(home, /part:writerStuck/);
 });
+
+// Karim 11-15 «تقريبا مفيش ولا اوردر موقع اتحول تلقائي»: a website order has no branch until staff send it on the website;
+// the Apex area found for it gives the branch (one owner only).
+test('auto transfer: a website order with no branch takes the branch of its Apex area', async () => {
+  const { decide } = await import('../src/autotransfer.js');
+  const now = Date.parse('2026-11-15T09:00:00Z');
+  const o = { source: 'site', ref: '31215', at: new Date(now - 3 * 60000).toISOString(), apexBranch: null, payment: 'cash', items: [{ name: 'كفتة', qty: 1, apex: [{ no: '10' }] }], detailRead: true,
+    customer: { siteArea: 'التجمع الاول', address: 'التجمع الاول' }, areaGuess: { no: 332, seen: 0, how: 'address' }, discounts: [],
+    apexCustomerNote: { status: 'none', checkedAt: new Date(now - 60000).toISOString() } };
+  const locations = [{ no: 332, name: 'التجمع الاول', branch: 1, service: 30 }, { no: 9, name: 'شارع الطاقه', branch: 2, service: 20 }, { no: 361, name: 'مدينتي', branch: 1, service: 40 }, { no: 361, name: 'مدينتي', branch: 3, service: 40 }];
+  const d = decide(o, { now, locations, groups: null, picks: new Map() });
+  assert.ok(!d.why.includes('الفرع مش واضح'), d.why.join(' · '));
+  assert.ok(!d.why.some(w => /فرع تاني/.test(w)));
+  const two = decide({ ...o, areaGuess: { no: 361, seen: 0, how: 'address' } }, { now, locations, groups: null, picks: new Map() });
+  assert.ok(two.why.includes('الفرع مش واضح'), 'an area of two branches decides nothing');
+});
