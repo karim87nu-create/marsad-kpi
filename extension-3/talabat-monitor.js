@@ -287,6 +287,17 @@
     const minutesOf = v => { const m = /^(\d{1,3})\s*(?:د|دق|دقيقة|دقيقه|دقائق|دقايق|min|mins|minutes)?\.?$/i.exec(String(v || '')); return m ? Number(m[1]) : null; };
     const sameStore = (a, b) => { const n = x => String(x || '').replace(/[،,\-–_.]/g, ' ').replace(/\s+/g, ' ').trim(); return !!a && !!b && (n(a) === n(b) || n(a).includes(n(b)) || n(b).includes(n(a))); };
     async function pickMinutes(dlg, minutes) {
+      for (const sel of dlg.querySelectorAll('select')) {
+        const opt = [...sel.options].find(o => minutesOf((o.textContent || '').trim()) === minutes || Number(o.value) === minutes);
+        if (opt) { sel.value = opt.value; sel.dispatchEvent(new Event('input', { bubbles: true })); sel.dispatchEvent(new Event('change', { bubbles: true })); await sleep(400); return { ok: true }; }
+      }
+      const combo = dlg.querySelector('[role="combobox"],[aria-haspopup="listbox"]');
+      if (combo && minutesOf(txtOf(combo)) !== minutes) {
+        combo.click(); await sleep(500);
+        const opt = [...document.querySelectorAll('[role="option"],[role="menuitem"],li')].find(o => minutesOf(txtOf(o)) === minutes);
+        if (opt) { opt.click(); await sleep(500); return { ok: true }; }
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      } else if (combo && minutesOf(txtOf(combo)) === minutes) return { ok: true };
       const chips = [...dlg.querySelectorAll('button,[role="option"],[role="radio"],[role="tab"],label')].filter(e => minutesOf(txtOf(e)) != null && minutesOf(txtOf(e)) >= 5);
       const hit = chips.find(e => minutesOf(txtOf(e)) === minutes);
       if (hit) { hit.click(); await sleep(500); return { ok: true }; }
@@ -301,6 +312,40 @@
       if (n == null) return { ok: false, note: 'الوقت الظاهر في شباك القبول مش مقروء' };
       for (let i = 0; i < 40 && n !== minutes; i++) { (n < minutes ? plus : minus).click(); await sleep(250); const m = shown(); if (m == null || m === n) return { ok: false, note: 'الوقت مش بيتغير (واقف على ' + n + ')' }; n = m; }
       return n === minutes ? { ok: true } : { ok: false, note: 'ماوصلش لـ ' + minutes + ' دقيقة (واقف على ' + n + ')' };
+    }
+    // Karim 11-15 «كارت قبول الاوردر قبل الشباك»: the time and «قبول» are on the order's card; the window that follows
+    // («رفض» / «تأكيد», sample 15-11) only confirms. It is confirmed only right after our own «قبول» on that order's card.
+    const ACCEPT_WORD = /^(?:قبول|اقبل|قبول الطلب|accept|accept order)$/i;
+    const cardOf = (btn, live) => {
+      let el = btn;
+      for (let i = 0; i < 12 && el; i++, el = el.parentElement) {
+        const t = el.innerText || '';
+        const hits = (live || []).filter(o => o.externalId && (t.includes(String(o.externalId)) || (o.shortCode && new RegExp('#\\s*' + String(o.shortCode).replace(/\D/g, '') + '(?!\\d)').test(t))));
+        if (hits.length === 1) return { card: el, o: hits[0] };
+        if (hits.length > 1) return null;
+      }
+      return null;
+    };
+    async function acceptFromCard(live, accept) {
+      for (const btn of [...document.querySelectorAll('button,[role="button"]')].filter(b => !b.closest('[role="dialog"]') && (ACCEPT_WORD.test(txtOf(b)) || /accept/i.test(b.dataset?.testid || '')))) {
+        const hit = cardOf(btn, live); if (!hit) continue;
+        sendUi('newCard', hit.card);
+        const id = String(hit.o.externalId), store = Object.keys(accept || {}).find(s => sameStore(s, hit.o.vendorName));
+        if (!store || btn.disabled || tried.get('a' + id) > Date.now() - 10 * 60000) continue;
+        tried.set('a' + id, Date.now());
+        const minutes = Number(accept[store]), t = await pickMinutes(hit.card, minutes);
+        if (!t.ok) { uiSent.newCard = 0; sendUi('newCard', hit.card); return { id, ok: false, note: t.note }; }
+        btn.click(); await sleep(1500);
+        const dlg = newOrderDialog();
+        if (dlg) {
+          const ok = dlg.querySelector('button[data-testid="dialog_confirm_button"]');
+          if (!ok || /رفض|reject|cancel|إلغاء/i.test(txtOf(ok))) return { id, ok: false, note: 'ظهر شباك بعد «قبول» مش واضح — مادستش حاجة' };
+          ok.click(); await sleep(2000);
+          return { id, ok: true, note: 'اتقبل على ' + minutes + ' دقيقة (من الكارت واتأكد)' };
+        }
+        return { id, ok: true, note: 'اتقبل على ' + minutes + ' دقيقة (من الكارت)' };
+      }
+      return null;
     }
     async function acceptNew(dlg, live, accept) {
       const text = dlg.innerText || '';
@@ -404,10 +449,15 @@
         const nd = newOrderDialog();
         if (nd) {
           sendUi('new', nd);
-          const r = await acceptNew(nd, live, actions?.accept).catch(e => ({ ok: false, note: 'خطأ: ' + String(e?.message || e).slice(0, 80) }));
+          // A window with a time to choose is a new-order window of its own; «رفض» / «تأكيد» alone is someone's card click: left alone.
+          const hasTime = [...nd.querySelectorAll('button,[role="option"],[role="radio"],select,[role="combobox"]')].some(e => minutesOf(txtOf(e)) != null || e.matches('select,[role="combobox"]'));
+          const r = hasTime ? await acceptNew(nd, live, actions?.accept).catch(e => ({ ok: false, note: 'خطأ: ' + String(e?.message || e).slice(0, 80) })) : null;
+          if (r?.id) await bg({ type: 'TALABAT_ACTION_RESULT', body: { id: r.id, action: 'accept', ok: r.ok, note: r.note } }).catch(() => null);
+        } else {
+          const r = await acceptFromCard(live, actions?.accept).catch(e => ({ ok: false, note: 'خطأ: ' + String(e?.message || e).slice(0, 80) }));
           if (r?.id) await bg({ type: 'TALABAT_ACTION_RESULT', body: { id: r.id, action: 'accept', ok: r.ok, note: r.note } }).catch(() => null);
         }
-        else for (const o of actions?.onTheWay || []) {
+        if (!newOrderDialog()) for (const o of actions?.onTheWay || []) {
           if (tried.get(o.id) > Date.now() - 10 * 60000 || !codes.some(c => c.id === o.id && !c.fromData)) continue;
           tried.set(o.id, Date.now());
           const r = await pressOnTheWay(o.id);

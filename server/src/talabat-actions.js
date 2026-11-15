@@ -43,7 +43,7 @@ function setup(app) {
     const c = await config();
     const log = parseJson(await setting('talabat_actions_log'), []);
     const ui = {};
-    for (const k of ['new', 'accepted', 'onTheWay']) ui[k] = parseJson(await setting('talabat_ui:' + k), null);
+    for (const k of ['new', 'newCard', 'accepted', 'onTheWay']) ui[k] = parseJson(await setting('talabat_ui:' + k), null);
     return { branches: [...new Set([...stores, ...Object.keys(c.branches)])].map(s => ({ store: s, ...(c.branches[s] || { accept: false, minutes: null, onTheWay: false }) })),
       acceptReady: false, log: log.slice(0, 30), ui };
   });
@@ -182,11 +182,11 @@ function setup(app) {
   // A sample of the screen's controls (button words, test ids, roles): no customer details.
   app.route('POST', '/api/talabat/ui', async ctx => {
     await screen(ctx);
-    const kind = ['new', 'accepted', 'onTheWay'].includes(ctx.body?.kind) ? ctx.body.kind : null;
+    const kind = ['new', 'newCard', 'accepted', 'onTheWay'].includes(ctx.body?.kind) ? ctx.body.kind : null;
     if (!kind) fail(400, 'invalid_kind');
     const controls = (Array.isArray(ctx.body.controls) ? ctx.body.controls : []).slice(0, 120).map(x => ({
       tag: String(x?.tag || '').slice(0, 12), testid: String(x?.testid || '').slice(0, 120), role: String(x?.role || '').slice(0, 30),
-      aria: String(x?.aria || '').slice(0, 80), text: String(x?.text || '').replace(/\d{6,}/g, '#').slice(0, 60) }));
+      aria: String(x?.aria || '').slice(0, 80), text: String(x?.text || '').replace(/\d{6,}/g, '#').slice(0, 60), value: String(x?.value || '').replace(/\D/g, '').slice(0, 6) }));
     await put('talabat_ui:' + kind, JSON.stringify({ at: iso(ctx.now), controls }));
     return { ok: true };
   });
