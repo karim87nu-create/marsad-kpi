@@ -103,6 +103,7 @@ const WEIGHTS = [
 // Apex branches (Branches table, read 2026-10-31): number → name, for the employee's branch choice.
 const APEX_BRANCHES = [{ no: 1, name: 'التجمع' }, { no: 2, name: 'مدينة نصر' }, { no: 3, name: 'مدينتى' }];
 // Pickup at the branch («استلام فرع …»): the Apex area of each branch (LocationServices, read 11-11), delivery 0.
+const TALABAT_PICKUP = /pick\s*-?\s*up|self\s*-?\s*pick|استلام/i;
 const PICKUP_AREAS = { 1: { no: 353, name: 'استلام فرع التجمع' }, 2: { no: 268, name: 'استلام مدينة نصر' }, 3: { no: 372, name: 'استلام فرع مدينتي' } };
 
 // The Apex branch a Talabat store / website branch name points to (null when unclear: the employee picks).
@@ -591,6 +592,8 @@ function setup(app) {
         const billDiscounts = talabatDiscounts(bill).filter(d => !(dishTotal > 0 && d.amount != null && Math.abs(d.amount - dishTotal) < 0.05 && !/(talabat|طلبات)/i.test(d.text)));
         const discounts = [...dishDiscounts, ...billDiscounts];
         list.push({ source: 'talabat', ref: o.id, code: o.code || null, at: iso(o.accepted_at || o.received_at || o.placed_at), status: o.status, out: TALABAT_OUT.has(String(o.status || '').toUpperCase()) || !!o.picked_up_at || !!o.delivered_at, branch: o.store, apexBranch: apexBranchOf(o.store), deliveryType: o.delivery_type || null,
+          // Karim 11-15 «ما هو الاوردر استلام فعلا»: a Talabat pickup goes to the branch's «استلام» area like a website one.
+          ...(TALABAT_PICKUP.test(o.delivery_type || '') ? { fulfillment: 'pickup', ...(PICKUP_AREAS[apexBranchOf(o.store)] ? { areaGuess: { ...PICKUP_AREAS[apexBranchOf(o.store)], how: 'pickup' } } : {}) } : {}),
           customer: { name: /^(?:information|details|customer|العميل)$/i.test(p.name || '') ? null : p.name || null, phone: phoneOut(p.phoneDisplay || p.phone || p.mobileDisplay || p.mobile), address: p.address || null, ...(p.area ? { talabatArea: p.area } : {}) },
           // What Apex must total (Karim 31-10): the bill's «مجموع» (what the customer pays) plus Talabat's share of the discounts
           // (not deducted on Apex). The writer discounts any amount Apex comes out above it.
@@ -870,6 +873,7 @@ function setup(app) {
       // Karim 11-11: a website pickup goes to the branch's «استلام فرع» area, with no address, floor or flat.
       let pickup = false;
       if (source === 'site') { const so = await db.prepare('SELECT fulfillment FROM site_orders WHERE id = ?').get(Number(ref)); pickup = so?.fulfillment === 'pickup'; }
+      else if (source === 'talabat') { const to = await db.prepare('SELECT delivery_type FROM talabat_orders WHERE id = ?').get(String(ref)); pickup = TALABAT_PICKUP.test(to?.delivery_type || ''); }
       if (pickup && !PICKUP_AREAS[Number(b.branchNo)]) fail(400, 'اختار فرع Apex');
       const locationNo = pickup ? PICKUP_AREAS[Number(b.branchNo)].no : Number(b.locationNo);
       if (!Number.isInteger(locationNo) || locationNo < 1) fail(400, 'اختار منطقة العميل على Apex');

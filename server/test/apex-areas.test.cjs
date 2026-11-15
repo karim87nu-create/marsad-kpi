@@ -96,3 +96,15 @@ test('auto transfer: a delivery order is not put on a branch pickup area', async
   const learned = decide({ ...o, areaGuess: { no: 268, seen: 3, share: 1 } }, { now, locations, groups: null, picks: new Map() });
   assert.ok(learned.why.some(w => /استلام/.test(w)));
 });
+
+// Karim 11-15 «ما هو الاوردر استلام فعلا»: a Talabat pickup goes to the branch's «استلام» area by itself.
+test('auto transfer: a Talabat pickup order takes the branch pickup area', async () => {
+  const { decide } = await import('../src/autotransfer.js');
+  const now = Date.parse('2026-11-15T20:00:00Z');
+  const o = { source: 'talabat', ref: '4723000002', code: '1466', at: new Date(now - 3 * 60000).toISOString(), apexBranch: 2, payment: 'paid', deliveryType: 'Pickup',
+    fulfillment: 'pickup', areaGuess: { no: 268, name: 'استلام مدينة نصر', how: 'pickup' }, items: [{ name: 'عرض نصف فراخ', qty: 1, apex: [{ no: '10' }], modifiersComplete: true }], detailRead: true,
+    customer: { talabatArea: 'مدينة نصر', address: '' }, discounts: [], apexCustomerNote: { status: 'none', checkedAt: new Date(now - 60000).toISOString() } };
+  const locations = [{ no: 268, name: 'استلام مدينة نصر', branch: 2, service: 0 }];
+  const d = decide(o, { now, locations, groups: null, picks: new Map() });
+  assert.ok(!d.why.some(w => /استلام|منطقة/.test(w)), d.why.join(' · '));
+});

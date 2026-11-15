@@ -84,7 +84,6 @@ export function decide(o, x) {
   if (o.source === 'site' && o.sentToBranch) why.push('اتحوّل للفرع على الموقع — غالباً اتسجل بإيد');
   if (o.scheduled) why.push('أوردر مجدول');
   if (o.source === 'talabat' && /^(?:NEW|PENDING|WAITING|RECEIVED|PLACED|UNACCEPTED)/i.test(String(o.status || ''))) why.push('لسه ما اتقبلش على طلبات');
-  if (o.source === 'talabat' && /pick|استلام/i.test(String(o.deliveryType || ''))) why.push('استلام من الفرع على طلبات');
   if (o.source === 'talabat' && !String(o.code || '').replace(/\D/g, '')) why.push('هاشتاج طلبات لسه ماظهرش');   // Karim 11-14: never written without it
   if (!o.items?.length) { why.push(o.detailRead ? 'مفيش أصناف' : 'تفاصيل الأوردر لسه ماوصلتش'); return { ok: false, why, quiet: why.every(w => QUIET.has(w)) }; }
   if (o.source === 'talabat' && o.items.some(i => !i.modifiersComplete)) why.push('الإضافات مش ظاهرة كاملة');
@@ -103,7 +102,7 @@ export function decide(o, x) {
   if (!pay) why.push(o.source === 'site' ? 'طريقة الدفع على الموقع مش واضحة أو جزء منها كاش' : 'كاش ولا مدفوع مش واضح');
   // Branch and area.
   let branch = Number(o.apexBranch) || null;
-  const pickup = o.source === 'site' && o.fulfillment === 'pickup';
+  const pickup = o.fulfillment === 'pickup';   // website or Talabat (11-15)
   let loc = null, locHow = null;
   if (pickup) { loc = o.areaGuess?.how === 'pickup' ? Number(o.areaGuess.no) : null; locHow = 'pickup'; }
   // Learned: chosen 2+ times and at least 80% of the times (one area name staff put on two Apex areas is not certain).
