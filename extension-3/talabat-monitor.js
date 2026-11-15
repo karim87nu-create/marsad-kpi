@@ -2,7 +2,8 @@
 // شاشة مراقبة طلبات: runs only on the one PC linked from the admin page (الإدارة ← شاشة مراقبة طلبات), in a Firefox
 // window signed in with the call center's Talabat account. It keeps Order History open on the operating day, reads the
 // list every few seconds, and opens each order the server asks for to read its timeline, cancellation and items.
-// It never accepts, rejects or cancels an order; the only change it makes is «في الطريق», when admin turns it on for a branch
+// It never rejects or cancels an order. It changes two things, each only when admin turns it on for a branch: «في الطريق»,
+// and (Karim 11-15) accepting a new order on the branch's delivery time set in admin
 // and the order's Apex order left with its pilot. It reads customer matching fields inside the current order only.
 (async () => {
   if (location.hostname !== 'partner-app.talabat.com' || window.top !== window || window.__marsadTalabat === globalThis.MARSAD.VERSION) return;
@@ -265,13 +266,59 @@
     const controlsOf = root => [...(root || document).querySelectorAll('button,[role="button"],[role="option"],[role="radio"],[role="menuitem"],[data-testid],input,select')].slice(0, 120).map(e => {
       const clickable = e.matches('button,[role="button"],[role="option"],[role="radio"],[role="menuitem"]');
       return { tag: e.tagName.toLowerCase(), testid: e.dataset?.testid || '', role: e.getAttribute('role') || '', aria: e.getAttribute('aria-label') || '',
-        text: clickable ? (e.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 60) : '' };
+        text: clickable ? (e.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 60) : '',
+        value: e.matches('input[type="number"],[role="spinbutton"],[role="slider"]') ? String(e.value || e.getAttribute('aria-valuenow') || '').slice(0, 6) : '' };
     });
     const uiSent = {};
     const sendUi = (kind, root) => { if (uiSent[kind] > Date.now() - 30 * 60000) return; uiSent[kind] = Date.now(); bg({ type: 'TALABAT_UI', body: { kind, controls: controlsOf(root) } }).catch(() => null); };
     // The new-order window. Not the «Please allow notifications» window: it has the same confirm button and stays up on a
     // PC with notifications off — taken for a new order, it stopped every detail read (found 01-11-2026).
-    const newOrderDialog = () => [...document.querySelectorAll('[role="dialog"]')].find(d => d.querySelector('button[data-testid="dialog_confirm_button"]:not([hidden])') && !/notification|إشعار/i.test(d.innerText || '')) || null;
+    // Karim 11-15: Talabat's notices («فهمت» only, sample 14-11) are not a new order — taken for one, they stopped «في الطريق».
+    const NOTICE_ONLY = /^(?:فهمت|حسنًا|حسنا|تمام|ok|okay|got it|close|إغلاق)$/i;
+    const newOrderDialog = () => [...document.querySelectorAll('[role="dialog"]')].find(d => {
+      if (!d.querySelector('button[data-testid="dialog_confirm_button"]:not([hidden])') || /notification|إشعار/i.test(d.innerText || '')) return false;
+      const words = [...d.querySelectorAll('button,[role="button"]')].map(b => (b.innerText || '').trim()).filter(Boolean);
+      return !(words.length && words.every(w => NOTICE_ONLY.test(w)));
+    }) || null;
+    // Karim 11-15 «عايز الاضافه تقبل علي التايم المحدد في الادمن»: in the new-order window of a branch admin turned on, the
+    // branch's delivery time is chosen and «قبول» pressed — nothing else (never «رفض»). The window must name exactly one
+    // live order; the time must be offered as it is; otherwise nothing is pressed and admin gets why and the window's sample.
+    const txtOf = e => (e.innerText || e.value || e.getAttribute('aria-valuenow') || '').trim().replace(/\s+/g, ' ');
+    const minutesOf = v => { const m = /^(\d{1,3})\s*(?:د|دق|دقيقة|دقيقه|دقائق|دقايق|min|mins|minutes)?\.?$/i.exec(String(v || '')); return m ? Number(m[1]) : null; };
+    const sameStore = (a, b) => { const n = x => String(x || '').replace(/[،,\-–_.]/g, ' ').replace(/\s+/g, ' ').trim(); return !!a && !!b && (n(a) === n(b) || n(a).includes(n(b)) || n(b).includes(n(a))); };
+    async function pickMinutes(dlg, minutes) {
+      const chips = [...dlg.querySelectorAll('button,[role="option"],[role="radio"],[role="tab"],label')].filter(e => minutesOf(txtOf(e)) != null && minutesOf(txtOf(e)) >= 5);
+      const hit = chips.find(e => minutesOf(txtOf(e)) === minutes);
+      if (hit) { hit.click(); await sleep(500); return { ok: true }; }
+      if (chips.length >= 2) return { ok: false, note: 'وقت ' + minutes + ' دقيقة مش من اختيارات طلبات (' + chips.map(e => minutesOf(txtOf(e))).join('، ') + ')' };
+      const buttons = [...dlg.querySelectorAll('button,[role="button"]')], hint = b => (b.getAttribute('aria-label') || '') + ' ' + (b.dataset?.testid || '');
+      const plus = buttons.find(b => /^\+$/.test(txtOf(b)) || /increase|increment|plus|زياد/i.test(hint(b)));
+      const minus = buttons.find(b => /^[-−–]$/.test(txtOf(b)) || /decrease|decrement|minus|تقليل|نقص/i.test(hint(b)));
+      if (!plus || !minus) return { ok: false, note: 'اختيار الوقت مش واضح في شباك القبول' };
+      let box = plus.parentElement; for (let i = 0; i < 3 && box && !box.contains(minus); i++) box = box.parentElement;
+      const shown = () => { for (const e of (box || dlg).querySelectorAll('input,[role="spinbutton"],span,p,div,strong,b')) { if (e.matches('span,p,div,strong,b') && e.children.length) continue; const n = minutesOf(txtOf(e)); if (n != null && n >= 5 && n <= 240) return n; } return null; };
+      let n = shown();
+      if (n == null) return { ok: false, note: 'الوقت الظاهر في شباك القبول مش مقروء' };
+      for (let i = 0; i < 40 && n !== minutes; i++) { (n < minutes ? plus : minus).click(); await sleep(250); const m = shown(); if (m == null || m === n) return { ok: false, note: 'الوقت مش بيتغير (واقف على ' + n + ')' }; n = m; }
+      return n === minutes ? { ok: true } : { ok: false, note: 'ماوصلش لـ ' + minutes + ' دقيقة (واقف على ' + n + ')' };
+    }
+    async function acceptNew(dlg, live, accept) {
+      const text = dlg.innerText || '';
+      const inIt = (live || []).filter(o => o.externalId && (text.includes(String(o.externalId)) || (o.shortCode && new RegExp('#\\s*' + String(o.shortCode).replace(/\D/g, '') + '(?!\\d)').test(text))));
+      if (inIt.length !== 1) return null;   // not sure which order: nothing pressed
+      const o = inIt[0], id = String(o.externalId);
+      const store = Object.keys(accept || {}).find(s => sameStore(s, o.vendorName));
+      if (!store || tried.get('a' + id) > Date.now() - 10 * 60000) return null;
+      tried.set('a' + id, Date.now());
+      const minutes = Number(accept[store]);
+      const t = await pickMinutes(dlg, minutes);
+      if (!t.ok) { uiSent.new = 0; sendUi('new', dlg); return { id, ok: false, note: t.note }; }
+      const btn = [...dlg.querySelectorAll('button,[role="button"]')].find(b => /^(?:قبول|اقبل|قبول الطلب|accept|accept order)$/i.test(txtOf(b)) && !b.disabled);
+      if (!btn) { uiSent.new = 0; sendUi('new', dlg); return { id, ok: false, note: 'زرار «قبول» مش موجود في الشباك' }; }
+      btn.click(); await sleep(2500);
+      const still = [...document.querySelectorAll('[role="dialog"]')].some(d => (d.innerText || '').includes(id) && d.contains(btn));
+      return { id, ok: !still, note: still ? 'اتداس «قبول» والشباك لسه مفتوح' : 'اتقبل على ' + minutes + ' دقيقة' };
+    }
     const drawer = () => T('details-order-id')?.closest('[data-testid*="drawer"], [role="dialog"], aside') || T('order-details-drawer__content') || null;
     // «في الطريق» for one order whose Apex order left with the pilot: open it (a click on its number), press the button
     // with exactly these words, confirm only a dialog that asks about it, close. Anything unexpected: stop and report.
@@ -355,7 +402,11 @@
         // Orders from admin (every 30 s): the branches' delivery times, and the orders to mark «في الطريق».
         if (Date.now() - actionsAt > 30000) { actionsAt = Date.now(); const a = await bg({ type: 'TALABAT_ACTIONS' }).catch(() => null); if (a?.ok) actions = a; }
         const nd = newOrderDialog();
-        if (nd) sendUi('new', nd);   // the new-order window: read only (accepting is built once its controls are known)
+        if (nd) {
+          sendUi('new', nd);
+          const r = await acceptNew(nd, live, actions?.accept).catch(e => ({ ok: false, note: 'خطأ: ' + String(e?.message || e).slice(0, 80) }));
+          if (r?.id) await bg({ type: 'TALABAT_ACTION_RESULT', body: { id: r.id, action: 'accept', ok: r.ok, note: r.note } }).catch(() => null);
+        }
         else for (const o of actions?.onTheWay || []) {
           if (tried.get(o.id) > Date.now() - 10 * 60000 || !codes.some(c => c.id === o.id && !c.fromData)) continue;
           tried.set(o.id, Date.now());
