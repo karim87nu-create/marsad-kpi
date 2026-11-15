@@ -211,8 +211,9 @@ BEGIN TRY
     SET @SignAt = PATINDEX(N'%خصم%', @SignRest); SET @SignTurn = @SignTurn + 1;
   END;
   IF PATINDEX(N'%[0-9ء-ي]%', @SignRest) = 0 OR @SignRest IN (N'0', N'0.') SET @SignRest = N'';   -- only dots, slashes or «0» left
-  DECLARE @NewSign nvarchar(100) = CASE WHEN @Sign <> '' AND @SignRest <> '' THEN LEFT(@Sign + N' | ' + @SignRest, 100) WHEN @Sign <> '' THEN LEFT(@Sign, 100)
-    WHEN @SignRest <> '' THEN LEFT(@SignRest, 100) ELSE N'.' END;
+  -- Karim 11-15 «اكيد مش عايز تفاصيل قديمه في اي اوردر»: the mark is this order's only — what an earlier order left on the
+  -- card is not printed again (Apex prints the card).
+  DECLARE @NewSign nvarchar(100) = CASE WHEN @Sign <> '' THEN LEFT(@Sign, 100) ELSE N'.' END;
   -- Karim 11-15: this order's delivery instructions («اتصل عند الوصول», «البوابة 4») on the order's mark only, never kept on the card.
   DECLARE @OrderSign nvarchar(100) = LEFT(CASE WHEN @SignNote = N'' THEN @NewSign WHEN @NewSign IN (N'.', N'') THEN @SignNote ELSE @NewSign + N' | ' + @SignNote END, 100);
   IF @Cust IS NULL BEGIN

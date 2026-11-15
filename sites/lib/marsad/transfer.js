@@ -938,7 +938,8 @@ function setup(app) {
       // What did not fit in the mark stays in the comment, never lost.
       const signLeft = noteSplit.delivery && signNote !== apexText(compactDeliveryComment(noteSplit.delivery, 1000)) ? noteSplit.delivery : '';
       const translatedNote = apexText(compactDeliveryComment([noteSplit.order, signLeft].filter(Boolean).join(' | '), 200));   // no «?» on Apex (11-14)
-      const deliveryFields = { address: addressLine.main, floor: address.floor, flat: address.flat };
+      // Karim 11-15: nothing of an earlier order on the receipt — what this order does not say is written 0 (Apex prints the card).
+      const deliveryFields = { address: addressLine.main || '0', floor: address.floor || '0', flat: address.flat || '0' };
       // Karim 11-14 «الهاشتاج سعات مش بيتكتب في طلبات»: the hashtag is the server's own (the order's code from the Talabat
       // screens), not only what the page sent; a Talabat order is never written without it (the branch looks for it).
       const code = (String(b.code || '').replace(/[^\d]/g, '') || (source === 'talabat' ? String(sourceOrder?.code || (await db.prepare('SELECT code FROM talabat_orders WHERE id = ?').get(ref))?.code || '').replace(/[^\d]/g, '') : '') || (source === 'site' ? String(ref) : '')).slice(0, 10) || null;
