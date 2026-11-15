@@ -292,27 +292,31 @@ function setup(app) {
       }
       const o = list[i], words = !o.done && !o.areaGuess && (o.customer?.talabatArea || o.customer?.siteArea), k = words && normArabic(words).slice(0, 120);
       if (!k) continue;
+      // The Apex area by name: the same name, else an Apex area named inside the platform's area (Karim 11-15 «منت عارف
+      // مناطق ابيكس»: «مصر الجديدة - ميدان تريومف» → «ميدان تريومف»); for Talabat the «… طلبات» spelling when Apex has both.
+      const byNameGuess = () => {
+        const named = byName.get(k)?.size ? byName.get(k) : byName.get(areaKey(words));
+        if (oneArea(named)) {
+          const nos = [...named].sort((a, b) => a - b), nameOf = n => (base.locations.find(l => l.no === n)?.name || '');
+          return { no: nos.find(n => /طلبات/.test(nameOf(n)) === (o.source === 'talabat')) ?? nos[0], seen: 0, how: 'name' };
+        }
+        const no = areaInAddress(words, base.locations, o.apexBranch, groups, l => /طلبات/.test(String(l.name || '')) === (o.source === 'talabat'));
+        return no ? { no, seen: 0, how: 'areaName' } : null;
+      };
       const seen = areaPairs.get(k);
+      let learned = null;
       if (seen?.size) {
         const per = new Map();
         for (const [no, n] of seen) { const g = groups.get(Number(no)) ?? Number(no), x = per.get(g) || { n: 0, best: no, bestN: -1 }; x.n += n; if (n > x.bestN) { x.best = no; x.bestN = n; } per.set(g, x); }
         const top = [...per.values()].sort((x, y) => y.n - x.n), all = top.reduce((t, c) => t + c.n, 0);
-        list[i] = { ...o, areaGuess: { no: Number(top[0].best), seen: top[0].n, share: Math.round(top[0].n / all * 100) / 100 } };
-      } else {
-        const named = byName.get(k)?.size ? byName.get(k) : byName.get(areaKey(words));
-        // Several Apex numbers of one area: the spelling the platform's own orders use («… طلبات») for Talabat, else the plain one.
-        if (oneArea(named)) {
-          const nos = [...named].sort((a, b) => a - b), nameOf = n => (base.locations.find(l => l.no === n)?.name || '');
-          const pick = nos.find(n => /طلبات/.test(nameOf(n)) === (o.source === 'talabat')) ?? nos[0];
-          list[i] = { ...o, areaGuess: { no: pick, seen: 0, how: 'name' } };
-        } else {
-          // Karim 11-15 «منت عارف مناطق ابيكس»: an Apex area named inside the platform's area («مصر الجديدة - ميدان تريومف» →
-          // «ميدان تريومف», «كومبوند جاردينيا سيتي» → «جاردينيا سيتي»): the longest one, never two different areas; for
-          // Talabat the «… طلبات» spelling when Apex has both.
-          const no = areaInAddress(words, base.locations, o.apexBranch, groups, l => /طلبات/.test(String(l.name || '')) === (o.source === 'talabat'));
-          if (no) list[i] = { ...o, areaGuess: { no, seen: 0, how: 'areaName' } };
-        }
+        learned = { no: Number(top[0].best), seen: top[0].n, share: Math.round(top[0].n / all * 100) / 100 };
       }
+      // Karim 11-16 (15-11: «العباسية», «مصر الجديدة - الكوربة» waited): one earlier pick (or a split one) no longer hides
+      // the Apex area of the same name; what staff chose 2+ times (80%) still comes first.
+      const strong = learned && learned.seen >= 2 && !(learned.share < 0.8);
+      const ng = strong ? null : byNameGuess(), same = (a, b) => a && b && (groups.get(Number(a.no)) ?? Number(a.no)) === (groups.get(Number(b.no)) ?? Number(b.no));
+      const guess = strong ? learned : same(ng, learned) ? learned : (ng || learned);
+      if (guess) list[i] = { ...o, areaGuess: guess };
     }
     // English typed by the customer (address, name, comments) shown and sent in Arabic (Karim 01-11); the original is kept.
     if (app.toArabic) {
