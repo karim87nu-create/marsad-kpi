@@ -85,3 +85,13 @@ test('after the order only the used sentence leaves the card; the rest of what s
   assert.equal(p('العميل بيحب الشطة\nخصم 90% على 3 اوردرات والكومنت يتمسح').next.note, 'العميل بيحب الشطة\nخصم 60% يتقسمو ع اوردرين والكومنت يتمسح.');
   assert.equal(p('عميل دايم خصم 10%').next, null, 'a lasting discount is never touched');
 });
+
+// Karim 11-15 «لو ملاحظه علي الاوردر أو كلام مفيد»: useful card lines go to the branch; staff's own marks do not.
+test('card note: useful lines for the order comment, staff marks left out', async () => {
+  const { usefulCardNotes, parseApexCustomerNote } = await import('../src/apex-customer-notes.js');
+  const u = n => usefulCardNotes(parseApexCustomerNote(n));
+  for (const n of ['اط25/10.', 'ا ط 25/9.', '.تم تعديل العنوان.', 'باقى 200.', 'منيييو.', '.', '30/10.', '.اط 20/9.']) assert.deepEqual(u(n), [], n);
+  assert.deepEqual(u('الاتصال عند الوصول.'), ['الاتصال عند الوصول.']);
+  assert.deepEqual(u('خصم 15% ع الاوردر القادم. العميل بيحب الشطة'), ['العميل بيحب الشطة']);
+  assert.deepEqual(u('بيحب الملوخية من غير ثوم | تم التعديل'), ['بيحب الملوخية من غير ثوم']);
+});

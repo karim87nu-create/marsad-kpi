@@ -178,3 +178,17 @@ function sayNumbers(s) {
     .replace(new RegExp('(^|[\\s.،,])(' + UW + ')(?=\\s*(?:%|٪|في|بال|جنيه|ج\\b|[اأ]وردر|طلب))', 'g'), (m, pre, u) => pre + UNITS[u])
     .replace(/(\d)\s*(?:(?:في|ف)\s*(?:ال)?(?:مي[هة]|مائ[هة]|مئ[هة])|بال(?:مي[هة]|مائ[هة]|مئ[هة]))/g, '$1%');
 }
+
+// Karim 11-15 «لو ملاحظه علي الاوردر أو كلام مفيد»: what else the card says, for the order's comment at the branch. Not
+// what staff write for themselves (read on Apex 11-15: «ا ط 25/10», «30/10», «تم تعديل العنوان», «باقى 200», «.»).
+const CARD_NOISE = [
+  /^[\s.\-–ـ،,]*$/,
+  /^(?:ا\s*ط)?\s*[\/.]?\s*\d{1,2}\s*[\/\-.]\s*\d{1,2}(?:\s*[\/\-.]\s*\d{2,4})?\s*[.]*$/,
+  /^(?:تم\s*)?(?:ال)?تعديل(?:\s*(?:ال)?عنوان)?[\s.]*$/,
+  /^باق[يى]\s*\d+[\s.]*$/,
+  /^من+ي+و+[\s.]*$/
+];
+export function usefulCardNotes(parsed) {
+  return (parsed?.other || []).map(x => String(x).replace(/\s+/g, ' ').trim())
+    .filter(x => normArabic(x).replace(/[^\u0621-\u064a]/g, '').length >= 4 && !CARD_NOISE.some(r => r.test(normArabic(x).replace(/^[.\s]+/, ''))));
+}

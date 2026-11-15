@@ -12,7 +12,7 @@ import { takeTransferBuildLease, waitForTransferBuild } from './transfer-build-l
 import { CANCELLED_SQL, isCancelled, sourceCanTransfer, handoffPending } from './transfer-cancellation.js';
 import { parseJson } from './order-match.js';
 import { deliveryPhone, deliveryLabel, deliveryAddress, splitDeliveryAddress, deliveryMark, compactDeliveryComment, deliveryNotes, apexText } from './delivery-fields.js';
-import { parseApexCustomerNote, normArabic, guessApexItem } from './apex-customer-notes.js';
+import { parseApexCustomerNote, normArabic, guessApexItem, usefulCardNotes } from './apex-customer-notes.js';
 import { areaGroups, areaKey, areaInAddress } from './apex-areas.js';
 import { knownNos, itemKey } from './items.js';
 import { APEX_NAMES, APEX_PRICES } from './menu-seed.js';
@@ -863,7 +863,9 @@ function setup(app) {
       const sourceNote = source === 'site' ? parseJson((await db.prepare("SELECT data FROM match_profiles WHERE source='site' AND ref=?").get(ref))?.data,{}).payment?.note : '';
       const sourceBooking = deliveryNotes(sourceNote,row.scheduled_at);
       const booking = sourceBooking.appointment ? sourceBooking : deliveryNotes(b.note,row.scheduled_at);
-      const safeRemarks = compactDeliveryComment(deliveryNotes(b.note,row.scheduled_at).note, 200);
+      // Karim 11-15: a useful line on the customer's card (not a discount, not staff's own marks) goes to the branch too.
+      const cardLines = usefulCardNotes(verifiedCardNote).filter(x => !String(b.note || '').includes(x));
+      const safeRemarks = compactDeliveryComment([deliveryNotes(b.note,row.scheduled_at).note, ...cardLines.map(x => 'من كارت العميل: ' + x)].filter(Boolean).join(' | '), 200);
       // Karim 11-11: a website pickup goes to the branch's «استلام فرع» area, with no address, floor or flat.
       let pickup = false;
       if (source === 'site') { const so = await db.prepare('SELECT fulfillment FROM site_orders WHERE id = ?').get(Number(ref)); pickup = so?.fulfillment === 'pickup'; }
