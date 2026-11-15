@@ -196,17 +196,28 @@ function cleanChoice(value) {
     .replace(/ ×1(?!\d)/g, '')
     .replace(/\s{2,}/g, ' ').replace(/^[\s:：،,|-]+|[\s:：،,|-]+$/g, '').trim();
 }
+// Common free sides as the kitchen says them, short (the receipt has room for one line).
+// Never two things to one word («سلطة بلدي» and «عيش بلدي» stay apart).
+const SHORT_CHOICE = [[/^سلط[ةه]\s+طحين[ةه]$/u, 'طحينة'], [/^(?:سلط[ةه]\s+)?بابا\s*غنوج$/u, 'بابا'], [/^خيار\s*مخلل$/u, 'مخلل'], [/^طماطم\s*متبل[ةه]$/u, 'طماطم'],
+  [/^(?:أرز|ارز|رز)\s*بسمتي$/u, 'بسمتي'], [/^بطاطس\s*محمر[ةه]$/u, 'بطاطس']];
+function shortChoice(v) { let x = String(v || '').trim(); for (const [re, to] of SHORT_CHOICE) x = x.replace(re, to); return x.trim(); }
 export function deliveryComment(order) {
   const clean = s => String(s || '').split(/\s*[|\n]\s*/).map(stripPlatformNotes).map(cleanOptionComment)
     .filter(x => x && !SITE_META.test(x)).join('، ').trim();
   const parts = [clean(order.scheduledAt ? deliveryNotes(order.note, order.scheduledAt).note : order.note)];
   const items = order.items || [];
   const withChoices = items.filter(i => (i.freeOptions || []).some(v => cleanChoice(v))).length;
+  const firstWord = item => { const a = /[\u0621-\u064a]/.test(item.nameShown || '') ? item.nameShown : /[\u0621-\u064a]/.test(item.name || '') ? item.name : '';
+    return String(a).replace(/[()\[\]\d\/]+/g, ' ').split(/\s+/).filter(w => w.length > 1 && !/^(?:ك|كيلو|ربع|نص|نصف|عرض|وجب[ةه]|طبق|طاجن)$/.test(w))[0] || ''; };
+  const words = items.map(firstWord);
   for (const [n, item] of items.entries()) {
-    const free = [...new Set((item.freeOptions || []).map(v => cleanChoice(stripPlatformNotes(v))).filter(Boolean))];
-    const short = String(item.name || '').replace(/[()\[\]]/g, ' ').split(/\s+/).filter(Boolean).slice(0, 2).join(' ');
-    const label = order.source === 'site' && short ? short : withChoices > 1 ? 'الصنف ' + (n + 1) : '';
-    if (free.length) parts.push((label ? label + ': ' : '') + free.join('، '));
+    // Karim 11-16: the receipt prints one line of the comment (~35 letters, Apex 703733): the dish's choices short —
+    // «صدور: طحينة/بابا/مخلل» — after the customer's own words.
+    const free = [...new Set((item.freeOptions || []).map(v => shortChoice(cleanChoice(stripPlatformNotes(v)))).filter(Boolean))];
+    // Two dishes with the same first word: by their number instead.
+    const short = words[n] && words.filter(w => w === words[n]).length === 1 ? words[n] : '';
+    const label = short || (withChoices > 1 ? 'الصنف ' + (n + 1) : '');
+    if (free.length) parts.push((label ? label + ': ' : '') + free.join('/'));
     if (item.note) parts.push(clean(item.note));
   }
   return apexText([...new Set(parts.filter(Boolean))].join(' | '));
