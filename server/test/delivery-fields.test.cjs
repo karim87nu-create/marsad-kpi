@@ -132,5 +132,5 @@ test('delivery comment: delivery pieces and food pieces apart', async () => {
     { order: 'الأكل لازم يكون مستوي بزيادة | ويصل سخن', delivery: 'والانتركوم بايظ لو الباب مقفول اتصل' });
   assert.deepEqual(splitDeliveryComment('الاستلام عند بوابه 4 | من غير بصل'), { order: 'من غير بصل', delivery: 'الاستلام عند بوابه 4' });
   assert.deepEqual(splitDeliveryComment('الكفته: طحينة ×2 | سلطة بلدي ×2'), { order: 'الكفته: طحينة ×2 | سلطة بلدي ×2', delivery: '' });
-  assert.deepEqual(splitDeliveryComment('معاه 500 هات فكة'), { order: '', delivery: 'معاه 500 هات فكة' });
+  assert.deepEqual(splitDeliveryComment('معاه 500 هات فكة'), { order: 'معاه 500 هات فكة', delivery: '' }, 'money stays in the comment');
 });
