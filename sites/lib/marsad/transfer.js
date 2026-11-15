@@ -694,6 +694,7 @@ function setup(app) {
   }
   async function learnTransferArea(source, ref, locationNo, confirmed = false) {
     if (!app.learn || !locationNo) return;
+    if (Object.values(PICKUP_AREAS).some(x => x.no === Number(locationNo))) return;   // a «استلام» area teaches nothing about an area (11-15)
     const d = parseJson((await db.prepare('SELECT data FROM match_profiles WHERE source = ? AND ref = ?').get(source, ref))?.data, {});
     const area = source === 'talabat' ? d?.area : d?.customer?.area;
     if (area && normArabic(area)) {

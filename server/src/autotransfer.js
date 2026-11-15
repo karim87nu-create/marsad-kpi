@@ -112,6 +112,9 @@ export function decide(o, x) {
   else if (o.areaGuess?.how === 'address') { loc = Number(o.areaGuess.no); locHow = 'address'; }
   else if (o.areaGuess?.how === 'areaName') { loc = Number(o.areaGuess.no); locHow = 'areaName'; }
   else { const c = x.customerArea?.(o); if (c) { loc = Number(c); locHow = 'customer'; } }
+  // Karim 11-15 (Apex 703813 «ازاي استلام وفيه عنوان توصيل»): a delivery order never goes to a branch's «استلام» area,
+  // whether it came from the customer's card on Apex or from what was chosen before — the employee picks.
+  if (!pickup && loc && (x.locations || []).some(l => Number(l.no) === loc && /استلام/.test(String(l.name || '')))) { loc = null; locHow = null; why.push('المنطقة اللي على كارت العميل «استلام» والأوردر توصيل — اختار منطقة التوصيل'); }
   // Karim 11-15 «تقريبا مفيش ولا اوردر موقع اتحول تلقائي»: a website order has no branch until someone sends it to one on
   // the website (and then it is left to staff) — 144 of 154 waited for «الفرع مش واضح». The Apex area found for it belongs
   // to one branch on Apex: that is its branch (never when the area is listed for two branches).

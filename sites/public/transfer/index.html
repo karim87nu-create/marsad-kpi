@@ -633,6 +633,8 @@ $('list').addEventListener('click', async e => {
     if (!pay) { toast('حدد الأول: كاش ولا مدفوع'); return; }
     if (!p.branch) { toast('اختار الفرع'); return; }
     if (!p.loc) { toast('اختار منطقة العميل'); return; }
+    // Karim 11-15: «استلام» for an order to be delivered only on purpose.
+    if (o.fulfillment !== 'pickup' && /استلام/.test((data.locations || []).find(l => String(l.no) === String(p.loc))?.name || '') && !confirm('المنطقة اللي مختارها «استلام» — يعني العميل هيستلم من الفرع ومن غير توصيل.\nالأوردر ده توصيل. متأكد؟')) return;
     if (p.saving) { toast('استنى حفظ اختيار الصنف'); return; }
     const missingAt = flatLines(o).findIndex((i, n) => !/^\d{1,10}$/.test(String(p.items?.[n] || '')));
     if (missingAt >= 0) { toast('اختار الصنف على Apex لـ: ' + flatLines(o)[missingAt].name); return; }

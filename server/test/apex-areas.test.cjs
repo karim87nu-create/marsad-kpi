@@ -83,3 +83,16 @@ test('auto transfer: a website order with no branch takes the branch of its Apex
   const two = decide({ ...o, areaGuess: { no: 361, seen: 0, how: 'address' } }, { now, locations, groups: null, picks: new Map() });
   assert.ok(two.why.includes('الفرع مش واضح'), 'an area of two branches decides nothing');
 });
+
+// Karim 11-15 (Apex 703813 «ازاي استلام وفيه عنوان توصيل»): a delivery order never automatically on a «استلام» area.
+test('auto transfer: a delivery order is not put on a branch pickup area', async () => {
+  const { decide } = await import('../src/autotransfer.js');
+  const now = Date.parse('2026-11-15T20:00:00Z');
+  const o = { source: 'talabat', ref: '4723000001', code: '1466', at: new Date(now - 3 * 60000).toISOString(), apexBranch: 2, payment: 'paid', items: [{ name: 'عرض نصف فراخ', qty: 1, apex: [{ no: '10' }], modifiersComplete: true }], detailRead: true,
+    customer: { talabatArea: 'مدينة نصر', address: 'مساكن الشروق مبنى 2' }, discounts: [], apexCustomerNote: { status: 'none', checkedAt: new Date(now - 60000).toISOString() } };
+  const locations = [{ no: 268, name: 'استلام مدينة نصر', branch: 2, service: 0 }, { no: 305, name: 'مساكن الشروق', branch: 2, service: 34.5 }];
+  const d = decide(o, { now, locations, groups: null, picks: new Map(), customerArea: () => 268 });
+  assert.ok(d.why.some(w => /استلام/.test(w)), d.why.join(' · '));
+  const learned = decide({ ...o, areaGuess: { no: 268, seen: 3, share: 1 } }, { now, locations, groups: null, picks: new Map() });
+  assert.ok(learned.why.some(w => /استلام/.test(w)));
+});
