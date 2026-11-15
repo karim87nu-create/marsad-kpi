@@ -211,3 +211,14 @@ export function deliveryComment(order) {
   }
   return apexText([...new Set(parts.filter(Boolean))].join(' | '));
 }
+
+// Karim 11-15 «التعليقات الي تخص الديلفري تبقي في العلامه المميزه والي يخص الطلب نفسو يبقي في كومنت الاوردر»: the comment's
+// pieces about reaching the customer (call, door, gate, landmark, pilot, change for the cash) go to the order's special mark;
+// the rest — the food — stays the order's comment.
+const DELIVERY_NOTE = /(?:اتصل|اتصال|كلم|كلمني|رن|رنه|رنة|مكالم|موبايل|تليفون|الرقم|رقم\s*تاني|واتس|الباب|الجرس|جرس|انتركوم|الانتركوم|البواب|بواب|الامن|الأمن|سكيوريتي|security|البوابه|البوابة|بوابه|بوابة|gate|door|call|intercom|ring|العماره|العمارة|عماره|برج|الدور|الشقه|الشقة|اسانسير|الاسانسير|مصعد|سلم|ينزل|انزل|هنزل|نازل|استلم|استلام|يستلم|الريسبشن|reception|امام|أمام|قدام|جنب|بجوار|بجانب|ورا|خلف|بعد|قبل|ناصيه|ناصية|يمين|شمال|لوكيشن|location|العنوان|عنوان|الطيار|طيار|المندوب|مندوب|الدليفري|دليفري|delivery|يوصل|توصيل|الوصول|توصل|وصول|فكه|فكة|باقي\s*\d|معاه\s*\d|كاش\s*\d|change)/iu;
+export function splitDeliveryComment(text) {
+  const parts = String(text || '').split(/\s*[|\n]\s*/).map(x => x.trim()).filter(Boolean);
+  const delivery = [], order = [];
+  for (const x of parts) (DELIVERY_NOTE.test(x) && !/(?:الاكل|الأكل|سخن|مستوي|بدون|من\s*غير|زياد|طحين|عيش|صوص|ملح|حار|شطه|شطة|سلط)/u.test(x) ? delivery : order).push(x);
+  return { order: order.join(' | '), delivery: delivery.join(' | ') };
+}

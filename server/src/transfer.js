@@ -11,7 +11,7 @@ import { businessDay, dayWindow, iso, validDate, addDays } from './time.js';
 import { takeTransferBuildLease, waitForTransferBuild } from './transfer-build-lease.js';
 import { CANCELLED_SQL, isCancelled, sourceCanTransfer, handoffPending } from './transfer-cancellation.js';
 import { parseJson } from './order-match.js';
-import { deliveryPhone, deliveryLabel, deliveryAddress, splitDeliveryAddress, deliveryMark, compactDeliveryComment, deliveryNotes, apexText } from './delivery-fields.js';
+import { deliveryPhone, deliveryLabel, deliveryAddress, splitDeliveryAddress, deliveryMark, compactDeliveryComment, deliveryNotes, apexText, splitDeliveryComment } from './delivery-fields.js';
 import { parseApexCustomerNote, normArabic, guessApexItem, usefulCardNotes } from './apex-customer-notes.js';
 import { areaGroups, areaKey, areaInAddress } from './apex-areas.js';
 import { knownNos, itemKey } from './items.js';
@@ -917,10 +917,16 @@ function setup(app) {
       if (app.learnArabic) for (const [en, ar] of [[b.customer?.nameEn, b.customer?.name]]) if (en && ar) await app.learnArabic(en, ar).catch(() => {});
       const rawAddress = b.customer?.addressEdited === true ? b.customer.address : sourceOrder?.customer?.address || b.customer?.addressEn || b.customer?.address;
       const translatedAddress = app.toArabicAddress?.([rawAddress]).get(rawAddress) || rawAddress;
-      const translatedNote = apexText(compactDeliveryComment(arabic.get(safeRemarks) || safeRemarks, 200));   // no «?» on Apex (11-14)
+      // Karim 11-15: delivery instructions to the order's special mark (up to 100 letters with the rest of the mark), the food to the comment.
+      const noteSplit = splitDeliveryComment(arabic.get(safeRemarks) || safeRemarks);
       const address = pickup ? { street: '', floor: '', flat: '' } : deliveryAddress(translatedAddress, [area?.name, sourceOrder?.customer?.talabatArea, sourceOrder?.customer?.siteArea, b.customer?.area]);
-      const addressLine = splitDeliveryAddress(address.street), sign = deliveryMark(apexText(signBase), addressLine.extra);
+      const addressLine = splitDeliveryAddress(address.street), sign = deliveryMark(apexText(signBase), addressLine.extra, 100);
       if (sign == null) fail(409, 'تكملة العنوان أكبر من مساحة العلامة المميزة — اختصر العنوان قبل التسجيل');
+      const room = 100 - Array.from(sign === '.' ? '' : sign).length - (sign && sign !== '.' ? 3 : 0);
+      const signNote = room >= 8 ? apexText(compactDeliveryComment(noteSplit.delivery, room)) : '';
+      // What did not fit in the mark stays in the comment, never lost.
+      const signLeft = noteSplit.delivery && signNote !== apexText(compactDeliveryComment(noteSplit.delivery, 1000)) ? noteSplit.delivery : '';
+      const translatedNote = apexText(compactDeliveryComment([noteSplit.order, signLeft].filter(Boolean).join(' | '), 200));   // no «?» on Apex (11-14)
       const deliveryFields = { address: addressLine.main, floor: address.floor, flat: address.flat };
       // Karim 11-14 «الهاشتاج سعات مش بيتكتب في طلبات»: the hashtag is the server's own (the order's code from the Talabat
       // screens), not only what the page sent; a Talabat order is never written without it (the branch looks for it).
@@ -928,7 +934,7 @@ function setup(app) {
       if (source === 'talabat' && !code) fail(409, 'هاشتاج طلبات لسه ماظهرش للأوردر ده — افتح الأوردر على شاشة لايف طلبات وثواني ويظهر، بعدين سجّله');
       const payload = { v: 1, source, ref, code, db: mode, branchNo, locationNo, payment, ...(paymentOverride ? { paymentOverride } : {}),
         label: deliveryLabel(translatedName, source, payment, code, booking.appointment), customer: { name: String(translatedName || '').slice(0, 80), phone: deliveryPhone(b.customer?.phone), address: pickup ? '' : String(b.customer?.address || '').slice(0, 360), ...deliveryFields }, ...(pickup ? { pickup: true } : {}),
-        sign, platformDiscount, note: translatedNote, items: [...clean, ...noteItems], apexCustomerBenefit: noteBenefit,
+        sign, signNote, platformDiscount, note: translatedNote, items: [...clean, ...noteItems], apexCustomerBenefit: noteBenefit,
         restaurantDiscount, expectedTotal, targetTotal, areaService, by: me.name, at: now };
       const queued = await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at, payload, result) VALUES (?,?,?,'auto_pending',?,?,?,?,?,?,NULL)
         ON CONFLICT(source, ref) DO UPDATE SET state = 'auto_pending', employee_id = excluded.employee_id, employee_name = excluded.employee_name, payment = excluded.payment, note = excluded.note, at = excluded.at, payload = excluded.payload, result = NULL

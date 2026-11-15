@@ -211,8 +211,10 @@ BEGIN TRY
     SET @SignAt = PATINDEX(N'%خصم%', @SignRest); SET @SignTurn = @SignTurn + 1;
   END;
   IF PATINDEX(N'%[0-9ء-ي]%', @SignRest) = 0 OR @SignRest IN (N'0', N'0.') SET @SignRest = N'';   -- only dots, slashes or «0» left
-  DECLARE @NewSign nvarchar(100) = CASE WHEN @Sign <> '' AND @SignRest <> '' THEN LEFT(@Sign + N' | ' + @SignRest, 50) WHEN @Sign <> '' THEN LEFT(@Sign, 50)
-    WHEN @SignRest <> '' THEN LEFT(@SignRest, 50) ELSE N'.' END;
+  DECLARE @NewSign nvarchar(100) = CASE WHEN @Sign <> '' AND @SignRest <> '' THEN LEFT(@Sign + N' | ' + @SignRest, 100) WHEN @Sign <> '' THEN LEFT(@Sign, 100)
+    WHEN @SignRest <> '' THEN LEFT(@SignRest, 100) ELSE N'.' END;
+  -- Karim 11-15: this order's delivery instructions («اتصل عند الوصول», «البوابة 4») on the order's mark only, never kept on the card.
+  DECLARE @OrderSign nvarchar(100) = LEFT(CASE WHEN @SignNote = N'' THEN @NewSign WHEN @NewSign IN (N'.', N'') THEN @SignNote ELSE @NewSign + N' | ' + @SignNote END, 100);
   IF @Cust IS NULL BEGIN
     SELECT @Cust = ISNULL(MAX(CustNo), 0) + 1 FROM dbo.Customers;
     -- The same fields Apex's own customer screen fills (Karim 01-11: our customers opened empty in Apex — it reads Phone,
@@ -255,7 +257,7 @@ BEGIN TRY
     0, 0, @Shift, t.TransType, @Sub, @Service, 0, @Tax, 0, @Time, @RestDiscount, 0, 0, @PayWay, CASE WHEN @PayWay = 'Ledge' THEN 0 ELSE @Total END, 0,
     LEFT(@Remarks, 200), @Pos, CASE WHEN @RestDiscount > 0 THEN t.DiscountType ELSE NULL END, t.HallNo, 1, DATEPART(hour, @Now), '0', NULL, CASE WHEN @PayWay = 'Ledge' THEN 0 ELSE @Total END, '0', 0, 0, '', 0, 0, @Branch, @BranchOrderNo,
     0, @TaxRatio, 0, @PosSerial, @CheckNo, @Time, t.Otlob, '', @OnlineType, '', '', 0, t.DeliveryTrack, @Phone, LEFT(@Label, 50),
-    LEFT(@Address, 100), @NewSign, '', @Phone, 0, 1, @LocationNo, LEFT(@Floor, 20), LEFT(@Flat, 20), 0, NEWID()
+    LEFT(@Address, 100), @OrderSign, '', @Phone, 0, 1, @LocationNo, LEFT(@Floor, 20), LEFT(@Flat, 20), 0, NEWID()
   FROM (SELECT TOP 1 * FROM (
           SELECT 0 AS o, TakeAwayLoc, TableNo, GuestNo, TransType, DiscountType, HallNo, Otlob, DeliveryTrack FROM dbo.Orders_M_Daily WITH (NOLOCK) WHERE OrderNo = @Tpl
           UNION ALL SELECT 0, TakeAwayLoc, TableNo, GuestNo, TransType, DiscountType, HallNo, Otlob, DeliveryTrack FROM dbo.Orders_M WITH (NOLOCK) WHERE OrderNo = @Tpl AND @TplArchive = 1
@@ -335,7 +337,7 @@ function Write-Order($c, $job, [string]$mode){
   # The address loses the floor/flat parts and «، القاهرة»: Apex keeps 100 characters of it (Karim 01-11: «String or binary data would be truncated»).
   $p = @{ '@Exec' = $(if ($mode -eq 'shadow') { 0 } else { 1 }); '@IsTest' = $(if ($mode -eq 'test') { 1 } else { 0 }); '@PayWay' = $(if ($job.payment -eq 'paid') { 'Ledge' } else { 'Cash' }); '@Floor' = $(if ($null -ne $job.customer.floor) { [string]$job.customer.floor } elseif ([string]$job.customer.address -match '(?:الدور|الطابق)\s*[:：]\s*([^،,—\-]+)') { $Matches[1].Trim() } else { '' }); '@Flat' = $(if ($null -ne $job.customer.flat) { [string]$job.customer.flat } elseif ([string]$job.customer.address -match 'الشقة\s*[:：]\s*([^،,—\-]+)') { $Matches[1].Trim() } else { '' }); '@Pos' = $WriterPos; '@LocationNo' = [int]$job.locationNo; '@ServiceItem' = [string]$TalabatServiceItem; '@RefPos' = $(if ($mode -eq 'test') { $RefPosTest } else { $RefPos }); '@Branch' = [int]$job.branchNo
           '@Marker' = ('M' + $(if ($job.source -eq 'site') { 'S' } else { 'T' }) + ':' + $job.ref); '@Kind' = [string]$job.source; '@Phone' = [string]$job.customer.phone
-          '@Label' = [string]$job.label; '@Address' = ((([string]$job.customer.address) -replace '\s*—\s*(?:الدور|الطابق|الشقة)\s*[:：]\s*[^—]*', '') -replace '\s*[،,]\s*(?:القاهرة|Cairo|Egypt|مصر)\s*(?=—|$)', '').Trim(); '@Sign' = [string]$job.sign; '@Remarks' = [string]$job.note
+          '@Label' = [string]$job.label; '@Address' = ((([string]$job.customer.address) -replace '\s*—\s*(?:الدور|الطابق|الشقة)\s*[:：]\s*[^—]*', '') -replace '\s*[،,]\s*(?:القاهرة|Cairo|Egypt|مصر)\s*(?=—|$)', '').Trim(); '@Sign' = [string]$job.sign; '@SignNote' = [string]$job.signNote; '@Remarks' = [string]$job.note
           '@NoTpl' = $(if ($mode -eq 'test' -and $job.noTemplate) { 1 } else { 0 }); '@AreaService' = $(if ($job.areaService -ne $null -and "$($job.areaService)" -ne '') { [decimal]$job.areaService } else { [decimal]-1 }); '@RestDiscount' = [decimal]$job.restaurantDiscount; '@Target' = $(if ($job.targetTotal) { [decimal]$job.targetTotal } else { [decimal]0 }); '@AddPrinted' = $(if ($AddPrintedOrders) { 1 } else { 0 }); '@PrintedFlag' = $PrintedFlag; '@UserNo' = $WriterUserNo; '@Pickup' = $(if ($job.pickup) { 1 } else { 0 })
           '@NotePercent' = $(if ($job.apexCustomerBenefit) { [decimal]$job.apexCustomerBenefit.percent } else { [decimal]0 })
           '@NoteAmount' = $(if ($job.apexCustomerBenefit) { [decimal]$job.apexCustomerBenefit.amount } else { [decimal]0 })

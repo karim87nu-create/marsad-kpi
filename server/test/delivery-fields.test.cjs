@@ -124,3 +124,13 @@ test('the website\'s free-choice wording never reaches Apex', async () => {
   assert.equal(compactDeliveryComment('صدور مشوية: اختيارات السلطة المجانية: طحينة × 4 (ضمن الوجبة)', 200), 'صدور مشوية: طحينة ×4');
   assert.equal(compactDeliveryComment('بدون بصل | كفتة: اختيارات السلطة: بابا غنوج', 200), 'بدون بصل | كفتة: بابا غنوج');
 });
+
+// Karim 11-15: delivery instructions to the special mark, the food to the comment (real comments of 11-15).
+test('delivery comment: delivery pieces and food pieces apart', async () => {
+  const { splitDeliveryComment } = await import('../src/delivery-fields.js');
+  assert.deepEqual(splitDeliveryComment('الأكل لازم يكون مستوي بزيادة | ويصل سخن | والانتركوم بايظ لو الباب مقفول اتصل'),
+    { order: 'الأكل لازم يكون مستوي بزيادة | ويصل سخن', delivery: 'والانتركوم بايظ لو الباب مقفول اتصل' });
+  assert.deepEqual(splitDeliveryComment('الاستلام عند بوابه 4 | من غير بصل'), { order: 'من غير بصل', delivery: 'الاستلام عند بوابه 4' });
+  assert.deepEqual(splitDeliveryComment('الكفته: طحينة ×2 | سلطة بلدي ×2'), { order: 'الكفته: طحينة ×2 | سلطة بلدي ×2', delivery: '' });
+  assert.deepEqual(splitDeliveryComment('معاه 500 هات فكة'), { order: '', delivery: 'معاه 500 هات فكة' });
+});
