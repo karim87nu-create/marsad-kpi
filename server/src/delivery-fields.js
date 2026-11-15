@@ -223,3 +223,26 @@ export function splitDeliveryComment(text) {
   for (const x of parts) (DELIVERY_NOTE.test(x) && !/(?:الاكل|الأكل|سخن|مستوي|بدون|من\s*غير|زياد|طحين|عيش|صوص|ملح|حار|شطه|شطة|سلط)/u.test(x) ? delivery : order).push(x);
   return { order: order.join(' | '), delivery: delivery.join(' | ') };
 }
+
+// Karim 11-15 (Apex 703733: «287 ب شارع ترعة الجبل الزيتون بالعمارة معمل بيوميديكا للتحاليل الطبية، عمارة 287 ب» on one
+// line, «العنوان مش متقسم»): the address keeps the street and the building, like staff write it («14ش ابن الرومي»); what
+// shows the way (in front of, next to, the shop in the building) goes to the special mark («صيدلية عائشة»); a building
+// number said twice is said once.
+const WAY_MARK = /(?:^|\s)(?:ب?ال?عمار[ةه]\s+(?=[\u0621-\u064a]{3})|(?:بجوار|بجانب|جنب|امام|أمام|قدام|خلف|وراء|فوق|علي\s*ناصي[ةه]|على\s*ناصي[ةه]|بالقرب\s*من|قريب\s*من|مقابل|في\s*وش|فى\s*وش|صيدلي[ةه]|معمل|مستشف[يى]|بنزين[ةه]|سوبر\s*ماركت)(?=\s|$))/u;
+export function splitAddressLandmark(street) {
+  const parts = String(street || '').split(/\s*[،,]\s*/).map(x => x.trim()).filter(Boolean);
+  const keep = [], marks = [];
+  for (const part of parts) {
+    const m = WAY_MARK.exec(part);
+    if (!m) { keep.push(part); continue; }
+    const head = part.slice(0, m.index).trim(), tail = part.slice(m.index).trim();
+    // Only when what is left is still an address («شارع جامع الفتح» is not cut to «شارع»).
+    if (head && !(head.split(/\s+/).length >= 2 && /[\d٠-٩]|شارع|ش\s|ع\s|عمار|برج|فيلا|مجموع|بلوك|block/i.test(head))) { keep.push(part); continue; }
+    if (head) keep.push(head);
+    marks.push(tail.replace(/^ب?ال?عمار[ةه]\s+/, 'في العمارة '));
+  }
+  // «عمارة 287 ب» when «287 ب» is already in the address: once.
+  const out = keep.filter((x, i) => { const n = /^(?:عمار[ةه]|ع|مبن[يى]|برج)\s*[:：]?\s*([\d٠-٩]+\s*[\u0621-\u064aA-Za-z]?)$/.exec(x); return !(n && keep.some((y, j) => j !== i && (' ' + y + ' ').includes(' ' + n[1].trim() + ' '))); });
+  if (!keep.length) return { street: String(street || '').trim(), landmark: '' };   // nothing but a landmark: the address as written
+  return { street: (out.length ? out : keep).join('، '), landmark: marks.join('/') };
+}

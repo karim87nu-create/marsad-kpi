@@ -11,7 +11,7 @@ import { businessDay, dayWindow, iso, validDate, addDays } from './time.js';
 import { takeTransferBuildLease, waitForTransferBuild } from './transfer-build-lease.js';
 import { CANCELLED_SQL, isCancelled, sourceCanTransfer, handoffPending } from './transfer-cancellation.js';
 import { parseJson } from './order-match.js';
-import { deliveryPhone, deliveryLabel, deliveryAddress, splitDeliveryAddress, deliveryMark, compactDeliveryComment, deliveryNotes, apexText, splitDeliveryComment } from './delivery-fields.js';
+import { deliveryPhone, deliveryLabel, deliveryAddress, splitDeliveryAddress, deliveryMark, compactDeliveryComment, deliveryNotes, apexText, splitDeliveryComment, splitAddressLandmark } from './delivery-fields.js';
 import { parseApexCustomerNote, normArabic, guessApexItem, usefulCardNotes } from './apex-customer-notes.js';
 import { areaGroups, areaKey, areaInAddress } from './apex-areas.js';
 import { knownNos, itemKey } from './items.js';
@@ -920,7 +920,11 @@ function setup(app) {
       // Karim 11-15: delivery instructions to the order's special mark (up to 100 letters with the rest of the mark), the food to the comment.
       const noteSplit = splitDeliveryComment(arabic.get(safeRemarks) || safeRemarks);
       const address = pickup ? { street: '', floor: '', flat: '' } : deliveryAddress(translatedAddress, [area?.name, sourceOrder?.customer?.talabatArea, sourceOrder?.customer?.siteArea, b.customer?.area]);
-      const addressLine = splitDeliveryAddress(address.street), sign = deliveryMark(apexText(signBase), addressLine.extra, 100);
+      // Karim 11-15: the street and building in the address, what shows the way in the special mark — the address in full
+      // when the mark has no room for it.
+      const addrSplit = splitAddressLandmark(address.street);
+      let addressLine = splitDeliveryAddress(addrSplit.street), sign = deliveryMark(apexText(signBase), [addrSplit.landmark, addressLine.extra].filter(Boolean).join('/'), 100);
+      if (sign == null) { addressLine = splitDeliveryAddress(address.street); sign = deliveryMark(apexText(signBase), addressLine.extra, 100); }
       if (sign == null) fail(409, 'تكملة العنوان أكبر من مساحة العلامة المميزة — اختصر العنوان قبل التسجيل');
       const room = 100 - Array.from(sign === '.' ? '' : sign).length - (sign && sign !== '.' ? 3 : 0);
       const signNote = room >= 8 ? apexText(compactDeliveryComment(noteSplit.delivery, room)) : '';

@@ -134,3 +134,14 @@ test('delivery comment: delivery pieces and food pieces apart', async () => {
   assert.deepEqual(splitDeliveryComment('الكفته: طحينة ×2 | سلطة بلدي ×2'), { order: 'الكفته: طحينة ×2 | سلطة بلدي ×2', delivery: '' });
   assert.deepEqual(splitDeliveryComment('معاه 500 هات فكة'), { order: 'معاه 500 هات فكة', delivery: '' }, 'money stays in the comment');
 });
+
+// Karim 11-15 (Apex 703733 «العنوان مش متقسم»): the street in the address, what shows the way in the special mark.
+test('address: street and building kept, landmark apart, building said once', async () => {
+  const { splitAddressLandmark } = await import('../src/delivery-fields.js');
+  assert.deepEqual(splitAddressLandmark('287 ب شارع ترعة الجبل الزيتون بالعمارة معمل بيوميديكا للتحاليل الطبية، عمارة 287 ب'),
+    { street: '287 ب شارع ترعة الجبل الزيتون', landmark: 'في العمارة معمل بيوميديكا للتحاليل الطبية' });
+  assert.deepEqual(splitAddressLandmark('14ش ابن الرومي، امام صيدلية عائشة'), { street: '14ش ابن الرومي', landmark: 'امام صيدلية عائشة' });
+  assert.deepEqual(splitAddressLandmark('اول مكرم، عمارة 5'), { street: 'اول مكرم، عمارة 5', landmark: '' });
+  assert.deepEqual(splitAddressLandmark('شارع جامع الفتح عمارة 3'), { street: 'شارع جامع الفتح عمارة 3', landmark: '' });
+  assert.deepEqual(splitAddressLandmark('صيدلية العزبي'), { street: 'صيدلية العزبي', landmark: '' }, 'never an empty address');
+});
