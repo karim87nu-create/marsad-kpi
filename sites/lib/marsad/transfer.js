@@ -338,6 +338,7 @@ function setup(app) {
       for (const o of open) texts.push(o.customer?.name, o.customer?.area, o.note, ...(o.items || []).flatMap(i => [i.note, ...(i.freeOptions || [])]));
       const ar = await app.toArabic(texts.filter(Boolean), { waitUntil: ctx.waitUntil }).catch(() => new Map());
       for (const [original,address] of app.toArabicAddress?.(open.map(o => o.customer?.address)) || []) ar.set(original,address);
+      for (const [original, note] of app.toArabicNote?.(open.flatMap(o => [o.note, ...(o.items || []).flatMap(i => [i.note, ...(i.freeOptions || [])])])) || []) ar.set(original, note);
       const tr = v => (v && ar.get(v)) || v, changed = v => v && ar.get(v) && ar.get(v) !== v;
       for (let i = 0; i < list.length; i++) {
         const o = list[i]; if (o.done) continue;
@@ -953,7 +954,7 @@ function setup(app) {
       const rawAddress = b.customer?.addressEdited === true ? b.customer.address : sourceOrder?.customer?.address || b.customer?.addressEn || b.customer?.address;
       const translatedAddress = app.toArabicAddress?.([rawAddress]).get(rawAddress) || rawAddress;
       // Karim 11-15: delivery instructions to the order's special mark (up to 100 letters with the rest of the mark), the food to the comment.
-      const noteSplit = splitDeliveryComment(arabic.get(safeRemarks) || safeRemarks);
+      const noteSplit = splitDeliveryComment(app.toArabicNote?.([safeRemarks]).get(safeRemarks) || arabic.get(safeRemarks) || safeRemarks);
       // Karim 11-15 «استلام الفرع نكتب صفر في العنوان والدور والشقه عشان ميطبعش بيانات قديمه»: Apex prints the customer's
       // card, so a pickup writes 0 there (the next delivery order writes its own address back).
       const address = pickup ? { street: '0', floor: '0', flat: '0' } : deliveryAddress(translatedAddress, [area?.name, sourceOrder?.customer?.talabatArea, sourceOrder?.customer?.siteArea, b.customer?.area]);

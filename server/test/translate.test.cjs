@@ -46,3 +46,13 @@ test('offline dictionary preserves negative instructions, numbers and explicit a
     assert.equal(d('Ismail Baraka'), 'إسماعيل بركة');
   } finally { await t.close(); }
 });
+
+// 11-16 Talabat #1574: «Replace Tahini with Yogurt Salads» was printed spelled out in Arabic letters; «Omar Ibn El Khattab» half English.
+test('translate: a dish choice in Arabic, nothing spelled out; a known street in Arabic', async () => {
+  const { setup } = await import('../src/translate.js');
+  const app = { db: {}, config: {} }; setup(app);
+  const n = app.toArabicNote(['Replace Tahini with Yogurt Salads', 'Make it Halal style']);
+  assert.equal(n.get('Replace Tahini with Yogurt Salads'), 'بدل الطحينة سلطة زبادي');
+  assert.equal(n.get('Make it Halal style'), 'Make it Halal style');
+  assert.equal(app.toArabicAddress(['Building 116, Omar Ibn El Khattab']).get('Building 116, Omar Ibn El Khattab'), 'عمارة 116، عمر بن الخطاب');
+});

@@ -39,13 +39,30 @@ const WORDS = [
   ['bread', 'عيش'], ['onions', 'بصل'], ['onion', 'بصل'], ['pickles', 'مخلل'], ['sauce', 'صوص'], ['salt', 'ملح'],
   ['mohamed', 'محمد'], ['mohammed', 'محمد'], ['mohammad', 'محمد'], ['ahmed', 'أحمد'], ['mahmoud', 'محمود'],
   ['karim', 'كريم'], ['kareem', 'كريم'], ['ismail', 'إسماعيل'], ['baraka', 'بركة'], ['mona', 'منى'], ['hend', 'هند'],
+  ['omar ibn el khattab', 'عمر بن الخطاب'], ['omar ibn al khattab', 'عمر بن الخطاب'], ['ibn el khattab', 'بن الخطاب'], ['el khattab', 'الخطاب'], ['ibn', 'بن'],
   ['atia', 'عطية'], ['ali', 'علي'], ['hassan', 'حسن'], ['hussein', 'حسين'], ['omar', 'عمر'], ['youssef', 'يوسف'],
   // comments
   ['please', 'من فضلك'], ['call me', 'كلمني'], ['call', 'اتصل'], ['ring the bell', 'اضرب الجرس'], ["don't ring", 'متضربش الجرس'], ['no onion', 'من غير بصل'],
   ['without', 'من غير'], ['extra', 'زيادة'], ['spicy', 'حار'], ['no', 'من غير'], ['thanks', 'شكراً'], ['thank you', 'شكراً'],
   ...PHRASES,
 ].sort((a, b) => b[0].length - a[0].length);
-const RX = WORDS.map(([en, ar]) => [new RegExp('(^|[^A-Za-z])' + en.replace(/ /g, '\\s+') + '(?=[^A-Za-z]|$)', 'gi'), ar]);
+const rxOf = list => list.map(([en, ar]) => [new RegExp('(^|[^A-Za-z])' + en.replace(/ /g, '\\s+') + '(?=[^A-Za-z]|$)', 'gi'), ar]);
+const RX = rxOf(WORDS);
+// Comments and the dish's choices (11-16 Talabat #1574: «Replace Tahini with Yogurt Salads» was printed spelled out
+// letter by letter in Arabic): food words, and a word not known stays in English rather than spelled out.
+const FOOD = [
+  ['replace tahini with yogurt salads', 'بدل الطحينة سلطة زبادي'], ['replace tahini with yogurt salad', 'بدل الطحينة سلطة زبادي'],
+  ['instead of', 'بدل'], ['replace', 'بدل'], ['change', 'تغيير'], ['with', 'مع'], ['add', 'إضافة'], ['remove', 'من غير'], ['only', 'بس'],
+  ['on the side', 'على جنب'], ['side', 'جنب'], ['less', 'قليل'], ['more', 'زيادة'], ['cold', 'ساقع'], ['hot', 'سخن'],
+  ['yogurt salads', 'سلطة زبادي'], ['yogurt salad', 'سلطة زبادي'], ['tahini salad', 'سلطة طحينة'], ['green salad', 'سلطة خضراء'], ['oriental salad', 'سلطة بلدي'],
+  ['baba ghanoush', 'بابا غنوج'], ['garlic sauce', 'ثومية'], ['salads', 'سلطات'], ['salad', 'سلطة'], ['tahini', 'طحينة'], ['tahina', 'طحينة'],
+  ['yogurt', 'زبادي'], ['yoghurt', 'زبادي'], ['garlic', 'ثوم'], ['coleslaw', 'كول سلو'], ['french fries', 'بطاطس'], ['fries', 'بطاطس'],
+  ['chicken', 'فراخ'], ['grilled', 'مشوي'], ['rice', 'أرز'], ['pasta', 'مكرونة'], ['molokhia', 'ملوخية'], ['soup', 'شوربة'], ['lentil', 'عدس'],
+  ['kofta', 'كفتة'], ['kebab', 'كباب'], ['liver', 'كبدة'], ['sausage', 'سجق'], ['baladi', 'بلدي'], ['wrapped', 'ملفوف'], ['wrap', 'ملفوف'], ['roll', 'رول'],
+  ['ketchup', 'كاتشب'], ['mayonnaise', 'مايونيز'], ['mayo', 'مايونيز'], ['tomatoes', 'طماطم'], ['tomato', 'طماطم'], ['cucumber', 'خيار'], ['lemon', 'ليمون'],
+  ['pepsi', 'بيبسي'], ['water', 'مياه'], ['cutlery', 'أدوات أكل'], ['napkins', 'مناديل'], ['tissues', 'مناديل'], ['spoon', 'معلقة'], ['fork', 'شوكة'],
+].sort((a, b) => b[0].length - a[0].length);
+const RX_FOOD = rxOf(FOOD);
 
 
 // Words still in English after the dictionary: what staff taught (learned), a known name, else spelled out in Arabic
@@ -60,11 +77,12 @@ function arabizeRest(s, learned, preserveUnknown = false) {
   });
 }
 
-function dictionary(text, learned, preserveUnknown = false) {
+function dictionary(text, learned, preserveUnknown = false, food = false) {
   let s = String(text).replace(/\bno\.?\s*(?=\d)/gi, 'رقم ');
   // Phrases and words first (longest first), so «El Banafseg» / «Ahmed El Zomor» are taken whole.
-  for (const [rx, ar] of RX) s = s.replace(rx, (m, pre, at, all) => pre + (all.slice(Math.max(0, at + pre.length - 2), at + pre.length) === 'ال' && ar.startsWith('ال') ? ar.slice(2) : ar));
+  for (const [rx, ar] of [...(food ? RX_FOOD : []), ...RX]) s = s.replace(rx, (m, pre, at, all) => pre + (all.slice(Math.max(0, at + pre.length - 2), at + pre.length) === 'ال' && ar.startsWith('ال') ? ar.slice(2) : ar));
   s = s.replace(/\b(?:El|Al)[-\s](?=[A-Za-z])/gi, 'ال');
+  s = s.replace(/\b(?:El|Al)[-\s]+(?=[\u0600-\u06FF])/gi, 'ال');   // «El» before a word already in Arabic
   s = arabizeRest(s, learned, preserveUnknown).replace(/الال/g, 'ال');
   // An unknown place name kept in English keeps its own «El» (11-14: Apex showed «الHelmiya»).
   if (preserveUnknown) s = s.replace(/ال(?=[A-Za-z])/g, 'El ');
@@ -84,6 +102,8 @@ export function setup(app) {
   // Delivery addresses must not be guessed from spelling or old automatic translations.
   // Known place words remain Arabic; unknown place names and building codes stay intact.
   app.toArabicAddress = texts => new Map(texts.filter(Boolean).map(t => [t,dictionary(t,null,true)]));
+  // Comments and choices: food words in Arabic, nothing spelled out (11-16).
+  app.toArabicNote = texts => new Map(texts.filter(t => t && LATIN.test(t)).map(t => [t, dictionary(t, null, true, true)]));
 
   async function cached(texts) {
     const out = new Map(), want = [...new Set(texts.filter(t => t && LATIN.test(t)))];
