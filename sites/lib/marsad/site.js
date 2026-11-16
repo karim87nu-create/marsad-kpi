@@ -244,16 +244,21 @@ function setup(app) {
     if (!raw) return null;
     try { const c = JSON.parse(await open(raw)); return c?.key && c.secret ? c : null; } catch { return null; }
   }
-  async function wc(c, path, params = {}) {
+  async function wc(c, path, params = {}, write = null) {
     const url = new URL(c.url.replace(/\/$/, '') + '/wp-json/wc/v3/' + path);
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-    const r = await doFetch(url.toString(), { headers: { authorization: 'Basic ' + btoa(c.key + ':' + c.secret), accept: 'application/json', 'user-agent': 'MarsadEldahan/1.0' }, signal: AbortSignal.timeout(20000) });
+    const r = await doFetch(url.toString(), { method: write ? 'PUT' : 'GET', headers: { authorization: 'Basic ' + btoa(c.key + ':' + c.secret), accept: 'application/json', 'user-agent': 'MarsadEldahan/1.0', ...(write ? { 'content-type': 'application/json' } : {}) },
+      ...(write ? { body: JSON.stringify(write) } : {}), signal: AbortSignal.timeout(20000) });
     const text = await r.text();
     let body = null; try { body = JSON.parse(text); } catch {}
     if (!r.ok) throw Error('الموقع رد ' + r.status + (body?.message ? ': ' + String(body.message).slice(0, 120) : ''));
     if (body == null) throw Error('الموقع رد بحاجة مش JSON (ممكن الحماية قافلة الطلب)');
     return body;
   }
+
+  // For «الأصناف الواقفة» (stock.js): the website's products, and a product's stock changed (admin's own button).
+  app.siteWc = async (path, params) => { const c = await creds(); if (!c) throw Error('الموقع مش متربط'); return wc(c, path, params); };
+  app.siteWcWrite = async (path, body) => { const c = await creds(); if (!c) throw Error('الموقع مش متربط'); return wc(c, path, {}, body); };
 
   // The rating the customer gave the order (meta written by the app's rating page): a number 1–5, alone or in an object
   // with its comment. Keys about asking / dismissing / snoozing the rating are not the rating.

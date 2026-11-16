@@ -103,7 +103,8 @@ function setup(app) {
   app.route('POST', '/api/talabat/stock-config', async ctx => {
     const who = await app.requireAdmin(ctx, 'write');
     if (ctx.body?.action === 'apply') {
-      const v = { talabat: ctx.body.talabat === true, apex: ctx.body.apex === true };
+      const was = await json('talabat_stock_apply', {});
+      const v = { talabat: ctx.body.talabat === true, apex: ctx.body.apex === true, site: ctx.body.site === undefined ? was.site === true : ctx.body.site === true };
       await put('talabat_stock_apply', JSON.stringify(v)); await app.audit('talabat_stock_apply', null, { actor: who.name, ...v });
       return { ok: true, ...v };
     }

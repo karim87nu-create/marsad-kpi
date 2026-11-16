@@ -421,13 +421,14 @@
         <p id="talActNote" class="muted" role="status"></p>
         <details><summary class="muted">آخر اللي عملته الشاشة</summary><div id="talActLog" class="muted"></div></details>
       </article>
-      <article class="panel" id="stockPanel" hidden><h2>إيقاف أصناف على طلبات لكل فرع</h2>
+      <article class="panel" id="stockPanel" hidden><h2>الأصناف الواقفة وإيقافها <span class="muted">Apex وطلبات والموقع جنب بعض</span></h2>
+        <div id="stockCompare"></div>
         <p class="muted">اختار الفرع وعلّم على الأصناف الموقوفة، واحفظ. شاشة طلبات على جهاز الكاشير هي اللي بتوقفها وبترجّعها.</p>
         <div class="row"><select id="stockStore"></select> <input id="stockFind" placeholder="دوّر على صنف" style="width:200px"> <label><input type="checkbox" id="stockOnly"> الموقوف بس</label></div>
         <div id="stockList" style="max-height:420px;overflow:auto;margin-top:8px"></div>
         <div class="row"><button type="button" id="stockSave">حفظ للفرع ده</button></div>
         <p id="stockNote" class="muted" role="status"></p>
-        <div class="row"><label><input type="checkbox" id="stockApplyTb"> يتطبق على طلبات (شاشة طلبات بتوقف/ترجّع الأصناف)</label> <label><input type="checkbox" id="stockApplyApex"> يتطبق على Apex (الكاتب بيوقف الصنف في الفرع)</label></div>
+        <div class="row"><label><input type="checkbox" id="stockApplyTb"> يتطبق على طلبات (شاشة طلبات بتوقف/ترجّع الأصناف)</label> <label><input type="checkbox" id="stockApplyApex"> يتطبق على Apex (الكاتب بيوقف الصنف في الفرع)</label> <label><input type="checkbox" id="stockApplySite"> زراير الموقع شغالة (توقف/ترجّع الصنف على الموقع كله)</label></div>
         <div id="stockActual" class="muted"></div>
         <details><summary class="muted">آخر اللي اتطبق</summary><div id="stockLog" class="muted"></div></details>
       </article>
@@ -513,7 +514,7 @@
 <script src="charts.js?v=4"></script>
 <script src="now-arc.js?v=3"></script>
 <script src="orders.js?v=4"></script>
-<script src="site.js?v=13"></script>
+<script src="site.js?v=14"></script>
 <script src="insights.js?v=2"></script>
 <script src="kpi.js?v=4"></script>
 <script src="bot.js?v=1"></script>
@@ -526,7 +527,7 @@
 <script src="home.js?v=4"></script>
 <script src="daily.js?v=4"></script>
 <script src="trend.js?v=2"></script>
-<script src="app.js?v=61"></script>
+<script src="app.js?v=62"></script>
 </body>
 </html>
 

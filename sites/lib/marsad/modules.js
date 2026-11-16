@@ -40,7 +40,8 @@ import * as daily from './daily.js';
 import * as cs from './cs.js';
 import * as reports from './reports.js';
 import * as talabatRatings from './talabat-ratings.js';
+import * as stock from './stock.js';
 
-const MODULES = [translate, admin, employees, sessions, dashboard, breaks, messages, shifts, history, engine, telegram, importRows, ops, range, orders, names, learn, reviews, site, talabat, cancels, whatsapp, transfer, talabatActions, systemWatch, backup, archive, kpi, branchClosures, branchBot, perf, qa, forecast, autotransfer, apexCancel, apexAreas, home, daily, cs, reports, talabatRatings];
+const MODULES = [translate, admin, employees, sessions, dashboard, breaks, messages, shifts, history, engine, telegram, importRows, ops, range, orders, names, learn, reviews, site, talabat, cancels, whatsapp, transfer, talabatActions, systemWatch, backup, archive, kpi, branchClosures, branchBot, perf, qa, forecast, autotransfer, apexCancel, apexAreas, home, daily, cs, reports, talabatRatings, stock];
 export { MODULES };
 

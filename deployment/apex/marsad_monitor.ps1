@@ -1390,6 +1390,21 @@ while ($true) {
         if ($wfree) { Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $wr + '"'); L 'apex writer started' }
       }
     } catch { L "apex writer start: $($_.Exception.Message)" }
+    # Karim 11-16 «وقف الأصناف»: the dishes stopped in each branch on Apex (its StoppedItems table, read-only) and the last
+    # stops and resumes made there (StoppedItems_Trans), every 5 minutes, for the Marsad's «الأصناف الواقفة» comparison.
+    try {
+      if ($OrdersKey -and (-not $script:stockAt -or ((Get-Date) - $script:stockAt).TotalMinutes -ge 5)) {
+        $script:stockAt = Get-Date
+        $st = @((Q "SELECT s.BranchNo AS b, RTRIM(s.ItemNo) AS i, s.StopStatus AS st, s.ReasonNo AS r, RTRIM(it.ItemName) AS n FROM StoppedItems s WITH (NOLOCK) LEFT JOIN Items it WITH (NOLOCK) ON it.ItemNo = s.ItemNo").Rows | ForEach-Object {
+          [ordered]@{ branch = [int](N $_.b); item = (S $_.i); status = $(if ($_.st -is [DBNull]) { $null } else { [double]$_.st }); reason = $(if ($_.r -is [DBNull]) { $null } else { [double]$_.r }); name = (S $_.n) } })
+        $tr = @()
+        try { $tr = @((Q "SELECT TOP 60 t.BranchNo AS b, RTRIM(t.ItemNo) AS i, t.ReasonNo AS r, t.StopDate AS d, t.StopTime AS tm, t.UserNo AS u FROM StoppedItems_Trans t WITH (NOLOCK) ORDER BY t.StopDate DESC, t.StopTime DESC").Rows | ForEach-Object {
+          $when = $null; try { if (-not ($_.d -is [DBNull])) { $dd = [datetime]$_.d; if (-not ($_.tm -is [DBNull])) { $tt = [datetime]$_.tm; $dd = $dd.Date.Add($tt.TimeOfDay) }; $when = IsoT $dd } } catch {}
+          [ordered]@{ branch = [int](N $_.b); item = (S $_.i); reason = $(if ($_.r -is [DBNull]) { $null } else { [double]$_.r }); at = $when; user = (UName $_.u) } }) } catch {}
+        $sj = [ordered]@{ stopped = $st; recent = $tr; at = (IsoT (Get-Date)) } | ConvertTo-Json -Depth 5 -Compress
+        Invoke-RestMethod -Method Post -Uri "$ServerUrl/api/apex-stock" -Headers @{ 'x-orders-token' = $OrdersKey } -Body ([Text.Encoding]::UTF8.GetBytes($sj)) -ContentType 'application/json; charset=utf-8' -TimeoutSec 20 | Out-Null
+      }
+    } catch { if (-not $script:stockErrAt -or ((Get-Date) - $script:stockErrAt).TotalMinutes -ge 30) { $script:stockErrAt = Get-Date; L "stopped items: $($_.Exception.Message)" } }
     # Print trace (read-only, numbers only): how a new order's print flags change after it is saved, so the
     # Marsad → Apex bridge can create orders exactly the way the branch printers expect. One line per change.
     try {

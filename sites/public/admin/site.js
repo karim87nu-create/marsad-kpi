@@ -381,12 +381,35 @@ window.MarsadSite = function MarsadSite(ctx) {
     $('stockStore').replaceChildren(...stock.stores.map(s => h('option', { value: s, textContent: s, selected: s === cur })));
     drawStock();
     $('stockApplyTb').checked = !!stock.apply?.talabat; $('stockApplyApex').checked = !!stock.apply?.apex;
+    $('stockApplySite').checked = !!stock.apply?.site;
+    drawCompare().catch(e => $('stockCompare').replaceChildren(h('p', { className: 'muted', textContent: e.message })));
     const name = id => stock.products.find(p => p.id === id)?.name || id;
     $('stockActual').replaceChildren(...Object.values(stock.actual || {}).map(a => h('div', { textContent: 'على طلبات الآن — ' + (a.name || '') + ' (' + t12(new Date(a.at).toISOString()) + '): ' + (a.unavailable.length ? a.unavailable.length + ' صنف واقف: ' + a.unavailable.map(name).join('، ') : 'كله متاح') })));
     $('stockLog').replaceChildren(...(stock.log || []).map(l => h('div', { textContent: t12(new Date(l.at).toISOString()) + ' — ' + (l.where === 'apex' ? 'Apex فرع ' + l.branch + ' صنف ' + l.item : 'طلبات ' + (l.store || '') + ' — ' + (l.dish || '')) + ' — ' + (l.act === 'stop' ? 'إيقاف' : 'رجوع') + ' ' + (l.ok ? '✓' : '✗ ' + (l.note || '')) })));
   }
-  const saveApply = async () => { try { await api('/api/talabat/stock-config', { method: 'POST', body: { action: 'apply', talabat: $('stockApplyTb').checked, apex: $('stockApplyApex').checked } }); $('stockNote').textContent = 'اتحفظ.'; } catch (e) { $('stockNote').textContent = e.message; } };
-  $('stockApplyTb').onchange = saveApply; $('stockApplyApex').onchange = saveApply;
+  // Karim 11-16 «وقف الأصناف … والموقع»: each branch's stopped dishes on Apex, Talabat and the website, and what differs.
+  async function drawCompare() {
+    const c = await api('/api/stock/compare'), ago = at => at ? t12(new Date(at).toISOString()) : 'لسه ماتقراش';
+    const stale = at => !at || Date.now() - at > 40 * 60000;
+    const box = $('stockCompare'); box.replaceChildren();
+    for (const b of c.branches) {
+      const diffs = b.diffs.length ? h('div', {}, ...b.diffs.map(d => h('div', { className: 'warn', textContent: '⚠️ ' + d.dish + ' — ' + d.text }))) : h('div', { className: 'muted', textContent: b.checked ? '✅ مفيش اختلاف بين Apex وطلبات' : 'المقارنة مستنية قراية حديثة من Apex وطلبات' });
+      box.append(h('details', { className: 'more', open: !!b.diffs.length }, h('summary', { textContent: b.name + ' — Apex: ' + b.apex.length + ' واقف · طلبات: ' + b.talabat.length + ' واقف' + (b.diffs.length ? ' · ' + b.diffs.length + ' اختلاف' : '') }),
+        diffs,
+        h('div', { className: stale(b.apexAt) ? 'warn' : 'muted', textContent: 'Apex (' + ago(b.apexAt) + '): ' + (b.apex.map(x => x.name).join('، ') || 'مفيش واقف') }),
+        h('div', { className: stale(b.talabatAt) ? 'warn' : 'muted', textContent: 'طلبات (' + ago(b.talabatAt) + '): ' + (b.talabat.map(x => x.name).join('، ') || 'مفيش واقف') })));
+    }
+    const siteBtn = (p, stop) => !c.siteApply ? null : h('button', { type: 'button', className: 'ghost small', textContent: stop ? 'وقفه على الموقع' : 'رجّعه على الموقع', onclick: async () => {
+      try { await api('/api/stock/site', { method: 'POST', body: { id: p.siteId || p.id, stop } }); await drawCompare(); } catch (e) { $('stockNote').textContent = e.message; } } });
+    box.append(h('details', { className: 'more', open: !!c.site.diffs.length }, h('summary', { textContent: 'الموقع (منيو واحد لكل الفروع) — ' + c.site.outOfStock.length + ' صنف خلصان' + (c.site.diffs.length ? ' · ' + c.site.diffs.length + ' اختلاف' : '') }),
+      c.siteError ? h('div', { className: 'warn', textContent: 'قراية الموقع: ' + c.siteError }) : h('div', { className: 'muted', textContent: 'آخر قراية: ' + ago(c.site.at) + ' · ' + c.site.count + ' صنف' }),
+      ...c.site.diffs.map(d => h('div', { className: 'warn' }, '⚠️ ' + d.dish + ' — ' + d.text + ' ', siteBtn(d, true))),
+      ...c.site.outOfStock.map(p => h('div', { className: 'muted' }, 'خلصان على الموقع: ' + p.name + ' ', siteBtn(p, false)))));
+    if (c.recent?.length) box.append(h('details', { className: 'more' }, h('summary', { textContent: 'آخر وقف ورجوع على Apex' }),
+      ...c.recent.map(r => h('div', { className: 'muted', textContent: (r.at ? t12(r.at) : '') + ' — فرع ' + r.branch + ' — صنف ' + r.item + (r.user ? ' — ' + r.user : '') }))));
+  }
+  const saveApply = async () => { try { await api('/api/talabat/stock-config', { method: 'POST', body: { action: 'apply', talabat: $('stockApplyTb').checked, apex: $('stockApplyApex').checked, site: $('stockApplySite').checked } }); $('stockNote').textContent = 'اتحفظ.'; } catch (e) { $('stockNote').textContent = e.message; } };
+  $('stockApplyTb').onchange = saveApply; $('stockApplyApex').onchange = saveApply; $('stockApplySite').onchange = async () => { await saveApply(); drawCompare().catch(() => {}); };
   $('stockStore').onchange = drawStock; $('stockFind').oninput = drawStock; $('stockOnly').onchange = drawStock;
   $('stockSave').onclick = async () => {
     const store = $('stockStore').value; if (!store) return;
