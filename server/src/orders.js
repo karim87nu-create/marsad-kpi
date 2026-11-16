@@ -101,7 +101,7 @@ function setup(app) {
     if (!hash || !given || sha256(given) !== hash) fail(401, 'مفتاح مرصد الأوردرات غير صحيح');
     let b = ctx.body;
     if (!validDate(String(b.day || ''))) fail(400, 'invalid_day');
-    const existing = await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(b.day);
+    const existing = await db.prepare('SELECT data, received_at FROM orders_days WHERE day = ?').get(b.day);
     let before = {}; try { before = JSON.parse(existing?.data || '{}'); } catch {}
     const replay = b.replayAlerts === true;
     if (replay) {
@@ -124,8 +124,9 @@ function setup(app) {
     const data = JSON.stringify({ ...b, alerts: undefined });
     if (data.length > 900000) fail(413, 'payload_too_large');
     const previous = Number(await setting('orders_last_push')) || null;
-    const stored = replay ? { changes: 1 } : await db.prepare('INSERT INTO orders_days (day, data, received_at) VALUES (?, ?, ?) ON CONFLICT(day) DO UPDATE SET data = excluded.data, received_at = excluded.received_at WHERE orders_days.data = ?')
-      .run(b.day, data, ctx.now, existing?.data ?? null);
+    const stored = replay ? { changes: 1 } : await db.prepare('INSERT INTO orders_days (day, data, received_at) VALUES (?, ?, ?) ON CONFLICT(day) DO UPDATE SET data = excluded.data, received_at = excluded.received_at WHERE orders_days.received_at IS ?')
+      // 11-16: the guard against a concurrent write compares the time of the row read (not the whole ~180 KB day again).
+      .run(b.day, data, existing ? Math.max(ctx.now, Number(existing.received_at) + 1) : ctx.now, existing ? existing.received_at : null);
     if (!stored.changes) fail(409, 'snapshot_changed_retry');
     if (!replay) await put('orders_last_push', ctx.now);
     // The cashier monitor includes notes that say an Apex order is cancelled. Keep this

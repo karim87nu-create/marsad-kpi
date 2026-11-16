@@ -719,7 +719,25 @@ function Probe-Payload($payload){
   Add-Type -AssemblyName System.Web.Extensions
   $serializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
   $serializer.MaxJsonLength = [int]::MaxValue
-  $wire = ConvertTo-JsonPlain -value $payload
+  # Karim 11-16 «مش كل يوم ومع كل ضغط شغل»: by the afternoon the day's online orders with their item lines made every
+  # push ~180 KB each minute, and the server failed under it at the rush. An order's items, customer and source
+  # references go once; afterwards only when they change (the server keeps the ones it has). Everything again every 30
+  # minutes and at a new day.
+  $sendPayload = $payload; $sentNow = $null
+  try {
+    if ($payload.online) {
+      $full = ($script:sentDay -ne $payload.day -or -not $script:sentAt -or ((Get-Date) - $script:sentAt).TotalMinutes -ge 30 -or -not $script:sentOnline)
+      $sentNow = @{}; $slim = New-Object System.Collections.ArrayList
+      foreach ($o in @($payload.online)) {
+        $h = $serializer.Serialize((ConvertTo-JsonPlain -value @($o['items'], $o['customer'], $o['sourceRefs'])))
+        $sentNow["$($o['no'])"] = $h
+        if (-not $full -and $script:sentOnline["$($o['no'])"] -eq $h) { $x = [ordered]@{}; foreach ($k in @($o.Keys)) { if ($k -notin @('items', 'customer', 'sourceRefs')) { $x[$k] = $o[$k] } }; [void]$slim.Add($x) } else { [void]$slim.Add($o) }
+      }
+      $sendPayload = [ordered]@{}; foreach ($k in @($payload.Keys)) { $sendPayload[$k] = $payload[$k] }; $sendPayload['online'] = @($slim)
+      if ($full) { $sentNow['__full'] = '1' }
+    }
+  } catch { $sendPayload = $payload; $sentNow = $null; L "push slim: $($_.Exception.Message)" }
+  $wire = ConvertTo-JsonPlain -value $sendPayload
   $json = $serializer.Serialize($wire)
   $bodyBytes = [Text.Encoding]::UTF8.GetBytes($json)
   if ($tracePush) { L "push payload ready: $($bodyBytes.Length) bytes; JSON $($serializeTimer.ElapsedMilliseconds) ms" }
@@ -736,6 +754,7 @@ function Probe-Payload($payload){
       if ("$($_.Exception.Message)" -notmatch '\(500\)' -or -not $payload.online) { throw }
       $light = [ordered]@{}; foreach($k in $payload.Keys){ $light[$k] = $payload[$k] }
       $light.online = @($payload.online | ForEach-Object { $x = [ordered]@{}; foreach($k in $_.Keys){ if ($k -ne 'items') { $x[$k] = $_[$k] } }; $x })
+      $sentNow = $null   # the server did not get the item lines: everything goes again next time
       $json2 = $serializer.Serialize((ConvertTo-JsonPlain -value $light))
       $resp = Invoke-RestMethod -Method Post -Uri "$ServerUrl/api/orders/push" -Headers @{ 'x-orders-token' = $OrdersKey } -Body ([Text.Encoding]::UTF8.GetBytes($json2)) -ContentType 'application/json; charset=utf-8' -TimeoutSec 20
       if (-not $script:lightLogged) { L "push ok only without online item lines (full $([Text.Encoding]::UTF8.GetByteCount($json)) bytes, light $([Text.Encoding]::UTF8.GetByteCount($json2)) bytes)"; $script:lightLogged = $true }
@@ -749,6 +768,8 @@ function Probe-Payload($payload){
       for ($i = $pending.Count - 1; $i -ge 0; $i--) { if ($pending[$i].day -eq $payload.day -and $pending[$i].key -eq $key) { $pending.RemoveAt($i) } }
     }
     SaveOutbox
+    # What the server now has: next pushes leave those out.
+    if ($sentNow) { if ($sentNow.ContainsKey('__full')) { $script:sentAt = Get-Date; $script:sentDay = $payload.day; $sentNow.Remove('__full') }; $script:sentOnline = $sentNow }
     if ($script:pushFails -gt 0) { L "push ok again after $($script:pushFails) failures" }
     $script:pushFails = 0
   } catch {
