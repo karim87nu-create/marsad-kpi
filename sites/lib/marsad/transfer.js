@@ -648,7 +648,11 @@ function setup(app) {
         }
       }
       list.sort((x, y) => (x.apex ? 1 : 0) - (y.apex ? 1 : 0) || String(x.at || '').localeCompare(String(y.at || '')));
-      return { at: now, list, locations: (Array.isArray(snap.locations) ? snap.locations : []) };
+      // 11-16 (#5473 at 10:38, no areas to choose): Apex's day table is empty until its first order of the day, so the
+      // cashier sends nothing for the new day and the day has no areas yet. Apex's areas rarely change: the last day's.
+      let locations = Array.isArray(snap.locations) ? snap.locations : [];
+      if (!locations.length) locations = parseJson((await db.prepare("SELECT data FROM orders_days WHERE day < ? AND data LIKE '%\"locations\":[{%' ORDER BY day DESC LIMIT 1").get(day))?.data, {}).locations || [];
+      return { at: now, list, locations };
     }
   }
   // ---- claim / entered / release ----

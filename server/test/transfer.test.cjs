@@ -439,3 +439,18 @@ test('a weight under the dish is its size, never a paid add-on («1 كيلو» 1
     assert.equal(o.items[2].size, 'ربع كيلو'); assert.deepEqual(o.items[2].addons.map(a => a.name), ['Basmati Rice'], 'a real add-on stays one');
   } finally { await t.close(); }
 });
+
+// 11-16 (#5473 at 10:38): before Apex's first order of the day the cashier sends nothing for the new day; the areas
+// to choose from are the last day's.
+test('transfer page: the areas are there before the cashier sends the new day', async () => {
+  const t = await start({ at: cairoToUtc(2026, 10, 23, 10, 30, 0) });
+  try {
+    const admin = await t.admin();
+    await t.employee(admin, { name: 'سارة', code: 'E1', pin: '1111' });
+    const okey = (await admin('POST', '/api/orders/token')).body.token;
+    await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': okey }, body: { v: 1, day: '2026-10-22', online: [], locations: [{ no: 370, name: 'مدينتى', branch: 3, service: 39.47 }] } });
+    const tok = (await t.call('POST', '/api/transfer/login', { body: { pin: '1111' } })).body.token;
+    const q = (await t.call('GET', '/api/transfer/queue?day=2026-10-23', { headers: { 'x-transfer-session': tok } })).body;
+    assert.deepEqual((q.locations || []).map(l => l.no), [370]);
+  } finally { await t.close(); }
+});
