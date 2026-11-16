@@ -1131,6 +1131,17 @@ function setup(app) {
     }
     return { pending: pending.map(({ last, ...x }) => x) };
   });
+  // Karim 11-17 (#1573): someone saved the customer's card on Apex after the Marsad and the special mark (the Talabat
+  // discount) was gone; the writer put it back. The online group is told who, once per order.
+  app.route('POST', '/api/apex-writer/mark-restored', async ctx => {
+    await writer(ctx);
+    const rows = (Array.isArray(ctx.body?.fixed) ? ctx.body.fixed : []).slice(0, 20), day = businessDay(ctx.now);
+    const clean = v => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    const w = rows.filter(f => /^\d{1,12}$/.test(String(f.orderNo || ''))).map(f => db.prepare("INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, sent_at, target, branch) VALUES (?, 'markRestored', NULL, ?, ?, NULL, 'online', NULL)")
+      .bind('mark:' + day + ':' + f.orderNo + ':online', '🖥️ Apex | ⚠️ ' + (clean(f.who) || 'حد') + ' فتح بطاقة العميل لأوردر المرصد ' + (clean(f.name) || f.orderNo) + ' وحفظها، فاتمسحت العلامة المميزة «' + clean(f.mark) + '»\nالمرصد رجّعها قبل ما الأوردر يطلع. أوردرات المرصد ماتتفتحش وتتحفظ من شاشة العميل', ctx.now));
+    if (w.length) await db.batch(w);
+    return { ok: true, told: w.length };
+  });
   app.route('POST', '/api/apex-writer/customer-notes/result', async ctx => {
     await writer(ctx);
     const rows = Array.isArray(ctx.body.results) ? ctx.body.results.slice(0, 25) : [];

@@ -883,6 +883,52 @@ function Sync-CustomerNotes {
   }
 }
 
+# Karim 11-17 (#1573: Apex printed «.» where the Talabat discount was): Apex prints the special mark from the customer's
+# card when the pilot is assigned, and a person who opens the card and saves it (Abdo Belal, 3 minutes after the Marsad
+# wrote the order) leaves it empty. Every minute, for the Marsad's delivery orders not yet given to a pilot whose
+# customer has no newer order: if someone else saved the card after the Marsad and the mark the Marsad wrote is gone, it
+# is put back (what they wrote stays after it), with one Customers_Log row like every change there, and the server is told.
+$script:marksNext = Get-Date
+function Guard-Marks {
+  if ((Get-Date) -lt $script:marksNext) { return }
+  $script:marksNext = (Get-Date).AddSeconds(60)
+  if ($script:lastMode -ne 'live' -or -not $AllowLive -or $WriterUserNo -eq 0) { return }
+  $c = $null
+  try {
+    $c = Open-Db 'live'
+    $cmd = $c.CreateCommand(); $cmd.CommandTimeout = 20
+    $cmd.CommandText = @'
+SET XACT_ABORT ON;
+DECLARE @Fix TABLE (CustNo numeric(18,0) PRIMARY KEY, OrderNo numeric(18,0), Want nvarchar(100), Was nvarchar(100), Who nvarchar(60), Tag nvarchar(60));
+INSERT INTO @Fix (CustNo, OrderNo, Want, Was, Who, Tag)
+SELECT m.CustNo, m.OrderNo, w.Sign, LTRIM(RTRIM(ISNULL(CONVERT(nvarchar(100), c.Sign), ''))), x.ModifyUser, LEFT(RTRIM(ISNULL(m.o_CustName, '')), 60)
+FROM dbo.Orders_M_Daily m WITH (NOLOCK)
+JOIN dbo.Customers c WITH (NOLOCK) ON c.CustNo = m.CustNo AND c.LastOrderNo = m.OrderNo
+CROSS APPLY (SELECT TOP 1 LTRIM(RTRIM(CONVERT(nvarchar(100), l.Sign))) AS Sign, l.SNo FROM dbo.Customers_Log l WITH (NOLOCK) WHERE l.CustNo = m.CustNo AND l.ModifyUser = 'MARSAD' ORDER BY l.SNo DESC) w
+CROSS APPLY (SELECT TOP 1 LTRIM(RTRIM(l.ModifyUser)) AS ModifyUser, l.SNo FROM dbo.Customers_Log l WITH (NOLOCK) WHERE l.CustNo = m.CustNo ORDER BY l.SNo DESC) x
+WHERE m.OrderDate >= DATEADD(day, -1, CAST(GETDATE() AS date)) AND m.UserNo = @U AND ISNULL(m.WaiterNo, 0) = 0 AND RTRIM(ISNULL(m.TransType, '')) = 'Delivery'
+  AND x.SNo > w.SNo AND x.ModifyUser <> 'MARSAD' AND ISNULL(w.Sign, '') NOT IN (N'', N'.', N'0')
+  AND CHARINDEX(w.Sign, LTRIM(RTRIM(ISNULL(CONVERT(nvarchar(100), c.Sign), '')))) = 0;
+IF EXISTS (SELECT 1 FROM @Fix) BEGIN
+  BEGIN TRANSACTION;
+  UPDATE c SET Sign = LEFT(CASE WHEN f.Was IN (N'', N'.') THEN f.Want ELSE f.Want + N' | ' + f.Was END, 100)
+  FROM dbo.Customers c JOIN @Fix f ON f.CustNo = c.CustNo;
+  IF HAS_PERMS_BY_NAME('dbo.Customers_Log', 'OBJECT', 'INSERT') = 1
+    INSERT INTO dbo.Customers_Log (CustNo, SNo, Name, CType, Phone, Address, FlatNo, FloorNo, Sign, CLedge, LocationNo, Note, UBranchNo, StreetNo, TransDate, ModifyUser)
+    SELECT c.CustNo, (SELECT ISNULL(MAX(SNo), 0) + 1 FROM dbo.Customers_Log WHERE CustNo = c.CustNo), c.Name, c.CType, c.Phone, c.Address, c.FlatNo, c.FloorNo, c.Sign, c.CLedge, c.LocationNo, c.Note, c.UBranchNo, c.StreetNo, GETDATE(), 'MARSAD'
+    FROM dbo.Customers c JOIN @Fix f ON f.CustNo = c.CustNo;
+  COMMIT;
+END;
+SELECT OrderNo, CustNo, Want, Was, Who, Tag FROM @Fix;
+'@
+    [void]$cmd.Parameters.AddWithValue('@U', [decimal]$WriterUserNo)
+    $rd = $cmd.ExecuteReader(); $fixed = @()
+    try { while ($rd.Read()) { $fixed += @{ orderNo = [string]$rd['OrderNo']; mark = [string]$rd['Want']; was = [string]$rd['Was']; who = [string]$rd['Who']; name = [string]$rd['Tag'] } } } finally { $rd.Close() }
+    foreach ($f in $fixed) { L ("mark restored on the card: order $($f.orderNo) by $($f.who) (was '" + $f.was + "')") }
+    if ($fixed.Count) { try { [void](Api '/api/apex-writer/mark-restored' @{ fixed = $fixed }) } catch {} }
+  } finally { if ($c) { try { $c.Close() } catch {} } }
+}
+
 L "writer started (pos $WriterPos)"
 $failures = 0
 for (;;) {
@@ -892,10 +938,12 @@ for (;;) {
   try { Apply-Stock } catch { L "stock: $($_.Exception.Message)" }
   try { Apply-Cancels } catch { L "cancel: $($_.Exception.Message)" }
   try { Apply-CancelNotes } catch { L "cancel note: $($_.Exception.Message)" }
+  try { Guard-Marks } catch { L "marks: $($_.Exception.Message)" }
   $c = $null
   try {
     $n = Api '/api/apex-writer/next' @{}
     $failures = 0
+    if ($n.mode) { $script:lastMode = [string]$n.mode }
     if ($n.job) {
       $job = $n.job; $mode = [string]$n.mode
       if ($mode -eq 'live' -and -not $AllowLive) { throw 'live mode is locked on this PC ($AllowLive)' }
