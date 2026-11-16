@@ -489,3 +489,6 @@ a.arc-cap{text-decoration:none;color:inherit}
 .qa-items input{width:100%;font-size:16px;text-align:center}
 .qa-items label.low{border-color:#d97706}
 .qa-total{font-size:18px;font-weight:700;margin:6px 0}
+
+/* A customer-service account: its page alone (Karim 11-16). */
+.cs-only #sections, .cs-only #reqBell, .cs-only #nav .tabset button:not([data-view="cs"]), .cs-only #breakRequests { display: none !important; }

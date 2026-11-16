@@ -225,6 +225,7 @@ CREATE TABLE IF NOT EXISTS employee_flags (employee_id INTEGER PRIMARY KEY, mana
 -- branch's rating of the day on Talabat (with the competitor's).
 CREATE TABLE IF NOT EXISTS cs_entries (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, platform TEXT NOT NULL, branch TEXT, customer TEXT, phone TEXT, order_no TEXT, rating INTEGER, comment TEXT, complaint TEXT, reached TEXT, action TEXT, by_name TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS cs_entries_day ON cs_entries(day);
+CREATE TABLE IF NOT EXISTS cs_links (entry_id INTEGER PRIMARY KEY, platform TEXT, apex_no TEXT, sn TEXT, branch TEXT, employee TEXT, pilot TEXT, at INTEGER, out_at INTEGER);
 CREATE TABLE IF NOT EXISTS cs_branch_day (day TEXT NOT NULL, branch TEXT NOT NULL, rating REAL, competitor REAL, by_name TEXT, at INTEGER NOT NULL, PRIMARY KEY(day, branch));
 -- Karim 11-16: a website order came from the app or the website (WooCommerce created_via), for the orders-by-source sheet.
 CREATE TABLE IF NOT EXISTS site_channels (id INTEGER PRIMARY KEY, via TEXT);

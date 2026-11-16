@@ -1182,7 +1182,7 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
   } catch { L "item lines: $($_.Exception.Message)" }
   # Online orders (anything but Hotline), so the server can tie each website order to the Apex order and who entered it.
   $onlineList = @($list | Where-Object { $_.Kind -ne 'Hotline' -and $_.Entry } | Sort-Object Entry | ForEach-Object {
-    [ordered]@{ no = $_.No; sn = $_.Sn; branch = BName $_.Branch; kind = $_.Kind; at = IsoT $_.Entry; out = $(if ($_.Out) { IsoT $_.Out } else { $null }); user = UName $_.User; amount = R2 $_.Amt; customer = $_.Customer; tag = $tags[$_.No]; items = @($lines[$_.No]) } })
+    [ordered]@{ no = $_.No; sn = $_.Sn; branch = BName $_.Branch; kind = $_.Kind; at = IsoT $_.Entry; out = $(if ($_.Out) { IsoT $_.Out } else { $null }); user = UName $_.User; pilot = $(if ($_.Out) { UName $_.Waiter } else { $null }); amount = R2 $_.Amt; customer = $_.Customer; tag = $tags[$_.No]; items = @($lines[$_.No]) } })
   # Sales: per branch, platform, payment and service type (officer orders not included).
   $salesList = @($list | Group-Object { "$($_.Branch)|$($_.Kind)|$($_.Pay)|$($_.Trans)" } | ForEach-Object {
     $f = $_.Group[0]; [ordered]@{ branch = BName $f.Branch; kind = $f.Kind; pay = $f.Pay; trans = $f.Trans; orders = $_.Count; sales = SumOf $_.Group 'Amt'; discounts = SumOf $_.Group 'Disc' } })

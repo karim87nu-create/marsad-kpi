@@ -197,7 +197,10 @@ window.MarsadExports = function MarsadExports(ctx) {
     // «الكومنتات والشكاوي»: the date, then Karim's columns.
     const ent = cs.entries || [];
     sheets.push({ name: 'الكومنتات والشكاوي', widths: [40, 12, 14, 26, 24, 10], rows: [[{ v: state.to, t: 'date', b: true }], ['الملاحظات', 'الفرع', 'اسم العميل', 'حل الشكوي', 'الشكوي', 'المنصه'].map(H),
-      ...ent.map(e => [e.comment, branchOf(e.branch)?.short || e.branch, e.customer, e.action, e.complaint, e.platform])] });
+      ...ent.map(e => [e.comment, branchOf(e.branch)?.short || e.branch, e.customer, e.action, e.complaint, e.platform]),
+      // Karim 11-16: the positive comments come by themselves (5 stars with words on Talabat and the website), unless typed already.
+      ...(cs.positive || []).filter(p => !ent.some(e => (p.orderNo && e.orderNo === p.orderNo) || (e.comment && e.comment === p.comment)))
+        .map(p => [p.comment, branchOf(p.branch)?.short || p.branch || '', p.customer || '', null, null, p.platform])] });
     // «اجمالي»: the ratio by branch and platform, the rating, the closing time, the complaints, the orders.
     const T = Array.from({ length: 14 }, () => Array(16).fill(null)), put = (r, c, v) => { T[r - 1][c] = v; };
     const sumifs = (col, b, p) => 'SUMIFS(' + RT + '!$' + col + ':$' + col + ',' + RT + '!$B:$B,' + b + (p ? ',' + RT + '!$C:$C,' + p : '') + ')';

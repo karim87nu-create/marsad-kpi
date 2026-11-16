@@ -5,7 +5,7 @@
 // the old sheet is imported once. Management users (employee_flags.manager) are never suggested.
 // The first form (11-11, marks per item, qa_evals) is still read for the averages of its days.
 import { addDays, businessDay, validDate, iso } from './time.js';
-import { weekStart } from './perf.js';
+import { weekStart, phKey } from './perf.js';
 
 export const FORM = [
   { key: 'opening', label: 'الافتتاح', max: 10 },
@@ -21,7 +21,7 @@ export const FORM = [
   { key: 'pro', label: 'احترافية المكالمة', max: 20 },
 ];
 export const TYPES = ['اوردر', 'استفسار', 'شكوى'];
-const FLAGS = { complaint: 'شكوى', short: 'مكالمة طلب قصيرة جدًا', long: 'مكالمة طويلة', repeat: 'العميل اتصل تاني', wentToPlatform: 'ماطلبش مننا وطلب من طلبات أو الموقع', fixed: 'الأوردر اتعدل بعد الضرب' };
+const FLAGS = { csComplaint: 'العميل اشتكى لخدمة العملاء', csOrder: 'أوردر عليه شكوى من ضربه', complaint: 'شكوى', short: 'مكالمة طلب قصيرة جدًا', long: 'مكالمة طويلة', repeat: 'العميل اتصل تاني', wentToPlatform: 'ماطلبش مننا وطلب من طلبات أو الموقع', fixed: 'الأوردر اتعدل بعد الضرب' };
 const PER_WEEK = 5;
 export const CRITICAL = {};
 
@@ -52,12 +52,24 @@ function setup(app) {
     for (const d of days) { try { const p = await app.perfDay(d, now); all.push(...p.calls); } catch {} }
     const done = new Map((await db.prepare('SELECT call_key, COUNT(*) n FROM qa_scores WHERE day BETWEEN ? AND ? AND call_key IS NOT NULL GROUP BY call_key').all(week, addDays(week, 6))).map(r => [r.call_key, r.n]));
     const skip = await managers();
+    // Karim 11-16 «الجودة مع الشكاوى»: a call from a customer who complained to customer service that week, and the call
+    // that took an order customer service tied a complaint to, are reviewed first.
+    const cs = await db.prepare("SELECT e.day, e.phone, l.employee, l.at FROM cs_entries e LEFT JOIN cs_links l ON l.entry_id = e.id WHERE e.day BETWEEN ? AND ? AND e.complaint IS NOT NULL")
+      .all(addDays(week, -1), addDays(week, 7)).catch(() => []);
+    const csPhones = new Set(cs.map(x => phKey(x.phone)).filter(Boolean));
+    const emps = new Map((await db.prepare('SELECT id, name FROM employees').all()).map(e => [normName(e.name), e.id]));
+    const csOrders = cs.filter(x => x.employee && x.at).map(x => ({ id: emps.get(normName(x.employee)), at: x.at })).filter(x => x.id);
+    for (const c of all) {
+      if (c.phk && csPhones.has(c.phk) && !c.flags.includes('csComplaint')) c.flags.unshift('csComplaint');
+      if (csOrders.some(o => o.id === c.employeeId && o.at >= c.at - 2 * 60000 && o.at <= c.at + 30 * 60000) && !c.flags.includes('csOrder')) c.flags.unshift('csOrder');
+    }
+    const weight = c => c.flags.length + (c.flags.includes('csComplaint') || c.flags.includes('csOrder') ? 10 : 0);
     const by = new Map(); for (const c of all) if (!skip.has(c.employeeId)) (by.get(c.employeeId) || by.set(c.employeeId, []).get(c.employeeId)).push(c);
     const out = [];
     for (const [, list] of by) {
       const rnd = c => { let h = 0; for (const ch of c.key + week) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h; };
-      const pick = [...list].sort((a, b) => b.flags.length - a.flags.length || rnd(a) - rnd(b)).slice(0, PER_WEEK);
-      for (const c of pick) out.push({ ...c, at: iso(c.at), flagLabels: c.flags.map(f => FLAGS[f] || f), evaluated: done.get(c.key) || 0 });
+      const pick = [...list].sort((a, b) => weight(b) - weight(a) || rnd(a) - rnd(b)).slice(0, PER_WEEK);
+      for (const { phk, ...c } of pick) out.push({ ...c, at: iso(c.at), flagLabels: c.flags.map(f => FLAGS[f] || f), evaluated: done.get(c.key) || 0 });
     }
     return out;
   }

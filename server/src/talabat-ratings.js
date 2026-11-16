@@ -79,7 +79,7 @@ function setup(app) {
   app.talabatRatings = async (from, to) => (await db.prepare('SELECT * FROM talabat_ratings WHERE day BETWEEN ? AND ?').all(from, to).catch(() => []));
 
   app.route('GET', '/api/talabat/rating-pages', async ctx => {
-    await app.requireAdmin(ctx);
+    await app.requireAdmin(ctx, 'csRead');
     return { pages: await pages(), error: await get('talabat_rating_error'), at: Number(await get('talabat_rating_at')) || null };
   });
   app.route('POST', '/api/talabat/rating-pages', async ctx => {

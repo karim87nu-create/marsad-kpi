@@ -1,6 +1,8 @@
 import { sha256, randomToken, hashPassword, verifyPassword } from './security.js';
 
-const ROLES = ['admin', 'supervisor', 'viewer'];
+// 'cs' (Karim 11-16 «صفحة خدمة العملاء بس»): a customer-service user sees and writes only the customer-service page,
+// each under their own name.
+const ROLES = ['admin', 'supervisor', 'viewer', 'cs'];
 const SESSION_MS = 12 * 3600000;
 const MASTER = { id: 0, name: 'الإدارة', role: 'admin' };
 
@@ -14,15 +16,23 @@ function setup(app) {
     return app.config.adminPasswordHash;
   }
 
+  // The table only allows admin / supervisor / viewer (a CHECK in the schema, not changed on a live database): a cs
+  // account is stored as 'viewer' and listed in the setting admin_cs_ids.
+  const csIds = async () => { try { return new Set(JSON.parse((await db.prepare("SELECT value FROM settings WHERE key = 'admin_cs_ids'").get())?.value || '[]').map(Number)); } catch { return new Set(); } };
+  const setCs = async (id, on) => { const s = await csIds(); on ? s.add(Number(id)) : s.delete(Number(id));
+    await db.prepare("INSERT INTO settings (key, value) VALUES ('admin_cs_ids', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(JSON.stringify([...s])); };
+  const roleOf = (a, cs) => cs.has(Number(a.id)) ? 'cs' : a.role;
+
   async function identityForPassword(password) {
     if (!password) return null;
     const master = await masterHash();
     if (master && await verifyPassword(password, master)) return MASTER;
+    const cs = await csIds();
     for (const a of await db.prepare('SELECT * FROM admin_accounts WHERE deleted_at IS NULL AND active = 1').all()) {
-      if (await verifyPassword(password, a.password_hash)) return { id: a.id, name: a.name, role: a.role };
+      if (await verifyPassword(password, a.password_hash)) return { id: a.id, name: a.name, role: roleOf(a, cs) };
       if (await app.legacy.verifyAdmin(password, a.password_hash)) {
         await db.prepare('UPDATE admin_accounts SET password_hash = ? WHERE id = ?').run(await hashPassword(password), a.id);
-        return { id: a.id, name: a.name, role: a.role };
+        return { id: a.id, name: a.name, role: roleOf(a, cs) };
       }
     }
     return null;
@@ -31,7 +41,7 @@ function setup(app) {
   async function accountIdentity(id) {
     if (id === 0) return MASTER;
     const a = await db.prepare('SELECT * FROM admin_accounts WHERE id = ? AND deleted_at IS NULL AND active = 1').get(id);
-    return a ? { id: a.id, name: a.name, role: a.role } : null;
+    return a ? { id: a.id, name: a.name, role: roleOf(a, await csIds()) } : null;
   }
 
   // x-admin-password carries a session token from /api/admin-access login; a raw
@@ -53,10 +63,13 @@ function setup(app) {
     return identity;
   }
 
-  // level: 'read' (any role), 'write' (admin or supervisor), 'admin'
+  // level: 'read' (any role but cs), 'write' (admin or supervisor), 'admin'; the customer-service page: 'csRead' (any
+  // role), 'cs' (admin, supervisor or cs); 'self' (who am I). A cs account gets nothing else.
   app.requireAdmin = async (ctx, level = 'read') => {
     const who = await resolve(ctx);
     if (!who) fail(401, 'كلمة المرور غير صحيحة أو انتهى الدخول');
+    if (who.role === 'cs' && !['cs', 'csRead', 'self'].includes(level)) fail(403, 'الحساب ده لصفحة خدمة العملاء بس');
+    if (level === 'cs' && !['admin', 'supervisor', 'cs'].includes(who.role)) fail(403, 'هذا الحساب للعرض فقط');
     if (level === 'admin' && who.role !== 'admin') fail(403, 'هذا الإجراء لحساب المدير فقط');
     if (level === 'write' && !['admin', 'supervisor'].includes(who.role)) fail(403, 'هذا الحساب للعرض فقط');
     return who;
@@ -77,11 +90,11 @@ function setup(app) {
     if (await passwordTaken(password, exceptId)) fail(409, 'الباسورد مستخدم لحساب آخر؛ اختار باسورد مختلف');
   }
 
-  const accounts = async () => (await db.prepare('SELECT id, name, role, active FROM admin_accounts WHERE deleted_at IS NULL ORDER BY id')
-    .all()).map(a => ({ ...a, active: !!a.active }));
+  const accounts = async () => { const cs = await csIds(); return (await db.prepare('SELECT id, name, role, active FROM admin_accounts WHERE deleted_at IS NULL ORDER BY id')
+    .all()).map(a => ({ ...a, role: roleOf(a, cs), active: !!a.active })); };
 
   app.route('GET', '/api/admin-access', async ctx => {
-    const who = await app.requireAdmin(ctx);
+    const who = await app.requireAdmin(ctx, 'self');
     return { identity: who, ...(who.role === 'admin' ? { accounts: await accounts() } : {}) };
   });
 
@@ -127,7 +140,8 @@ function setup(app) {
     if (!name || name.length > 100) fail(400, 'اكتب اسم المستخدم');
     if (!ROLES.includes(b.role)) fail(400, 'اختار دورًا صحيحًا');
     await checkNewPassword(b.password, b.confirmation);
-    const r = await db.prepare('INSERT INTO admin_accounts (name, role, password_hash, created_at) VALUES (?,?,?,?)').run(name, b.role, await hashPassword(b.password), ctx.now);
+    const r = await db.prepare('INSERT INTO admin_accounts (name, role, password_hash, created_at) VALUES (?,?,?,?)').run(name, b.role === 'cs' ? 'viewer' : b.role, await hashPassword(b.password), ctx.now);
+    if (b.role === 'cs') await setCs(r.lastInsertRowid, true);
     await app.audit('admin_account_created', null, { actor: who.name, accountId: r.lastInsertRowid, name, role: b.role });
     return { ok: true, id: r.lastInsertRowid };
   });
@@ -137,7 +151,7 @@ function setup(app) {
     const b = ctx.body, a = await db.prepare('SELECT * FROM admin_accounts WHERE id = ? AND deleted_at IS NULL').get(Number(b.id));
     if (!a) fail(404, 'المستخدم غير موجود');
     const changes = {};
-    if (b.role !== undefined) { if (!ROLES.includes(b.role)) fail(400, 'اختار دورًا صحيحًا'); changes.role = b.role; }
+    if (b.role !== undefined) { if (!ROLES.includes(b.role)) fail(400, 'اختار دورًا صحيحًا'); changes.role = b.role === 'cs' ? 'viewer' : b.role; }
     if (b.active !== undefined) { if (!b.active && a.id === who.id) fail(400, 'مينفعش توقف حسابك انت'); changes.active = b.active ? 1 : 0; }
     if (b.password) { await checkNewPassword(b.password, b.confirmation, a.id); changes.password_hash = await hashPassword(b.password); }
     if (!Object.keys(changes).length) fail(400, 'لا يوجد تغيير');
@@ -146,7 +160,8 @@ function setup(app) {
       db.prepare('UPDATE admin_accounts SET ' + keys.map(k => k + ' = ?').join(', ') + ' WHERE id = ?').bind(...keys.map(k => changes[k]), a.id),
       db.prepare('UPDATE admin_sessions SET revoked_at = ? WHERE account_id = ? AND revoked_at IS NULL').bind(ctx.now, a.id),
     ]);
-    await app.audit('admin_account_changed', null, { actor: who.name, accountId: a.id, role: changes.role, active: b.active, passwordChanged: !!b.password });
+    if (b.role !== undefined) await setCs(a.id, b.role === 'cs');
+    await app.audit('admin_account_changed', null, { actor: who.name, accountId: a.id, role: b.role, active: b.active, passwordChanged: !!b.password });
     return { ok: true };
   });
 

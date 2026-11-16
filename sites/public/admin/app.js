@@ -26,7 +26,7 @@
   const STATE = { ready_night: 'متاح (بعد 2 الفجر)', on_call_night: 'في مكالمة (بعد 2 الفجر)', break_night: 'بريك (بعد 2 الفجر)', unknown_night: 'انقطاع رصد (بعد 2 الفجر)', ready: 'متاح', on_call: 'في مكالمة', break: 'بريك', unknown: 'انقطاع رصد', logged_in: 'سجّل ولسه مدخلش الكونسول', offline: 'برّه التحويلة', logged_out: 'خرج', out_arabicss: 'خرج من أرابيكس', out_extension: 'خرج من التحويلة', out_browser: 'قفل المتصفح', out_gap: 'انقطاع رصد', disconnected: 'انقطع الاتصال', not_started: 'مبدأش', no_session: 'لم يسجل', shift_ended: 'خلص الشيفت', post_call: 'أنهى مكالمة', break_unconfirmed: 'بريك بلا طرفين مؤكدين' };
   const QUEUE = q => ({ 0: 'خارج ساعات العمل', 1: 'طلب أوردر', 2: 'متابعة أوردر', 3: 'شكاوى' })[String(q || '').slice(-1)] || 'غير معروف';
   const MISSED = { counted: 'محتسبة', short_exempt: 'قصيرة ≤7ث — للتوضيح', after_hours: 'خارج ساعات العمل', unknown_wait: 'انتظار غير معروف', unknown_queue: 'نوع طلب غير معروف' };
-  const ROLE = { admin: 'مدير', supervisor: 'مشرف', viewer: 'مشاهدة فقط' };
+  const ROLE = { admin: 'مدير', supervisor: 'مشرف', viewer: 'مشاهدة فقط', cs: 'خدمة العملاء' };
 
   // ---------- server ----------
   let token = sessionStorage.getItem(TOKEN) || '', who = null, offset = 0;
@@ -40,6 +40,8 @@
     return d;
   }
   const canWrite = () => ['admin', 'supervisor'].includes(who?.role), isAdmin = () => who?.role === 'admin';
+  // Karim 11-16 «صفحة خدمة العملاء بس»: a customer-service account opens on that page alone and writes there under its own name.
+  const csOnly = () => who?.role === 'cs', canCs = () => canWrite() || csOnly();
 
   // ---------- tables ----------
   // columns: { title, get(row), show?(row), type: 'text'|'number'|'duration'|'datetime'|'percent', cls? }
@@ -135,7 +137,7 @@
   const BOT = window.MarsadBot({ api, h, $, table, pill, state, canWrite: () => canWrite(), showError: x => showError(x) });
   const ROSTER = window.MarsadRoster({ api, h, $, canWrite: () => canWrite(), showError: x => showError(x), cairoToday: () => cairoToday() });
   const QA = window.MarsadQa({ api, h, $, table, pill, kpi, state, canWrite: () => canWrite(), isAdmin: () => isAdmin(), showError: x => showError(x), cairoToday: () => cairoToday() });
-  const CS = window.MarsadCs({ api, h, $, table, pill, kpi, state, canWrite: () => canWrite(), isAdmin: () => isAdmin(), showError: x => showError(x), cairoToday: () => cairoToday() });
+  const CS = window.MarsadCs({ api, h, $, table, pill, kpi, state, canWrite: () => canCs(), csOnly: () => csOnly(), me: () => who, isAdmin: () => isAdmin(), showError: x => showError(x), cairoToday: () => cairoToday() });
   const EXP = window.MarsadExports({ api, h, $, state, showError: x => showError(x) });
   for (const b of document.querySelectorAll('[data-qa-export]')) b.onclick = () => EXP.RUN.quality().catch(x => showError(x));
   const FC = window.MarsadForecast({ api, h, $, table, pill, kpi, showError: x => showError(x), cairoToday: () => cairoToday() });
@@ -216,7 +218,7 @@
   }
   let requestsBusy = false;
   async function refreshRequests() {
-    if (requestsBusy) return;
+    if (requestsBusy || csOnly()) return;
     requestsBusy = true;
     try {
     try { state.requests = await api('/api/break-requests'); } catch (e) { if (state.view === 'breaks') showError(e); return; }
@@ -646,7 +648,9 @@
     $('adminUsersPanel').hidden = !isAdmin();
     if (isAdmin()) {
       const a = await api('/api/admin-access');
-      table('adminsTable', [{ title: 'الاسم', get: x => x.name }, { title: 'الدور', get: x => ROLE[x.role] }, { title: 'الحالة', get: x => x.active ? 'مفعّل' : 'موقوف' },
+      table('adminsTable', [{ title: 'الاسم', get: x => x.name }, { title: 'الدور', get: x => ROLE[x.role], show: x => x.id === who?.id ? ROLE[x.role] : (() => {
+        const sel = h('select', {}, ...Object.entries(ROLE).map(([k, t]) => h('option', { value: k, textContent: t, selected: k === x.role })));
+        sel.onchange = () => act('adminMessage', () => api('/api/admin-access', { method: 'PATCH', body: { id: x.id, role: sel.value } }), 'اتغير الدور'); return sel; })() }, { title: 'الحالة', get: x => x.active ? 'مفعّل' : 'موقوف' },
         { title: '', get: () => '', show: x => h('span', { className: 'inline' },
           btn('الباسورد', async () => { const p = await askPasswords('باسورد جديد لـ ' + x.name, { minLength: 6, digits: false }); if (p == null) return; await act('adminMessage', () => api('/api/admin-access', { method: 'PATCH', body: { id: x.id, password: p, confirmation: p } }), 'اتغير'); }),
           x.id === who?.id ? null : btn(x.active ? 'إيقاف' : 'تفعيل', () => act('adminMessage', () => api('/api/admin-access', { method: 'PATCH', body: { id: x.id, active: !x.active } }), 'اتحفظ'))) }], a.accounts || []);
@@ -1000,6 +1004,7 @@
   async function show(view, force = false) {
     view = ALIAS[view] || view;
     if (!VIEWS[view]) view = 'home';
+    if (csOnly()) view = 'cs';
     state.view = view;
     const sec = SECTION_OF[view] || 'calls'; lastIn[sec] = view; if (sec !== state.section) setSection(sec);
     for (const b of document.querySelectorAll('#nav [data-view]')) { const on = b.dataset.view === view; b.classList.toggle('active', on); b.setAttribute('aria-current', on ? 'page' : 'false'); }
@@ -1055,7 +1060,7 @@
   // الفروع الآن: timers every second, the summary every 5 seconds; elsewhere only the late badge, every 30 seconds.
   let boardBusy = false, boardAt = 0;
   setInterval(() => {
-    if (!token || document.hidden) return;
+    if (!token || document.hidden || csOnly()) return;
     if (liveOn('branchesNow')) OR.tickBoard();
     const every = liveOn('branchesNow') ? 10000 : 60000;
     if (boardBusy || Date.now() - boardAt < every) return;
@@ -1092,7 +1097,9 @@
     who = d.identity;
     $('who').textContent = who.name + ' · ' + ROLE[who.role];
     $('login').hidden = true; $('app').hidden = false;
+    document.body.classList.toggle('cs-only', csOnly());
     $('dayTo').value = state.to; $('dayTo').max = cairoToday(); $('day').value = state.day; $('day').max = cairoToday(); $('dayNext').disabled = true;
+    if (csOnly()) return show('cs');
     await loadEmployees();
     refreshRequests();
     show(decodeURIComponent(location.hash.slice(1)) || 'home');

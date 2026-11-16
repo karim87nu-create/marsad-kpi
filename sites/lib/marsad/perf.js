@@ -159,7 +159,7 @@ function setup(app) {
         const rec = records.find(r => digits(r.phone) && digits(r.phone) === digits(c.phone) && r.startMs != null && Math.abs(r.startMs + (r.waitSeconds || 0) * 1000 - start) <= 120000);
         if (rec?.waitSeconds != null) { e.waitSum += rec.waitSeconds; e.waitN++; }
       }
-      callList.push({ key: day + '|' + c.employeeId + '|' + start, employeeId: c.employeeId, at: start, durationSeconds: dur, queue: c.queue || null, phoneEnd: digits(c.phone).slice(-4) || null, flags });
+      callList.push({ key: day + '|' + c.employeeId + '|' + start, employeeId: c.employeeId, at: start, durationSeconds: dur, queue: c.queue || null, phoneEnd: digits(c.phone).slice(-4) || null, phk: k || null, flags });
     }
     // Orders each employee entered on Apex (by the Apex user name linked to them).
     for (const u of book.staff || []) { const id = names.get(u.user); if (id) E(id).entered += u.orders; }
