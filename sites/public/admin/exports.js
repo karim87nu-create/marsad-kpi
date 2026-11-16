@@ -14,7 +14,7 @@ window.MarsadExports = function MarsadExports(ctx) {
   // RLM keeps «من … إلى …» in order inside a right-to-left cell.
   const label = () => state.day === state.to ? dmy(state.day) : 'من \u200F' + dmy(state.day) + '\u200F إلى \u200F' + dmy(state.to);
   const fileLabel = () => state.day === state.to ? state.day : state.day + '_' + state.to;
-  const sum = (l, f) => l.reduce((n, x) => n + (Number(f(x)) || 0), 0);
+  const sum = (l, f) => l.reduce((n, x, i) => n + (Number(f(x, i)) || 0), 0);
   const round = v => Math.round((Number(v) || 0) * 100) / 100;
   const days = async () => (await api('/api/reports/days?from=' + state.day + '&to=' + state.to, { timeout: 120000 })).days;
   const say = t => { $('expMsg').textContent = t; };
@@ -27,38 +27,28 @@ window.MarsadExports = function MarsadExports(ctx) {
   const q = n => "'" + n.replace(/'/g, "''") + "'";
   const div = (a, b) => b ? a / b : 0;
 
-  // ---------- 1. تقرير الكول سنتر ----------
+  // ---------- 1. تقرير الكول سنتر (الصورة: شيت واحد) ----------
   async function callCenter() {
     const list = await days(), H = v => ({ v, s: 'head', b: true });
     const c = k => sum(list, d => d.calls?.[k]), hot = sum(list, d => d.hotline);
-    const calls = c('calls'), missed = c('abandoned'), ans = c('answered'), lost = c('orderQueueMissed'), after = c('afterHours');
-    const sheets = [], multi = list.length > 1, D = q('كل يوم'), tot = list.length + 2;
-    // One day: the numbers themselves; a period: the sums of «كل يوم» (fix a day there and the report follows).
-    const ref = (colL, v) => multi ? F(D + '!' + colL + tot, v, { b: true }) : { v, b: true };
+    const calls = c('calls'), missed = c('abandoned'), ans = c('answered');
     const rows = [
       [{ v: 'Call center Report', s: 'title', b: true, big: true }, null, null, null, null, null],
       [{ v: label(), s: 'sub', b: true, big: true }, null, null, null, null, null],
       [H('نسبه الطلبات'), H('عدد الاوردرات المفعله'), H('عدد المكالمات المستلمه'), H('نسبه المكالمات الفائته'), H('عدد المكالمات الفائته (اكثر من 10ثواني)'), H('اجمالي المكالمات الوارده')],
-      [F('IFERROR(B4/C4,0)', div(hot, ans), { t: 'pct', b: true }), ref('F', hot), ref('E', ans), F('IFERROR(E4/F4,0)', div(missed, calls), { t: 'pct', b: true }), ref('C', missed), ref('B', calls)],
+      [F('IFERROR(B4/C4,0)', div(hot, ans), { t: 'pct', b: true }), { v: hot, b: true }, F('F4-E4', calls - missed, { b: true }), F('IFERROR(E4/F4,0)', div(missed, calls), { t: 'pct', b: true }), { v: missed, b: true }, { v: calls, b: true }],
       [H('"الطلبات المحتملة من المكالمات الفائتة"'), null, null, H('بعد اوقات العمل'), null, null],
-      [ref('H', lost), null, null, ref('I', after), null, null]];
-    sheets.push({ name: 'التقرير', widths: [22, 18, 20, 18, 24, 22], heights: [40, 34, 44, 34, 40, 30], rows, merges: ['A1:F1', 'A2:F2', 'A5:C5', 'D5:F5', 'A6:C6', 'D6:F6'] });
-    if (multi) sheets.push({ name: 'كل يوم', widths: [14, 12, 14, 12, 14, 12, 12, 14, 14], freeze: 1, rows: [
-      ['التاريخ', 'اجمالي المكالمات الوارده', 'عدد المكالمات الفائته', 'نسبه الفائته', 'عدد المكالمات المستلمه', 'عدد الاوردرات المفعله', 'نسبه الطلبات', 'الطلبات المحتملة من الفائتة', 'بعد اوقات العمل'].map(H),
-      ...list.map((d, i) => { const r = i + 2, x = d.calls || {};
-        return [{ v: d.day, t: 'date' }, x.calls ?? null, x.abandoned ?? null, F('IFERROR(C' + r + '/B' + r + ',0)', div(x.abandoned, x.calls), { t: 'pct' }), x.answered ?? null, d.hotline,
-          F('IFERROR(F' + r + '/E' + r + ',0)', div(d.hotline, x.answered), { t: 'pct' }), x.orderQueueMissed ?? null, x.afterHours ?? null]; }),
-      [{ v: 'الإجمالي', s: 'sub', b: true }, ...[['B', calls], ['C', missed], null, ['E', ans], ['F', hot], null, ['H', lost], ['I', after]].map((x, j) => x ? F('SUM(' + x[0] + '2:' + x[0] + (tot - 1) + ')', x[1], { s: 'sub', b: true })
-        : F(j === 2 ? 'IFERROR(C' + tot + '/B' + tot + ',0)' : 'IFERROR(F' + tot + '/E' + tot + ',0)', j === 2 ? div(missed, calls) : div(hot, ans), { t: 'pct', s: 'sub', b: true }))]] });
-    X().grid('تقرير الكول سنتر ' + fileLabel(), sheets);
+      [{ v: c('orderQueueMissed'), b: true }, null, null, { v: c('afterHours'), b: true }, null, null]];
+    X().grid('Call center Report ' + fileLabel(), [{ name: 'Call center Report', widths: [22, 18, 20, 18, 24, 22], heights: [40, 34, 44, 34, 40, 30], rows, merges: ['A1:F1', 'A2:F2', 'A5:C5', 'D5:F5', 'A6:C6', 'D6:F6'] }]);
     return list.some(d => !d.calls) ? 'فيه أيام سجل المكالمات بتاعها لسه مااتسحبش من أرابيكس' : '';
   }
 
   // ---------- 2. مبيعات الفروع (هوت لاين، طلبات، وفرها، لينك، موقعنا) ----------
   function salesBlocks(list) {
     return BRANCHES.map(b => {
-      const s = list.flatMap(d => d.branches.filter(x => branchOf(x.name) === b).flatMap(x => x.sales));
-      const pick = f => { const l = s.filter(f); return { amount: Math.round(sum(l, x => x.sales)), orders: sum(l, x => x.orders) }; };
+      // Each day's amount rounded on its own, so the period equals the sum of the days' sheets.
+      const per = list.map(d => d.branches.filter(x => branchOf(x.name) === b).flatMap(x => x.sales));
+      const pick = f => ({ amount: sum(per, s => Math.round(sum(s.filter(f), x => x.sales))), orders: sum(per, s => sum(s.filter(f), x => x.orders)) });
       const off = list.flatMap(d => d.branches.filter(x => branchOf(x.name) === b));
       return { b,
         // Karim's sheet: the Hotline «كاش» is everything not Visa (the payment link included; «لينك» shows it again below).
@@ -119,35 +109,42 @@ window.MarsadExports = function MarsadExports(ctx) {
     return list.some(d => !d.linked) ? 'فيه أيام Apex بتاعها مش عند المرصد' : '';
   }
 
-  // ---------- 3. الأوردرات حسب المنطقة ومصدر الطلب ----------
+  // ---------- 3. الأوردرات حسب المنطقة ومصدر الطلب (ملف FB: الشهر كله في شيت) ----------
   const SOURCES = ['تليفون', 'واتساب', 'شات', 'أبليكيشن', 'ويب سايت'];
   async function bySource() {
-    const list = await days(), H = v => ({ v, s: 'head', b: true }), C = X().col;
+    // The month of the chosen day, every day in its row; the days up to the chosen one are filled.
+    const to = state.to, m0 = to.slice(0, 8) + '01', ym = to.slice(0, 7);
+    const list = (await api('/api/reports/days?from=' + m0 + '&to=' + to, { timeout: 180000 })).days, byDay = new Map(list.map(d => [d.day, d]));
+    const n = new Date(Date.UTC(+ym.slice(0, 4), +ym.slice(5, 7), 0)).getUTCDate(), H = v => ({ v, s: 'head', b: true }), C = X().col;
     const cellsOf = d => BRANCHES.flatMap(b => {
-      const x = d.branches.filter(y => branchOf(y.name) === b), k = n => sum(x, y => y.kinds?.[n]);
+      const x = d.branches.filter(y => branchOf(y.name) === b), k = nm => sum(x, y => y.kinds?.[nm]);
       // Karim's sheet: «تليفون» = the Hotline and Wafarha orders; the website split by the app / the website.
       const app = sum(x, y => y.site?.app), web = sum(x, y => (y.site?.web || 0) + (y.site?.other || 0)), siteAll = k('الموقع');
-      return [k('Hotline') + k('وفرها'), null, null, app, Math.max(siteAll - app, web)];
+      return [k('Hotline') + k('وفرها'), 0, 0, app, Math.max(siteAll - app, web)];
     });
     const rows = [[{ v: 'متابعة أوردرات الدهان اليومية حسب المنطقة ومصدر الطلب', s: 'title', b: true, big: true }, ...Array(16).fill(null)],
       [H('التاريخ'), ...BRANCHES.flatMap(b => [H(b.region), null, null, null, null]), H('إجمالي اليوم')],
-      [H(null), ...BRANCHES.flatMap(() => SOURCES.map(H)), H(null)]];
-    const merges = ['A1:Q1', 'A2:A3', 'Q2:Q3', 'B2:F2', 'G2:K2', 'L2:P2'], grid = list.map(cellsOf);
-    list.forEach((d, i) => { const r = 4 + i; rows.push([{ v: d.day, t: 'date' }, ...grid[i], F('SUM(B' + r + ':P' + r + ')', sum(grid[i], v => v), { b: true })]); });
-    const last = 3 + list.length, s0 = last + 2, colSum = j => sum(grid, g => g[j]);
-    rows.push([], [{ v: 'ملخص الفترة', s: 'sub', b: true }], [H('المنطقة'), ...SOURCES.map(H), H('الإجمالي')]);
+      [H(null), ...BRANCHES.flatMap(() => SOURCES.map(H)), H(null)], []];
+    const merges = ['A1:Q1', 'A2:A3', 'Q2:Q3', 'B2:F2', 'G2:K2', 'L2:P2'], grid = [];
+    for (let i = 1; i <= n; i++) {
+      const day = ym + '-' + String(i).padStart(2, '0'), d = byDay.get(day), r = 4 + i, cells = d?.linked ? cellsOf(d) : Array(15).fill(null);
+      grid.push(cells.map(v => v || 0));
+      rows.push([{ v: day, t: 'date' }, ...cells, F('SUM(B' + r + ':P' + r + ')', sum(cells, v => v), { b: true })]);
+    }
+    const last = 4 + n, s0 = last + 4, colSum = j => sum(grid, g => g[j]);
+    rows.push([], [], [], [{ v: 'ملخص الشهر', s: 'sub', b: true }], [H('المنطقة'), ...SOURCES.map(H), H('الإجمالي')]);
     BRANCHES.forEach((b, i) => { const r = s0 + 2 + i, c0 = 1 + i * 5;
-      rows.push([{ v: b.region, b: true }, ...SOURCES.map((_, j) => F('SUM(' + C(c0 + j) + '4:' + C(c0 + j) + last + ')', colSum(i * 5 + j))), F('SUM(B' + r + ':F' + r + ')', sum(SOURCES, (_, j) => colSum(i * 5 + j)), { b: true })]); });
-    const tr = s0 + 5;
-    rows.push([{ v: 'الإجمالي', s: 'sub', b: true }, ...[0, 1, 2, 3, 4, 5].map(j => F('SUM(' + C(j + 1) + (s0 + 2) + ':' + C(j + 1) + (tr - 1) + ')', j < 5 ? sum([0, 1, 2], i => colSum(i * 5 + j)) : sum(grid, g => sum(g, v => v)), { s: 'sub', b: true }))]);
-    X().grid('الأوردرات حسب المنطقة والمصدر ' + fileLabel(), [{ name: 'المتابعة اليومية', widths: [12, ...Array(15).fill(10), 12], rows, merges, freeze: 3 }]);
-    return 'واتساب وشات بيتكتبوا بإيد (Apex مش بيفرّقهم عن التليفون)' + (list.some(d => d.branches.some(b => b.site?.other)) ? '؛ أوردرات الموقع اللي قبل التحديث متحسبة «ويب سايت»' : '');
+      rows.push([{ v: b.region, b: true }, ...SOURCES.map((_, j) => F('SUM(' + C(c0 + j) + '5:' + C(c0 + j) + last + ')', colSum(i * 5 + j))), F('SUM(B' + r + ':F' + r + ')', sum(SOURCES, (_, j) => colSum(i * 5 + j)), { b: true })]); });
+    const t0 = s0 + 2;
+    rows.push([{ v: 'الإجمالي', s: 'sub', b: true }, ...[0, 1, 2, 3, 4, 5].map(j => F('SUM(' + C(j + 1) + t0 + ':' + C(j + 1) + (t0 + 2) + ')', j < 5 ? sum([0, 1, 2], i => colSum(i * 5 + j)) : sum(grid, g => sum(g, v => v)), { s: 'sub', b: true }))]);
+    X().grid('ElDahan_Daily_Orders_' + ym, [{ name: 'المتابعة اليومية', widths: [12, ...Array(15).fill(10), 12], rows, merges, freeze: 3 }]);
+    return 'الشهر ' + ym + ' لحد ' + dmy(to);
   }
 
-  // ---------- 4. الإلغاءات (نفس شيت الإلغاءات: التفاصيل، النسبة، الأسباب، الغلق والتقييم، الكومنتات، الإجمالي) ----------
-  // Platforms as in Karim's file; Wafarha counts with the Hotline (as the team counts it); Page and WhatsApp are written by hand.
+  // ---------- 4. الإلغاءات (نفس الست شيتات بالترتيب) ----------
+  // Platforms as in Karim's file; Wafarha counts with the Hotline (as the team counts it).
   const PLATFORM = { Hotline: 'Hotline', 'وفرها': 'Hotline', 'طلبات': 'Talabat', 'الموقع': 'WEB' };
-  const PLATS = ['APP', 'Hotline', 'Page', 'Talabat', 'WEB', 'Whatsapp'];
+  const PLATS = ['APP', 'Hotline', 'Page', 'Talabat', 'WEB', 'Whatsapp'], RATIO_ORDER = ['Talabat', 'WEB', 'APP', 'Hotline', 'Whatsapp', 'Page'];
   const REASONS = ['رفض من المطعم', 'تأخر في التوصيل', 'خطأ في الطلب', 'المنتج غير متوفر', 'إلغاء العميل', 'مشكلة في الدفع', 'مشكلة تقنية', 'جوده', 'أخرى'];
   const reasonOf = t => { const s = String(t || ''); return /رفض|reject/i.test(s) ? REASONS[0] : /تأخ|تاخ|late|delay/i.test(s) ? REASONS[1] : /خطأ|خطا|غلط|wrong/i.test(s) ? REASONS[2] : /متوفر|نواقص|نفذ|unavailable|out of stock/i.test(s) ? REASONS[3]
     : /العميل|customer/i.test(s) ? REASONS[4] : /دفع|payment|فيزا/i.test(s) ? REASONS[5] : /تقن|system|سيستم/i.test(s) ? REASONS[6] : /جود|quality|بارد/i.test(s) ? REASONS[7] : REASONS[8]; };
@@ -156,127 +153,146 @@ window.MarsadExports = function MarsadExports(ctx) {
   async function cancels() {
     const [list, own, cs] = await Promise.all([days(), api('/api/cancels/owners?from=' + state.day + '&to=' + state.to).catch(() => ({ list: [] })), api('/api/cs?from=' + state.day + '&to=' + state.to).catch(() => ({ entries: [], ratings: [] }))]);
     const owner = new Map((own.list || []).map(c => [String(c.apexNo || c.ref), c]));
-    const H = v => ({ v, s: 'head', b: true }), DT = q('تفاصيل الإلغاءات'), RT = q('نسبه الالغاءات'), CL = q('وقت غلق طلبات والتقييم'), CM = q('الكومنتات والشكاوي');
+    const H = v => ({ v, s: 'head', b: true }), DT = q('تفاصيل الإلغاءات'), RT = q('نسبه الالغاءات'), CL = q('وقت غلق طلبات والتقييم'), CM = q('الكومنتات والشكاوي'), C = X().col;
     const det = list.flatMap(d => (d.cancels || []).map(c => { const o = owner.get(String(c.no)), f = o?.final || o?.owner;
       return { day: d.day, month: d.day.slice(0, 7), branch: branchOf(c.branch)?.short || c.branch, platform: PLATFORM[c.kind] || c.kind, area: c.area || '', reason: reasonOf(c.reason), raw: c.reason,
         mine: f ? (['employee', 'branch', 'pilot'].includes(f) ? 'نعم' : 'لا') : '', amount: c.amount }; }));
     const sheets = [];
-    sheets.push({ name: 'تفاصيل الإلغاءات', widths: [12, 10, 12, 12, 18, 16, 14, 28, 12], freeze: 2, merges: ['A1:I1'], rows: [[{ v: 'الالغاءات ' + label(), s: 'title', b: true, big: true }],
-      ['التاريخ', 'الشهر', 'الفرع', 'منصة الطلب', 'منطقة الطلب', 'سبب الإلغاء', 'محمّل على المطعم؟', 'ملاحظات', 'اجمالي الاوردر'].map(H),
-      ...det.map((x, i) => [{ v: x.day, t: 'date' }, F('IF(A' + (i + 3) + '="","",TEXT(A' + (i + 3) + ',"YYYY-MM"))', x.month), x.branch, x.platform, x.area, x.reason, x.mine, x.raw, x.amount])] });
-    // «نسبه الالغاءات»: the cancellations counted from the details; the orders are the Marsad's; the ratio a formula.
-    const ratio = [[{ v: 'اجمالي الالغاءات ' + label(), s: 'title', b: true, big: true }], ['الفرع', 'منصة الطلب', 'إجمالي الإلغاءات', 'اجمالي الاوردرات', 'نسبة الالغاءات'].map(H)];
-    const rr = {};
-    for (const p of PLATS) for (const b of BRANCHES) {
-      const r = ratio.length + 1, n = det.filter(x => x.branch === b.short && x.platform === p).length, o = ordersOf(list, b, p); rr[b.short + '|' + p] = { n, o };
-      ratio.push([b.short, p, F('COUNTIFS(' + DT + '!$C:$C,A' + r + ',' + DT + '!$D:$D,B' + r + ')', n), o, F('IFERROR(C' + r + '/D' + r + ',0)', div(n, o), { t: 'pct' })]);
-    }
-    const rl = ratio.length, allN = det.length, allO = sum(Object.values(rr), x => x.o);
-    ratio.push([{ v: 'الإجمالي', s: 'sub', b: true }, { v: null, s: 'sub' }, F('SUM(C3:C' + rl + ')', allN, { s: 'sub', b: true }), F('SUM(D3:D' + rl + ')', allO, { s: 'sub', b: true }), F('IFERROR(C' + (rl + 1) + '/D' + (rl + 1) + ',0)', div(allN, allO), { t: 'pct', s: 'sub', b: true })]);
-    sheets.push({ name: 'نسبه الالغاءات', widths: [14, 12, 14, 14, 14], freeze: 2, merges: ['A1:E1'], rows: ratio });
     // «تحليل الأسباب»: counted from the details (as in Karim's sheet).
     const cnt = (r, mine) => det.filter(x => x.reason === r && (mine == null || x.mine === mine)).length;
-    sheets.push({ name: 'تحليل الأسباب', widths: [20, 14, 16, 12], merges: ['A1:D1'], rows: [[{ v: 'أسباب الإلغاء ' + label(), s: 'title', b: true, big: true }], ['سبب الإلغاء', 'إجمالي التكرار', 'محمّل على المطعم', 'غير محمّل'].map(H),
-      ...REASONS.map((r, i) => { const R = i + 3; return [r, F('COUNTIF(' + DT + '!$F:$F,A' + R + ')', cnt(r)), F('COUNTIFS(' + DT + '!$F:$F,A' + R + ',' + DT + '!$G:$G,"نعم")', cnt(r, 'نعم')), F('COUNTIFS(' + DT + '!$F:$F,A' + R + ',' + DT + '!$G:$G,"لا")', cnt(r, 'لا'))]; }),
-      [{ v: 'الإجمالي', s: 'sub', b: true }, ...['B', 'C', 'D'].map((L, j) => F('SUM(' + L + '3:' + L + '11)', [det.length, det.filter(x => x.mine === 'نعم').length, det.filter(x => x.mine === 'لا').length][j], { s: 'sub', b: true }))]] });
-    // Talabat: each branch's rating (entered in «خدمة العملاء») and closing time (the last closure of the day).
+    sheets.push({ name: 'تحليل الأسباب', widths: [20, 14, 16, 12], merges: ['A1:D1'], rows: [[{ v: '  أسباب الإلغاء', s: 'title', b: true, big: true }], [{ v: label(), b: true }], ['سبب الإلغاء', 'إجمالي التكرار', 'محمّل على المطعم', 'غير محمّل'].map(H),
+      ...REASONS.map((r, i) => { const R = i + 4; return [r, F('COUNTIF(' + DT + '!$F:$F,A' + R + ')', cnt(r)), F('COUNTIFS(' + DT + '!$F:$F,A' + R + ',' + DT + '!$G:$G,"نعم")', cnt(r, 'نعم')), F('COUNTIFS(' + DT + '!$F:$F,A' + R + ',' + DT + '!$G:$G,"لا")', cnt(r, 'لا'))]; }),
+      [{ v: 'الإجمالي', s: 'sub', b: true }, ...['B', 'C', 'D'].map((L, j) => F('SUM(' + L + '4:' + L + '12)', [det.length, det.filter(x => x.mine === 'نعم').length, det.filter(x => x.mine === 'لا').length][j], { s: 'sub', b: true }))]] });
+    sheets.push({ name: 'تفاصيل الإلغاءات', widths: [12, 10, 12, 12, 18, 16, 14, 28, 12], freeze: 2, merges: ['A1:I1'], heights: [36], rows: [[{ v: 'الالغاءات\n' + label(), s: 'title', b: true, big: true }],
+      ['التاريخ', 'الشهر', 'الفرع', 'منصة الطلب', 'منطقة الطلب', 'سبب الإلغاء', 'محمّل على المطعم؟', 'ملاحظات', 'اجمالي الاوردر'].map(H),
+      ...det.map((x, i) => [{ v: x.day, t: 'date' }, F('IF(A' + (i + 3) + '="","",TEXT(A' + (i + 3) + ',"YYYY-MM"))', x.month), x.branch, x.platform, x.area, x.reason, x.mine, x.raw, x.amount])] });
+    // «نسبه الالغاءات»: the cancellations counted from the details; the orders are the Marsad's; the ratio and the day's total formulas.
+    const ratio = [[{ v: 'اجمالي الالغاءات\n' + label(), s: 'title', b: true, big: true }], ['الشهر', 'الفرع', 'منصة الطلب', 'إجمالي الإلغاءات', 'اجمالي الاوردرات', 'نسبة الالغاءات', 'اجمالي نسبه الغاءات اليوم'].map(H)];
+    const rr = {}, month = state.to.slice(0, 7);
+    for (const p of RATIO_ORDER) for (const b of BRANCHES) {
+      const r = ratio.length + 1, nn = det.filter(x => x.branch === b.short && x.platform === p).length, o = ordersOf(list, b, p); rr[b.short + '|' + p] = { n: nn, o };
+      ratio.push([month, b.short, p, F('COUNTIFS(' + DT + '!$C:$C,B' + r + ',' + DT + '!$D:$D,C' + r + ')', nn), o, F('IFERROR(D' + r + '/E' + r + ',0)', div(nn, o), { t: 'pct' }), null]);
+    }
+    const rl = ratio.length, allN = det.length, allO = sum(Object.values(rr), x => x.o);
+    ratio[2][6] = F('IFERROR(SUM(D3:D' + rl + ')/SUM(E3:E' + rl + '),0)', div(allN, allO), { t: 'pct', b: true });
+    sheets.push({ name: 'نسبه الالغاءات', widths: [10, 14, 12, 14, 14, 14, 16], freeze: 2, merges: ['A1:G1'], heights: [36], rows: ratio });
+    // Talabat: each branch's rating and competitor's, and closing time (the last closure of the day).
     const close = [['التاريخ', 'الفرع', 'التقييم', 'تقييم المنافس', 'وقت الغلق'].map(H)], lastRow = {};
     for (const d of list) for (const b of BRANCHES) {
       const rt = (cs.ratings || []).find(r => r.day === d.day && branchOf(r.branch) === b);
-      const at = Object.entries(d.closedAt || {}).filter(([n]) => branchOf(n) === b).map(([, v]) => v).sort().pop();
+      const at = Object.entries(d.closedAt || {}).filter(([nm]) => branchOf(nm) === b).map(([, v]) => v).sort().pop();
       const tm = at ? new Intl.DateTimeFormat('en-GB', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(at)) : null;
       close.push([{ v: d.day, t: 'date' }, b.short, rt?.rating ?? null, rt?.competitor ?? null, tm ? { v: tm, t: 'time' } : null]);
-      lastRow[b.short] = { r: close.length, rating: rt?.rating, competitor: rt?.competitor, tm };
+      lastRow[b.short] = { r: close.length, tm };
     }
     sheets.push({ name: 'وقت غلق طلبات والتقييم', widths: [12, 12, 10, 12, 10], freeze: 1, rows: close });
-    sheets.push(commentsSheet(cs.entries || []));
-    // «اجمالي» (Karim's last sheet): the ratio by branch and platform, the rating, the closing time, the complaints, the orders.
-    const T = Array.from({ length: 14 }, () => Array(16).fill(null)), put = (r, c, v) => { T[r - 1][c] = v; }, C = X().col;
-    put(1, 0, { v: 'نسبة الالغاءات', s: 'title', b: true }); put(2, 0, H(null)); PLATS.forEach((p, j) => put(2, 1 + j, H(p))); put(2, 7, H('Grand Total'));
-    const sumifs = (col, b, p) => 'SUMIFS(' + RT + '!$' + col + ':$' + col + ',' + RT + '!$A:$A,' + b + (p ? ',' + RT + '!$B:$B,' + p : '') + ')';
+    // «الكومنتات والشكاوي»: the date, then Karim's columns.
+    const ent = cs.entries || [];
+    sheets.push({ name: 'الكومنتات والشكاوي', widths: [40, 12, 14, 26, 24, 10], rows: [[{ v: state.to, t: 'date', b: true }], ['الملاحظات', 'الفرع', 'اسم العميل', 'حل الشكوي', 'الشكوي', 'المنصه'].map(H),
+      ...ent.map(e => [e.comment, branchOf(e.branch)?.short || e.branch, e.customer, e.action, e.complaint, e.platform])] });
+    // «اجمالي»: the ratio by branch and platform, the rating, the closing time, the complaints, the orders.
+    const T = Array.from({ length: 14 }, () => Array(16).fill(null)), put = (r, c, v) => { T[r - 1][c] = v; };
+    const sumifs = (col, b, p) => 'SUMIFS(' + RT + '!$' + col + ':$' + col + ',' + RT + '!$B:$B,' + b + (p ? ',' + RT + '!$C:$C,' + p : '') + ')';
+    put(1, 0, { v: ' نسبة الالغاءات', s: 'title', b: true }); put(2, 0, H(null)); PLATS.forEach((p, j) => put(2, 1 + j, H(p))); put(2, 7, H('Grand Total'));
     BRANCHES.forEach((b, i) => { const r = 3 + i; put(r, 0, { v: b.short, b: true });
-      PLATS.forEach((p, j) => { const x = rr[b.short + '|' + p]; put(r, 1 + j, F('IFERROR(' + sumifs('C', '$A' + r, C(1 + j) + '$2') + '/' + sumifs('D', '$A' + r, C(1 + j) + '$2') + ',0)', div(x.n, x.o), { t: 'pct' })); });
-      const n = sum(PLATS, p => rr[b.short + '|' + p].n), o = sum(PLATS, p => rr[b.short + '|' + p].o);
-      put(r, 7, F('IFERROR(' + sumifs('C', '$A' + r) + '/' + sumifs('D', '$A' + r) + ',0)', div(n, o), { t: 'pct', b: true })); });
+      PLATS.forEach((p, j) => { const x = rr[b.short + '|' + p]; put(r, 1 + j, F('IFERROR(' + sumifs('D', '$A' + r, C(1 + j) + '$2') + '/' + sumifs('E', '$A' + r, C(1 + j) + '$2') + ',0)', div(x.n, x.o), { t: 'pct' })); });
+      const nn = sum(PLATS, p => rr[b.short + '|' + p].n), o = sum(PLATS, p => rr[b.short + '|' + p].o);
+      put(r, 7, F('IFERROR(' + sumifs('D', '$A' + r) + '/' + sumifs('E', '$A' + r) + ',0)', div(nn, o), { t: 'pct', b: true })); });
     put(6, 0, { v: 'Grand Total', s: 'sub', b: true });
-    PLATS.forEach((p, j) => { const n = sum(BRANCHES, b => rr[b.short + '|' + p].n), o = sum(BRANCHES, b => rr[b.short + '|' + p].o);
-      put(6, 1 + j, F('IFERROR(SUMIFS(' + RT + '!$C:$C,' + RT + '!$B:$B,' + C(1 + j) + '$2)/SUMIFS(' + RT + '!$D:$D,' + RT + '!$B:$B,' + C(1 + j) + '$2),0)', div(n, o), { t: 'pct', s: 'sub', b: true })); });
-    put(6, 7, F('IFERROR(' + RT + '!C' + (rl + 1) + '/' + RT + '!D' + (rl + 1) + ',0)', div(allN, allO), { t: 'pct', s: 'sub', b: true }));
-    // Rating and competitor: the period's average per branch; closing time: the last day's.
-    put(3, 8, H(null)); put(3, 9, H('التقييم')); put(3, 10, H('تقييم المنافس')); put(3, 12, H(null)); put(3, 13, H('وقت الغلق')); put(3, 14, H('الفرع')); put(3, 15, H('Count of الشكوي'));
+    PLATS.forEach((p, j) => { const nn = sum(BRANCHES, b => rr[b.short + '|' + p].n), o = sum(BRANCHES, b => rr[b.short + '|' + p].o);
+      put(6, 1 + j, F('IFERROR(SUMIFS(' + RT + '!$D:$D,' + RT + '!$C:$C,' + C(1 + j) + '$2)/SUMIFS(' + RT + '!$E:$E,' + RT + '!$C:$C,' + C(1 + j) + '$2),0)', div(nn, o), { t: 'pct', s: 'sub', b: true })); });
+    put(6, 7, F(RT + '!G3', div(allN, allO), { t: 'pct', s: 'sub', b: true }));
+    put(3, 8, H(null)); put(3, 9, H('التقييم ')); put(3, 10, H(' تقييم المنافس')); put(3, 12, H(null)); put(3, 13, H('وقت الغلق ')); put(3, 14, H('الفرع')); put(3, 15, H('Count of الشكوي'));
     const avgOf = (b, k) => { const l = (cs.ratings || []).filter(r => branchOf(r.branch) === b && r[k] != null); return l.length ? sum(l, r => r[k]) / l.length : null; };
     BRANCHES.forEach((b, i) => { const r = 4 + i, L = lastRow[b.short];
       put(r, 8, { v: b.short, b: true }); put(r, 12, { v: b.short, b: true }); put(r, 14, { v: b.short, b: true });
       put(r, 9, F('IFERROR(AVERAGEIFS(' + CL + '!$C:$C,' + CL + '!$B:$B,I' + r + '),"")', avgOf(b, 'rating') ?? '', { t: 'dec' }));
       put(r, 10, F('IFERROR(AVERAGEIFS(' + CL + '!$D:$D,' + CL + '!$B:$B,I' + r + '),"")', avgOf(b, 'competitor') ?? '', { t: 'dec' }));
       put(r, 13, L ? F('IF(' + CL + '!E' + L.r + '="","",' + CL + '!E' + L.r + ')', L.tm ? (+L.tm.slice(0, 2) * 60 + +L.tm.slice(3)) / 1440 : '', { t: 'time' }) : null);
-      put(r, 15, F('COUNTIFS(' + CM + '!$C:$C,O' + r + ',' + CM + '!$F:$F,"<>")', (cs.entries || []).filter(e => branchOf(e.branch) === b && e.complaint).length)); });
-    put(7, 14, { v: 'Grand Total', s: 'sub', b: true }); put(7, 15, F('SUM(P4:P6)', (cs.entries || []).filter(e => branchOf(e.branch) && e.complaint).length, { s: 'sub', b: true }));
-    // The orders by branch and platform (from «نسبه الالغاءات»).
-    put(9, 7, { v: 'اجمالي الاوردرات', s: 'title', b: true }); put(10, 7, H(null)); PLATS.forEach((p, j) => put(10, 8 + j, H(p))); put(10, 14, H('Grand Total'));
-    BRANCHES.forEach((b, i) => { const r = 11 + i; put(r, 7, { v: b.short, b: true });
-      PLATS.forEach((p, j) => put(r, 8 + j, F(sumifs('D', '$H' + r, C(8 + j) + '$10'), rr[b.short + '|' + p].o)));
+      put(r, 15, F('COUNTIFS(' + CM + '!$B:$B,O' + r + ',' + CM + '!$E:$E,"<>")', ent.filter(e => branchOf(e.branch) === b && e.complaint).length)); });
+    put(7, 14, { v: 'Grand Total', s: 'sub', b: true }); put(7, 15, F('SUM(P4:P6)', ent.filter(e => branchOf(e.branch) && e.complaint).length, { s: 'sub', b: true }));
+    put(8, 7, { v: ' اجمالي الاوردرات', s: 'title', b: true }); put(9, 7, H(null)); PLATS.forEach((p, j) => put(9, 8 + j, H(p))); put(9, 14, H('Grand Total'));
+    BRANCHES.forEach((b, i) => { const r = 10 + i; put(r, 7, { v: b.short, b: true });
+      PLATS.forEach((p, j) => put(r, 8 + j, F(sumifs('E', '$H' + r, C(8 + j) + '$9'), rr[b.short + '|' + p].o)));
       put(r, 14, F('SUM(I' + r + ':N' + r + ')', sum(PLATS, p => rr[b.short + '|' + p].o), { b: true })); });
-    T[13][7] = { v: 'Grand Total', s: 'sub', b: true };
-    for (let j = 8; j <= 14; j++) T[13][j] = F('SUM(' + C(j) + '11:' + C(j) + '13)', j < 14 ? sum(BRANCHES, b => rr[b.short + '|' + PLATS[j - 8]].o) : allO, { s: 'sub', b: true });
-    sheets.push({ name: 'اجمالي', widths: [12, 9, 9, 9, 9, 9, 9, 11, 12, 10, 12, 9, 10, 10, 11, 14], rows: T, merges: ['A1:H1', 'H9:O9'] });
-    X().grid('الإلغاءات ' + fileLabel(), sheets);
-    return 'Page و Whatsapp بيتكتبوا بإيد في «نسبه الالغاءات» والإجمالي بيتحسب لوحده';
+    put(13, 7, { v: 'Grand Total', s: 'sub', b: true });
+    for (let j = 8; j <= 14; j++) put(13, j, F('SUM(' + C(j) + '10:' + C(j) + '12)', j < 14 ? sum(BRANCHES, b => rr[b.short + '|' + PLATS[j - 8]].o) : allO, { s: 'sub', b: true }));
+    sheets.push({ name: 'اجمالي', widths: [12, 9, 9, 9, 9, 9, 9, 11, 12, 10, 12, 9, 10, 10, 11, 14], rows: T, merges: ['A1:H1', 'H8:O8'] });
+    X().grid('الالغاءات ' + fileLabel(), sheets);
+    return '';
   }
-  const commentsSheet = entries => ({ name: 'الكومنتات والشكاوي', widths: [12, 10, 12, 14, 34, 24, 26, 14], freeze: 1,
-    rows: [['التاريخ', 'المنصه', 'الفرع', 'اسم العميل', 'الملاحظات', 'الشكوي', 'حل الشكوي', 'هل تم الوصول للعميل؟'].map(v => ({ v, s: 'head', b: true })),
-      ...entries.map(e => [{ v: e.day, t: 'date' }, e.platform, branchOf(e.branch)?.short || e.branch, e.customer, e.comment, e.complaint, e.action, e.reached])] });
 
-  // ---------- 5. خدمة العملاء: التقييمات والشكاوى لكل منصة ----------
+  // ---------- 5. خدمة العملاء (شيتين: طلبات والموقع) ----------
   async function customerService() {
     const cs = await api('/api/cs?from=' + state.day + '&to=' + state.to);
     const H = v => ({ v, s: 'head', b: true });
     // The stars per branch are counted from the list below (change a rating and the counts follow).
     const sheetOf = (name, list) => {
-      const end = 7 + Math.max(list.length, 1) + 200, rows = [[H(null), H(5), H(4), H(3), H(2), H(1), H('الإجمالي'), H('نسبة اقل من 5'), H('سئ')]];
+      const end = 6 + list.length + 300, rows = [[H(null), H(5), H(4), H(3), H(2), H(1), H('الإجمالي'), H('نسبة اقل من 5'), H('سئ ')]];
       BRANCHES.forEach((b, i) => { const r = 2 + i, l = list.filter(e => branchOf(e.branch) === b), n = s => l.filter(e => e.rating === s).length, all = l.filter(e => e.rating != null).length;
-        rows.push([{ v: b.short, b: true }, ...[5, 4, 3, 2, 1].map((s, j) => F('COUNTIFS($A$7:$A$' + end + ',$A' + r + ',$C$7:$C$' + end + ',' + X().col(1 + j) + '$1)', n(s))),
+        rows.push([{ v: b.short, b: true }, ...[5, 4, 3, 2, 1].map((s, j) => F('COUNTIFS($A$6:$A$' + end + ',$A' + r + ',$C$6:$C$' + end + ',' + X().col(1 + j) + '$1)', n(s))),
           F('SUM(B' + r + ':F' + r + ')', all), F('IFERROR(SUM(C' + r + ':F' + r + ')/G' + r + ',0)', div(all - n(5), all), { t: 'pct' }), F('IFERROR(F' + r + '/G' + r + ',0)', div(n(1), all), { t: 'pct' })]); });
-      rows.push([], ['الفرع', 'الشكوى / تعليق العميل', 'التقييم', 'التاريخ', 'رقم الطلب', 'رقم العميل', 'هل تم الوصول للعميل؟', 'ما تم مع العميل / الإجراء'].map(H));
+      rows.push(['الفرع', 'الشكوى / تعليق العميل', 'التقييم', 'التاريخ', 'رقم الطلب', 'رقم العميل', 'هل تم الوصول للعميل؟', 'ما تم مع العميل / الإجراء'].map(H));
       for (const e of list) rows.push([branchOf(e.branch)?.short || e.branch, [e.complaint, e.comment].filter(Boolean).join(' — '), e.rating, { v: e.day, t: 'date' }, e.orderNo, e.phone, e.reached, e.action]);
       return { name, widths: [12, 44, 9, 12, 12, 14, 16, 30, 8], rows };
     };
     const by = p => cs.entries.filter(e => e.platform === p);
-    X().grid('خدمة العملاء ' + fileLabel(), [sheetOf('طلبات', by('طلبات')), sheetOf('الموقع', by('الموقع')), sheetOf('الكول سنتر', [...by('الكول سنتر'), ...by('وفرها')]), commentsSheet(cs.entries)]);
+    X().grid('خدمة العملاء ' + fileLabel(), [sheetOf('طلبات', by('طلبات')), sheetOf('الموقع', by('الموقع'))]);
     return cs.entries.length ? '' : 'مفيش ولا سطر متسجل في «خدمة العملاء» للفترة دي';
   }
 
-  // ---------- 6. الجودة ----------
+  // ---------- 6. الجودة: شيت QA (تقييم QA، المعايير، النسبه، Dashboard) و«النسبه» لوحدها (الصورة) ----------
+  const QA_HELP = ['تحية واضحة + اسم المكان + اسم الموظف + استعداد للخدمة', 'المنطقة، رقم الهاتف، الاسم، العنوان، رقم إضافي إن وجد', 'شرح الأصناف والبدائل والرد على الاستفسارات بدون لخبطة',
+    'اقتراح مناسب بدون ضغط: كومبو، إضافة، صنف مكمل', 'الأصناف، الكميات، الملاحظات، السعر، الفرع/القناة، طريقة الدفع', 'هدوء، وضوح، احترام، عدم مقاطعة، تحكم في المكالمة',
+    'احتواء العميل، اعتذار مناسب، تسجيل صحيح، تصعيد عند الحاجة', 'تأكيد الطلب/الخطوة التالية + سؤال عن أي استفسار + شكر العميل', 'عدم إعطاء وعود غلط، عدم تحويل العميل بدون داعي، الالتزام بالسكريبت',
+    'عدم وجود سلوك أو مخالفة تؤثر على جودة المكالمة', null];
+  const QA_NAMES = ['الافتتاح والترحيب', 'تأكيد بيانات العميل', 'معرفة المنتج والمنيو', 'البيع الإضافي والاقتراحات', 'دقة تسجيل الطلب', 'نبرة الصوت والاحتراف', 'التعامل مع الشكوى/الاعتراض', 'إنهاء المكالمة', 'الالتزام بالسياسات', 'الالتزام العام', 'احترافية المكالمة'];
+  const GRADES = ['ممتاز', 'جيد جدًا', 'جيد', 'مقبول', 'ضعيف'];
+  const qaData = async () => { const qa = await api('/api/qa?from=' + state.day + '&to=' + state.to); return { qa, list: [...qa.entries].sort((a, b) => a.day.localeCompare(b.day) || (a.time || '').localeCompare(b.time || '') || a.employee.localeCompare(b.employee, 'ar')) }; };
+  const avgPct = l => l.length ? sum(l, e => e.pct) / l.length / 100 : null;
+  const perEmployee = list => [...new Set(list.map(e => e.employee))].map(nm => ({ nm, v: avgPct(list.filter(e => e.employee === nm)) })).sort((a, b) => b.v - a.v);
+  // «النسبه» (the picture): each employee's average, highest first, and the total. With the evaluations: formulas over them.
+  function ratioSheet(list, withSource) {
+    const H = v => ({ v, s: 'head', b: true }), QS = q('تقييم QA'), n = 3 + list.length, per = perEmployee(list);
+    return { name: 'النسبه', widths: [22, 12], rows: [[H('التاريخ'), state.day === state.to ? { v: state.day, t: 'date', b: true } : { v: label(), b: true }], [H(null), H('QA')],
+      ...per.map((x, i) => [x.nm, withSource ? F('IFERROR(AVERAGEIFS(' + QS + '!$R$4:$R$' + n + ',' + QS + '!$B$4:$B$' + n + ',A' + (i + 3) + '),"")', x.v, { t: 'pct' }) : { v: x.v, t: 'pct' }]),
+      [{ v: 'Grand Total', s: 'sub', b: true }, withSource ? F('IFERROR(AVERAGE(' + QS + '!$R$4:$R$' + n + '),"")', avgPct(list), { t: 'pct', s: 'sub', b: true }) : { v: avgPct(list), t: 'pct', s: 'sub', b: true }]] };
+  }
+  async function qaDaily() {
+    const { list } = await qaData();
+    X().grid('QA ' + fileLabel(), [ratioSheet(list, false)]);
+    return list.length ? '' : 'مفيش تقييمات جودة في الفترة دي';
+  }
   async function quality() {
-    const qa = await api('/api/qa?from=' + state.day + '&to=' + state.to);
-    const H = v => ({ v, s: 'head', b: true }), QS = q('تقييم QA');
-    const list = [...qa.entries].sort((a, b) => a.day.localeCompare(b.day) || a.employee.localeCompare(b.employee, 'ar'));
+    const { qa, list } = await qaData();
+    const H = v => ({ v, s: 'head', b: true }), QS = q('تقييم QA'), n = 3 + list.length;
     const GRADE = R => 'IF(' + R + '="","",IF(' + R + '>=0.9,"ممتاز",IF(' + R + '>=0.8,"جيد جدًا",IF(' + R + '>=0.7,"جيد",IF(' + R + '>=0.6,"مقبول","ضعيف")))))';
-    const n = list.length + 2;
     // Each line: the 11 items are the evaluation; the total, the percent (out of 120, or 100 before «احترافية المكالمة») and the grade are formulas.
     const sheets = [{ name: 'تقييم QA', widths: [12, 16, 14, 10, 10, ...qa.form.map(() => 9), 10, 9, 12, 40], freeze: 2, merges: ['A1:T1'], rows: [
-      [{ v: 'شيت تقييم QA - الكول سنتر ' + label(), s: 'title', b: true, big: true }],
-      ['التاريخ', 'اسم الموظف', 'رقم المكالمة', 'وقت المكالمه', 'نوع المكالمة', ...qa.form.map(f => f.label + ' ' + f.max), 'الإجمالي', 'النسبة', 'التقدير', 'ملاحظات المقيم'].map(H),
-      ...list.map((e, i) => { const r = i + 3;
+      [{ v: 'شيت تقييم QA - الكول سنتر', s: 'title', b: true, big: true }],
+      ['التاريخ', 'اسم الموظف', 'رقم المكالمة', 'وقت المكالمه', 'نوع المكالمة', ...qa.form.map(f => f.label + ' ' + f.max), 'الإجمالي', 'النسبة', 'التقدير', 'ملاحظات المقيم'].map(H), [],
+      ...list.map((e, i) => { const r = i + 4;
         return [{ v: e.day, t: 'date' }, e.employee, e.phone, e.time ? { v: e.time, t: 'time' } : null, e.type, ...e.scores.map(v => v),
           F('IF(COUNT(F' + r + ':P' + r + ')=0,"",SUM(F' + r + ':P' + r + '))', e.total), F('IF(Q' + r + '="","",Q' + r + '/IF(P' + r + '="",100,120))', e.pct / 100, { t: 'pct' }), F(GRADE('R' + r), e.grade), e.notes]; })] }];
-    // «النسبه»: each employee's average for the period, highest first (Karim's daily picture); «كل يوم» by day.
-    const names = [...new Set(list.map(e => e.employee))];
-    const avg = l => l.length ? sum(l, e => e.pct) / l.length / 100 : null;
-    const per = names.map(nm => ({ nm, v: avg(list.filter(e => e.employee === nm)) })).sort((a, b) => b.v - a.v);
-    sheets.push({ name: 'النسبه', widths: [20, 12], rows: [[H('التاريخ'), { v: label(), b: true }], [H(null), H('QA')],
-      ...per.map((x, i) => [x.nm, F('IFERROR(AVERAGEIFS(' + QS + '!$R$3:$R$' + n + ',' + QS + '!$B$3:$B$' + n + ',A' + (i + 3) + '),"")', x.v, { t: 'pct' })]),
-      [{ v: 'Grand Total', s: 'sub', b: true }, F('IFERROR(AVERAGE(' + QS + '!$R$3:$R$' + n + '),"")', avg(list), { t: 'pct', s: 'sub', b: true })]] });
-    const dayList = [...new Set(list.map(e => e.day))];
-    if (dayList.length > 1) sheets.push({ name: 'كل يوم', widths: [20, ...dayList.map(() => 11), 12], freeze: 1, rows: [[H('الموظف'), ...dayList.map(d => ({ v: d, t: 'date', s: 'head', b: true })), H('الفترة')],
-      ...per.map((x, i) => { const r = i + 2; return [x.nm, ...dayList.map((d, j) => { const v = avg(list.filter(e => e.employee === x.nm && e.day === d));
-        return F('IFERROR(AVERAGEIFS(' + QS + '!$R$3:$R$' + n + ',' + QS + '!$B$3:$B$' + n + ',$A' + r + ',' + QS + '!$A$3:$A$' + n + ',' + X().col(1 + j) + '$1),"")', v ?? '', { t: 'pct' }); }),
-        F('IFERROR(AVERAGEIFS(' + QS + '!$R$3:$R$' + n + ',' + QS + '!$B$3:$B$' + n + ',$A' + r + '),"")', x.v, { t: 'pct', b: true })]; })] });
-    X().grid('الجودة ' + fileLabel(), sheets);
+    sheets.push({ name: 'المعايير', widths: [26, 10, 60, 14], rows: [['البند', 'الدرجة', 'شرح مختصر للتقييم', 'ملاحظات'].map(H),
+      ...QA_NAMES.map((nm, i) => [nm, qa.form[i]?.max ?? null, QA_HELP[i], null]), [{ v: 'الإجمالي', s: 'sub', b: true }, F('SUM(B2:B12)', sum(qa.form, f => f.max), { s: 'sub', b: true }), null, null]] });
+    sheets.push(ratioSheet(list, true));
+    // «Dashboard»: the counts, the average, the highest and lowest, the grades, each employee's average — formulas over «تقييم QA».
+    const R = QS + '!$R$4:$R$' + n, S = QS + '!$S$4:$S$' + n, per = perEmployee(list), pcts = list.map(e => e.pct / 100);
+    const D = [[{ v: 'Dashboard تقييم QA', s: 'title', b: true, big: true }], ['المؤشر', 'النتيجة', 'توزيع التقييمات', 'العدد', null, 'متوسط حسب الموظف', 'النسبة'].map(v => v ? H(v) : null)];
+    const kp = [['عدد التقييمات', F('COUNT(' + R + ')', list.length)], ['متوسط الجودة', F('IFERROR(AVERAGE(' + R + '),0)', avgPct(list) ?? 0, { t: 'pct' })],
+      ['أعلى تقييم', F('IFERROR(MAX(' + R + '),0)', pcts.length ? Math.max(...pcts) : 0, { t: 'pct' })], ['أقل تقييم', F('IFERROR(MIN(' + R + '),0)', pcts.length ? Math.min(...pcts) : 0, { t: 'pct' })],
+      ['نسبة النجاح (80% فأكتر)', F('IFERROR(COUNTIF(' + R + ',">=0.8")/COUNT(' + R + '),0)', div(pcts.filter(v => v >= 0.8).length, pcts.length), { t: 'pct' })]];
+    const rowsN = Math.max(kp.length, GRADES.length, per.length);
+    for (let i = 0; i < rowsN; i++) { const r = i + 3;
+      D.push([kp[i]?.[0] ?? null, kp[i]?.[1] ?? null, GRADES[i] ?? null, GRADES[i] ? F('COUNTIF(' + S + ',C' + r + ')', list.filter(e => e.grade === GRADES[i]).length) : null, null,
+        per[i]?.nm ?? null, per[i] ? F('IFERROR(AVERAGEIFS(' + R + ',' + QS + '!$B$4:$B$' + n + ',F' + r + '),0)', per[i].v, { t: 'pct' }) : null]); }
+    sheets.push({ name: 'Dashboard', widths: [24, 12, 16, 10, 4, 20, 12], merges: ['A1:G1'], rows: D });
+    X().grid('QA1 ' + fileLabel(), sheets);
     return list.length ? '' : 'مفيش تقييمات جودة في الفترة دي';
   }
 
-  const RUN = { callCenter, sales, bySource, cancels, customerService, quality };
+  const RUN = { callCenter, sales, qaDaily, bySource, cancels, customerService, quality };
   let opened = false;
   function render(setRange, today) {
     // The report of the day before by default (Karim: «لليوم الي قبله»), once per visit of the page.

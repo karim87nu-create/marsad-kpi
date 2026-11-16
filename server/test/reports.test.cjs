@@ -60,7 +60,7 @@ test('customer service and management users', async () => {
   } finally { await t.close(); }
 });
 
-test('admin «التقارير Excel»: the six files of a period, right to left', async () => {
+test('admin «التقارير Excel»: the seven files of a period, right to left', async () => {
   const t = await start({ at: cairoToUtc(2026, 11, 16, 12, 0) });
   let dom;
   try {
@@ -90,11 +90,13 @@ test('admin «التقارير Excel»: the six files of a period, right to left
     w.document.getElementById('day').value = '2026-11-14'; w.document.getElementById('dayTo').value = '2026-11-15'; w.document.getElementById('applyRange').click();
     await until(() => /14-11-2026.*15-11-2026/.test(w.document.getElementById('expPeriod').textContent), 'period');
     for (const b of w.document.querySelectorAll('[data-exp]')) { const n = files.length; b.click(); await until(() => files.length > n, b.textContent); }
-    assert.equal(files.length, 6);
+    assert.equal(files.length, 7);
+    assert.equal(JSON.stringify(files.map(f => f.sheets.map(x => x.name))), JSON.stringify([['Call center Report'], ['إجمالي الفترة', '2026-11-14', '2026-11-15'], ['النسبه'], ['المتابعة اليومية'],
+      ['تحليل الأسباب', 'تفاصيل الإلغاءات', 'نسبه الالغاءات', 'وقت غلق طلبات والتقييم', 'الكومنتات والشكاوي', 'اجمالي'], ['طلبات', 'الموقع'], ['تقييم QA', 'المعايير', 'النسبه', 'Dashboard']]), 'each file with the team\'s own sheets');
     const cc = files[0].sheets[0].rows;
     assert.equal(cc[3][1].v, DAYS['2026-11-14'].full.totals.kinds.Hotline + DAYS['2026-11-15'].full.totals.kinds.Hotline, 'the Hotline orders of the two days');
-    const q = files.find(f => /الجودة/.test(f.name)).sheets;
-    assert.equal(JSON.stringify(q[0].rows.slice(2).map(r => [r[1], r[17].v])), JSON.stringify([['اماني احمد', 1], ['اماني احمد', 0.917]]));
+    const q = files.find(f => /^QA1/.test(f.name)).sheets;
+    assert.equal(JSON.stringify(q[0].rows.slice(3).map(r => [r[1], r[17].v])), JSON.stringify([['اماني احمد', 1], ['اماني احمد', 0.917]]));
     const cs = files.find(f => /خدمة العملاء/.test(f.name)).sheets[0].rows;
     assert.equal(JSON.stringify(cs[1].slice(1, 6).map(c => c.v)), JSON.stringify([0, 0, 0, 0, 1]), 'Nasr City: one 1-star rating on Talabat');
     assert.match(cs[1][1].f, /^COUNTIFS\(/, 'counted by a formula from the list');

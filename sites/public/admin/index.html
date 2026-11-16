@@ -279,12 +279,13 @@
       <article class="panel"><h2>التقارير اليومية Excel <span class="muted" id="expPeriod"></span></h2>
         <p class="muted">بتطلع بنفس شكل الشيتات اللي بتتبعت، للفترة المختارة فوق (أول ما تفتح الصفحة بتبقى امبارح). الأرقام من Apex وأرابيكس وطلبات والموقع، والشكاوى والجودة من الصفحات بتاعتها.</p>
         <div class="exp-grid">
-          <button type="button" data-exp="callCenter">تقرير الكول سنتر</button>
+          <button type="button" data-exp="callCenter">Call center Report</button>
           <button type="button" data-exp="sales">مبيعات الفروع</button>
-          <button type="button" data-exp="bySource">الأوردرات حسب المنطقة والمصدر</button>
-          <button type="button" data-exp="cancels">الإلغاءات</button>
-          <button type="button" data-exp="customerService">خدمة العملاء</button>
-          <button type="button" data-exp="quality">الجودة</button>
+          <button type="button" data-exp="qaDaily">نسبة الجودة (QA)</button>
+          <button type="button" data-exp="bySource">الأوردرات اليومية حسب المنطقة والمصدر (الشهر)</button>
+          <button type="button" data-exp="cancels">الالغاءات</button>
+          <button type="button" data-exp="customerService">خدمة العملاء (طلبات والموقع)</button>
+          <button type="button" data-exp="quality">شيت تقييم QA</button>
         </div>
         <p id="expMsg" class="note"></p></article>
     </section>
@@ -515,7 +516,7 @@
 <script src="roster.js?v=1"></script>
 <script src="qa.js?v=2"></script>
 <script src="cs.js?v=1"></script>
-<script src="exports.js?v=2"></script>
+<script src="exports.js?v=4"></script>
 <script src="forecast.js?v=1"></script>
 <script src="transfer-live.js?v=2"></script>
 <script src="home.js?v=4"></script>
