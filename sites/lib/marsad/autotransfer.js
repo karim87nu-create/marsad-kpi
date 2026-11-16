@@ -22,7 +22,10 @@ import { APEX_PRICES } from './menu-seed.js';
 
 export const MODES = ['off', 'trial', 'on'];
 const QUIET = new Set(['لسه واصل', 'أوردر مجدول', 'تفاصيل الأوردر لسه ماوصلتش', 'لسه ما اتقبلش على طلبات', 'أوردر قديم — غالباً اتسجل بإيد', 'اتحوّل للفرع على الموقع — غالباً اتسجل بإيد']);
-const TICK_MS = 60000, SETTLE_MS = 60000, MAX_AGE_MS = 20 * 60000, ALERT_MS = 2 * 60000;
+const TICK_MS = 60000, SETTLE_MS = 60000, MAX_AGE_MS = 20 * 60000, ALERT_MS = 2 * 60000, LATE_MAX_MS = 60 * 60000;
+// Waits on the system, not on a person: staff are not asked to enter the order for these in its first 10 minutes.
+const SYSTEM_WAIT = new Set(['لسه واصل', 'مستني قراءة بطاقة العميل من Apex', 'تفاصيل الأوردر لسه ماوصلتش', 'هاشتاج طلبات لسه ماظهرش', 'لسه ما اتقبلش على طلبات']);
+const CARD_QUIET_MS = 10 * 60000;
 const r2 = v => Math.round(v * 100) / 100, T = v => r2(v * 1.14);
 const TALABAT_FEE_NO = '0114006', BRANCH_NAME = { 1: 'التجمع', 2: 'مدينة نصر', 3: 'مدينتي' };
 const amountIn = t => { const m = String(t || '').split(' | ').slice(1).join(' ').replace(/,/g, '').match(/-?\d+(?:\.\d+)?/); return m ? Number(m[0]) : null; };
@@ -80,7 +83,10 @@ export function decide(o, x) {
   // 11-11: an old order is one staff already handled (entered on Apex by hand, matching did not find it) — 9 website
   // orders of the day were written twice. Only orders of the last 20 minutes; a website order staff already sent to a
   // branch on the panel is handled.
-  if (age > MAX_AGE_MS) why.push('أوردر قديم — غالباً اتسجل بإيد');
+  // Karim 11-16 «اللي مكتوب عليه غالبا قديم مش بيتحول حتى لو مش متسجل»: an order the Marsad saw as soon as it came and
+  // that only waited on the system (the card on Apex, the server or the network) — nobody was asked to enter it — still
+  // goes, up to an hour.
+  if (age > MAX_AGE_MS && !(age <= LATE_MAX_MS && x.waitedOnSystem?.(o))) why.push('أوردر قديم — غالباً اتسجل بإيد');
   if (o.source === 'site' && o.sentToBranch) why.push('اتحوّل للفرع على الموقع — غالباً اتسجل بإيد');
   if (o.scheduled) why.push('أوردر مجدول');
   if (o.source === 'talabat' && /^(?:NEW|PENDING|WAITING|RECEIVED|PLACED|UNACCEPTED)/i.test(String(o.status || ''))) why.push('لسه ما اتقبلش على طلبات');
@@ -211,8 +217,12 @@ function setup(app) {
       if (!q) return { mode: m, skipped: 'no recent build' };
       const areas = await customerAreas(day);
       const { deliveryPhone } = await import('./delivery-fields.js');
-      const x = { now, locations: q.locations || [], groups: areaGroups(q.locations || [], (await app.apexAreaRules?.()) || {}), customerArea: o => areas.get(deliveryPhone(o.customer?.phone) + '|' + normAddress(o.customer?.address)) || null };
       const seen = new Map((await db.prepare('SELECT source, ref, decision, reasons, alerted, first_at FROM auto_transfer_log WHERE day = ?').all(day)).map(r => [r.source + ':' + r.ref, r]));
+      // Seen within 5 minutes of coming, never put to staff (no «سجّله بإيد» message), only system waits so far.
+      const waitedOnSystem = o => { const r = seen.get(o.source + ':' + o.ref); if (!r || r.alerted) return false;
+        if (!(Number(r.first_at) - Date.parse(o.at || 0) <= 5 * 60000)) return false;
+        return String(r.reasons || '').split(' · ').filter(Boolean).every(w => SYSTEM_WAIT.has(w) || w === 'أوردر قديم — غالباً اتسجل بإيد' || /^(?:كاتب Apex مش بيسجل|D1_|.*server|.*timeout|.*fetch)/i.test(w)); };
+      const x = { now, waitedOnSystem, locations: q.locations || [], groups: areaGroups(q.locations || [], (await app.apexAreaRules?.()) || {}), customerArea: o => areas.get(deliveryPhone(o.customer?.phone) + '|' + normAddress(o.customer?.address)) || null };
       const jobRows = await db.prepare("SELECT source, ref, state, employee_name, result, at FROM transfer_jobs WHERE day = ?").all(day);
       const jobs = new Map(jobRows.map(j => [j.source + ':' + j.ref, j]));
       // Karim 11-14 (11-12 ليلاً the writer could not log in to Apex for two hours): while orders already handed to the
@@ -248,9 +258,11 @@ function setup(app) {
         if (!prev || prev.decision !== decision || prev.reasons !== reasons)
           await db.prepare(`INSERT INTO auto_transfer_log (source, ref, day, code, decision, reasons, at, first_at, alerted) VALUES (?,?,?,?,?,?,?,?,0)
             ON CONFLICT(source, ref) DO UPDATE SET decision = excluded.decision, reasons = excluded.reasons, at = excluded.at, code = excluded.code`)
-            .run(o.source, String(o.ref), day, o.code || null, decision, reasons, now, now);
+            .run(o.source, String(o.ref), day, o.code || null, decision, reasons, now, prev?.first_at || now);
         // Still with nobody after 2 minutes (mode on): the call center group, once per order.
-        if (m === 'on' && decision === 'wait' && !d.quiet && !(prev?.alerted) && now - Date.parse(o.at || now) > ALERT_MS) {
+        // Waiting only on the system (the card on Apex): staff are told after 10 minutes, not 2.
+        const systemOnly = d.why?.length && d.why.every(w => SYSTEM_WAIT.has(w));
+        if (m === 'on' && decision === 'wait' && !d.quiet && !(prev?.alerted) && now - Date.parse(o.at || now) > (systemOnly ? CARD_QUIET_MS : ALERT_MS)) {
           const c = await db.prepare('SELECT rules FROM telegram_config WHERE id = 1').get().catch(() => null);
           if (parseJson(c?.rules, {}).autoWaiting !== false) {
             const text = '🟠 مستني تحويل بإيد موظف | ' + (o.source === 'talabat' ? 'طلبات' : 'الموقع') + ' #' + (o.code || o.ref) + (BRANCH_NAME[o.apexBranch] ? ' — فرع ' + BRANCH_NAME[o.apexBranch] : '') +

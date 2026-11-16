@@ -270,3 +270,14 @@ test('add-on count: a dish ordered twice — the count comes from the line\'s pr
     assert.equal(count('إضافة غريبة'), null, 'no Apex price to tell: a person picks the count');
   } finally { await t.close(); }
 });
+
+// Karim 11-16 «اللي مكتوب عليه غالبا قديم مش بيتحول حتى لو مش متسجل»: an order that only waited on the system still goes.
+test('auto transfer: an order past 20 minutes that only waited on the system is not «old»', async () => {
+  const { decide } = await import('../src/autotransfer.js');
+  const now = Date.parse('2026-11-16T16:40:00+02:00'), o = { source: 'talabat', ref: '1', code: '5480', at: new Date(now - 35 * 60000).toISOString(), items: [] };
+  const old = 'أوردر قديم — غالباً اتسجل بإيد';
+  assert.ok(decide(o, { now, waitedOnSystem: () => false }).why.includes(old));
+  assert.ok(!decide(o, { now, waitedOnSystem: () => true }).why.includes(old));
+  // Past an hour it is old either way.
+  assert.ok(decide({ ...o, at: new Date(now - 65 * 60000).toISOString() }, { now, waitedOnSystem: () => true }).why.includes(old));
+});
