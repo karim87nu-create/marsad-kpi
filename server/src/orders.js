@@ -87,6 +87,15 @@ function setup(app) {
   };
 
   // ---- the monitor pushes the day ----
+  // Karim 11-16: after Apex closes its day its daily table is empty until the first order (about half an hour every
+  // morning), and the monitor has nothing to send — it says it is reading anyway, so «مش بيقرا من Apex» means it is not.
+  app.ordersSeen = async () => Math.max(Number(await setting('orders_last_push')) || 0, Number(await setting('orders_alive_at')) || 0) || null;
+  app.route('POST', '/api/orders/alive', async ctx => {
+    const hash = await setting('orders_token_hash'), given = ctx.header('x-orders-token');
+    if (!hash || !given || sha256(given) !== hash) fail(401, 'مفتاح مرصد الأوردرات غير صحيح');
+    await put('orders_alive_at', ctx.now);
+    return { ok: true };
+  });
   app.route('POST', '/api/orders/push', async ctx => {
     const hash = await setting('orders_token_hash'), given = ctx.header('x-orders-token');
     if (!hash || !given || sha256(given) !== hash) fail(401, 'مفتاح مرصد الأوردرات غير صحيح');
@@ -308,7 +317,7 @@ function setup(app) {
     const w = dayWindow(day);
     const alerts = (await db.prepare("SELECT kind, text, created_at, sent_at, error FROM telegram_log WHERE kind LIKE 'orders%' AND created_at >= ? AND created_at < ? ORDER BY created_at DESC LIMIT 300").all(w.start, w.end))
       .map(r => ({ kind: r.kind, text: r.text, at: iso(r.created_at), sent: !!r.sent_at && !r.error }));
-    const last = Number(await setting('orders_last_push')) || null;
+    const last = await app.ordersSeen();
     let data = null; try { data = row ? JSON.parse(row.data) : null; } catch {}
     return { day, data, receivedAt: iso(row?.received_at), lastPush: iso(last), ageSeconds: last ? Math.round((ctx.now - last) / 1000) : null,
       linked: !!await setting('orders_token_hash'), alerts, apexNames: app.apexNameMap ? await app.apexNameMap() : {}, serverNow: iso(ctx.now) };
@@ -319,7 +328,7 @@ function setup(app) {
   app.afterRequest(async now => {
     if (now - lastCheck < CHECK_MS) return;
     lastCheck = now;
-    const last = Number(await setting('orders_last_push')) || null;
+    const last = await app.ordersSeen();
     if (!last || now - last < STALE_MS || !isOperating(now)) return;
     if (await db.prepare('SELECT 1 FROM telegram_log WHERE key = ?').get('orders:stale:' + last)) return;
     const at = new Date(last).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit' });

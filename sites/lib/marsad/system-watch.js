@@ -34,7 +34,7 @@ function setup(app) {
         fix: 'اتأكد إن جهاز الكاشير شغال (الكاتب بيشتغل مع مرصد Apex)' },
       { id: 'site', name: 'قراية أوردرات الموقع', last: siteLinked ? await num('site_sync_at') : null, after: 15, target: 'online', only: siteLinked,
         error: await setting('site_error'), fix: 'راجع مفتاح الموقع في «الإدارة» (WooCommerce)' },
-      { id: 'monitor', name: 'مرصد Apex على جهاز الكاشير (أوردرات الفروع)', last: await num('orders_last_push'), after: 10, target: 'online', only: !!await setting('orders_token_hash'),
+      { id: 'monitor', name: 'مرصد Apex على جهاز الكاشير (أوردرات الفروع)', last: app.ordersSeen ? await app.ordersSeen() : await num('orders_last_push'), after: 10, target: 'online', only: !!await setting('orders_token_hash'),
         fix: 'اتأكد إن جهاز الكاشير شغال ومتوصل بالنت' },
       { id: 'errors', name: 'السيرفر', bad: errs.length >= 5, since: errs.length ? Date.parse(errs[errs.length - 1].at) : null, target: 'online',
         text: () => '🛠️ السيرفر بيرجع أخطاء: ' + errs.length + ' خطأ في آخر 10 دقايق\nآخر خطأ: ' + errs[0].path + ' — ' + errs[0].error,

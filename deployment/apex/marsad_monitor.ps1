@@ -1351,6 +1351,11 @@ while ($true) {
     $payload = Cycle
     $cycleTimer.Stop()
     if ($cycleTimer.ElapsedMilliseconds -ge 10000) { L "cycle timing: total=$($cycleTimer.ElapsedMilliseconds) ms; SQL sum=$($script:cycleSqlMs) ms" }
+    # Karim 11-16: Apex closed its day and no order yet (its daily table is empty): nothing to send, but say it is reading.
+    if (-not $payload) {
+      try { Invoke-RestMethod -Method Post -Uri "$ServerUrl/api/orders/alive" -Headers @{ 'x-orders-token' = $OrdersKey } -ContentType 'application/json' -Body '{}' -TimeoutSec 15 | Out-Null }
+      catch { if (-not $script:aliveErrAt -or ((Get-Date) - $script:aliveErrAt).TotalMinutes -ge 30) { $script:aliveErrAt = Get-Date; L "alive: $($_.Exception.Message)" } }
+    }
     if ($payload) {
       $currentAlerts = @($pending | Where-Object { $_.day -eq $payload.day } | Select-Object -First 400)
       $payload.alerts = @($currentAlerts + $(if ($script:ServerFollow -and $currentAlerts.Count -lt 400) { @($script:follow | Select-Object -First (400 - $currentAlerts.Count)) } else { @() }))

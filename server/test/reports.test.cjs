@@ -148,3 +148,15 @@ test('Talabat portal reviews (Karim 11-16): the main screen sends each store\'s 
     assert.equal(tg.rating, 3, 'the day\'s average of the reviews');
   } finally { await t.close(); }
 });
+
+test('orders monitor (Karim 11-16): Apex\'s day closed and no order yet — the monitor says it is reading, so no «مش بيقرا» alert', async () => {
+  const t = await start({ at: cairoToUtc(2026, 11, 16, 9, 20) });
+  try {
+    const admin = await t.admin();
+    const tok = (await admin('POST', '/api/orders/token')).body.token;
+    assert.equal((await t.call('POST', '/api/orders/alive', { body: {} })).status, 401);
+    assert.equal((await t.call('POST', '/api/orders/alive', { headers: { 'x-orders-token': tok }, body: {} })).status, 200);
+    const live = (await admin('GET', '/api/orders/live')).body;
+    assert.equal(live.ageSeconds, 0);
+  } finally { await t.close(); }
+});

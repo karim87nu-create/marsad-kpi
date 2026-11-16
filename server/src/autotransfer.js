@@ -291,7 +291,7 @@ function setup(app) {
     const row = await db.prepare('SELECT data, received_at FROM orders_days WHERE day = ?').get(day).catch(() => null);
     const d = parseJson(row?.data, {}) || {};
     entered = new Map((d.online || []).filter(a => a?.no).map(a => [String(a.no), { at: a.at || null, user: a.user || null }]));
-    entered.pushedAt = row?.received_at || null; snapAt = now; snapDay = day;
+    entered.pushedAt = Math.max(row?.received_at || 0, (app.ordersSeen ? await app.ordersSeen() : 0) || 0) || null; snapAt = now; snapDay = day;
     return entered;
   }
   app.route('GET', '/api/transfer/live', async ctx => {
