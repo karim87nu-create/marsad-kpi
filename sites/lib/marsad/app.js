@@ -3,7 +3,7 @@ import { createSigner, createLimiter, hashPassword, randomToken } from './securi
 import { createLegacy } from './legacy.js';
 import { migrate, schemaReady } from './db.js';
 // Raised with each change worth checking after a publish (shown by /api/health).
-const BUILD = '2026-11-17.1';
+const BUILD = '2026-11-17.2';
 
 class HttpError extends Error {
   constructor(status, code, extra) {
@@ -40,7 +40,7 @@ async function readBody(request, limit) {
 
 // config: { secret?, adminPassword?, adminPasswordHash?, deviceTokens?, allowedOrigins?, telegramApi?, telegramTimer? }
 function createApp({ db, config: input = {}, now = () => Date.now() }) {
-  const routes = new Map(), afterRequest = [];
+  const routes = new Map(), afterRequest = [], beforeRequest = [];
   const config = {
     allowedOrigins: ['https://karim87nu-create.github.io'],
     ...input,
@@ -57,6 +57,7 @@ function createApp({ db, config: input = {}, now = () => Date.now() }) {
     },
     route(method, path, handler, options = {}) { routes.set(method + ' ' + path, { handler, options }); },
     afterRequest(fn) { afterRequest.push(fn); },
+    beforeRequest(fn) { beforeRequest.push(fn); },
     audit(action, employeeId, details) {
       return db.prepare('INSERT INTO audit (occurred_at, action, employee_id, details) VALUES (?,?,?,?)')
         .run(now(), action, employeeId ?? null, JSON.stringify(details || {}));
@@ -114,6 +115,7 @@ function createApp({ db, config: input = {}, now = () => Date.now() }) {
     let response;
     try {
       await app.init();
+      for (const fn of beforeRequest) await fn(now());
       const raw = request.method === 'GET' || route.options.stream ? new Uint8Array(0) : await readBody(request, route.options.limit || 256 * 1024);
       const type = String(request.headers.get('content-type') || '');
       let body = {};

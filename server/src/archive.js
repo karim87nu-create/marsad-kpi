@@ -77,6 +77,9 @@ function setup(app) {
         tables: Number(b.backup.tables) || null, freeGb };
       await put('backup_status', out.backup);
     }
+    // The PC's own clock (ISO with its offset): how far it is from the server's (Karim 11-17).
+    const pcTime = Date.parse(b.pcTime || '');
+    if (Number.isFinite(pcTime)) await put('pc_clock', { at: ctx.now, drift: pcTime - ctx.now });
     if (b.archive && typeof b.archive === 'object') {
       out.archive = { at: ctx.now, pages: Number(b.archive.pages) || 0, upToDate: b.archive.upToDate === true, error: b.archive.error ? String(b.archive.error).slice(0, 300) : null, freeGb };
       await put('archive_status', out.archive);

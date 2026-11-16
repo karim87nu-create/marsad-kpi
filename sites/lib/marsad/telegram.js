@@ -389,7 +389,7 @@ function setup(app) {
     }
 
     // ---- waiting customers (per caller, from the live queue) ----
-    const today = businessDay(now), w = dayWindow(today), operatingNow = now >= w.start && now < w.operatingEnd;
+    const today = businessDay(now), w = dayWindow(today), operatingNow = now >= w.open && now < w.operatingEnd;
     for (const r of queueRows) {
       const wait = waitOf(r), phone = String(r[9] || '').replace(/\D/g, '');
       if (wait == null || !operatingNow) continue;

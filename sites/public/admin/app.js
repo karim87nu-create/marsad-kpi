@@ -612,6 +612,7 @@
     const old = d.devices.filter(x => x.version && cmp(x.version, newest) < 0);
     $('systemCards').append(kpi('إضافات قديمة', old.length ? old.length + ' جهاز' : 'كله محدث', old.length ? 'warn' : 'good', old.length ? [...new Set(old.map(x => x.name + ' ' + x.version))].join(' · ') + ' — الأحدث ' + newest : 'الأحدث ' + (newest || '—')));
     renderWatch('sysWatch').catch(() => {});
+    renderOpsSettings().catch(e => say('hoursNote', e.message));
     auditRows = d.audit;
     table('auditTable', auditColumns, d.audit, { limit: 300 });
   }
@@ -793,6 +794,33 @@
     catch (e) { say('apexCancelNote', e.message); }
     finally { $('apexCancelOff').disabled = false; }
   };
+  // مواعيد الشغل والقواعد الزيادة (Karim 11-17): changed here, no publish.
+  const hourName = x => x === 0 ? '12 بالليل' : x < 12 ? x + (x < 6 ? ' الفجر' : ' الصبح') : x === 12 ? '12 الضهر' : (x - 12) + (x < 17 ? ' العصر' : ' بالليل');
+  async function renderOpsSettings() {
+    const panel = $('opsSettingsPanel'); if (!panel) return;
+    panel.hidden = !isAdmin(); if (!isAdmin()) return;
+    const d = await api('/api/ops-settings'), f = $('hoursForm');
+    const opts = (sel, from, to, v) => sel.replaceChildren(...Array.from({ length: to - from + 1 }, (_, i) => from + i).map(x => h('option', { value: x, textContent: hourName(x), selected: x === v })));
+    opts(f.elements.openHour, 9, 18, d.hours.openHour); opts(f.elements.closeHour, 0, 8, d.hours.closeHour);
+    say('hoursNote', 'دلوقتي: من ' + hourName(d.hours.openHour) + ' لـ ' + hourName(d.hours.closeHour) + (d.hours.openHour === d.defaults.openHour && d.hours.closeHour === d.defaults.closeHour ? ' (العادي)' : ' — متغيرة عن العادي'));
+    const rows = [...d.rules.areas.map(r => ({ kind: 'area', type: 'منطقة', key: r.words, source: r.source, src: r.source === 'talabat' ? 'طلبات' : r.source === 'site' ? 'الموقع' : 'الاتنين', no: r.no, extra: r.addAddress || '' })),
+      ...d.rules.items.map(r => ({ kind: 'item', type: 'صنف', key: r.name, src: '—', no: r.no, extra: '' }))];
+    table('rulesTable', [{ title: 'النوع', get: r => r.type }, { title: 'الكلام', get: r => r.key }, { title: 'المصدر', get: r => r.src }, { title: 'رقم Apex', get: r => String(r.no) }, { title: 'يتضاف للعنوان', get: r => r.extra },
+      { title: '', get: () => '', show: r => btn('امسح', async () => { if (!confirm('امسح القاعدة «' + r.key + '»؟')) return; try { await api('/api/ops-settings/rules', { method: 'PUT', body: { kind: r.kind, words: r.key, name: r.key, source: r.source || '', remove: true } }); renderOpsSettings(); } catch (e) { say('ruleNote', e.message); } }) }], rows, { empty: 'مفيش قواعد زيادة — النظام ماشي بالقواعد الأساسية واللي اتعلمه' });
+  }
+  $('hoursForm') && ($('hoursForm').onsubmit = async e => {
+    e.preventDefault(); const f = e.target;
+    try { await api('/api/ops-settings/hours', { method: 'PUT', body: { openHour: Number(f.elements.openHour.value), closeHour: Number(f.elements.closeHour.value) } }); await renderOpsSettings(); }
+    catch (x) { say('hoursNote', x.message); }
+  });
+  $('hoursReset') && ($('hoursReset').onclick = async () => { try { await api('/api/ops-settings/hours', { method: 'PUT', body: { reset: true } }); await renderOpsSettings(); } catch (x) { say('hoursNote', x.message); } });
+  $('ruleForm') && ($('ruleForm').onsubmit = async e => {
+    e.preventDefault(); const f = e.target, kind = f.elements.kind.value, words = f.elements.words.value.trim();
+    try {
+      await api('/api/ops-settings/rules', { method: 'PUT', body: { kind, words, name: words, source: f.elements.source.value, no: kind === 'area' ? Number(f.elements.no.value) : f.elements.no.value.trim(), addAddress: f.elements.addAddress.value.trim() } });
+      say('ruleNote', 'اتضافت — هتمشي على الأوردرات الجاية خلال دقيقة'); f.reset(); await renderOpsSettings();
+    } catch (x) { say('ruleNote', x.message); }
+  });
   // Every automatic part: working, or stopped since when and what to do (the same check that sends the Telegram alert).
   async function renderWatch(box) {
     if (!isAdmin()) return $(box).replaceChildren(h('p', { className: 'muted', textContent: 'للمدير بس' }));

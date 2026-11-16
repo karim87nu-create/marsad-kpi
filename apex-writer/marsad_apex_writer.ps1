@@ -36,7 +36,8 @@ $logFile = Join-Path $here 'writer_log.txt'
 function L($m){ try { if ((Test-Path $logFile) -and (Get-Item $logFile).Length -gt 5MB) { Move-Item $logFile ($logFile + '.old') -Force }; Add-Content $logFile ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '  ' + $m) -Encoding UTF8 } catch {} }
 
 $created = $false
-$mutex = New-Object System.Threading.Mutex($true, 'Local\MarsadApexWriter', [ref]$created)
+# Global (Karim 11-17): one copy across the logged-on session and the start-up run that needs no logon.
+try { $mutex = New-Object System.Threading.Mutex($true, 'Global\MarsadApexWriter', [ref]$created) } catch { $mutex = New-Object System.Threading.Mutex($true, 'Local\MarsadApexWriter', [ref]$created) }
 if (-not $created) { exit 0 }
 
 # Hang guard (Karim 11-16: the writer went silent at 09:03 when the line dropped): if the loop makes no progress for 15

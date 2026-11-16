@@ -29,8 +29,22 @@ const AREAS = [
 // An area that says only the district: the area comes from the address.
 const GENERAL = /^(مدينه نصر|مصر الجديده|القاهره|cairo)$/;
 
+// Rules Karim adds from the admin page (11-17, no publish needed): checked before the built-in ones, by the whole
+// normalized words or as a part of them. { areas: [{ words, source, no, addAddress }], items: [{ name, no }] }.
+let extra = { areas: [], items: [] };
+export function setExtraRules(x) {
+  const clean = (list, f) => (Array.isArray(list) ? list : []).map(f).filter(Boolean);
+  extra = {
+    areas: clean(x?.areas, r => { const w = norm(r?.words), no = Number(r?.no); return w && Number.isInteger(no) && no > 0 ? { words: w, source: r.source === 'talabat' || r.source === 'site' ? r.source : null, no, addAddress: String(r.addAddress || '').trim().slice(0, 60) || null } : null; }),
+    items: clean(x?.items, r => { const n = norm(r?.name), no = String(r?.no || '').trim(); return n && /^[0-9A-Za-z]{1,20}$/.test(no) ? { name: n, no } : null; }),
+  };
+  return extra;
+}
+const has = (t, w) => t === w || (' ' + t + ' ').includes(' ' + w + ' ');
+
 export function areaRule(words, source) {
   const t = norm(words); if (!t) return null;
+  for (const r of extra.areas) if ((!r.source || r.source === source) && has(t, r.words)) return { no: r.no, ...(r.addAddress ? { addAddress: r.addAddress } : {}) };
   if (GENERAL.test(t)) return { general: true };
   for (const [src, re, no, extra] of AREAS) if ((!src || src === source) && re.test(t)) return { no, ...(extra || {}) };
   return null;
@@ -49,6 +63,7 @@ const ITEMS = [
 ];
 export function itemRule(item) {
   const t = norm(item?.name); if (!t) return null;
+  for (const r of extra.items) if (t === r.name) return r.no;
   for (const [re, no] of ITEMS) if (re.test(t)) return typeof no === 'function' ? no(item) : no;
   return null;
 }

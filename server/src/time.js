@@ -10,6 +10,7 @@ const partsFormat = new Intl.DateTimeFormat('en-CA', {
 const RULES = {
   businessStartHour: 9,   // data day starts 09:00
   operatingEndHour: 2,    // operating hours end 02:00 next day (Karim: the restaurant works 9 ص → 2 الفجر)
+  openHour: 9,            // the restaurant opens (Karim 11-17: Ramadan and holidays change both from the admin page, no publish)
   slaSeconds: 10,
   shortAbandonSeconds: 7,
   callAlertSeconds: 240,
@@ -62,13 +63,14 @@ function dayWindow(date) {
     date,
     start: cairoToUtc(y, m, d, RULES.businessStartHour),
     end: cairoToUtc(next[0], next[1], next[2], RULES.businessStartHour),
+    open: cairoToUtc(y, m, d, Math.max(RULES.businessStartHour, RULES.openHour)),
     operatingEnd: cairoToUtc(next[0], next[1], next[2], RULES.operatingEndHour),
   };
 }
 
 function isOperating(ms) {
   const w = dayWindow(businessDay(ms));
-  return ms >= w.start && ms < w.operatingEnd;
+  return ms >= w.open && ms < w.operatingEnd;
 }
 
 const validDate = date => {

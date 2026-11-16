@@ -23,6 +23,12 @@ function setup(app) {
     // An automatic transfer waiting for the writer more than 5 minutes.
     const waiting = await db.prepare("SELECT MIN(at) t, COUNT(*) n FROM transfer_jobs WHERE state IN ('auto_pending', 'auto_sending')").get();
     const backup = parseJson(await setting('backup_status'), null);
+    // Karim 11-17 «كل السيناريوهات»: Apex's stopped items, the cashier PC's disk and clock, and Telegram itself.
+    const stock = parseJson(await setting('apex_stock_actual'), null);
+    const disk = [backup, parseJson(await setting('archive_status'), null)].filter(x => x?.freeGb != null).sort((a, b) => b.at - a.at)[0] || null;
+    const pcClock = parseJson(await setting('pc_clock'), null);
+    const drift = pcClock && now - pcClock.at < 3 * 3600000 ? pcClock.drift : null;
+    const tg = await db.prepare("SELECT COUNT(*) n, MIN(created_at) t, MAX(error) e FROM telegram_log WHERE created_at > ? AND sent_at IS NULL AND error IS NOT NULL AND error NOT LIKE 'مفيش جروب%'").get(now - 30 * 60000);
     return [
       { id: 'arabicss', name: 'سحب سجل مكالمات أرابيكس', last: history, after: 20, target: null,
         fix: 'افتح تقارير أرابيكس على جهاز المشرف وسجّل دخول، وراجع «حالة النظام»' },
@@ -47,6 +53,17 @@ function setup(app) {
         text: () => '🛠️ النسخة الاحتياطية الليلية ما اكتملتش' + (backup.okAt ? ' من ' + clock(backup.okAt) + ' (' + Math.round((now - backup.okAt) / 3600000) + ' ساعة)' : '') +
           (backup.error ? '\nالخطأ: ' + backup.error : '') + (backup.freeGb != null ? '\nالمساحة الفاضية على الجهاز: ' + backup.freeGb + ' جيجا' : ''),
         back: 'النسخة الاحتياطية اكتملت', fix: 'سيب جهاز الكاشير شغال بالليل (النسخة بتنزل من 4 لـ 8 الصبح)' },
+      { id: 'stock', name: 'قراية الأصناف الواقفة من Apex', last: stock?.at || null, after: 20, target: 'online', only: !!stock,
+        fix: 'اتأكد إن مرصد Apex شغال على جهاز الكاشير' },
+      { id: 'disk', name: 'مساحة جهاز الكاشير', always: true, only: !!disk, bad: !!disk && disk.freeGb < 2, since: disk?.at || null, target: null,
+        text: () => '🛠️ المساحة الفاضية على جهاز الكاشير ' + disk.freeGb + ' جيجا بس', back: 'المساحة على جهاز الكاشير بقت كفاية',
+        fix: 'امسح أي ملفات كبيرة مش محتاجها على C: (مش فولدر Marsad)' },
+      { id: 'clock', name: 'ساعة جهاز الكاشير', only: drift != null, bad: drift != null && Math.abs(drift) > 3 * 60000, since: pcClock?.at || null, target: null,
+        text: () => '🛠️ ساعة جهاز الكاشير ' + (drift > 0 ? 'قدّام' : 'ورا') + ' ' + Math.round(Math.abs(drift) / 60000) + ' دقيقة — أوقات الأوردرات هتتحسب غلط',
+        back: 'ساعة جهاز الكاشير مظبوطة', fix: 'من إعدادات الويندوز ← الوقت ← «اضبط الوقت تلقائي» و«زامن دلوقتي»' },
+      { id: 'telegram', name: 'إرسال تليجرام', bad: (tg?.n || 0) >= 3, since: tg?.t || null, target: null,
+        text: () => '🛠️ تليجرام مش بيبعت: ' + tg.n + ' رسالة فشلت في آخر نص ساعة\nالخطأ: ' + String(tg.e || '').slice(0, 150),
+        back: 'تليجرام رجع يبعت', fix: 'اتأكد إن البوت لسه في الجروبات ومش متشال، وراجع «تليجرام» في الإدارة' },
     ].filter(p => p.only !== false);
   };
 

@@ -29,7 +29,8 @@ function L($m){
 
 # ===== one copy only (the watchdog task starts this every few minutes) =====
 $created = $false
-$mutex = New-Object System.Threading.Mutex($true, 'Local\MarsadOrdersMonitor', [ref]$created)
+# Global (Karim 11-17): one copy across the logged-on session and the start-up run that needs no logon.
+try { $mutex = New-Object System.Threading.Mutex($true, 'Global\MarsadOrdersMonitor', [ref]$created) } catch { $mutex = New-Object System.Threading.Mutex($true, 'Local\MarsadOrdersMonitor', [ref]$created) }
 if (-not $created) { exit 0 }
 
 # ===== hang guard (Karim 11-16: the read from Apex hung 08:35-09:03 when the line to the Apex server dropped) =====
@@ -78,6 +79,7 @@ function Send-CopyStatus($body) {
   try {
     $drive = (Get-Item $here).PSDrive
     if ($drive -and $drive.Free) { $body.freeGb = [math]::Round($drive.Free / 1GB, 1) }
+    $body.pcTime = (Get-Date).ToString('o')   # the server compares this PC's clock with its own (Karim 11-17)
     Invoke-RestMethod -Method Post -Uri "$ServerUrl/api/archive/status" -Headers @{ 'x-orders-token' = $OrdersKey } -Body ([Text.Encoding]::UTF8.GetBytes(($body | ConvertTo-Json -Compress -Depth 4))) -ContentType 'application/json; charset=utf-8' -TimeoutSec 20 | Out-Null
   } catch { L "copy status: $($_.Exception.Message)" }
 }
@@ -1433,7 +1435,7 @@ while ($true) {
       $wr = Join-Path $here 'apex-writer\marsad_apex_writer.ps1'
       if (Test-Path $wr) {
         $wfree = $false
-        try { $wm = [System.Threading.Mutex]::OpenExisting('Local\MarsadApexWriter'); $wm.Dispose() } catch { $wfree = $true }
+        try { $wm = [System.Threading.Mutex]::OpenExisting('Global\MarsadApexWriter'); $wm.Dispose() } catch { try { $wm = [System.Threading.Mutex]::OpenExisting('Local\MarsadApexWriter'); $wm.Dispose() } catch { $wfree = $true } }
         if ($wfree) { Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $wr + '"'); L 'apex writer started' }
       }
     } catch { L "apex writer start: $($_.Exception.Message)" }

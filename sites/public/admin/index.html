@@ -478,6 +478,25 @@
     <section id="view-system" class="view page" hidden>
       <div id="systemCards" class="cards"></div>
       <article class="panel"><h2>مراقبة الأجزاء الآلية (بتبعت تليجرام لو جزء وقف)</h2><div id="sysWatch"></div></article>
+      <article class="panel" id="opsSettingsPanel"><h2>مواعيد الشغل وقواعد التحويل (بتتغير من هنا من غير نشر)</h2>
+        <form id="hoursForm" class="row">
+          <label>الفتح <select name="openHour"></select></label>
+          <label>القفل <select name="closeHour"></select></label>
+          <button type="submit">حفظ المواعيد</button> <button type="button" class="ghost small" id="hoursReset">رجّع 9 ص – 2 بالليل</button>
+        </form>
+        <p id="hoursNote" class="muted" role="status"></p>
+        <h4>قواعد زيادة (بتمشي قبل أي حاجة اتعلمها النظام)</h4>
+        <form id="ruleForm" class="row">
+          <select name="kind"><option value="area">منطقة</option><option value="item">صنف</option></select>
+          <input name="words" placeholder="الكلام زي ما بيظهر في الأوردر" required>
+          <select name="source"><option value="">طلبات والموقع</option><option value="talabat">طلبات بس</option><option value="site">الموقع بس</option></select>
+          <input name="no" placeholder="رقم المنطقة / الصنف في Apex" required>
+          <input name="addAddress" placeholder="كلمة تتضاف للعنوان (اختياري)">
+          <button type="submit">إضافة</button>
+        </form>
+        <p id="ruleNote" class="muted" role="status"></p>
+        <div id="rulesTable"></div>
+      </article>
       <article class="panel"><h2>الأجهزة اللي اشتغلت آخر 24 ساعة</h2><div id="deviceTable"></div></article>
       <article class="panel"><h2>سجل التغييرات <button class="ghost small" data-export="audit">تصدير Excel</button></h2><div id="auditTable"></div></article>
     </section>
@@ -527,7 +546,7 @@
 <script src="home.js?v=4"></script>
 <script src="daily.js?v=4"></script>
 <script src="trend.js?v=2"></script>
-<script src="app.js?v=62"></script>
+<script src="app.js?v=63"></script>
 </body>
 </html>
 
