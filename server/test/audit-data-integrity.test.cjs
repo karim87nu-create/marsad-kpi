@@ -46,7 +46,7 @@ test('Woo bounded sync resumes page 7 without advancing the completed cursor pas
   const pages=[];
   const created='2026-10-22T08:00:00', modified='2026-10-22T08:30:00';
   const rows=Array.from({length:301},(_,i)=>({id:i+1,status:'cancelled',date_created_gmt:created,date_modified_gmt:modified,total:'10'}));
-  const fake=async url=>{const u=new URL(url);if(u.pathname.endsWith('/notes'))return Response.json([]);const p=Number(u.searchParams.get('page')||1);if(u.searchParams.get('per_page')==='1')return Response.json(rows.slice(0,1));pages.push(p);return Response.json(rows.slice((p-1)*50,p*50));};
+  const fake=async url=>{const u=new URL(url);if(u.pathname.endsWith('/notes')||u.pathname.endsWith('/products/reviews'))return Response.json([]);const p=Number(u.searchParams.get('page')||1);if(u.searchParams.get('per_page')==='1')return Response.json(rows.slice(0,1));pages.push(p);return Response.json(rows.slice((p-1)*50,p*50));};
   const t=await start({config:{siteFetch:fake}});
   try {
     const admin=await t.admin();
