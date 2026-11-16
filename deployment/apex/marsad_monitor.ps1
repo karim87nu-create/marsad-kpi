@@ -1034,7 +1034,7 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
     $thr = if ($o.Kind -eq 'Hotline' -or $o.Kind -eq 'الموقع') { $DiscPctHotline } else { $DiscPctPlatform }
     if ($o.Sub -gt 0 -and $o.Disc -gt 0 -and (100 * $o.Disc / $o.Sub) -ge $thr) {
       $pct = [math]::Round(100 * $o.Disc / $o.Sub, 0)
-      Raise "disc:$($o.No)" 'ordersDiscount' ("🖥️ Apex | 💸 خصم كبير على أوردر`nالفرع: $b`nرقم الأوردر: $($o.Disp) ($(KindAr $o.Kind))`nالحساب قبل الخصم: $([math]::Round($o.Sub,0)) ج`nالخصم: $([math]::Round($o.Disc,0)) ج ($pct%)`nالمطلوب من العميل: $([math]::Round($o.Amt,0)) ج`nاللي ضرب الأوردر: $who$(Extra $o)$($bstat[$o.Branch])") $script:firstCycle $b $o.Sn ('d' + [math]::Round($o.Disc,0))
+      Raise "disc:$($o.No)" 'ordersDiscount' ("🖥️ Apex | 💸 خصم كبير على أوردر`nالفرع: $b`nرقم الأوردر: $($o.Disp) ($(KindAr $o.Kind))`nالحساب قبل الخصم: $([math]::Round($o.Sub,0)) ج`nالخصم: $([math]::Round($o.Disc,0)) ج ($pct%)`nالمطلوب من العميل: $([math]::Round($o.Amt,0)) ج$(if (($o.Amt - ($o.Sub - $o.Disc)) -ge 1) { ' (منها خدمة التوصيل والضريبة والإضافات ' + [math]::Round($o.Amt - ($o.Sub - $o.Disc),0) + ' ج)' })`nاللي ضرب الأوردر: $who$(Extra $o)$($bstat[$o.Branch])") $script:firstCycle $b $o.Sn ('d' + [math]::Round($o.Disc,0))
     }
     $bad = $null
     if ($o.Online -match '(?i)talabat\s*visa' -and $o.Pay -ne 'Ledge') { $bad = "الأوردر نوعه TALABAT VISA بس طريقة الدفع على Apex مكتوبة $($o.Pay) (المفروض Ledge)" }

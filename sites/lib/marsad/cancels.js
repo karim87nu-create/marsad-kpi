@@ -10,6 +10,9 @@ import { sameBranch } from './talabat.js';
 
 const OWNERS = { employee: 'الموظف اللي ضربه', branch: 'الفرع', pilot: 'الطيار', customer: 'العميل', platform: 'طلبات / المنصة', other: 'سبب تاني' };
 const LATE_ENTRY_MIN = 10, LATE_OUT_MIN = 45;
+// 11-15: «اتلغى بعد 845 دقيقة مع الطيار» — an order voided on Apex hours after it left (the next morning) is a late
+// bookkeeping cancel, not the pilot's: past 3 hours it is not put on the pilot.
+const BOOKED_LATE_MIN = 180;
 const norm = s => String(s || '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/[ًٌٍَُِّْ]/g, '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 const reasonKey = s => norm(s).split(' ').filter(w => w.length > 1).slice(0, 8).join(' ') || null;
 const RULES = [
@@ -75,7 +78,8 @@ function setup(app) {
       if (lo) ev.push({ owner: 'branch', text: 'خرج من الفرع بعد ' + lo.wait + ' دقيقة' });
       if (c.afterOut != null) ev.push({ text: 'اتلغى بعد خروجه مع الطيار بـ ' + c.afterOut + ' دقيقة' });
       const s = suggest(reasonText, ev);
-      if (!s.owner && c.afterOut != null && c.afterOut >= LATE_OUT_MIN) { s.owner = 'pilot'; s.why.push('اتلغى بعد ' + c.afterOut + ' دقيقة مع الطيار'); }
+      if (!s.owner && c.afterOut != null && c.afterOut >= LATE_OUT_MIN && c.afterOut < BOOKED_LATE_MIN) { s.owner = 'pilot'; s.why.push('اتلغى بعد ' + c.afterOut + ' دقيقة مع الطيار'); }
+      else if (c.afterOut != null && c.afterOut >= BOOKED_LATE_MIN) s.why.push('اتلغى على Apex بعد ' + Math.round(c.afterOut / 60) + ' ساعة من خروجه — غالبًا إلغاء متسجل متأخر، مش على الطيار');
       out.push({ key: 'apex:' + c.no, source: 'apex', ref: String(c.no), kind: c.kind, at: c.at, branch: c.branch, apexNo: c.no, apexSn: c.sn ?? null, user: nm(c.user), by: nm(c.by), pilot: c.pilot || null,
         amount: c.amount ?? null, reason: reasonText || null, reasonKey: reasonKey(reasonText), ...s });
     }

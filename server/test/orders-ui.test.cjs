@@ -1,16 +1,19 @@
 'use strict';
 // The admin page: the two sections, the branches' live board, the reports, the order-entry view, the monitor key and the branch group.
 const test = require('node:test'), assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path');
-const { JSDOM } = require('jsdom'); const { start } = require('./helpers.cjs');
+const { JSDOM } = require('jsdom'); const { start } = require('./helpers.cjs'); const { cairoToUtc } = require('../src/time.js');
 
 const cairoDay = () => { const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Cairo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' }).formatToParts(new Date()).map(x => [x.type, x.value])); const d = p.year + '-' + p.month + '-' + p.day; return +p.hour < 9 ? new Date(Date.parse(d + 'T12:00:00Z') - 864e5).toISOString().slice(0, 10) : d; };
 
 test('admin page: مرصد الدهان sections, live branches board, reports, order entry, monitor key', async () => {
-  const t = await start({ at: Date.now() }); let dom;
+  // The page and the server both run at 3 pm of today's business day: the orders of the last 5 hours never cross the
+  // 9 am day change (this test failed every morning between 9 and 10).
+  const T0 = (() => { const [y, m, d] = cairoDay().split('-').map(Number); return cairoToUtc(y, m, d, 15, 0, 0); })();
+  const t = await start({ at: T0 }); let dom;
   try {
     await t.admin();
     const token = await t.login();
-    const day = cairoDay(), ago = m => new Date(Date.now() - m * 60000).toISOString();
+    const day = cairoDay(), ago = m => new Date(T0 - m * 60000).toISOString();
     const k = (h, tal = 0) => ({ Hotline: h, 'طلبات': tal, 'الموقع': 0, 'وفرها': 0 });
     const push = (await t.call('POST', '/api/orders/token', { headers: { 'x-admin-password': token } })).body.token;
     const payload = { v: 1, day, generatedAt: ago(0), settings: { late: 30, veryLate: 45 },
@@ -30,7 +33,9 @@ test('admin page: مرصد الدهان sections, live branches board, reports, 
 
     const root = path.join(__dirname, '../../sites/public/admin');
     dom = new JSDOM(fs.readFileSync(path.join(root, 'index.html'), 'utf8'), { url: 'http://localhost/admin/#now', runScripts: 'outside-only', pretendToBeVisual: true });
-    const w = dom.window, doc = w.document; w.sessionStorage.setItem('marsadAdminToken', token); w.MARSAD_API = t.base; w.fetch = (u, o) => fetch(u, { ...o, signal: undefined }); // Node fetch needs its own AbortSignal realm.
+    const w = dom.window, doc = w.document;
+    { const RD = w.Date, shift = T0 - Date.now(); function FD(...a) { if (!new.target) return new RD(RD.now() + shift).toString(); return a.length ? new RD(...a) : new RD(RD.now() + shift); }
+      FD.prototype = RD.prototype; FD.now = () => RD.now() + shift; FD.parse = RD.parse; FD.UTC = RD.UTC; w.Date = FD; } w.sessionStorage.setItem('marsadAdminToken', token); w.MARSAD_API = t.base; w.fetch = (u, o) => fetch(u, { ...o, signal: undefined }); // Node fetch needs its own AbortSignal realm.
     w.confirm = () => true; w.alert = x => { throw Error(x); };
     for (const f of [...doc.querySelectorAll('script[src]')].map(s => s.getAttribute('src').split('?')[0]).filter(f => f !== 'config.js')) w.eval(fs.readFileSync(path.join(root, f), 'utf8'));
     const until = async (f, what) => { for (let i = 0; i < 300; i++) { if (f()) return; await new Promise(r => setTimeout(r, 10)); } throw Error('UI did not finish: ' + what + ' ' + doc.getElementById('error').textContent + ' / ' + doc.getElementById('title').textContent + ' / ' + doc.getElementById('boardRoot').textContent.slice(0, 300)); };
