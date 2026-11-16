@@ -741,6 +741,14 @@ function Probe-Payload($payload){
   $json = $serializer.Serialize($wire)
   $bodyBytes = [Text.Encoding]::UTF8.GetBytes($json)
   if ($tracePush) { L "push payload ready: $($bodyBytes.Length) bytes; JSON $($serializeTimer.ElapsedMilliseconds) ms" }
+  # Which part of the push weighs what (bytes per section), once at start and every 30 minutes, to keep it light.
+  try {
+    if (-not $script:sizesAt -or ((Get-Date) - $script:sizesAt).TotalMinutes -ge 30) {
+      $script:sizesAt = Get-Date
+      $parts = foreach ($k in @($sendPayload.Keys)) { "$k=" + [Text.Encoding]::UTF8.GetByteCount($serializer.Serialize((ConvertTo-JsonPlain -value $sendPayload[$k]))) }
+      L ("push sizes: " + ($parts -join ' '))
+    }
+  } catch {}
   if ($bodyBytes.Length -gt 900000) { $script:pushFails++; L "push withheld after serialization safety limit: $($bodyBytes.Length) bytes; outbox retained"; return }
   try {
     try {
