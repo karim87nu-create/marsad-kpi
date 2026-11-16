@@ -27,7 +27,7 @@ function middayShift() {
   return p.hour >= 10 && p.hour < 22 ? 0 : cairoToUtc(p.year, p.month, p.day, 12, 0, 0) - Date.now();
 }
 
-async function harness(t, shift = 0) {
+async function harness(t, shift = 0, wrap = null) {
   const read = f => fs.readFileSync(path.join(EXT, f), 'utf8').replace("API: 'https://marsad-v2.karim87nu.chatgpt.site'", "API: '" + t.base + "'");
   const store = {}, listeners = [], pageListeners = [];
   let current = '', w = null;
@@ -41,6 +41,7 @@ async function harness(t, shift = 0) {
     Intl, Date, JSON, Math, Promise, Error, Number, String, Array, Object, Map, Set, structuredClone, DOMParser: class {}, browser,
     fetch: !shift ? fetch : async (...a) => { const r = await fetch(...a); const hd = new Headers(r.headers); hd.set('date', new Date(Date.now() + shift).toUTCString()); return new Response(r.body, { status: r.status, headers: hd }); } };
   bg.globalThis = bg;
+  if (wrap) bg.fetch = wrap(bg.fetch);
   vm.createContext(bg);
   for (const f of ['config.js', 'background.js']) vm.runInContext(read(f), bg, { filename: f });
   const toBackground = async m => { const sender = { tab: { id: 7 }, url: current }; for (const f of listeners) { const r = await f(structuredClone(m), sender); if (r !== undefined) return structuredClone(r); } };
@@ -229,4 +230,51 @@ test('extension 3 collector: linked from the admin page, sends the day history a
     // Another site cannot link a collector.
     await assert.rejects(send({ type: 'COLLECTOR_LINK', ...tok }, 'https://evil.example/'));
   } finally { reports.close(); await t.close(); }
+});
+
+
+// Karim 11-17 «مش عايزين خطأ يحصل والشغل يقف»: the server down must not lock Arabicss behind the password screen.
+test('extension 3: the server down — no password screen; the shift starts when it answers', { skip: !JSDOM && 'jsdom not installed' }, async () => {
+  const shift = middayShift();
+  const t = await start({ at: Date.now() + shift });
+  Object.defineProperty(t.clock, 'now', { get: () => Date.now() + shift, set() {} });
+  let down = true;
+  const h = await harness(t, shift, f => async (url, o) => down && /session\/start/.test(String(url)) ? new Response('{"error":"server_error"}', { status: 503 }) : f(url, o));
+  try {
+    const admin = await t.admin();
+    await t.employee(admin);
+    const w = await h.open('mainLogin');
+    const gate = w.document.getElementById('marsad-gate');
+    gate.querySelector('input').value = '1234';
+    gate.querySelector('form').dispatchEvent(new w.Event('submit', { cancelable: true }));
+    await settle(1500);
+    assert.equal(w.document.getElementById('marsad-gate'), null, 'no password screen while the server is down');
+    assert.match(w.document.getElementById('marsad-offline')?.textContent || '', /المرصد مش متاح/);
+    assert.equal(t.app.db.raw.prepare('SELECT COUNT(*) n FROM employee_sessions').get().n, 0);
+    down = false;
+    w.dispatchEvent(new w.Event('online'));
+    await settle(1500);
+    assert.equal(w.document.getElementById('marsad-offline'), null);
+    assert.match(w.document.getElementById('marsad-box')?.textContent || '', /Ahmed/);
+    assert.equal(t.app.db.raw.prepare('SELECT COUNT(*) n FROM employee_sessions').get().n, 1);
+    // A wrong password still gets nothing.
+  } finally { h.close(); await t.close(); }
+});
+
+test('extension 3: a wrong password while the server answers — the screen stays', { skip: !JSDOM && 'jsdom not installed' }, async () => {
+  const shift = middayShift();
+  const t = await start({ at: Date.now() + shift });
+  Object.defineProperty(t.clock, 'now', { get: () => Date.now() + shift, set() {} });
+  const h = await harness(t, shift);
+  try {
+    const admin = await t.admin();
+    await t.employee(admin);
+    const w = await h.open('mainLogin');
+    const gate = w.document.getElementById('marsad-gate');
+    gate.querySelector('input').value = '9999';
+    gate.querySelector('form').dispatchEvent(new w.Event('submit', { cancelable: true }));
+    await settle(1500);
+    assert.ok(w.document.getElementById('marsad-gate'), 'screen stays');
+    assert.equal(w.document.getElementById('marsad-offline'), null);
+  } finally { h.close(); await t.close(); }
 });

@@ -189,8 +189,23 @@
   }, 1000);
 
   // ---------- start / end ----------
-  async function start(pin) {
-    const r = await api('/api/session/start', 'POST', { pin, extension: ext() });
+  // Karim 11-17 «مش عايزين خطأ يحصل والشغل يقف»: when the Marsad server cannot be reached (no network, the server down
+  // or failing), the password screen must not stop the calls. The employee works; the shift is started with the same
+  // password as soon as the server answers (every 30 seconds). A wrong password still gets no way in.
+  let pendingPin = null, offlineSince = 0;
+  const serverDown = r => !r || r.status === 0 || r.status >= 500;
+  async function startOrWait(pin) {
+    let r;
+    try { r = await api('/api/session/start', 'POST', { pin, extension: ext() }); } catch { r = null; }
+    if (serverDown(r)) { pendingPin = pin; offlineSince ||= now(); render(); return; }
+    pendingPin = null; offlineSince = 0;
+    await start(pin, r);
+  }
+  const retryPending = () => { if (pendingPin && !id) startOrWait(pendingPin).catch(e => { pendingPin = null; offlineSince = 0; notice = e.message; render(); }); };
+  setInterval(retryPending, 30000);
+  window.addEventListener('online', retryPending);   // the network came back
+  async function start(pin, given) {
+    const r = given || await api('/api/session/start', 'POST', { pin, extension: ext() });
     if (!r.ok) {
       const e = r.data?.error;
       throw Error(r.status === 401 ? 'الباسورد غير صحيح' : r.status === 429 ? 'محاولات كثيرة؛ انتظر 15 دقيقة'
@@ -331,6 +346,16 @@
   function render() {
     if (!document.body) return;
     const gate = $('#marsad-gate'), box = $('#marsad-box');
+    if (!id && pendingPin) {
+      // The server is not answering: no password screen, a note in the corner, the shift starts by itself when it answers.
+      gate?.remove(); box?.remove();
+      let b = $('#marsad-offline');
+      if (!b) { b = el('aside', { id: 'marsad-box', dir: 'rtl' }); b.id = 'marsad-offline'; document.body.append(b); }
+      const t = 'المرصد مش متاح دلوقتي — اشتغل عادي، الشيفت هيتسجل باسمك لوحده أول ما يرجع (من ' + Math.max(1, Math.round((now() - offlineSince) / 60000)) + ' د)';
+      if (b.textContent !== t) b.textContent = t;
+      return;
+    }
+    $('#marsad-offline')?.remove();
     if (!id) {
       box?.remove(); $('#marsad-messages')?.remove(); messagesKey = '';
       if (!gate) {
@@ -341,7 +366,7 @@
           e.preventDefault(); e.stopPropagation();
           if (!/^\d+$/.test(pin.value)) { err.textContent = 'الباسورد أرقام بس'; return; }
           go.disabled = true; err.textContent = 'جارٍ التحقق…';
-          try { await start(pin.value); pin.value = ''; } catch (x) { err.textContent = x.message; } finally { go.disabled = false; render(); }
+          try { await startOrWait(pin.value); pin.value = ''; } catch (x) { err.textContent = x.message; } finally { go.disabled = false; render(); }
         };
         document.body.append(el('div', { id: 'marsad-gate', dir: 'rtl' }, form));
         setTimeout(() => pin.focus(), 50);
