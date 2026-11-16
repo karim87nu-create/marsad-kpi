@@ -159,7 +159,10 @@ window.MarsadXlsx = (() => {
     if (t === 'date') { v = dateSerial(v); if (v == null) { t = 'text'; v = x.v; } }
     if (t === 'time' && typeof v === 'string') { const m = /^(\d{1,2}):(\d{2})/.exec(v); v = m ? (+m[1] * 60 + +m[2]) / 1440 : null; }
     const st = gridXf(x.s || 'none', t, x.b, x.big);
-    if (x.f) return '<c r="' + ref + '" s="' + st + '"><f>' + esc(x.f) + '</f></c>';
+    // A formula keeps its value too (the file opens right in previews; Excel recalculates on open).
+    if (x.f) return v == null || v === '' ? '<c r="' + ref + '" s="' + st + '"><f>' + esc(x.f) + '</f></c>'
+      : typeof v === 'number' && Number.isFinite(v) ? '<c r="' + ref + '" s="' + st + '"><f>' + esc(x.f) + '</f><v>' + v + '</v></c>'
+      : '<c r="' + ref + '" t="str" s="' + st + '"><f>' + esc(x.f) + '</f><v>' + esc(v) + '</v></c>';
     if (v == null || v === '') return '<c r="' + ref + '" s="' + st + '"/>';
     if (t !== 'text' && Number.isFinite(Number(v))) return '<c r="' + ref + '" s="' + st + '"><v>' + Number(v) + '</v></c>';
     return '<c r="' + ref + '" t="inlineStr" s="' + gridXf(x.s || 'none', 'text', x.b, x.big) + '"><is><t xml:space="preserve">' + esc(v) + '</t></is></c>';

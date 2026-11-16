@@ -96,7 +96,8 @@ test('admin «التقارير Excel»: the six files of a period, right to left
     const q = files.find(f => /الجودة/.test(f.name)).sheets;
     assert.equal(JSON.stringify(q[0].rows.slice(2).map(r => [r[1], r[17].v])), JSON.stringify([['اماني احمد', 1], ['اماني احمد', 0.917]]));
     const cs = files.find(f => /خدمة العملاء/.test(f.name)).sheets[0].rows;
-    assert.equal(JSON.stringify(cs[1].slice(0, 6)), JSON.stringify([{ v: 'مدينه نصر', b: true }, 0, 0, 0, 0, 1]), 'Nasr City: one 1-star rating on Talabat');
+    assert.equal(JSON.stringify(cs[1].slice(1, 6).map(c => c.v)), JSON.stringify([0, 0, 0, 0, 1]), 'Nasr City: one 1-star rating on Talabat');
+    assert.match(cs[1][1].f, /^COUNTIFS\(/, 'counted by a formula from the list');
     if (process.env.REPORT_OUT) for (const f of files) fs.writeFileSync(path.join(process.env.REPORT_OUT, f.name + '.xlsx'), Buffer.from(await f.blob.arrayBuffer()));
   } finally { dom?.window.close(); await t.close(); }
 });
