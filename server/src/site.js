@@ -255,6 +255,42 @@ function setup(app) {
     return body;
   }
 
+  // The rating the customer gave the order (meta written by the app's rating page): a number 1–5, alone or in an object
+  // with its comment. Keys about asking / dismissing / snoozing the rating are not the rating.
+  const metaSeen = new Set();
+  function ratingOf(meta) {
+    let rating = null, comment = null;
+    for (const m of meta || []) {
+      const k = String(m.key || ''), v = m.value;
+      if (!/rating|review|feedback/i.test(k) || /dismiss|snooze|pending|ask|sent|notif|remind|due|count/i.test(k)) continue;
+      if (v && typeof v === 'object') {
+        const r = Number(v.rating ?? v.stars ?? v.rate ?? v.value), c = v.comment ?? v.review ?? v.note ?? v.text ?? v.feedback;
+        if (r >= 1 && r <= 5) rating = Math.round(r); if (typeof c === 'string' && c.trim()) comment = c.trim().slice(0, 1000);
+      } else if (/comment|note|text|feedback|review/i.test(k) && typeof v === 'string' && v.trim() && !/^\d(\.\d)?$/.test(v.trim())) comment = v.trim().slice(0, 1000);
+      else if (Number(v) >= 1 && Number(v) <= 5) rating = Math.round(Number(v));
+    }
+    return rating == null && !comment ? null : { rating, comment };
+  }
+  // Reviews sent from the website's review form (WooCommerce product reviews), every 30 minutes.
+  async function reviewsSync(c, now) {
+    if (now - (Number(await setting('site_reviews_at')) || 0) < 30 * 60000) return;
+    const after = new Date((Number(await setting('site_reviews_at')) || now - 3 * 86400000) - 3600000).toISOString().slice(0, 19);
+    const list = await wc(c, 'products/reviews', { per_page: 100, after, orderby: 'date', order: 'asc' }).catch(() => null);
+    if (Array.isArray(list)) {
+      const w = [];
+      for (const r of list) {
+        const at = Date.parse(String(r.date_created_gmt || r.date_created) + (r.date_created_gmt ? 'Z' : '')); if (!Number.isFinite(at)) continue;
+        const text = String(r.review || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 1000) || null;
+        const phone = String(r.reviewer_phone || '').replace(/\D/g, '').slice(-11) || null;
+        w.push(db.prepare('INSERT INTO site_reviews (id, day, product, rating, review, reviewer, email, phone, order_id, at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET rating = excluded.rating, review = excluded.review')
+          .bind(r.id, businessDay(at), String(r.product_name || r.product_id || '').slice(0, 120), Number(r.rating) || null, text, String(r.reviewer || '').slice(0, 80) || null, String(r.reviewer_email || '').slice(0, 120) || null, phone, null, at));
+      }
+      if (w.length) await db.batch(w);
+    }
+    await db.prepare("INSERT INTO settings (key, value) VALUES ('site_reviews_at', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(String(now));
+    if (metaSeen.size) await db.prepare("INSERT INTO settings (key, value) VALUES ('site_rating_keys', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(JSON.stringify([...metaSeen].slice(0, 40)));
+  }
+
   // ---- one sync: orders changed since the last run, then notes for changed and still-open orders ----
   let running = false, current = null;
   // A manual sync (admin's button) waits for a background run in progress, then runs itself, so it is never skipped.
@@ -287,6 +323,10 @@ function setup(app) {
       const upsert = [];
       for (const o of changed) {
         const ful = (o.meta_data || []).find(m => m.key === '_eldahan_app_fulfillment')?.value || null;
+        // Karim 11-16: the customer's rating of the order (the app's rating page), kept with its comment.
+        const rt = ratingOf(o.meta_data);
+        if (rt) upsert.push(db.prepare('INSERT INTO site_ratings (order_id, rating, comment, at) VALUES (?,?,?,?) ON CONFLICT(order_id) DO UPDATE SET rating = excluded.rating, comment = excluded.comment, at = excluded.at').bind(o.id, rt.rating, rt.comment, now));
+        for (const m of o.meta_data || []) if (/rat|review|feedback/i.test(String(m.key || ''))) metaSeen.add(String(m.key).slice(0, 60));
         const created = Date.parse(String(o.date_created_gmt) + 'Z');
         if (!Number.isFinite(created)) continue;
         const modified = Date.parse(String(o.date_modified_gmt).replace(/Z?$/, 'Z')) || created;
@@ -339,6 +379,7 @@ function setup(app) {
         ]);
       }
       await put('site_error', null);
+      await reviewsSync(c, now).catch(() => {});
       await alerts(now);
       return { orders: changed.length, notes: due.length };
     } catch (e) {

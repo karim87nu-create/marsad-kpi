@@ -103,3 +103,28 @@ test('admin «التقارير Excel»: the seven files of a period, right to le
     if (process.env.REPORT_OUT) for (const f of files) fs.writeFileSync(path.join(process.env.REPORT_OUT, f.name + '.xlsx'), Buffer.from(await f.blob.arrayBuffer()));
   } finally { dom?.window.close(); await t.close(); }
 });
+
+test('Talabat ratings (Karim 11-16): ours and the competitor\'s from Talabat\'s public pages; a rating typed by hand stays first', async () => {
+  const { ratingFromPage, vendorIdOf } = await import('../src/talabat-ratings.js');
+  const page = (rate, branch) => '<script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"gtmEventData":{"restaurant":{"id":604313,"name":"الدهان","rate":' + rate + ',"totalRatings":1000,"branchName":"' + branch + '"}}}}}</script>';
+  assert.deepEqual(ratingFromPage(page(4.4, 'الدهان سيتي ستار')), { rate: 4.4, ratings: 1000, branch: 'الدهان سيتي ستار' });
+  assert.equal(vendorIdOf('https://www.talabat.com/ar/egypt/restaurant/503267/al-dahan--tagammoa-5?aid=9668'), '503267');
+  const seen = [];
+  const t = await start({ at: cairoToUtc(2026, 11, 16, 12, 0), config: { talabatFetch: async url => { seen.push(url); return new Response(/608556/.test(url) ? page(4.4, 'ours') : /503267/.test(url) ? page(4.6, 'rival') : 'blocked', { status: /608556|503267/.test(url) ? 200 : 403 }); } } });
+  try {
+    const admin = await t.admin();
+    await admin('GET', '/api/health'); await new Promise(r => setTimeout(r, 50));
+    let cs = (await admin('GET', '/api/cs?from=2026-11-16&to=2026-11-16')).body;
+    const r = Object.fromEntries(cs.ratings.map(x => [x.branch, x]));
+    assert.equal(r['مدينة نصر'].rating, 4.4); assert.equal(r['التجمع'].competitor, 4.6);
+    assert.equal(seen.length, 2, 'only the pages that are set');
+    await admin('POST', '/api/cs/rating', { day: '2026-11-16', branch: 'مدينة نصر', rating: 5 });
+    cs = (await admin('GET', '/api/cs?from=2026-11-16&to=2026-11-16')).body;
+    assert.equal(cs.ratings.find(x => x.branch === 'مدينة نصر').rating, 5, 'typed by hand wins');
+    const bad = await admin('POST', '/api/talabat/rating-pages', { pages: { 'مدينتي': { ours: 'not a link' } } });
+    assert.equal(bad.status, 400);
+    assert.equal((await admin('POST', '/api/talabat/rating-pages', { pages: { 'مدينتي': { ours: 'https://www.talabat.com/ar/egypt/restaurant/700001/x', rival: '700002' } } })).status, 200);
+    const p = (await admin('GET', '/api/talabat/rating-pages')).body;
+    assert.deepEqual(p.pages['مدينتي'], { ours: '700001', rival: '700002' });
+  } finally { await t.close(); }
+});

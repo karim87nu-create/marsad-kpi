@@ -135,7 +135,7 @@
   const BOT = window.MarsadBot({ api, h, $, table, pill, state, canWrite: () => canWrite(), showError: x => showError(x) });
   const ROSTER = window.MarsadRoster({ api, h, $, canWrite: () => canWrite(), showError: x => showError(x), cairoToday: () => cairoToday() });
   const QA = window.MarsadQa({ api, h, $, table, pill, kpi, state, canWrite: () => canWrite(), isAdmin: () => isAdmin(), showError: x => showError(x), cairoToday: () => cairoToday() });
-  const CS = window.MarsadCs({ api, h, $, table, pill, kpi, state, canWrite: () => canWrite(), showError: x => showError(x), cairoToday: () => cairoToday() });
+  const CS = window.MarsadCs({ api, h, $, table, pill, kpi, state, canWrite: () => canWrite(), isAdmin: () => isAdmin(), showError: x => showError(x), cairoToday: () => cairoToday() });
   const EXP = window.MarsadExports({ api, h, $, state, showError: x => showError(x) });
   for (const b of document.querySelectorAll('[data-qa-export]')) b.onclick = () => EXP.RUN.quality().catch(x => showError(x));
   const FC = window.MarsadForecast({ api, h, $, table, pill, kpi, showError: x => showError(x), cairoToday: () => cairoToday() });

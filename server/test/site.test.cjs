@@ -101,3 +101,23 @@ test('site: prep warnings keep comments but do not append Apex status', async ()
     assert.doesNotMatch(warning.text, /حالة الفرع دلوقتي/);
   } finally { await t.close(); }
 });
+
+test('site (Karim 11-16): the customer\'s rating of an order and the review form go to «خدمة العملاء» by themselves', async () => {
+  const t0 = cairoToUtc(2026, 10, 22, 13, 0, 0), site = fakeSite(t0);
+  site.orders[0].meta_data.push({ key: '_eldahan_app_rating', value: { rating: 2, comment: 'الأكل وصل بارد' } }, { key: '_eldahan_app_review_snoozed', value: '1' });
+  site.orders[1].meta_data.push({ key: '_eldahan_rating', value: '5' });
+  const base = site.fetch;
+  site.fetch = async (url, opts) => /products\/reviews/.test(url)
+    ? Response.json([{ id: 9, date_created_gmt: g(site.m(30)), product_name: 'فتة لحمة', rating: 1, review: '<p>اللحمة ناشفة</p>', reviewer: 'منى', reviewer_email: 'm@x.com' }]) : base(url, opts);
+  const t = await start({ at: t0 + 40 * 60000, config: { siteFetch: site.fetch } });
+  try {
+    const admin = await t.admin();
+    await admin('POST', '/api/site', { action: 'key', key: 'ck_' + 'a'.repeat(40), secret: 'cs_' + 'b'.repeat(40) });
+    const cs = (await admin('GET', '/api/cs?from=2026-10-22&to=2026-10-22')).body;
+    const byOrder = Object.fromEntries(cs.site.filter(x => x.orderNo).map(x => [x.orderNo, x]));
+    assert.deepEqual([byOrder['101'].rating, byOrder['101'].comment, byOrder['101'].branch], [2, 'الأكل وصل بارد', 'مدينة نصر']);
+    assert.equal(byOrder['102'].rating, 5);
+    const rv = cs.site.find(x => x.auto === 'review');
+    assert.deepEqual([rv.rating, rv.comment, rv.customer], [1, 'فتة لحمة: اللحمة ناشفة', 'منى']);
+  } finally { await t.close(); }
+});

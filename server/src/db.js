@@ -230,6 +230,13 @@ CREATE TABLE IF NOT EXISTS cs_branch_day (day TEXT NOT NULL, branch TEXT NOT NUL
 CREATE TABLE IF NOT EXISTS site_channels (id INTEGER PRIMARY KEY, via TEXT);
 -- Karim 11-16: a finished day's numbers for the daily Excel reports (reports.js), built once.
 CREATE TABLE IF NOT EXISTS report_days (day TEXT PRIMARY KEY, data TEXT NOT NULL, at INTEGER NOT NULL);
+-- Karim 11-16 «تعليقات العملاء السلبيه علي الموقع في صفحه تقييم العميل»: each website order's customer rating (the app's
+-- rating on the order) and each review sent from the website's review form (WooCommerce product reviews).
+CREATE TABLE IF NOT EXISTS site_ratings (order_id INTEGER PRIMARY KEY, rating INTEGER, comment TEXT, at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS site_reviews (id INTEGER PRIMARY KEY, day TEXT NOT NULL, product TEXT, rating INTEGER, review TEXT, reviewer TEXT, email TEXT, phone TEXT, order_id INTEGER, at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS site_reviews_day ON site_reviews(day);
+-- Karim 11-16: each branch's rating on Talabat and the competitor's (the other «الدهان», brown logo), read from Talabat's public pages.
+CREATE TABLE IF NOT EXISTS talabat_ratings (day TEXT NOT NULL, branch TEXT NOT NULL, side TEXT NOT NULL, vendor_id TEXT, rate REAL, ratings INTEGER, at INTEGER NOT NULL, PRIMARY KEY(day, branch, side));
 CREATE TABLE IF NOT EXISTS roster (employee_id INTEGER NOT NULL, day TEXT NOT NULL, start TEXT, end TEXT, off INTEGER NOT NULL DEFAULT 0, set_by TEXT, set_at INTEGER, PRIMARY KEY(employee_id, day));
 CREATE INDEX IF NOT EXISTS roster_day ON roster(day);
 CREATE TABLE IF NOT EXISTS bot_cases (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, branch TEXT, chat_id TEXT, kind TEXT NOT NULL, needs TEXT NOT NULL, state TEXT NOT NULL, source TEXT, ref TEXT, code TEXT, text TEXT, from_name TEXT, msg_id INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, claimed_by TEXT, claimed_at INTEGER, outcome TEXT, outcome_note TEXT, done_by TEXT, done_at INTEGER, escalated_at INTEGER, parent_id INTEGER);

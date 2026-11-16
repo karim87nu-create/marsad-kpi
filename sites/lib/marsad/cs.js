@@ -18,8 +18,18 @@ function setup(app) {
     const to = validDate(String(ctx.query.to || '')) ? ctx.query.to : businessDay(ctx.now);
     const from = validDate(String(ctx.query.from || '')) && ctx.query.from <= to ? ctx.query.from : to;
     const rows = await db.prepare('SELECT * FROM cs_entries WHERE day BETWEEN ? AND ? ORDER BY day DESC, id DESC LIMIT 5000').all(from, to);
-    const ratings = await db.prepare('SELECT * FROM cs_branch_day WHERE day BETWEEN ? AND ? ORDER BY day, branch').all(from, to);
-    return { from, to, platforms: PLATFORMS, reached: REACHED, entries: rows.map(shape), ratings: ratings.map(r => ({ day: r.day, branch: r.branch, rating: r.rating, competitor: r.competitor, by: r.by_name })) };
+    const manual = await db.prepare('SELECT * FROM cs_branch_day WHERE day BETWEEN ? AND ? ORDER BY day, branch').all(from, to);
+    // Karim 11-16: no typing — Talabat's public pages give each day's rating; one typed by hand stays first.
+    const auto = app.talabatRatings ? await app.talabatRatings(from, to) : [], key = (d, b) => d + '|' + b, ratings = new Map();
+    for (const r of auto) { const x = ratings.get(key(r.day, r.branch)) || { day: r.day, branch: r.branch, rating: null, competitor: null, by: 'طلبات (تلقائي)' }; x[r.side === 'ours' ? 'rating' : 'competitor'] = r.rate; ratings.set(key(r.day, r.branch), x); }
+    for (const r of manual) { const x = ratings.get(key(r.day, r.branch)) || { day: r.day, branch: r.branch }; ratings.set(key(r.day, r.branch), { ...x, rating: r.rating ?? x.rating ?? null, competitor: r.competitor ?? x.competitor ?? null, by: r.by_name }); }
+    // The website's customer ratings (the app's rating of each order, and the review form), with the order's branch.
+    const site = [
+      ...(await db.prepare('SELECT r.order_id, r.rating, r.comment, o.day, o.branch FROM site_ratings r JOIN site_orders o ON o.id = r.order_id WHERE o.day BETWEEN ? AND ?').all(from, to).catch(() => []))
+        .map(r => ({ day: r.day, platform: 'الموقع', branch: r.branch, orderNo: String(r.order_id), rating: r.rating, comment: r.comment, auto: 'rating' })),
+      ...(await db.prepare('SELECT * FROM site_reviews WHERE day BETWEEN ? AND ?').all(from, to).catch(() => []))
+        .map(r => ({ day: r.day, platform: 'الموقع', branch: null, customer: r.reviewer, phone: r.phone, rating: r.rating, comment: [r.product, r.review].filter(Boolean).join(': ') || null, auto: 'review' }))];
+    return { from, to, platforms: PLATFORMS, reached: REACHED, entries: rows.map(shape), ratings: [...ratings.values()].sort((a, b) => a.day.localeCompare(b.day) || a.branch.localeCompare(b.branch)), site };
   });
 
   const read = (b, now) => {

@@ -1102,12 +1102,14 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
     $bout = @($bo | Where-Object { $_.Out -and $_.WaitMin -ne $null })
     $boutN = @($bout | Where-Object { -not $_.Sched })
     $bk = NewCounts; foreach($o in $bo){ Bump $bk $o.Kind }
+    # Karim 11-16: a Hotline order taken on WhatsApp / the Facebook page has «واتساب» / «بيدج» written next to the customer's name.
+    $bsrc = [ordered]@{ whatsapp = @($bo | Where-Object { $_.Kind -eq 'Hotline' -and "$($_.Customer.name)" -match '(?i)وات?س|whats' }).Count; page = @($bo | Where-Object { $_.Kind -eq 'Hotline' -and "$($_.Customer.name)" -match '(?i)بيدج|بيج|فيس|page|facebook' }).Count }
     $bc = @($cancels | Where-Object { $_.Branch -eq $bn })
     $bcRate = @($bc | Where-Object { $_.RateEligible })
     $bcLate = @($bcRate | Where-Object { $_.LateForRate }).Count
     $outLateCount = @($bout | Where-Object { $_.Over -ge $LateMinutes }).Count
     $branchesOut += [ordered]@{
-      no = $bn; name = BName $bn; orders = $bo.Count; sales = SumOf $bo 'Amt'; kinds = $bk
+      no = $bn; name = BName $bn; orders = $bo.Count; sales = SumOf $bo 'Amt'; kinds = $bk; sources = $bsrc
       open = $open.Count; late = @($open | Where-Object { $_.Over -ge $LateMinutes }).Count; veryLate = @($open | Where-Object { $_.Over -ge $VeryLateMinutes }).Count
       avgOut = AvgOf $boutN 'WaitMin'; outLate = $outLateCount; outCount = $bout.Count
       delayRateCount = $bout.Count + $bcRate.Count; delayRateLate = $outLateCount + $bcLate; cancelLoadedCount = $bcRate.Count; cancelLoadedLate = $bcLate

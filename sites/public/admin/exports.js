@@ -120,7 +120,9 @@ window.MarsadExports = function MarsadExports(ctx) {
       const x = d.branches.filter(y => branchOf(y.name) === b), k = nm => sum(x, y => y.kinds?.[nm]);
       // Karim's sheet: «تليفون» = the Hotline and Wafarha orders; the website split by the app / the website.
       const app = sum(x, y => y.site?.app), web = sum(x, y => (y.site?.web || 0) + (y.site?.other || 0)), siteAll = k('الموقع');
-      return [k('Hotline') + k('وفرها'), 0, 0, app, Math.max(siteAll - app, web)];
+      // WhatsApp / the page: Hotline orders with «واتساب» / «بيدج» next to the customer's name (Karim 11-16); «شات» the page's chat.
+      const wa = sum(x, y => y.sources?.whatsapp), pg = sum(x, y => y.sources?.page);
+      return [k('Hotline') + k('وفرها') - wa - pg, wa, pg, app, Math.max(siteAll - app, web)];
     });
     const rows = [[{ v: 'متابعة أوردرات الدهان اليومية حسب المنطقة ومصدر الطلب', s: 'title', b: true, big: true }, ...Array(16).fill(null)],
       [H('التاريخ'), ...BRANCHES.flatMap(b => [H(b.region), null, null, null, null]), H('إجمالي اليوم')],
@@ -148,14 +150,16 @@ window.MarsadExports = function MarsadExports(ctx) {
   const REASONS = ['رفض من المطعم', 'تأخر في التوصيل', 'خطأ في الطلب', 'المنتج غير متوفر', 'إلغاء العميل', 'مشكلة في الدفع', 'مشكلة تقنية', 'جوده', 'أخرى'];
   const reasonOf = t => { const s = String(t || ''); return /رفض|reject/i.test(s) ? REASONS[0] : /تأخ|تاخ|late|delay/i.test(s) ? REASONS[1] : /خطأ|خطا|غلط|wrong/i.test(s) ? REASONS[2] : /متوفر|نواقص|نفذ|unavailable|out of stock/i.test(s) ? REASONS[3]
     : /العميل|customer/i.test(s) ? REASONS[4] : /دفع|payment|فيزا/i.test(s) ? REASONS[5] : /تقن|system|سيستم/i.test(s) ? REASONS[6] : /جود|quality|بارد/i.test(s) ? REASONS[7] : REASONS[8]; };
-  const ordersOf = (list, b, p) => sum(list, d => sum(d.branches.filter(x => branchOf(x.name) === b), x => p === 'Talabat' ? x.kinds?.['طلبات'] : p === 'Hotline' ? (x.kinds?.Hotline || 0) + (x.kinds?.['وفرها'] || 0)
+  const ordersOf = (list, b, p) => sum(list, d => sum(d.branches.filter(x => branchOf(x.name) === b), x => p === 'Talabat' ? x.kinds?.['طلبات']
+    : p === 'Hotline' ? (x.kinds?.Hotline || 0) + (x.kinds?.['وفرها'] || 0) - (x.sources?.whatsapp || 0) - (x.sources?.page || 0)
+    : p === 'Whatsapp' ? x.sources?.whatsapp : p === 'Page' ? x.sources?.page
     : p === 'APP' ? x.site?.app : p === 'WEB' ? (x.kinds?.['الموقع'] || 0) - (x.site?.app || 0) : 0));
   async function cancels() {
     const [list, own, cs] = await Promise.all([days(), api('/api/cancels/owners?from=' + state.day + '&to=' + state.to).catch(() => ({ list: [] })), api('/api/cs?from=' + state.day + '&to=' + state.to).catch(() => ({ entries: [], ratings: [] }))]);
     const owner = new Map((own.list || []).map(c => [String(c.apexNo || c.ref), c]));
     const H = v => ({ v, s: 'head', b: true }), DT = q('تفاصيل الإلغاءات'), RT = q('نسبه الالغاءات'), CL = q('وقت غلق طلبات والتقييم'), CM = q('الكومنتات والشكاوي'), C = X().col;
     const det = list.flatMap(d => (d.cancels || []).map(c => { const o = owner.get(String(c.no)), f = o?.final || o?.owner;
-      return { day: d.day, month: d.day.slice(0, 7), branch: branchOf(c.branch)?.short || c.branch, platform: PLATFORM[c.kind] || c.kind, area: c.area || '', reason: reasonOf(c.reason), raw: c.reason,
+      return { day: d.day, month: d.day.slice(0, 7), branch: branchOf(c.branch)?.short || c.branch, platform: c.src === 'whatsapp' ? 'Whatsapp' : c.src === 'page' ? 'Page' : PLATFORM[c.kind] || c.kind, area: c.area || '', reason: reasonOf(c.reason), raw: c.reason,
         mine: f ? (['employee', 'branch', 'pilot'].includes(f) ? 'نعم' : 'لا') : '', amount: c.amount }; }));
     const sheets = [];
     // «تحليل الأسباب»: counted from the details (as in Karim's sheet).
@@ -227,18 +231,23 @@ window.MarsadExports = function MarsadExports(ctx) {
     const cs = await api('/api/cs?from=' + state.day + '&to=' + state.to);
     const H = v => ({ v, s: 'head', b: true });
     // The stars per branch are counted from the list below (change a rating and the counts follow).
-    const sheetOf = (name, list) => {
-      const end = 6 + list.length + 300, rows = [[H(null), H(5), H(4), H(3), H(2), H(1), H('الإجمالي'), H('نسبة اقل من 5'), H('سئ ')]];
-      BRANCHES.forEach((b, i) => { const r = 2 + i, l = list.filter(e => branchOf(e.branch) === b), n = s => l.filter(e => e.rating === s).length, all = l.filter(e => e.rating != null).length;
-        rows.push([{ v: b.short, b: true }, ...[5, 4, 3, 2, 1].map((s, j) => F('COUNTIFS($A$6:$A$' + end + ',$A' + r + ',$C$6:$C$' + end + ',' + X().col(1 + j) + '$1)', n(s))),
+    // Karim 11-16: the list holds the negative ones (below 5, or with a comment); a 5 with nothing written is counted only
+    // (the count is the formula over the list plus those, so a line added or changed still counts).
+    const sheetOf = (name, every) => {
+      const listed = every.filter(e => e.manual || e.rating == null || e.rating < 5 || e.comment || e.complaint), quiet = every.filter(e => !listed.includes(e));
+      const list = listed, end = 6 + list.length + 300, rows = [[H(null), H(5), H(4), H(3), H(2), H(1), H('الإجمالي'), H('نسبة اقل من 5'), H('سئ ')]];
+      BRANCHES.forEach((b, i) => { const r = 2 + i, l = every.filter(e => branchOf(e.branch) === b), n = s => l.filter(e => e.rating === s).length, all = l.filter(e => e.rating != null).length;
+        const q5 = quiet.filter(e => branchOf(e.branch) === b).length;
+        rows.push([{ v: b.short, b: true }, ...[5, 4, 3, 2, 1].map((s, j) => F('COUNTIFS($A$6:$A$' + end + ',$A' + r + ',$C$6:$C$' + end + ',' + X().col(1 + j) + '$1)' + (s === 5 && q5 ? '+' + q5 : ''), n(s))),
           F('SUM(B' + r + ':F' + r + ')', all), F('IFERROR(SUM(C' + r + ':F' + r + ')/G' + r + ',0)', div(all - n(5), all), { t: 'pct' }), F('IFERROR(F' + r + '/G' + r + ',0)', div(n(1), all), { t: 'pct' })]); });
       rows.push(['الفرع', 'الشكوى / تعليق العميل', 'التقييم', 'التاريخ', 'رقم الطلب', 'رقم العميل', 'هل تم الوصول للعميل؟', 'ما تم مع العميل / الإجراء'].map(H));
       for (const e of list) rows.push([branchOf(e.branch)?.short || e.branch, [e.complaint, e.comment].filter(Boolean).join(' — '), e.rating, { v: e.day, t: 'date' }, e.orderNo, e.phone, e.reached, e.action]);
       return { name, widths: [12, 44, 9, 12, 12, 14, 16, 30, 8], rows };
     };
-    const by = p => cs.entries.filter(e => e.platform === p);
+    const typed = cs.entries.map(e => ({ ...e, manual: true })), orders = new Set(typed.map(e => e.orderNo).filter(Boolean));
+    const by = p => [...typed.filter(e => e.platform === p), ...(p === 'الموقع' ? (cs.site || []).filter(e => !orders.has(e.orderNo)) : [])];
     X().grid('خدمة العملاء ' + fileLabel(), [sheetOf('طلبات', by('طلبات')), sheetOf('الموقع', by('الموقع'))]);
-    return cs.entries.length ? '' : 'مفيش ولا سطر متسجل في «خدمة العملاء» للفترة دي';
+    return by('طلبات').length + by('الموقع').length ? '' : 'مفيش تقييمات للفترة دي';
   }
 
   // ---------- 6. الجودة: شيت QA (تقييم QA، المعايير، النسبه، Dashboard) و«النسبه» لوحدها (الصورة) ----------

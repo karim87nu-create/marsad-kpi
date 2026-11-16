@@ -21,7 +21,7 @@ export async function reportDay(app, day, now) {
       orderQueueMissed: (d.history.queues || []).filter(q => String(q.queue) === ORDER_QUEUE).reduce((n, q) => n + (q.abandoned || 0), 0) };
   } catch {}
   const branches = new Map(), B = name => branches.get(name) || branches.set(name, { name, kinds: {}, sales: [], offers: { talabat: 0, site: 0 }, site: { app: 0, web: 0, other: 0 }, cancels: {} }).get(name);
-  for (const b of full?.branches || []) Object.assign(B(b.name).kinds, b.kinds || {});
+  for (const b of full?.branches || []) { Object.assign(B(b.name).kinds, b.kinds || {}); if (b.sources) B(b.name).sources = { whatsapp: Number(b.sources.whatsapp) || 0, page: Number(b.sources.page) || 0 }; }
   for (const s of full?.sales || []) B(s.branch).sales.push({ kind: s.kind, pay: s.pay, trans: s.trans, orders: s.orders, sales: r2(s.sales), discounts: r2(s.discounts) });
   // Offers: Talabat's offer lines («عرض … طلبات», each one), the website's orders with an offer (Karim's sheets).
   const online = full?.online || [];
@@ -42,7 +42,9 @@ export async function reportDay(app, day, now) {
   }
   const det = full?.details || {};
   const cancels = (full?.cancels || []).map(c => { B(c.branch).cancels[c.kind] = (B(c.branch).cancels[c.kind] || 0) + 1;
-    return { no: c.no, sn: c.sn, kind: c.kind, branch: c.branch, amount: r2(c.amount), at: c.at, reason: c.reasonName || c.reason || null, area: String(det[c.no]?.loc || '').replace(/\.$/, '') || null }; });
+    // Karim 11-16: a Hotline order taken on WhatsApp / the page says so next to the customer's name.
+    const nm = String(c.customer?.name || ''), src = c.kind !== 'Hotline' ? null : /وات?س|whats/i.test(nm) ? 'whatsapp' : /بيدج|بيج|فيس|page|facebook/i.test(nm) ? 'page' : null;
+    return { no: c.no, sn: c.sn, kind: c.kind, src, branch: c.branch, amount: r2(c.amount), at: c.at, reason: c.reasonName || c.reason || null, area: String(det[c.no]?.loc || '').replace(/\.$/, '') || null }; });
   // Talabat's closing time: the last time each branch closed or went busy that day.
   const closes = await db.prepare('SELECT branch, name, outlet, started_at FROM talabat_closures WHERE day = ? ORDER BY started_at').all(day).catch(() => []);
   const closedAt = {}; for (const c of closes) closedAt[c.branch || c.name || c.outlet] = c.started_at;

@@ -41,7 +41,20 @@ window.MarsadCs = function MarsadCs(ctx) {
         return i; })() }))], rows, { pageSize: 30 });
   }
 
+  // Karim 11-16: the ratings come by themselves from Talabat's public pages — each branch's page and the competitor's.
+  async function pagesPanel() {
+    const box = $('csPages'); if (!box) return;
+    let p; try { p = await api('/api/talabat/rating-pages'); } catch (e) { box.replaceChildren(h('p', { className: 'muted', textContent: e.message })); return; }
+    const inputs = {};
+    const grid = h('div', { className: 'fgrid' }, ...BRANCHES.flatMap(b => ['ours', 'rival'].map(side => { const i = h('input', { value: p.pages[b]?.[side] || '', placeholder: 'لينك الصفحة على طلبات أو رقمها', disabled: !ctx.isAdmin?.() });
+      (inputs[b] ||= {})[side] = i; return h('label', {}, h('span', { textContent: b + ' — ' + (side === 'ours' ? 'الدهان بتاعنا' : 'المنافس (الدهان البني)') }), i); })));
+    const save = ctx.isAdmin?.() ? h('button', { type: 'button', textContent: 'حفظ الصفحات', onclick: async () => {
+      try { await api('/api/talabat/rating-pages', { method: 'POST', body: { pages: Object.fromEntries(BRANCHES.map(b => [b, { ours: inputs[b].ours.value, rival: inputs[b].rival.value }])) } }); $('csMsg').textContent = 'اتحفظت؛ التقييمات هتتقري في خلال دقايق'; await pagesPanel(); } catch (e) { showError(e); } } }) : null;
+    box.replaceChildren(grid, h('div', { className: 'inline' }, save, h('span', { className: p.error ? 'warn' : 'muted', textContent: p.error ? 'آخر قراية: ' + p.error : p.at ? 'آخر قراية: ' + new Date(p.at).toLocaleString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo' }) : 'لسه ماتقرتش' })));
+  }
+
   async function render() {
+    pagesPanel();
     try {
       data = await api('/api/cs?from=' + state.day + '&to=' + state.to);
       const l = data.entries, rated = l.filter(e => e.rating != null), low = rated.filter(e => e.rating < 5);
