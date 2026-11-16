@@ -171,3 +171,33 @@ test('telegram: waiting customers, missed calls with who was available, and how 
     void e;
   } finally { await t.close(); fake.close(); }
 });
+
+// 11-15: a break left open past 4 hours sent «عدّى وقت البريك» every 30 seconds (108 times) — the live view's «since»
+// slides with its 4-hour window. One alert per break, with the real duration.
+test('telegram: a break longer than 4 hours is alerted once', async () => {
+  const sent = [], fake = http.createServer((req, res) => {
+    let body = ''; req.on('data', c => body += c); req.on('end', () => {
+      const method = req.url.split('/').pop(), b = JSON.parse(body || '{}');
+      const result = method === 'getMe' ? { username: 'marsad_bot' } : method === 'getUpdates' ? [{ message: { chat: { id: -100123, title: 'g', type: 'supergroup' } } }] : (sent.push(b.text), { message_id: sent.length });
+      res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ ok: true, result }));
+    });
+  });
+  await new Promise(r => fake.listen(0, r));
+  const t = await start({ at: cairoToUtc(2026, 10, 22, 14, 0, 0), config: { telegramApi: 'http://127.0.0.1:' + fake.address().port } });
+  try {
+    const admin = await t.admin();
+    await admin('POST', '/api/telegram', { action: 'token', token: '123456:' + 'a'.repeat(35) });
+    await admin('POST', '/api/telegram', { action: 'chat', chatId: -100123, title: 'g' });
+    await t.employee(admin);
+    const s = await t.session('1234');
+    await t.event(s.token, 'heartbeat', { state: 'ready' });
+    const p = await t.device(s.token, 'POST', '/api/break-requests', { action: 'regular_start' });
+    await t.event(s.token, 'break_start', { state: 'break', permissionId: p.body.permissionId });
+    await t.app.telegramTick();
+    for (let i = 0; i < 9; i++) { await t.tick(s.token, 30 * 60000, 'break'); await t.app.telegramTick(); }
+    await t.tick(s.token, 30000, 'break'); await t.app.telegramTick();
+    await t.tick(s.token, 30000, 'break'); await t.app.telegramTick();
+    const over = sent.filter(x => x.includes('عدّى وقت البريك'));
+    assert.equal(over.length, 1, over.join('\n---\n'));
+  } finally { await t.close(); fake.close(); }
+});

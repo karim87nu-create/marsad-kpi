@@ -353,7 +353,9 @@ function setup(app) {
     for (const p of live) {
       if (p.state === 'break' && on('breakOver')) {
         const start = await latestBreakStart(p.employeeId, now), allowed = breakAllowance(start);
-        if (since(p) > allowed) addNew('over:' + p.employeeId + ':' + p.since, 'breakOver', p.employeeId, '⏰ ' + p.name + ' عدّى وقت البريك — بقاله ' + fmt(since(p)) + ' والمسموح ' + fmt(allowed) + ' (' + breakKind(start) + ') — تحويلة ' + p.extension,
+        // One alert per break: keyed by the break's start event — after 4 hours the live view's «since» slides with its
+        // window, and keying by it sent the same alert every 30 seconds (11-15: 108 for one break).
+        if (since(p) > allowed) addNew('over:' + p.employeeId + ':' + (start?.id ?? p.since), 'breakOver', p.employeeId, '⏰ ' + p.name + ' عدّى وقت البريك — بقاله ' + fmt(start && start.occurred_at < Date.parse(p.since) ? (now - start.occurred_at) / 1000 : since(p)) + ' والمسموح ' + fmt(allowed) + ' (' + breakKind(start) + ') — تحويلة ' + p.extension,
           { replyTo: start ? 'break:' + start.id : null });
       }
       if (p.state === 'on_call' && on('longCall') && since(p) > RULES.callAlertSeconds)

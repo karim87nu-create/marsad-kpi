@@ -23,7 +23,9 @@ function setup(app) {
       db.prepare("INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, sent_at, target, branch) VALUES (?, 'apexAutoCancel', NULL, ?, ?, NULL, ?, ?)")
         .bind(r.key + sfx, r.text, now, target, branch))));
   };
-  const head = r => '🖥️ Apex | أوردر ' + (r.sn ? r.sn + ' (' + r.order_no + ')' : r.order_no) + (r.branch ? ' — ' + r.branch : '');
+  // The serial comes from Apex as a decimal ("659.0"); shown as the plain number.
+  const num = v => String(v ?? '').replace(/\.0+$/, '');
+  const head = r => '🖥️ Apex | أوردر ' + (r.sn ? num(r.sn) + ' (' + num(r.order_no) + ')' : num(r.order_no)) + (r.branch ? ' — ' + r.branch : '');
 
   // From each push of the monitor (orders.js calls it with the payload's cancelNotes).
   app.apexCancelNotes = async (list, now) => {
