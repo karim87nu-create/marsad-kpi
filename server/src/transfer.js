@@ -475,6 +475,7 @@ function setup(app) {
         }).catch(() => {});
     }
   });
+  let lastAreas = { day: null, list: [] };
   async function buildBase(day, now) {
     {
       const snap = parseJson((await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(day))?.data, {});
@@ -651,7 +652,11 @@ function setup(app) {
       // 11-16 (#5473 at 10:38, no areas to choose): Apex's day table is empty until its first order of the day, so the
       // cashier sends nothing for the new day and the day has no areas yet. Apex's areas rarely change: the last day's.
       let locations = Array.isArray(snap.locations) ? snap.locations : [];
-      if (!locations.length) locations = parseJson((await db.prepare("SELECT data FROM orders_days WHERE day < ? AND data LIKE '%\"locations\":[{%' ORDER BY day DESC LIMIT 1").get(day))?.data, {}).locations || [];
+      // Read once per day and kept: no extra load on the queue's rebuilds.
+      if (!locations.length) {
+        if (lastAreas.day !== day) lastAreas = { day, list: parseJson((await db.prepare("SELECT data FROM orders_days WHERE day < ? AND data LIKE '%\"locations\":[{%' ORDER BY day DESC LIMIT 1").get(day))?.data, {}).locations || [] };
+        locations = lastAreas.list;
+      }
       return { at: now, list, locations };
     }
   }
