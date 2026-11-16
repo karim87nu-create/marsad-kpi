@@ -36,6 +36,7 @@ test('transfer rules: confirmed areas and dishes', async () => {
   assert.equal(itemRule({ name: 'Kebab Sandwich', freeOptions: ['ملفوف'] }), '0104011');
   assert.equal(itemRule({ name: 'Kebab Sandwich', freeOptions: ['بلدي'] }), '0104010');
   assert.equal(itemRule({ name: 'طبق كباب وكفتة ضانى', sizeOption: 'ربع كيلو' }), '0109011');
+  assert.equal(itemRule({ name: 'عرض وجبة كفته' }), '218');
   assert.equal(itemRule({ name: 'بيتزا سلامي' }), null);
 });
 
