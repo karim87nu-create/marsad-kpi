@@ -112,6 +112,23 @@ function setup(app) {
     if (b.generatedAt && !Number.isFinite(sourceAt)) fail(400, 'invalid_snapshot_time');
     if (Number.isFinite(previousAt) && (!Number.isFinite(sourceAt) || sourceAt < previousAt))
       return { ok: true, ignored: 'older_snapshot' };
+    // 11-16 rush hour: the cashier sends only the orders that changed; «same» lists the numbers unchanged since its last
+    // accepted push (the rows this server has), per list. A number this server does not have is reported back and the
+    // cashier sends everything next time.
+    const missingSame = [];
+    if (!replay && b.same && typeof b.same === 'object') {
+      for (const key of ['online', 'lateOut', 'open', 'issues']) {
+        const nos = Array.isArray(b.same[key]) ? b.same[key].map(String) : [];
+        if (!nos.length) continue;
+        const prior = new Map((Array.isArray(before[key]) ? before[key] : []).map(o => [String(o?.no), o]));
+        const got = Array.isArray(b[key]) ? b[key] : [];
+        const kept = nos.map(n => prior.get(n) || (missingSame.push(key + ':' + n), null)).filter(Boolean);
+        b[key] = [...got, ...kept].sort((x, y) => String(x?.at || x?.entry || '').localeCompare(String(y?.at || y?.entry || '')) || Number(x?.no) - Number(y?.no));
+      }
+      delete b.same;
+    }
+    // Lists sent only every 30 minutes (they rarely change): kept from the last push when absent.
+    if (!replay) for (const key of ['locations', 'users']) if (!Object.hasOwn(b, key) && Object.hasOwn(before, key)) b[key] = before[key];
     // A legacy lightweight retry omits items. Absence is not an empty basket.
     if (Array.isArray(b.online)) {
       const old = new Map((before.online || []).map(o => [String(o.no), o]));
@@ -255,7 +272,7 @@ function setup(app) {
     // Payment / service / platform values the admin marked as officer: the monitor keeps them out of every total.
     let officer = []; try { officer = JSON.parse(await setting('officer_values') || '[]'); } catch {}
     // follow: this server answers warnings from the monitor's follow-ups (status changes, reminders).
-    return { ok: true, officer, follow: 1, kinds: KINDS, serverNow: iso(ctx.now),
+    return { ok: true, officer, follow: 1, kinds: KINDS, serverNow: iso(ctx.now), same: 1, ...(missingSame.length ? { missingSame: missingSame.slice(0, 50) } : {}),
       acknowledgedAlerts: (Array.isArray(b.alerts) ? b.alerts : []).slice(0, 400).map(a => a?.key).filter(Boolean) };
   }, { limit: 1024 * 1024 });
 

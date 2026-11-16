@@ -725,17 +725,30 @@ function Probe-Payload($payload){
   # minutes and at a new day.
   $sendPayload = $payload; $sentNow = $null
   try {
-    if ($payload.online) {
-      $full = ($script:sentDay -ne $payload.day -or -not $script:sentAt -or ((Get-Date) - $script:sentAt).TotalMinutes -ge 30 -or -not $script:sentOnline)
-      $sentNow = @{}; $slim = New-Object System.Collections.ArrayList
-      foreach ($o in @($payload.online)) {
-        $h = $serializer.Serialize((ConvertTo-JsonPlain -value @($o['items'], $o['customer'], $o['sourceRefs'])))
-        $sentNow["$($o['no'])"] = $h
-        if (-not $full -and $script:sentOnline["$($o['no'])"] -eq $h) { $x = [ordered]@{}; foreach ($k in @($o.Keys)) { if ($k -notin @('items', 'customer', 'sourceRefs')) { $x[$k] = $o[$k] } }; [void]$slim.Add($x) } else { [void]$slim.Add($o) }
+    $full = ($script:sentDay -ne $payload.day -or -not $script:sentAt -or ((Get-Date) - $script:sentAt).TotalMinutes -ge 30 -or -not $script:sentRows)
+    $sentNow = @{}
+    $sendPayload = [ordered]@{}; foreach ($k in @($payload.Keys)) { $sendPayload[$k] = $payload[$k] }
+    $same = [ordered]@{}
+    foreach ($list in @('online', 'lateOut')) {
+      if (-not $payload[$list]) { continue }
+      $rows = New-Object System.Collections.ArrayList; $nos = New-Object System.Collections.ArrayList
+      foreach ($o in @($payload[$list])) {
+        $no = "$($o['no'])"
+        $hRow = $serializer.Serialize((ConvertTo-JsonPlain -value $o)); $sentNow["$list|$no"] = $hRow
+        # A server that keeps unchanged rows (answers «same»): only the number of an order that did not change.
+        if (-not $full -and $script:serverSame -and $script:sentRows["$list|$no"] -eq $hRow) { [void]$nos.Add($o['no']); continue }
+        if ($list -eq 'online') {
+          $hIt = $serializer.Serialize((ConvertTo-JsonPlain -value @($o['items'], $o['customer'], $o['sourceRefs']))); $sentNow["it|$no"] = $hIt
+          if (-not $full -and $script:sentRows["it|$no"] -eq $hIt) { $x = [ordered]@{}; foreach ($k in @($o.Keys)) { if ($k -notin @('items', 'customer', 'sourceRefs')) { $x[$k] = $o[$k] } }; [void]$rows.Add($x); continue }
+        }
+        [void]$rows.Add($o)
       }
-      $sendPayload = [ordered]@{}; foreach ($k in @($payload.Keys)) { $sendPayload[$k] = $payload[$k] }; $sendPayload['online'] = @($slim)
-      if ($full) { $sentNow['__full'] = '1' }
+      $sendPayload[$list] = @($rows); if ($nos.Count) { $same[$list] = @($nos) }
     }
+    if ($same.Count) { $sendPayload['same'] = $same }
+    # The Apex areas (read every 30 minutes) go when read again; the server keeps the last ones.
+    if (-not $full -and $script:serverSame -and $script:locsAt -and $script:locsSentAt -eq $script:locsAt) { $sendPayload.Remove('locations') }
+    if ($full) { $sentNow['__full'] = '1' }
   } catch { $sendPayload = $payload; $sentNow = $null; L "push slim: $($_.Exception.Message)" }
   $wire = ConvertTo-JsonPlain -value $sendPayload
   $json = $serializer.Serialize($wire)
@@ -777,7 +790,10 @@ function Probe-Payload($payload){
     }
     SaveOutbox
     # What the server now has: next pushes leave those out.
-    if ($sentNow) { if ($sentNow.ContainsKey('__full')) { $script:sentAt = Get-Date; $script:sentDay = $payload.day; $sentNow.Remove('__full') }; $script:sentOnline = $sentNow }
+    if ($sentNow) { if ($sentNow.ContainsKey('__full')) { $script:sentAt = Get-Date; $script:sentDay = $payload.day; $sentNow.Remove('__full') }; $script:sentRows = $sentNow } else { $script:sentRows = $null }
+    $script:serverSame = [bool]($resp -and $resp.same)
+    if ($resp -and $resp.missingSame) { $script:sentRows = $null; L "push: the server did not have $(@($resp.missingSame).Count) rows - everything again next time" }
+    if ($sendPayload.Contains('locations')) { $script:locsSentAt = $script:locsAt }
     if ($script:pushFails -gt 0) { L "push ok again after $($script:pushFails) failures" }
     $script:pushFails = 0
   } catch {
