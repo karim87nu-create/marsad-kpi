@@ -773,9 +773,11 @@ function Probe-Payload($payload){
       Note-ServerError $_ 'push'
       # Server error: try once more at once with a lighter day (online orders without their item lines), and say so in the log.
       if ("$($_.Exception.Message)" -notmatch '\(500\)' -or -not $payload.online) { throw }
-      $light = [ordered]@{}; foreach($k in $payload.Keys){ $light[$k] = $payload[$k] }
-      $light.online = @($payload.online | ForEach-Object { $x = [ordered]@{}; foreach($k in $_.Keys){ if ($k -ne 'items') { $x[$k] = $_[$k] } }; $x })
-      $sentNow = $null   # the server did not get the item lines: everything goes again next time
+      # 11-16: from what was about to go (the lighter push), not from the whole day — the whole day without items
+      # was bigger (197 KB against 143 KB). The orders whose items are left out now go with them next time.
+      $light = [ordered]@{}; foreach($k in $sendPayload.Keys){ $light[$k] = $sendPayload[$k] }
+      $light['online'] = @($sendPayload['online'] | ForEach-Object { $x = [ordered]@{}; foreach($k in $_.Keys){ if ($k -ne 'items') { $x[$k] = $_[$k] } }
+        if ($sentNow -and $_.Contains('items')) { $sentNow.Remove("it|$($_['no'])"); $sentNow.Remove("online|$($_['no'])") }; $x })
       $json2 = $serializer.Serialize((ConvertTo-JsonPlain -value $light))
       $resp = Invoke-RestMethod -Method Post -Uri "$ServerUrl/api/orders/push" -Headers @{ 'x-orders-token' = $OrdersKey } -Body ([Text.Encoding]::UTF8.GetBytes($json2)) -ContentType 'application/json; charset=utf-8' -TimeoutSec 20
       if (-not $script:lightLogged) { L "push ok only without online item lines (full $([Text.Encoding]::UTF8.GetByteCount($json)) bytes, light $([Text.Encoding]::UTF8.GetByteCount($json2)) bytes)"; $script:lightLogged = $true }
