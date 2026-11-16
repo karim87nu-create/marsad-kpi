@@ -39,6 +39,25 @@ $created = $false
 $mutex = New-Object System.Threading.Mutex($true, 'Local\MarsadApexWriter', [ref]$created)
 if (-not $created) { exit 0 }
 
+# Hang guard (Karim 11-16: the writer went silent at 09:03 when the line dropped): if the loop makes no progress for 15
+# minutes the writer stops, and the monitor starts it again. A .NET timer, because a stuck call never returns to PowerShell.
+if (-not ('MarsadWriterGuard' -as [type])) { try {
+  Add-Type -TypeDefinition @'
+using System; using System.IO; using System.Threading;
+public static class MarsadWriterGuard {
+  static Timer beat; static string log;
+  public static void Beat(string logFile, int ms) {
+    log = logFile;
+    if (beat == null) beat = new Timer(delegate(object o) {
+      try { File.AppendAllText(log, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  hang guard: no progress - stopping (the monitor starts it again)\r\n"); } catch {}
+      Environment.Exit(3);
+    }, null, ms, Timeout.Infinite);
+    else beat.Change(ms, Timeout.Infinite);
+  }
+}
+'@
+} catch { L "hang guard not available: $($_.Exception.Message)" } }
+
 function ReadSecret($file){ if (-not (Test-Path $file)) { return $null }; return ((Get-Content $file -Raw).Trim() | ConvertTo-SecureString) }
 function Plain($sec){ return [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)) }
 # Its own key if one was set up, otherwise the monitor's orders key (same PC, same Windows user).
@@ -867,6 +886,7 @@ function Sync-CustomerNotes {
 L "writer started (pos $WriterPos)"
 $failures = 0
 for (;;) {
+  if ('MarsadWriterGuard' -as [type]) { try { [MarsadWriterGuard]::Beat($logFile, 900000) } catch {} }
   try { if ((Get-Item $self).LastWriteTimeUtc -ne $selfStamp) { L 'script updated - restarting'; $mutex.ReleaseMutex(); $mutex.Dispose(); Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $self + '"'); exit 0 } } catch {}
   try { Self-Test } catch { L "self-test: $($_.Exception.Message)" }
   try { Apply-Stock } catch { L "stock: $($_.Exception.Message)" }

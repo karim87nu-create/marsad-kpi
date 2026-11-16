@@ -32,6 +32,30 @@ $created = $false
 $mutex = New-Object System.Threading.Mutex($true, 'Local\MarsadOrdersMonitor', [ref]$created)
 if (-not $created) { exit 0 }
 
+# ===== hang guard (Karim 11-16: the read from Apex hung 08:35-09:03 when the line to the Apex server dropped) =====
+# A read from Apex that is still waiting after 2 minutes has its connection closed (the read fails and the next cycle
+# connects again); and if the loop itself makes no progress for 10 minutes the monitor stops, and the watchdog task
+# starts it again within 5 minutes. .NET timers, because a stuck read never returns to PowerShell.
+if (-not ('MarsadGuard' -as [type])) { try {
+  Add-Type -ReferencedAssemblies System.Data -TypeDefinition @'
+using System; using System.IO; using System.Threading; using System.Data.SqlClient;
+public static class MarsadGuard {
+  public static Timer Arm(SqlConnection c, SqlCommand cmd, int ms) {
+    return new Timer(delegate(object o) { try { cmd.Cancel(); } catch {} try { c.Close(); } catch {} }, null, ms, Timeout.Infinite);
+  }
+  static Timer beat; static string log;
+  public static void Beat(string logFile, int ms) {
+    log = logFile;
+    if (beat == null) beat = new Timer(delegate(object o) {
+      try { File.AppendAllText(log, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  hang guard: no progress - stopping (the watchdog starts it again)\r\n"); } catch {}
+      Environment.Exit(3);
+    }, null, ms, Timeout.Infinite);
+    else beat.Change(ms, Timeout.Infinite);
+  }
+}
+'@
+} catch { L "hang guard not available: $($_.Exception.Message)" } }
+
 # ===== keys saved by setup (encrypted for this Windows user) =====
 function ReadSecret($file){
   if (-not (Test-Path $file)) { return $null }
@@ -133,8 +157,11 @@ function Q([string]$q, $params){
   if ($params) { foreach($k in $params.Keys){ [void]$c.Parameters.AddWithValue($k, $params[$k]) } }
   $da = New-Object System.Data.SqlClient.SqlDataAdapter($c); $dt = New-Object System.Data.DataTable
   $sqlTimer = [Diagnostics.Stopwatch]::StartNew()
+  $guard = $null; if ('MarsadGuard' -as [type]) { $guard = [MarsadGuard]::Arm($script:conn, $c, 120000) }
   try { [void]$da.Fill($dt) }
   finally {
+    if ($guard) { $guard.Dispose() }
+    if ($script:conn.State -ne 'Open') { L "SQL read stopped after $([int]($sqlTimer.ElapsedMilliseconds / 1000)) s - connecting again next cycle"; try { $script:conn.Dispose() } catch {}; $script:conn = $null }
     $sqlTimer.Stop()
     if ($null -ne $script:cycleSqlMs) { $script:cycleSqlMs += $sqlTimer.ElapsedMilliseconds }
     if ($sqlTimer.ElapsedMilliseconds -ge 1000) {
@@ -1313,6 +1340,7 @@ L 'monitor started (read-only)'
 Test-Schedule
 $cycleNo = 0
 while ($true) {
+  if ('MarsadGuard' -as [type]) { try { [MarsadGuard]::Beat($logFile, 600000) } catch {} }
   # A newer copy of this script was put in the folder: start it and stop this one (updates need nobody at the PC).
   try { if ((Get-Item $self).LastWriteTimeUtc -ne $selfStamp) { L 'script updated - restarting'; $mutex.ReleaseMutex(); $mutex.Dispose(); Start-Process wscript.exe -ArgumentList '//B', ('"' + (Join-Path $here 'run_hidden.vbs') + '"'); exit 0 } } catch {}
   try {
