@@ -321,7 +321,7 @@ function setup(app) {
       const strong = learned && learned.seen >= 2 && !(learned.share < 0.8);
       // Karim 11-16 (transfer-rules.js): the areas he confirmed come before a name guess; a district alone («مدينة نصر»,
       // «مصر الجديدة») is taken from the address, or left to a person.
-      const rule = strong ? null : areaRule(words, o.source);
+      const rule = areaRule(words, o.source);   // «اكيد الي قلته هو الي يمشي»: before what staff chose (strong or not)
       if (rule?.general) {
         const no = o.customer?.address ? areaInAddress(o.customer.address, base.locations, o.apexBranch, groups) : null;
         if (no) list[i] = { ...o, areaGuess: { no, seen: 0, how: 'address' } };
@@ -656,8 +656,9 @@ function setup(app) {
           line.choiceKey = sha256(JSON.stringify([order.source, kind, parent, line.name, item.sizeOption || '']));
           const choices = [...(manual.get(line.choiceKey)?.keys() || [])].filter(no => apexName.has(no));
           if (choices.length) line.apex = choices.map(no => ({ no, name: apexName.get(no) }));
-          // Karim 11-16: a dish he confirmed (transfer-rules.js), when no single Apex item is known for it yet.
-          if ((line.apex || []).length !== 1) { const no = itemRule(kind === 'item' ? item : { name: line.name }); if (no && apexName.has(no)) { line.apex = [{ no, name: apexName.get(no) }]; line.byRule = true; } }
+          // Karim 11-16: a dish he confirmed (transfer-rules.js).
+          // Karim 11-16 «اكيد الي قلته هو الي يمشي»: it comes before what staff chose or what was learned.
+          { const no = itemRule(kind === 'item' ? item : { name: line.name }); if (no && apexName.has(no)) { line.apex = [{ no, name: apexName.get(no) }]; line.byRule = true; delete line.apexPick; } }
         }
       }
       list.sort((x, y) => (x.apex ? 1 : 0) - (y.apex ? 1 : 0) || String(x.at || '').localeCompare(String(y.at || '')));
