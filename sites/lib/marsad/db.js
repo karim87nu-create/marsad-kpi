@@ -237,6 +237,9 @@ CREATE TABLE IF NOT EXISTS site_reviews (id INTEGER PRIMARY KEY, day TEXT NOT NU
 CREATE INDEX IF NOT EXISTS site_reviews_day ON site_reviews(day);
 -- Karim 11-16: each branch's rating on Talabat and the competitor's (the other «الدهان», brown logo), read from Talabat's public pages.
 CREATE TABLE IF NOT EXISTS talabat_ratings (day TEXT NOT NULL, branch TEXT NOT NULL, side TEXT NOT NULL, vendor_id TEXT, rate REAL, ratings INTEGER, at INTEGER NOT NULL, PRIMARY KEY(day, branch, side));
+-- Karim 11-16: the customers' reviews on the Talabat portal (Reviews page, read by the main Talabat screen): stars, words, the order.
+CREATE TABLE IF NOT EXISTS talabat_reviews (order_id TEXT PRIMARY KEY, vendor TEXT, branch TEXT, day TEXT NOT NULL, at INTEGER NOT NULL, rating INTEGER, text TEXT, seen_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS talabat_reviews_day ON talabat_reviews(day);
 CREATE TABLE IF NOT EXISTS roster (employee_id INTEGER NOT NULL, day TEXT NOT NULL, start TEXT, end TEXT, off INTEGER NOT NULL DEFAULT 0, set_by TEXT, set_at INTEGER, PRIMARY KEY(employee_id, day));
 CREATE INDEX IF NOT EXISTS roster_day ON roster(day);
 CREATE TABLE IF NOT EXISTS bot_cases (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, branch TEXT, chat_id TEXT, kind TEXT NOT NULL, needs TEXT NOT NULL, state TEXT NOT NULL, source TEXT, ref TEXT, code TEXT, text TEXT, from_name TEXT, msg_id INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, claimed_by TEXT, claimed_at INTEGER, outcome TEXT, outcome_note TEXT, done_by TEXT, done_at INTEGER, escalated_at INTEGER, parent_id INTEGER);

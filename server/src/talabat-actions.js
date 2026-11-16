@@ -34,6 +34,7 @@ function setup(app) {
     if (!given && app.config.deviceTokens.includes(ctx.header('x-device-token') || '')) return;   // a Live Orders tab on any PC with the extension
     if (!given || !((hash && sha256(given) === hash) || extras.includes(sha256(given)))) fail(401, 'مفتاح شاشة طلبات غير صحيح');
   };
+  app.talabatScreen = screen;
 
   // Admin: the branches seen on Talabat lately, each with its setting, the last results and the screen samples.
   app.route('GET', '/api/talabat/actions-config', async ctx => {

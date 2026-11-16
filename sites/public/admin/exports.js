@@ -12,8 +12,12 @@ window.MarsadExports = function MarsadExports(ctx) {
   const WEEKDAY = d => new Intl.DateTimeFormat('ar-EG', { weekday: 'long', timeZone: 'UTC' }).format(new Date(d + 'T12:00:00Z'));
   const dmy = d => d.slice(8, 10) + '-' + d.slice(5, 7) + '-' + d.slice(0, 4);
   // RLM keeps «من … إلى …» in order inside a right-to-left cell.
-  const label = () => state.day === state.to ? dmy(state.day) : 'من \u200F' + dmy(state.day) + '\u200F إلى \u200F' + dmy(state.to);
-  const fileLabel = () => state.day === state.to ? state.day : state.day + '_' + state.to;
+  // Karim 11-16 «عايز يمكن سحبها في اي وقت في اليوم والارقام تبقي لحد منا سحبت التقرير»: a day still running says until when.
+  const cairoNow = () => { const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Cairo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date()).map(x => [x.type, x.value]));
+    const d = p.year + '-' + p.month + '-' + p.day; return { day: +p.hour < 9 ? new Date(Date.parse(d + 'T12:00:00Z') - 864e5).toISOString().slice(0, 10) : d, time: p.hour + ':' + p.minute }; };
+  const until = () => { const n = cairoNow(); return state.to >= n.day ? ' (لحد الساعة \u200F' + n.time + ')' : ''; };
+  const label = () => (state.day === state.to ? dmy(state.day) : 'من \u200F' + dmy(state.day) + '\u200F إلى \u200F' + dmy(state.to)) + until();
+  const fileLabel = () => (state.day === state.to ? state.day : state.day + '_' + state.to) + (until() ? '_' + cairoNow().time.replace(':', '') : '');
   const sum = (l, f) => l.reduce((n, x, i) => n + (Number(f(x, i)) || 0), 0);
   const round = v => Math.round((Number(v) || 0) * 100) / 100;
   const days = async () => (await api('/api/reports/days?from=' + state.day + '&to=' + state.to, { timeout: 120000 })).days;
@@ -231,21 +235,23 @@ window.MarsadExports = function MarsadExports(ctx) {
     const cs = await api('/api/cs?from=' + state.day + '&to=' + state.to);
     const H = v => ({ v, s: 'head', b: true });
     // The stars per branch are counted from the list below (change a rating and the counts follow).
-    // Karim 11-16: the list holds the negative ones (below 5, or with a comment); a 5 with nothing written is counted only
-    // (the count is the formula over the list plus those, so a line added or changed still counts).
+    // Karim 11-16 «التقييمات السلبيه الي من غير تعليق تدخل في العدد بس… الي يتكتب يبقي التعليقات السلبيه فقط»: the list holds
+    // the negative ones with words (below 5, or a complaint typed); every rating is counted (the formula over the list plus
+    // the ones not listed, so a line added or changed still counts).
     const sheetOf = (name, every) => {
-      const listed = every.filter(e => e.manual || e.rating == null || e.rating < 5 || e.comment || e.complaint), quiet = every.filter(e => !listed.includes(e));
+      const listed = every.filter(e => (e.comment || e.complaint) && (e.complaint || e.rating == null || e.rating < 5)), quiet = every.filter(e => !listed.includes(e));
       const list = listed, end = 6 + list.length + 300, rows = [[H(null), H(5), H(4), H(3), H(2), H(1), H('الإجمالي'), H('نسبة اقل من 5'), H('سئ ')]];
       BRANCHES.forEach((b, i) => { const r = 2 + i, l = every.filter(e => branchOf(e.branch) === b), n = s => l.filter(e => e.rating === s).length, all = l.filter(e => e.rating != null).length;
-        const q5 = quiet.filter(e => branchOf(e.branch) === b).length;
-        rows.push([{ v: b.short, b: true }, ...[5, 4, 3, 2, 1].map((s, j) => F('COUNTIFS($A$6:$A$' + end + ',$A' + r + ',$C$6:$C$' + end + ',' + X().col(1 + j) + '$1)' + (s === 5 && q5 ? '+' + q5 : ''), n(s))),
+        const qn = s => quiet.filter(e => branchOf(e.branch) === b && e.rating === s).length;
+        rows.push([{ v: b.short, b: true }, ...[5, 4, 3, 2, 1].map((s, j) => F('COUNTIFS($A$6:$A$' + end + ',$A' + r + ',$C$6:$C$' + end + ',' + X().col(1 + j) + '$1)' + (qn(s) ? '+' + qn(s) : ''), n(s))),
           F('SUM(B' + r + ':F' + r + ')', all), F('IFERROR(SUM(C' + r + ':F' + r + ')/G' + r + ',0)', div(all - n(5), all), { t: 'pct' }), F('IFERROR(F' + r + '/G' + r + ',0)', div(n(1), all), { t: 'pct' })]); });
       rows.push(['الفرع', 'الشكوى / تعليق العميل', 'التقييم', 'التاريخ', 'رقم الطلب', 'رقم العميل', 'هل تم الوصول للعميل؟', 'ما تم مع العميل / الإجراء'].map(H));
       for (const e of list) rows.push([branchOf(e.branch)?.short || e.branch, [e.complaint, e.comment].filter(Boolean).join(' — '), e.rating, { v: e.day, t: 'date' }, e.orderNo, e.phone, e.reached, e.action]);
       return { name, widths: [12, 44, 9, 12, 12, 14, 16, 30, 8], rows };
     };
     const typed = cs.entries.map(e => ({ ...e, manual: true })), orders = new Set(typed.map(e => e.orderNo).filter(Boolean));
-    const by = p => [...typed.filter(e => e.platform === p), ...(p === 'الموقع' ? (cs.site || []).filter(e => !orders.has(e.orderNo)) : [])];
+    const auto = p => p === 'الموقع' ? cs.site || [] : p === 'طلبات' ? cs.talabat || [] : [];
+    const by = p => [...typed.filter(e => e.platform === p), ...auto(p).filter(e => !orders.has(e.orderNo))];
     X().grid('خدمة العملاء ' + fileLabel(), [sheetOf('طلبات', by('طلبات')), sheetOf('الموقع', by('الموقع'))]);
     return by('طلبات').length + by('الموقع').length ? '' : 'مفيش تقييمات للفترة دي';
   }

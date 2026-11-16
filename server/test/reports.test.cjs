@@ -117,7 +117,8 @@ test('Talabat ratings (Karim 11-16): ours and the competitor\'s from Talabat\'s 
     let cs = (await admin('GET', '/api/cs?from=2026-11-16&to=2026-11-16')).body;
     const r = Object.fromEntries(cs.ratings.map(x => [x.branch, x]));
     assert.equal(r['مدينة نصر'].rating, 4.4); assert.equal(r['التجمع'].competitor, 4.6);
-    assert.equal(seen.length, 2, 'only the pages that are set');
+    assert.equal(seen.length, 6, 'our three branches and the competitor\'s');
+    assert.ok(seen.some(u => /egypt\/al-dahan-od$/.test(u)), 'the competitor\'s brand page where its branch is not known');
     await admin('POST', '/api/cs/rating', { day: '2026-11-16', branch: 'مدينة نصر', rating: 5 });
     cs = (await admin('GET', '/api/cs?from=2026-11-16&to=2026-11-16')).body;
     assert.equal(cs.ratings.find(x => x.branch === 'مدينة نصر').rating, 5, 'typed by hand wins');
@@ -126,5 +127,24 @@ test('Talabat ratings (Karim 11-16): ours and the competitor\'s from Talabat\'s 
     assert.equal((await admin('POST', '/api/talabat/rating-pages', { pages: { 'مدينتي': { ours: 'https://www.talabat.com/ar/egypt/restaurant/700001/x', rival: '700002' } } })).status, 200);
     const p = (await admin('GET', '/api/talabat/rating-pages')).body;
     assert.deepEqual(p.pages['مدينتي'], { ours: '700001', rival: '700002' });
+  } finally { await t.close(); }
+});
+
+test('Talabat portal reviews (Karim 11-16): the main screen sends each store\'s reviews; the day\'s average per branch; the negative words listed', async () => {
+  const t = await start({ at: cairoToUtc(2026, 11, 16, 12, 0), config: { talabatFetch: async () => new Response('x', { status: 403 }) } });
+  try {
+    const admin = await t.admin();
+    const tok = (await admin('POST', '/api/talabat/token')).body.token;
+    const at = (h, m) => cairoToUtc(2026, 11, 16, h, m);
+    const send = body => t.call('POST', '/api/talabat/reviews', { headers: { 'x-talabat-token': tok }, body });
+    assert.equal((await t.call('POST', '/api/talabat/reviews', { body: { vendor: 'HF_EG;608556' } })).status, 401);
+    assert.equal((await send({ vendor: 'HF_EG;1', reviews: [] })).status, 400);
+    const r = await send({ vendor: 'HF_EG;760858', stats: { rating: 4.3, total: 900 }, reviews: [
+      { orderId: '4723779338', at: at(10, 38), rating: 1, text: 'الأكل بارد' }, { orderId: '4722644332', at: at(11, 41), rating: 5, text: 'طعم ممتاز' }, { orderId: '4722644399', at: at(11, 50), rating: 3, text: '' }] });
+    assert.equal(r.status, 200);
+    const cs = (await admin('GET', '/api/cs?from=2026-11-16&to=2026-11-16')).body;
+    assert.equal(cs.talabat.length, 3);
+    const tg = cs.ratings.find(x => x.branch === 'التجمع');
+    assert.equal(tg.rating, 3, 'the day\'s average of the reviews');
   } finally { await t.close(); }
 });

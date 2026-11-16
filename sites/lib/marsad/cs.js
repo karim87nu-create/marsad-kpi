@@ -22,6 +22,10 @@ function setup(app) {
     // Karim 11-16: no typing — Talabat's public pages give each day's rating; one typed by hand stays first.
     const auto = app.talabatRatings ? await app.talabatRatings(from, to) : [], key = (d, b) => d + '|' + b, ratings = new Map();
     for (const r of auto) { const x = ratings.get(key(r.day, r.branch)) || { day: r.day, branch: r.branch, rating: null, competitor: null, by: 'طلبات (تلقائي)' }; x[r.side === 'ours' ? 'rating' : 'competitor'] = r.rate; ratings.set(key(r.day, r.branch), x); }
+    // «التقييم» of a branch's day: the average of that day's reviews on the portal when there are some (Karim's sheet), else the store's rating.
+    const reviews = app.talabatReviews ? await app.talabatReviews(from, to) : [];
+    const dayAvg = new Map(); for (const r of reviews) if (r.rating != null) { const k = key(r.day, r.branch), x = dayAvg.get(k) || { s: 0, n: 0 }; x.s += r.rating; x.n++; dayAvg.set(k, x); }
+    for (const [k, x] of dayAvg) { const [day, branch] = k.split('|'), v = ratings.get(k) || { day, branch, rating: null, competitor: null, by: 'طلبات (تلقائي)' }; v.rating = Math.round(x.s / x.n * 100) / 100; v.reviews = x.n; ratings.set(k, v); }
     for (const r of manual) { const x = ratings.get(key(r.day, r.branch)) || { day: r.day, branch: r.branch }; ratings.set(key(r.day, r.branch), { ...x, rating: r.rating ?? x.rating ?? null, competitor: r.competitor ?? x.competitor ?? null, by: r.by_name }); }
     // The website's customer ratings (the app's rating of each order, and the review form), with the order's branch.
     const site = [
@@ -29,7 +33,8 @@ function setup(app) {
         .map(r => ({ day: r.day, platform: 'الموقع', branch: r.branch, orderNo: String(r.order_id), rating: r.rating, comment: r.comment, auto: 'rating' })),
       ...(await db.prepare('SELECT * FROM site_reviews WHERE day BETWEEN ? AND ?').all(from, to).catch(() => []))
         .map(r => ({ day: r.day, platform: 'الموقع', branch: null, customer: r.reviewer, phone: r.phone, rating: r.rating, comment: [r.product, r.review].filter(Boolean).join(': ') || null, auto: 'review' }))];
-    return { from, to, platforms: PLATFORMS, reached: REACHED, entries: rows.map(shape), ratings: [...ratings.values()].sort((a, b) => a.day.localeCompare(b.day) || a.branch.localeCompare(b.branch)), site };
+    const talabat = reviews.map(r => ({ day: r.day, platform: 'طلبات', branch: r.branch, orderNo: r.order_id, rating: r.rating, comment: r.text, auto: 'talabat' }));
+    return { from, to, platforms: PLATFORMS, reached: REACHED, entries: rows.map(shape), talabat, ratings: [...ratings.values()].sort((a, b) => a.day.localeCompare(b.day) || a.branch.localeCompare(b.branch)), site };
   });
 
   const read = (b, now) => {
