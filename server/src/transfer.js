@@ -7,6 +7,7 @@
 // The employee claims an order (so two people do not enter it twice) and marks it entered; the order then
 // turns «في Apex» only when the monitor actually sees it on Apex. Automatic transfer to Apex stays off until
 // the bridge is proven (numbering under live work and the branch delivery); this page never writes to Apex.
+import { areaRule, itemRule } from './transfer-rules.js';
 import { businessDay, dayWindow, iso, validDate, addDays } from './time.js';
 import { takeTransferBuildLease, waitForTransferBuild } from './transfer-build-lease.js';
 import { CANCELLED_SQL, isCancelled, sourceCanTransfer, handoffPending } from './transfer-cancellation.js';
@@ -318,6 +319,15 @@ function setup(app) {
       // Karim 11-16 (15-11: «العباسية», «مصر الجديدة - الكوربة» waited): one earlier pick (or a split one) no longer hides
       // the Apex area of the same name; what staff chose 2+ times (80%) still comes first.
       const strong = learned && learned.seen >= 2 && !(learned.share < 0.8);
+      // Karim 11-16 (transfer-rules.js): the areas he confirmed come before a name guess; a district alone («مدينة نصر»,
+      // «مصر الجديدة») is taken from the address, or left to a person.
+      const rule = strong ? null : areaRule(words, o.source);
+      if (rule?.general) {
+        const no = o.customer?.address ? areaInAddress(o.customer.address, base.locations, o.apexBranch, groups) : null;
+        if (no) list[i] = { ...o, areaGuess: { no, seen: 0, how: 'address' } };
+        continue;
+      }
+      if (rule?.no && (base.locations || []).some(l => Number(l.no) === rule.no)) { list[i] = { ...o, areaGuess: { no: rule.no, seen: 0, how: 'rule', ...(rule.addAddress ? { addAddress: rule.addAddress } : {}) } }; continue; }
       const ng = strong ? null : byNameGuess(), same = (a, b) => a && b && (groups.get(Number(a.no)) ?? Number(a.no)) === (groups.get(Number(b.no)) ?? Number(b.no));
       const guess = strong ? learned : same(ng, learned) ? learned : (ng || learned);
       if (guess) list[i] = { ...o, areaGuess: guess };
@@ -646,6 +656,8 @@ function setup(app) {
           line.choiceKey = sha256(JSON.stringify([order.source, kind, parent, line.name, item.sizeOption || '']));
           const choices = [...(manual.get(line.choiceKey)?.keys() || [])].filter(no => apexName.has(no));
           if (choices.length) line.apex = choices.map(no => ({ no, name: apexName.get(no) }));
+          // Karim 11-16: a dish he confirmed (transfer-rules.js), when no single Apex item is known for it yet.
+          if ((line.apex || []).length !== 1) { const no = itemRule(kind === 'item' ? item : { name: line.name }); if (no && apexName.has(no)) { line.apex = [{ no, name: apexName.get(no) }]; line.byRule = true; } }
         }
       }
       list.sort((x, y) => (x.apex ? 1 : 0) - (y.apex ? 1 : 0) || String(x.at || '').localeCompare(String(y.at || '')));

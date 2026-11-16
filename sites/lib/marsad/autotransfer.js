@@ -116,6 +116,7 @@ export function decide(o, x) {
   else if (o.areaGuess?.how === 'name') { loc = Number(o.areaGuess.no); locHow = 'name'; }
   else if (o.areaGuess?.how === 'address') { loc = Number(o.areaGuess.no); locHow = 'address'; }
   else if (o.areaGuess?.how === 'areaName') { loc = Number(o.areaGuess.no); locHow = 'areaName'; }
+  else if (o.areaGuess?.how === 'rule') { loc = Number(o.areaGuess.no); locHow = 'rule'; }   // confirmed by Karim (transfer-rules.js)
   else { const c = x.customerArea?.(o); if (c) { loc = Number(c); locHow = 'customer'; } }
   // Karim 11-15 (Apex 703813 «ازاي استلام وفيه عنوان توصيل»): a delivery order never goes to a branch's «استلام» area,
   // whether it came from the customer's card on Apex or from what was chosen before — the employee picks.
@@ -178,6 +179,9 @@ export function decide(o, x) {
   if (why.length) return { ok: false, why, warnings, quiet: why.every(w => QUIET.has(w)) };
   // The customer as the page shows it, without the English (the page's «what staff wrote over the Arabic» is not learned from this).
   const { nameEn, addressEn, original, talabatArea, siteArea, ...customer } = o.customer || {};
+  // «المستقبل اربطها بالشروق بس لازم يكون مكتوب المستقبل في العنوان الي هيتسجل».
+  const addArea = o.areaGuess?.how === 'rule' && locHow === 'rule' ? o.areaGuess.addAddress : null;
+  if (addArea && !String(customer.address || '').includes(addArea)) customer.address = (customer.address ? customer.address + ' - ' : '') + addArea;
   const body = { source: o.source, ref: String(o.ref), action: 'auto', payment: pay, branchNo: branch, locationNo: loc, code: o.code,
     items: lines.map(l => ({ itemNo: String(l.no), qty: l.qty, note: '' })),
     apexNote: card.status === 'found' ? { approved: true, note: card.text, custNo: card.custNo, items: [], resolution: null, gifts: null } : null,
