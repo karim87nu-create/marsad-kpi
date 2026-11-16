@@ -70,6 +70,62 @@
   const say = text => { banner.textContent = 'شاشة مراقبة طلبات — مرصد الدهان · ' + text; if (!banner.isConnected) document.documentElement.append(banner); };
   say('بتبدأ…');
 
+  // ---------- Reviews tab (main screen; Karim 11-16): each of our stores' rating, and each review's stars, words and order ----------
+  // Reads only: the review cards on the page (newest first), page by page back about two days; never replies, disputes or
+  // opens an order. One store after the other, then again half an hour later.
+  if (state.role === 'reviews') {
+    // The list page shows a card per store this account sees; each card opens its store's reviews.
+    const at = /^\/reviews\/([^/?#]+)/.exec(location.pathname), idx = Number(sessionStorage.getItem('marsadReviewsIdx') || 0);
+    const toList = ms => setTimeout(() => { location.href = '/reviews'; }, ms);
+    if (!at) {
+      if (!/^\/reviews\/?$/.test(location.pathname)) { toList(2000); return; }
+      say('بيقرا تقييمات العملاء على طلبات');
+      // A card: the smallest box holding one «Store rating» and the store's name above it.
+      const cards = () => { const root = document.querySelector('[data-testid="review-plugin-view"]') || document.body;
+        const labels = [...root.querySelectorAll('p,span,div')].filter(e => !e.children.length && /^(?:Store rating|تقييم المتجر)$/.test((e.textContent || '').trim()));
+        return [...new Set(labels.map(l => { let c = l; while (c.parentElement && c.parentElement !== root && (c.parentElement.innerText.match(/Store rating|تقييم المتجر/g) || []).length === 1) c = c.parentElement; return c; }))]; };
+      for (let i = 0; i < 40 && !cards().length; i++) await sleep(1500);
+      const list = cards();
+      if (!list.length) { toList(30 * 60000); return; }
+      sessionStorage.setItem('marsadReviewsCount', String(list.length));
+      if (idx >= list.length) { sessionStorage.setItem('marsadReviewsIdx', '0'); say('هيقرا التقييمات تاني بعد نص ساعة'); toList(30 * 60000); return; }
+      (list[idx].querySelector('[role="button"],button,a') || list[idx]).click();
+      await sleep(8000);
+      if (!/^\/reviews\/[^/?#]+/.test(location.pathname)) { sessionStorage.setItem('marsadReviewsIdx', String(idx + 1)); toList(3000); }
+      return;
+    }
+    const vendor = decodeURIComponent(at[1]);
+    say('بيقرا تقييمات العملاء على طلبات');
+    const dates = () => [...document.querySelectorAll('[data-testid="review-header-date"]')];
+    const cardOf = el => { let c = el; for (let i = 0; i < 8 && c; i++) { c = c.parentElement; if (c?.querySelector('[data-testid="rating-stars-line"]') && c.querySelectorAll('p').length > 1) return c; } return el.parentElement; };
+    const parse = el => {
+      const m = /(\d{1,2})\/(\d{1,2})\/(\d{4})\s*•\s*(\d{1,2}):(\d{2})\s*(AM|PM|ص|م)?\s*•\s*(\d{6,})/i.exec(el.textContent || ''); if (!m) return null;
+      let h = +m[4] % 12; if (/PM|م/i.test(m[6] || '')) h += 12;
+      const card = cardOf(el), stars = [...(card.querySelector('[data-testid="rating-stars-line"]')?.querySelectorAll('svg') || [])].filter(x => /branded/.test(x.getAttribute('color') || '')).length;
+      const text = [...card.querySelectorAll('p')].filter(p => p !== el && !p.closest('button,a') && !/^(?:View order|Dispute|Reply|عرض الطلب|اعتراض|رد)$/i.test((p.innerText || '').trim())).map(p => (p.innerText || '').trim()).filter(Boolean).join(' ');
+      return { orderId: m[7], at: new Date(+m[3], +m[1] - 1, +m[2], h, +m[5]).getTime(), rating: stars || null, text: text.slice(0, 1000) };
+    };
+    const main = () => document.querySelector('main')?.innerText || '';
+    for (let i = 0; i < 40 && !dates().length; i++) await sleep(1500);
+    const seen = new Map(), oldest = Date.now() - 2.5 * 86400000;
+    for (let page = 0; page < 25; page++) {
+      const list = dates().map(parse).filter(Boolean); for (const r of list) seen.set(r.orderId, r);
+      if (!list.length || Math.min(...list.map(r => r.at)) < oldest) break;
+      const first = dates()[0]?.textContent;
+      const next = [...document.querySelectorAll('button,[role="button"]')].find(b => /chevron_right|navigate_next/.test(b.innerText || b.getAttribute('aria-label') || '') && !b.disabled);
+      if (!next) break;
+      next.click();
+      for (let i = 0; i < 20 && dates()[0]?.textContent === first; i++) await sleep(500);
+      if (dates()[0]?.textContent === first) break;
+    }
+    const rate = Number((/Store rating\s*([\d.]+)|تقييم المتجر\s*([\d.]+)/.exec(main()) || []).slice(1).find(Boolean)), total = Number((/(\d+)\s*(?:reviews|تقييم)/.exec(main()) || [])[1]);
+    if (seen.size || rate) await bg({ type: 'TALABAT_REVIEWS', body: { vendor, stats: { rating: rate || null, total: total || null }, reviews: [...seen.values()] } }).catch(() => null);
+    say('قرا ' + seen.size + ' تقييم — ' + vendor);
+    sessionStorage.setItem('marsadReviewsIdx', String(idx + 1));
+    toList(5000);
+    return;
+  }
+
   // ---------- Menu Availability tab (main screen): which dishes are stopped in each branch; applies admin's queued stops ----------
   // Reads each dish's status from the page's own data (0 = available). Changes only what admin queued, only when admin
   // turned it on, one dish at a time: open that dish's availability menu, choose «Unavailable» / «Available», check it took.

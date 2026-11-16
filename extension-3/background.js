@@ -229,10 +229,15 @@ async function talabatMessage(m, sender) {
     if (talabatTabs.menu != null && talabatTabs.menu !== tabId && !(await alive(talabatTabs.menu))) delete talabatTabs.menu;
     if (talabatTabs.menu == null && /^\/menu-management-tb\/menu-availability/.test(new URL(sender.url).pathname)) talabatTabs.menu = tabId;
     if (talabatTabs.menu === tabId) return { active: true, role: 'menu' };
+    // Karim 11-16: and the «Reviews» page (fourth tab): the customers' stars and words on each of our stores, for the reports.
+    if (talabatTabs.reviews != null && talabatTabs.reviews !== tabId && !(await alive(talabatTabs.reviews))) delete talabatTabs.reviews;
+    if (talabatTabs.reviews == null && /^\/reviews/.test(new URL(sender.url).pathname)) talabatTabs.reviews = tabId;
+    if (talabatTabs.reviews === tabId) return { active: true, role: 'reviews' };
     let role = Object.keys(talabatTabs).find(r => talabatTabs[r] === tabId);
     if (!role) { role = talabatTabs.history == null ? 'history' : talabatTabs.live == null ? 'live' : 'extra'; if (role !== 'extra') talabatTabs[role] = tabId; }
     if (talabatTabs.history != null && talabatTabs.live == null) { const n = await browser.tabs.create({ url: 'https://partner-app.talabat.com/live-orders', active: false }); talabatTabs.live = n.id; }
     if (talabatTabs.history != null && talabatTabs.menu == null) { const n = await browser.tabs.create({ url: 'https://partner-app.talabat.com/menu-management-tb/menu-availability', active: false }); talabatTabs.menu = n.id; }
+    if (talabatTabs.history != null && talabatTabs.reviews == null) { const n = await browser.tabs.create({ url: 'https://partner-app.talabat.com/reviews', active: false }); talabatTabs.reviews = n.id; }
     return { active: true, role };
   }
   if (m.type === 'TALABAT_PUSH') {
@@ -258,6 +263,11 @@ async function talabatMessage(m, sender) {
     if (!t) return { ok: false };
     const r = await api('/api/talabat/stock', { headers: { ...auth(t) }, timeout: 20000 });
     return r.ok ? { ok: true, ...r.json() } : { ok: false };
+  }
+  if (m.type === 'TALABAT_REVIEWS') {
+    if (!t || t.device || t.extra) return { ok: false };
+    const r = await api('/api/talabat/reviews', { method: 'POST', headers: { 'content-type': 'application/json', ...auth(t) }, body: JSON.stringify(m.body || {}), timeout: 30000 });
+    return { ok: r.ok };
   }
   if (m.type === 'TALABAT_STOCK_REPORT') {
     if (!t) return { ok: false };
