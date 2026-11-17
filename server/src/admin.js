@@ -105,6 +105,8 @@ function setup(app) {
     const b = ctx.body;
     if (b.action === 'setup') {
       if (await masterHash()) fail(409, 'كلمة المرور الرئيسية متحددة بالفعل');
+      // The Cloudflare copy gets its main password only from the move page (Karim 11-17), never from a stranger first.
+      if (app.config.noFirstSetup) fail(409, 'السيرفر ده بياخد كلمة المرور الرئيسية من صفحة النقل (/move/)');
       // Only a truly empty server may be set up from the page; a server with data needs MARSAD_ADMIN_PASSWORD.
       if ((await db.prepare('SELECT COUNT(*) n FROM employees').get()).n || (await db.prepare('SELECT COUNT(*) n FROM admin_accounts').get()).n)
         fail(409, 'السيرفر فيه بيانات؛ كلمة المرور الرئيسية لازم تتحدد من إعدادات السيرفر (MARSAD_ADMIN_PASSWORD)');

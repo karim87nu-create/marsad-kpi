@@ -31,3 +31,25 @@ test('migrate: everything copied (employee passwords and settings keep working),
     await assert.rejects(run({}), /409|failed/);
   } finally { await a.close(); await b.close(); }
 });
+
+// The move page: the fresh server pulls page by page from the old one with the old main password (no keys copied by hand).
+test('migrate: the fresh server pulls everything from the old one through the move page', async () => {
+  const a = await start();
+  const b = await start({ config: { adminPasswordHash: null } });
+  b.app.config.migrateFrom = a.base;
+  try {
+    const adminA = await a.admin();
+    await a.employee(adminA, { name: 'Mona', code: 'E9', pin: '5555' });
+    const pull = (pw, body) => b.call('POST', '/api/migrate/pull', { headers: { 'x-old-password': pw }, body });
+    assert.equal((await pull('wrong-pass', {})).status, 401);
+    const { tables, full } = (await pull('master-pass', {})).body;
+    assert.equal(full, true);
+    for (const table of tables) { let after = 0; for (;;) { const p = (await pull('master-pass', { table, after })).body; assert.ok(p.table, table + ' ' + JSON.stringify(p)); if (p.next == null) break; after = p.next; } }
+    assert.equal((await b.session('5555', '102')).status, 200, 'the employee password works on the new server');
+    assert.equal((await b.call('POST', '/api/admin-access', { body: { action: 'login', password: 'master-pass' } })).status, 200, 'and the main password');
+    // Now this server has the main password: a wrong one is refused here too, then the move is closed.
+    assert.equal((await pull('nope', { table: 'employees' })).status, 401);
+    await (await b.admin())('POST', '/api/migrate/lock', {});
+    assert.equal((await pull('master-pass', {})).status, 409);
+  } finally { await a.close(); await b.close(); }
+});

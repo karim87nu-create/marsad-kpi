@@ -15,5 +15,8 @@ binding = "DB"
 database_name = "marsad"
 database_id = "__D1_ID__"
 
+[vars]
+MARSAD_NO_SETUP = "1"   # the main password comes only from the move page (/move/)
+
 [observability]
 enabled = true

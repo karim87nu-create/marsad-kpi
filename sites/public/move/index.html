@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>نقل المرصد</title>
+<style>
+  :root { --bg:#f6f4ef; --card:#fff; --ink:#1d1b16; --mute:#6b665b; --ok:#1f7a4d; --bad:#b3261e; --line:#e3dfd5; --acc:#8a5a00; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#16140f; --card:#211e17; --ink:#f1ede4; --mute:#a8a294; --line:#3a352b; --ok:#5fc48e; --bad:#ff8a80; --acc:#e0b05a; } }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.6 system-ui, "Segoe UI", Tahoma, sans-serif; }
+  main { max-width:640px; margin:0 auto; padding:24px 16px; }
+  h1 { font-size:22px; margin:0 0 4px; } p { color:var(--mute); margin:4px 0 16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  label { display:block; font-weight:600; margin-bottom:6px; }
+  input { width:100%; box-sizing:border-box; padding:10px 12px; font:inherit; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--ink); }
+  button { margin-top:12px; padding:10px 18px; font:inherit; font-weight:600; border:0; border-radius:8px; background:var(--acc); color:#fff; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:default; }
+  #log { margin-top:16px; font-size:14px; max-height:50vh; overflow:auto; }
+  #log div { padding:3px 0; border-bottom:1px solid var(--line); }
+  .ok { color:var(--ok); } .bad { color:var(--bad); }
+  #sum { font-weight:700; margin-top:12px; }
+</style>
+</head>
+<body><main>
+  <h1>نقل بيانات المرصد للسيرفر الجديد</h1>
+  <p>بينقل كل الجداول من السيرفر القديم (ChatGPT) للسيرفر ده، صفحة صفحة. الشغل القديم مش بيتأثر، وينفع تعيده أكتر من مرة — كل مرة بتستبدل اللي قبلها.</p>
+  <form class="card" id="f">
+    <label for="pw">كلمة مرور الإدارة الرئيسية (بتاعة السيرفر القديم)</label>
+    <input id="pw" type="password" autocomplete="current-password" required>
+    <button id="go" type="submit">ابدأ النقل</button>
+    <div id="sum" role="status"></div>
+    <div id="log"></div>
+  </form>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const line = (t, cls) => { const d = document.createElement('div'); d.textContent = t; if (cls) d.className = cls; $('log').prepend(d); };
+async function pull(pw, body) {
+  for (let i = 1; ; i++) {
+    const r = await fetch('/api/migrate/pull', { method: 'POST', headers: { 'content-type': 'application/json', 'x-old-password': pw }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok) return j;
+    if (r.status < 500 || i >= 4) throw Error(j.error || ('خطأ ' + r.status));
+    await new Promise(ok => setTimeout(ok, 3000 * i));
+  }
+}
+$('f').onsubmit = async e => {
+  e.preventDefault();
+  const pw = $('pw').value; $('go').disabled = true; $('log').textContent = ''; $('sum').textContent = 'بيبدأ…';
+  let done = 0, bad = 0, rows = 0;
+  try {
+    const { tables, full } = await pull(pw, {});
+    line(full ? 'نقل كامل (بالباسوردات والمفاتيح)' : 'نقل تجربة (من غير باسوردات ولا مفاتيح — السيرفر القديم لسه ما اتنشرش عليه النقل الكامل)');
+    for (const table of tables) {
+      let after = 0, n = 0;
+      try {
+        for (;;) { const p = await pull(pw, { table, after }); n += p.rows || 0; rows += p.rows || 0; $('sum').textContent = 'بينقل ' + table + ' … ' + rows + ' صف'; if (p.next == null) break; after = p.next; }
+        done++; line('✔ ' + table + ': ' + n, 'ok');
+      } catch (x) { bad++; line('✖ ' + table + ': ' + x.message, 'bad'); if (/غلط|اتقفل/.test(x.message)) break; }
+    }
+    $('sum').textContent = (bad ? 'خلص مع ' + bad + ' جدول ما اتنقلش' : 'خلص النقل') + ' — ' + done + ' جدول، ' + rows + ' صف';
+  } catch (x) { $('sum').textContent = x.message; $('sum').className = 'bad'; }
+  $('go').disabled = false;
+};
+</script>
+</body></html>

@@ -10,6 +10,7 @@ function server(env) {
   app ??= buildCore(d1Adapter(env.DB), {
     secret: env.MARSAD_SECRET || undefined,
     adminPassword: env.MARSAD_ADMIN_PASSWORD || undefined,
+    noFirstSetup: env.MARSAD_NO_SETUP === '1',
     telegramApi: env.TELEGRAM_API || undefined,
     openaiKey: env.OPENAI_API_KEY || undefined,
     telegramTimer: 'requests',
