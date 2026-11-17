@@ -53,3 +53,17 @@ test('migrate: the fresh server pulls everything from the old one through the mo
     assert.equal((await pull('master-pass', {})).status, 409);
   } finally { await a.close(); await b.close(); }
 });
+
+// The cashier PC's key works on the Cloudflare copy without copying it by hand: checked once against the old server.
+test('migrate: the cashier PC key is adopted from the old server, a wrong one is not', async () => {
+  const a = await start();
+  const b = await start({ config: { adminPasswordHash: null } });
+  b.app.config.adoptFrom = a.base;
+  try {
+    const { token } = (await (await a.admin())('POST', '/api/orders/token')).body;
+    const st = tok => b.call('POST', '/api/archive/status', { headers: { 'x-orders-token': tok }, body: { freeGb: 9 } });
+    assert.equal((await st('wrong-token-123')).status, 401);
+    assert.equal((await st(token)).status, 200, 'adopted on its first call');
+    assert.equal((await st(token)).status, 200);
+  } finally { await a.close(); await b.close(); }
+});

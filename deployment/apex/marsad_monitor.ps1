@@ -34,6 +34,18 @@ $UrlFile = Join-Path $here 'server_url.txt'
 function Test-MarsadUrl([string]$u) { return $u -cmatch '^https://(marsad-v2\.karim87nu\.chatgpt\.site|marsad\.[a-z0-9-]+\.workers\.dev)$' }
 try { if (Test-Path $UrlFile) { $u0 = (Get-Content $UrlFile -Raw).Trim(); if (Test-MarsadUrl $u0) { $ServerUrl = $u0 } } } catch {}
 $script:switchAt = [datetime]::MinValue
+$script:MirrorUrl = $null
+function Mirror-Send([string]$path, [byte[]]$bytes) {
+  if (-not $script:MirrorUrl -or -not $OrdersKey) { return }
+  try {
+    if (-not $script:mirrorClient) { Add-Type -AssemblyName System.Net.Http; $script:mirrorClient = New-Object System.Net.Http.HttpClient; $script:mirrorClient.Timeout = [TimeSpan]::FromSeconds(25) }
+    $req = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Post, ($script:MirrorUrl + $path))
+    $req.Content = New-Object System.Net.Http.ByteArrayContent(,$bytes)
+    $req.Content.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse('application/json; charset=utf-8')
+    [void]$req.Headers.TryAddWithoutValidation('x-orders-token', $OrdersKey)
+    [void]$script:mirrorClient.SendAsync($req)   # not awaited: the real server never waits for the copy
+  } catch {}
+}
 function Follow-Switch {
   if (((Get-Date) - $script:switchAt).TotalMinutes -lt 5) { return }
   $script:switchAt = Get-Date
@@ -41,6 +53,10 @@ function Follow-Switch {
     $j = Invoke-RestMethod -Uri ($SwitchUrl + '?t=' + [DateTime]::UtcNow.Ticks) -TimeoutSec 15
     $u = ([string]$j.api).TrimEnd('/')
     if ((Test-MarsadUrl $u) -and $u -ne $script:ServerUrl) { L "server switched: $($script:ServerUrl) -> $u"; $script:ServerUrl = $u; Set-Content -Path $UrlFile -Value $u -Encoding ASCII }
+    # A second server that gets a copy of what is sent (the Cloudflare trial, Karim 11-17); never waited for.
+    $m = ([string]$j.mirror).TrimEnd('/')
+    if ((Test-MarsadUrl $m) -and $m -ne $script:ServerUrl) { if ($m -ne $script:MirrorUrl) { L "mirror on: $m" }; $script:MirrorUrl = $m }
+    elseif ($script:MirrorUrl) { L 'mirror off'; $script:MirrorUrl = $null }
   } catch {}
 }
 
@@ -786,6 +802,7 @@ function Probe-Payload($payload){
     try {
             $requestTimer = [Diagnostics.Stopwatch]::StartNew()
       $resp = Invoke-RestMethod -Method Post -Uri "$ServerUrl/api/orders/push" -Headers @{ 'x-orders-token' = $OrdersKey } -Body $bodyBytes -ContentType 'application/json; charset=utf-8' -TimeoutSec 20
+      Mirror-Send '/api/orders/push' $bodyBytes
       if ($tracePush) { L "push response received: $($requestTimer.ElapsedMilliseconds) ms" }
     } catch {
       if ($tracePush -and $requestTimer) { L "push request failed after $($requestTimer.ElapsedMilliseconds) ms" }
@@ -1470,6 +1487,7 @@ while ($true) {
           [ordered]@{ branch = [int](N $_.b); item = (S $_.i); reason = $(if ($_.r -is [DBNull]) { $null } else { [double]$_.r }); at = $when; user = (UName $_.u) } }) } catch {}
         $sj = [ordered]@{ stopped = $st; recent = $tr; at = (IsoT (Get-Date)) } | ConvertTo-Json -Depth 5 -Compress
         Invoke-RestMethod -Method Post -Uri "$ServerUrl/api/apex-stock" -Headers @{ 'x-orders-token' = $OrdersKey } -Body ([Text.Encoding]::UTF8.GetBytes($sj)) -ContentType 'application/json; charset=utf-8' -TimeoutSec 20 | Out-Null
+        Mirror-Send '/api/apex-stock' ([Text.Encoding]::UTF8.GetBytes($sj))
       }
     } catch { if (-not $script:stockErrAt -or ((Get-Date) - $script:stockErrAt).TotalMinutes -ge 30) { $script:stockErrAt = Get-Date; L "stopped items: $($_.Exception.Message)" } }
     # Print trace (read-only, numbers only): how a new order's print flags change after it is saved, so the

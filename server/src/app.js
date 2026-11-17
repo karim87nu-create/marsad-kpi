@@ -115,7 +115,7 @@ function createApp({ db, config: input = {}, now = () => Date.now() }) {
     let response;
     try {
       await app.init();
-      for (const fn of beforeRequest) await fn(now());
+      for (const fn of beforeRequest) await fn(now(), request);
       const raw = request.method === 'GET' || route.options.stream ? new Uint8Array(0) : await readBody(request, route.options.limit || 256 * 1024);
       const type = String(request.headers.get('content-type') || '');
       let body = {};

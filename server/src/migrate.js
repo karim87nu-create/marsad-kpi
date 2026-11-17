@@ -2,7 +2,7 @@
 // export: every table page by page, as the database holds it (hashes and the server's own key included, so the
 //   employees' passwords, the tokens of the cashier PC and the saved Telegram key keep working on the new server).
 // import: the same pages written into this server; closed for good with «lock» once the move is done.
-import { hashPassword } from './security.js';
+import { hashPassword, sha256 } from './security.js';
 
 const PAGE = 1000;
 const SKIP = /^(sqlite_|_cf_|d1_)/;
@@ -71,6 +71,26 @@ function setup(app) {
     const n = await write(table, r.j.rows || [], !b.after);
     return { table, rows: n, next: r.j.next ?? null, full: path === '/api/migrate/export' };
   }, { limit: 64 * 1024 });
+
+  // The cashier PC's key follows it to the new server (Karim 11-17: no publish, no keys by hand). Only where the
+  // server is set to take it (adoptFrom, the Cloudflare copy): an orders key this server doesn't know is checked
+  // against the old server once (its backup list answers only that key), and kept here if the old server takes it.
+  const tried = new Map();
+  app.beforeRequest(async (now, request) => {
+    const from = app.config.adoptFrom, given = request?.headers?.get('x-orders-token');
+    if (!from || !given || given.length > 200) return;
+    const h = sha256(given);
+    if ((await db.prepare("SELECT value FROM settings WHERE key = 'orders_token_hash'").get())?.value === h) return;
+    if (now - (tried.get(h) || -Infinity) < 10 * 60000) return;
+    tried.set(h, now);
+    try {
+      const r = await fetch(from + '/api/backup', { method: 'POST', headers: { 'content-type': 'application/json', 'x-orders-token': given }, body: '{}' });
+      if (r.status === 200) {
+        await db.prepare("INSERT INTO settings (key, value) VALUES ('orders_token_hash', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(h);
+        await app.audit('orders_token_adopted', null, { actor: 'جهاز الكاشير' });
+      }
+    } catch {}
+  });
 
   app.route('POST', '/api/migrate/import', async ctx => {
     await master(ctx);
