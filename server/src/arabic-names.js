@@ -54,6 +54,23 @@ export const NAMES = {
   gam3a: 'جامعة', gamea: 'جامع', masged: 'مسجد', kenisa: 'كنيسة', madrasa: 'مدرسة', bawaba: 'بوابة', bwaba: 'بوابة', makhbaz: 'مخبز', saydalia: 'صيدلية',
 };
 
+// Karim 11-18 «أسماء العملاء بتتكتب غلط جدا» (Apex 704790–704908): names that came out letter by letter.
+Object.assign(NAMES, {
+  hadeel: 'هديل', hadil: 'هديل', naila: 'نائلة', nayla: 'نائلة', rashed: 'راشد', rashid: 'راشد', nazmy: 'نظمي', nazmi: 'نظمي', mahgoub: 'محجوب', mahjoub: 'محجوب',
+  sally: 'سالي', sali: 'سالي', shehab: 'شهاب', chehab: 'شهاب', khayat: 'خياط', elkhayat: 'الخياط', faiza: 'فايزة', fayza: 'فايزة', arwa: 'أروى', moataz: 'معتز', motaz: 'معتز',
+  moatz: 'معتز', fayad: 'فياض', afraa: 'عفراء', mokbel: 'مقبل', moqbel: 'مقبل', dahlia: 'داليا', dalia: 'داليا', kader: 'قادر', qader: 'قادر', gaida: 'غيداء', ghaida: 'غيداء',
+  jolnar: 'جلنار', julnar: 'جلنار', golnar: 'جلنار', patrick: 'باتريك', yusuf: 'يوسف', mohanad: 'مهند', muhannad: 'مهند', jannah: 'جنة', duaa: 'دعاء', shaymaa: 'شيماء',
+  salmaa: 'سلمى', nadeen: 'نادين', marwah: 'مروة', ameera: 'أميرة', hebatallah: 'هبة الله', mennatallah: 'منة الله', husam: 'حسام', issam: 'عصام', imad: 'عماد',
+  ihab: 'إيهاب', shereef: 'شريف', mahmood: 'محمود', aisha: 'عائشة', aysha: 'عائشة', khadija: 'خديجة', nabeel: 'نبيل', faraj: 'فرج', sameer: 'سمير', monir: 'منير',
+  gerges: 'جرجس', girgis: 'جرجس', gergis: 'جرجس', beshoy: 'بيشوي', kyrillos: 'كيرلس', marco: 'ماركو', foad: 'فؤاد', bakry: 'بكري', imam: 'إمام', naser: 'ناصر',
+  mazin: 'مازن', abdelrahim: 'عبدالرحيم', abdelaal: 'عبدالعال', elsayed: 'السيد', elsaid: 'السعيد', elshafei: 'الشافعي', shafei: 'الشافعي', ghonim: 'غنيم',
+  sulaiman: 'سليمان', mutairi: 'مطيري', almutairi: 'المطيري', elmutairi: 'المطيري', anbar: 'عنبر', haddad: 'حداد', mekled: 'مخلد', makhlad: 'مخلد', hanafy: 'حنفي',
+  zarkawy: 'زرقاوي', elzarkawy: 'الزرقاوي', hanna: 'حنا', hanein: 'حنين', haneen: 'حنين', madeleine: 'مادلين', madlen: 'مادلين', nermo: 'نيرمو', basma: 'بسمة',
+  yomna: 'يمنى', youmna: 'يمنى', jomana: 'جمانة', jumana: 'جمانة', farida: 'فريدة', fareeda: 'فريدة', roqaya: 'رقية', ruqaya: 'رقية', retaj: 'رتاج', lojain: 'لجين',
+  logain: 'لجين', loujain: 'لجين', mostafa: 'مصطفى', abdelmonem: 'عبدالمنعم', abdelmoneim: 'عبدالمنعم', monem: 'منعم', abdo: 'عبده', badawy: 'بدوي', badawi: 'بدوي',
+  sherkasy: 'شركسي', cherkasy: 'شركسي', elnamy: 'النامي', namy: 'نامي', manam: 'منعم', fawzy: 'فوزي', fawzi: 'فوزي', ghareeb: 'غريب', gharib: 'غريب', elgharib: 'الغريب', gazzar: 'جزار', elgazzar: 'الجزار', sherif: 'شريف',
+});
+
 // The longer list (arabic-names-extra.js) adds to this one; a word here wins.
 for (const [k, v] of Object.entries(NAMES_EXTRA)) if (!(k in NAMES)) NAMES[k] = v;
 
@@ -96,4 +113,34 @@ export function translit(word) {
     out += ONE[ch] || ''; i++;
   }
   return out || word;
+}
+
+// A spelling not in the lists but with the same consonants as one that is (Karim 11-18: «Mohmad», «Srah», «Wala2»,
+// «Abdulrhman», «Gameel» came out letter by letter): matched by its consonant skeleton, only where one Arabic name has it.
+export function skeleton(w) {
+  let s = String(w || '').toLowerCase().replace(/['’`\-]/g, '');
+  if (!/^[a-z0-9]+$/.test(s)) return '';
+  s = s.replace(/7/g, 'h').replace(/5/g, 'kh').replace(/2/g, '').replace(/q/g, 'k').replace(/j/g, 'g').replace(/ph/g, 'f');
+  s = s.replace(/([aeiou])h$/, '$1');                // «sarah» = «sara»
+  const first = /^[aeiou]/.test(s) ? '@' : '';
+  if (first) s = s.slice(1);
+  // «o u» and «i» kept as W / Y (Gamil ≠ Gamal, Mina ≠ Mona, Mahmoud ≠ Mohamed); «a e» dropped.
+  s = s.replace(/ou|oo|u|o/g, 'W').replace(/ee|ie|i/g, 'Y').replace(/[ae]/g, '').replace(/(.)\1+/g, '$1');
+  return s.replace(/[WY]/g, '').length >= 2 && !/[0-9]/.test(s.replace(/3/g, '')) ? first + s : '';
+}
+let SKEL = null;
+export function bySkeleton(w) {
+  if (!SKEL) {
+    const votes = new Map();
+    for (const [k, v] of Object.entries(NAMES)) {
+      if (k.length < 3 || k.includes(' ') || (v.startsWith('ال') && !/^(el|al)/.test(k))) continue;   // places, not names
+      const sk = skeleton(k); if (!sk) continue;
+      const m = votes.get(sk) || new Map(); m.set(v, (m.get(v) || 0) + 1); votes.set(sk, m);
+    }
+    // One Arabic name for the skeleton, or one with three times the spellings of any other.
+    SKEL = new Map();
+    for (const [sk, m] of votes) { const [[a, n], second] = [...m].sort((x, y) => y[1] - x[1]); if (!second || n >= 3 * second[1]) SKEL.set(sk, a); }
+  }
+  if (String(w || '').length < 3) return null;
+  return SKEL.get(skeleton(w)) || null;
 }

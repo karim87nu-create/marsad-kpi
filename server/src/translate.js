@@ -1,4 +1,4 @@
-import { NAMES, translit } from './arabic-names.js';
+import { NAMES, translit, bySkeleton } from './arabic-names.js';
 import { PHRASES } from './arabic-names-extra.js';
 // English → Arabic for what customers type in English (Karim 01-11): addresses, names, comments — the way an Egyptian
 // call-center employee would write them on Apex, not word for word. With an OpenAI key (config.openaiKey) the text is
@@ -70,7 +70,7 @@ const RX_FOOD = rxOf(FOOD);
 function arabizeRest(s, learned, preserveUnknown = false) {
   return s.replace(/[A-Za-z][A-Za-z0-9']*/g, (w, at, all) => {
     const k = w.toLowerCase().replace(/'/g, '');
-    let v = learned?.get(k) || NAMES[k];
+    let v = learned?.get(k) || NAMES[k] || (preserveUnknown ? null : bySkeleton(k));
     if (!v) { const franco = /[a-z]{2,}/i.test(w) && /[a-z][2356789]|[2356789][a-z]/i.test(w) && !/^[A-Za-z]{1,2}\d+$/.test(w);
       if (preserveUnknown || (/\d/.test(w) && !franco) || (/^[A-Z]{2,4}$/.test(w)) || w.length < 2) return w; v = translit(w); }
     return all.slice(Math.max(0, at - 2), at) === 'ال' && v.startsWith('ال') ? v.slice(2) : v;

@@ -614,7 +614,7 @@ function setup(app) {
         list.push({ source: 'talabat', ref: o.id, code: o.code || null, at: iso(o.accepted_at || o.received_at || o.placed_at), status: o.status, out: TALABAT_OUT.has(String(o.status || '').toUpperCase()) || !!o.picked_up_at || !!o.delivered_at, branch: o.store, apexBranch: apexBranchOf(o.store), deliveryType: o.delivery_type || null,
           // Karim 11-15 «ما هو الاوردر استلام فعلا»: a Talabat pickup goes to the branch's «استلام» area like a website one.
           ...(TALABAT_PICKUP.test(o.delivery_type || '') ? { fulfillment: 'pickup', ...(PICKUP_AREAS[apexBranchOf(o.store)] ? { areaGuess: { ...PICKUP_AREAS[apexBranchOf(o.store)], how: 'pickup' } } : {}) } : {}),
-          customer: { name: /^(?:information|details|customer|العميل)$/i.test(p.name || '') ? null : p.name || null, phone: phoneOut(p.phoneDisplay || p.phone || p.mobileDisplay || p.mobile), address: p.address || null, ...(p.area ? { talabatArea: p.area } : {}) },
+          customer: { name: /^(?:information|details|customer|العميل|unknown|n\/?a|none|guest|-+|\.+)$/i.test(p.name || '') ? null : p.name || null, phone: phoneOut(p.phoneDisplay || p.phone || p.mobileDisplay || p.mobile), address: p.address || null, ...(p.area ? { talabatArea: p.area } : {}) },
           // What Apex must total (Karim 31-10): the bill's «مجموع» (what the customer pays) plus Talabat's share of the discounts
           // (not deducted on Apex). The writer discounts any amount Apex comes out above it.
           target: (() => { const t = bill.find(x => /^(?:مجموع|المجموع|الإجمالي|total|order total)$/i.test(String(x.k || '').trim())), v = t ? amountOf(String(t.text).split(' | ').slice(1).join(' ')) : o.total ?? null;
