@@ -270,7 +270,7 @@
         modifiers: (i.modifiers || []).map(m => (Number(m.amount) || 1) + '× ' + String(m.name || '').trim()), modifierRead: true, modifierComplete: true,
         options: (i.modifiers || []).map(m => ({ qty: Number(m.amount) || null, name: String(m.name || '').trim(), price: money2(m.total), productId: m.productId ? String(m.productId) : undefined })) }));
       return { id: String(o.externalId), store: o.vendorName || undefined,
-        detail: { receivedAt: o.timestamp || undefined, acceptedAt: o.acceptedAt || undefined, subtotal: money2(pay.itemsTotalPrice), customer: { name: [c.firstName, c.lastName].filter(Boolean).join(' '), phone, address, area: a.area ? String(a.area).trim().slice(0, 80) : undefined }, items, bill } };
+        detail: { receivedAt: o.timestamp || undefined, acceptedAt: o.acceptedAt || undefined, subtotal: money2(pay.itemsTotalPrice), customer: { ...(n => globalThis.MARSAD_NAME_PAIR ? globalThis.MARSAD_NAME_PAIR(n) : { name: n })([c.firstName, c.lastName].filter(Boolean).join(' ')), phone, address, area: a.area ? String(a.area).trim().slice(0, 80) : undefined }, items, bill } };
     };
     const statePushed = new Map();
     // Each live card: the long order number and the short #code (both may be split into several pieces on the page).
@@ -713,7 +713,7 @@
       if (hit && !new RegExp(label + '\\s*[:：]').test(address)) extra.push(label + ': ' + hit[1].trim());
     }
     if (extra.length) address = (address ? address + ' — ' : '') + extra.join('، ');
-    d.customer = { name: name.slice(0, 160), address: address.slice(0, 360), phone: phone || '' };
+    d.customer = { ...(n => globalThis.MARSAD_NAME_PAIR ? globalThis.MARSAD_NAME_PAIR(n) : { name: n })(name.slice(0, 160)), address: address.slice(0, 360), phone: phone || '' };
     d.deliveryType = lines(T('prop-delivery-type'))[1] || null;
     // The bill and payment exactly as this order shows them: label → value pairs from «Subtotal» on
     // (e.g. «Payment method» → «Online»). Nothing is interpreted here. Talabat shows the payment method and
