@@ -27,6 +27,23 @@ function L($m){
   } catch {}
 }
 
+# ===== the server's address (Karim 11-17: the move to Cloudflare without stopping work) =====
+# Follows server.json on the GitHub page every 5 minutes and keeps it in server_url.txt; only Marsad addresses.
+$SwitchUrl = 'https://karim87nu-create.github.io/marsad-kpi/server.json'
+$UrlFile = Join-Path $here 'server_url.txt'
+function Test-MarsadUrl([string]$u) { return $u -cmatch '^https://(marsad-v2\.karim87nu\.chatgpt\.site|marsad\.[a-z0-9-]+\.workers\.dev)$' }
+try { if (Test-Path $UrlFile) { $u0 = (Get-Content $UrlFile -Raw).Trim(); if (Test-MarsadUrl $u0) { $ServerUrl = $u0 } } } catch {}
+$script:switchAt = [datetime]::MinValue
+function Follow-Switch {
+  if (((Get-Date) - $script:switchAt).TotalMinutes -lt 5) { return }
+  $script:switchAt = Get-Date
+  try {
+    $j = Invoke-RestMethod -Uri ($SwitchUrl + '?t=' + [DateTime]::UtcNow.Ticks) -TimeoutSec 15
+    $u = ([string]$j.api).TrimEnd('/')
+    if ((Test-MarsadUrl $u) -and $u -ne $script:ServerUrl) { L "server switched: $($script:ServerUrl) -> $u"; $script:ServerUrl = $u; Set-Content -Path $UrlFile -Value $u -Encoding ASCII }
+  } catch {}
+}
+
 # ===== one copy only (the watchdog task starts this every few minutes) =====
 $created = $false
 # Global (Karim 11-17): one copy across the logged-on session and the start-up run that needs no logon.
@@ -1389,6 +1406,7 @@ L 'monitor started (read-only)'
 Test-Schedule
 $cycleNo = 0
 while ($true) {
+  try { Follow-Switch } catch {}
   if ('MarsadGuard' -as [type]) { try { [MarsadGuard]::Beat($logFile, 600000) } catch {} }
   # A newer copy of this script was put in the folder: start it and stop this one (updates need nobody at the PC).
   try { if ((Get-Item $self).LastWriteTimeUtc -ne $selfStamp) { L 'script updated - restarting'; $mutex.ReleaseMutex(); $mutex.Dispose(); Start-Process wscript.exe -ArgumentList '//B', ('"' + (Join-Path $here 'run_hidden.vbs') + '"'); exit 0 } } catch {}

@@ -4,7 +4,23 @@
 // - durable outbox: events are saved first, then delivered in order, retried until accepted
 // - which tab holds which employee session, so a closed tab or browser ends it properly
 // - notifications, and the history / live-queue collector on the supervisor's PC
-const { API, VERSION, REPORTS_ROOT } = globalThis.MARSAD;
+const { VERSION, REPORTS_ROOT } = globalThis.MARSAD;
+let API = globalThis.MARSAD.API;
+// The server's address follows server.json on the GitHub page (Karim 11-17: the move to Cloudflare without stopping
+// work): checked every 5 minutes, kept for the next start; anything not a Marsad address is ignored.
+const serverSwitch = (async () => {
+  try { const o = await browser.storage.local.get('marsadApi'); if (globalThis.MARSAD.isServer(o?.marsadApi)) API = o.marsadApi.replace(/\/$/, ''); } catch {}
+})();
+async function followSwitch() {
+  try {
+    const r = await fetch(globalThis.MARSAD.SWITCH_URL + '?t=' + Date.now(), { cache: 'no-store', signal: AbortSignal.timeout(15000) });
+    if (!r.ok) return;
+    const u = String((await r.json())?.api || '').replace(/\/$/, '');
+    if (globalThis.MARSAD.isServer(u) && u !== API) { API = u; await browser.storage.local.set({ marsadApi: u }); }
+  } catch {}
+}
+serverSwitch.then(followSwitch);
+setInterval(followSwitch, 5 * 60000);
 const OUTBOX = 'outbox', REJECTED = 'rejected', TABS = 'tabs', COLLECTOR = 'collector', ENDED = 'endedTokens';
 
 // ---------- small helpers ----------
@@ -109,6 +125,7 @@ async function closeTab(tabId, reason) {
 browser.tabs.onRemoved.addListener(tabId => closeTab(String(tabId), 'tab_closed'));
 // After a browser restart no tab survives: end what was left open (and retry later if offline).
 const startup = (async () => {
+  await serverSwitch;
   const tabs = await store.get(TABS, {}), open = await browser.tabs.query({}).catch(() => null);
   for (const [id, e] of Object.entries(tabs)) if (!e.closing && open && !open.some(t => String(t.id) === id)) e.closing = 'browser_restarted';
   await store.set(TABS, tabs);
@@ -177,7 +194,7 @@ browser.runtime.onMessage.addListener(async (m, sender) => {
 const TALABAT = 'talabatMonitor', talabatTabs = {};
 // One id per Firefox profile, so admin can tell the Talabat screens apart (random; nothing about the PC).
 const screenId = async () => { let v = await store.get('talabatScreenId', null); if (!v) { v = Math.random().toString(36).slice(2, 10); await store.set('talabatScreenId', v); } return v; };
-const adminSender = sender => { try { const u = new URL(sender.url); return globalThis.MARSAD.ADMIN_ORIGINS.includes(u.origin) && (u.hostname !== 'karim87nu-create.github.io' || u.pathname.startsWith('/marsad-kpi/')); } catch { return false; } };
+const adminSender = sender => { try { const u = new URL(sender.url); return (globalThis.MARSAD.ADMIN_ORIGINS.includes(u.origin) || u.origin === API) && (u.hostname !== 'karim87nu-create.github.io' || u.pathname.startsWith('/marsad-kpi/')); } catch { return false; } };
 const talabatSender = sender => { try { return !!sender.tab && ['partner-app.talabat.com', 'web.whatsapp.com'].includes(new URL(sender.url).hostname); } catch { return false; } };
 const waSender = sender => { try { return new URL(sender.url).hostname === 'web.whatsapp.com'; } catch { return false; } };
 // The website's central panel / branch boards (site-panel.js): what the panel itself loaded, to the Marsad. Signed with
@@ -426,7 +443,7 @@ collectHistory(); collectLive();
 async function collectorMessage(m, sender) {
   const page = browser.runtime.getURL('collector.html');
   // Only the Marsad admin pages themselves (not any other page on the same github.io account).
-  const adminPage = (() => { try { const u = new URL(sender.url); return globalThis.MARSAD.ADMIN_ORIGINS.includes(u.origin) && (u.hostname !== 'karim87nu-create.github.io' || u.pathname.startsWith('/marsad-kpi/')); } catch { return false; } })();
+  const adminPage = (() => { try { const u = new URL(sender.url); return (globalThis.MARSAD.ADMIN_ORIGINS.includes(u.origin) || u.origin === API) && (u.hostname !== 'karim87nu-create.github.io' || u.pathname.startsWith('/marsad-kpi/')); } catch { return false; } })();
   if (sender.url !== page && !adminPage) throw Error('invalid_sender');
   if (m.type === 'COLLECTOR_LINK' && adminPage) {
     if (typeof m.token !== 'string' || typeof m.refreshToken !== 'string') throw Error('invalid_link');

@@ -35,6 +35,23 @@ if (Test-Path (Join-Path $here 'allow_live.txt')) { $AllowLive = $true }
 $logFile = Join-Path $here 'writer_log.txt'
 function L($m){ try { if ((Test-Path $logFile) -and (Get-Item $logFile).Length -gt 5MB) { Move-Item $logFile ($logFile + '.old') -Force }; Add-Content $logFile ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '  ' + $m) -Encoding UTF8 } catch {} }
 
+# ===== the server's address (Karim 11-17: the move to Cloudflare without stopping work) =====
+# Follows server.json on the GitHub page every 5 minutes and keeps it in server_url.txt; only Marsad addresses.
+$SwitchUrl = 'https://karim87nu-create.github.io/marsad-kpi/server.json'
+$UrlFile = Join-Path (Split-Path $here -Parent) 'server_url.txt'
+function Test-MarsadUrl([string]$u) { return $u -cmatch '^https://(marsad-v2\.karim87nu\.chatgpt\.site|marsad\.[a-z0-9-]+\.workers\.dev)$' }
+try { if (Test-Path $UrlFile) { $u0 = (Get-Content $UrlFile -Raw).Trim(); if (Test-MarsadUrl $u0) { $ServerUrl = $u0 } } } catch {}
+$script:switchAt = [datetime]::MinValue
+function Follow-Switch {
+  if (((Get-Date) - $script:switchAt).TotalMinutes -lt 5) { return }
+  $script:switchAt = Get-Date
+  try {
+    $j = Invoke-RestMethod -Uri ($SwitchUrl + '?t=' + [DateTime]::UtcNow.Ticks) -TimeoutSec 15
+    $u = ([string]$j.api).TrimEnd('/')
+    if ((Test-MarsadUrl $u) -and $u -ne $script:ServerUrl) { L "server switched: $($script:ServerUrl) -> $u"; $script:ServerUrl = $u; Set-Content -Path $UrlFile -Value $u -Encoding ASCII }
+  } catch {}
+}
+
 $created = $false
 # Global (Karim 11-17): one copy across the logged-on session and the start-up run that needs no logon.
 try { $mutex = New-Object System.Threading.Mutex($true, 'Global\MarsadApexWriter', [ref]$created) } catch { $mutex = New-Object System.Threading.Mutex($true, 'Local\MarsadApexWriter', [ref]$created) }
@@ -933,6 +950,7 @@ SELECT OrderNo, CustNo, Want, Was, Who, Tag FROM @Fix;
 L "writer started (pos $WriterPos)"
 $failures = 0
 for (;;) {
+  try { Follow-Switch } catch {}
   if ('MarsadWriterGuard' -as [type]) { try { [MarsadWriterGuard]::Beat($logFile, 900000) } catch {} }
   try { if ((Get-Item $self).LastWriteTimeUtc -ne $selfStamp) { L 'script updated - restarting'; $mutex.ReleaseMutex(); $mutex.Dispose(); Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $self + '"'); exit 0 } } catch {}
   try { Self-Test } catch { L "self-test: $($_.Exception.Message)" }

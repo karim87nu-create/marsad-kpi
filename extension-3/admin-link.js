@@ -2,7 +2,7 @@
 // Runs on the admin page only. When a signed-in supervisor presses «ربط هذا الجهاز كموصل», the page passes the
 // collector credentials it just received from the server; this hands them to the extension on this PC.
 (() => {
-  if (!globalThis.MARSAD.ADMIN_ORIGINS.includes(location.origin)) return;
+  if (!globalThis.MARSAD.ADMIN_ORIGINS.includes(location.origin) && !(globalThis.MARSAD.isServer(location.origin) && location.hostname.endsWith('.workers.dev'))) return;
   window.addEventListener('message', async e => {
     if (e.source !== window || e.origin !== location.origin || e.data?.source !== 'MARSAD_ADMIN') return;
     let reply;

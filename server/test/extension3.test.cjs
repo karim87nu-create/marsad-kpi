@@ -27,7 +27,7 @@ function middayShift() {
   return p.hour >= 10 && p.hour < 22 ? 0 : cairoToUtc(p.year, p.month, p.day, 12, 0, 0) - Date.now();
 }
 
-async function harness(t, shift = 0, wrap = null) {
+async function harness(t, shift = 0, wrap = null, switchTo = null) {
   const read = f => fs.readFileSync(path.join(EXT, f), 'utf8').replace("API: 'https://marsad-v2.karim87nu.chatgpt.site'", "API: '" + t.base + "'");
   const store = {}, listeners = [], pageListeners = [];
   let current = '', w = null;
@@ -37,10 +37,11 @@ async function harness(t, shift = 0, wrap = null) {
     tabs: { query: async () => [{ id: 7 }], onRemoved: { addListener() {} }, sendMessage: async (id, m) => { for (const f of pageListeners) f(structuredClone(m)); }, create() {} },
     browserAction: { onClicked: { addListener() {} } }, notifications: { create: async () => {} },
   };
-  const bg = { console, URL, URLSearchParams, AbortController, setTimeout, clearTimeout, setInterval, performance, crypto: globalThis.crypto,
+  const bg = { console, URL, URLSearchParams, AbortController, AbortSignal, setTimeout, clearTimeout, setInterval, performance, crypto: globalThis.crypto,
     Intl, Date, JSON, Math, Promise, Error, Number, String, Array, Object, Map, Set, structuredClone, DOMParser: class {}, browser,
     fetch: !shift ? fetch : async (...a) => { const r = await fetch(...a); const hd = new Headers(r.headers); hd.set('date', new Date(Date.now() + shift).toUTCString()); return new Response(r.body, { status: r.status, headers: hd }); } };
   bg.globalThis = bg;
+  { const f = bg.fetch; bg.fetch = async (url, o) => /server\.json/.test(String(url)) ? (switchTo ? new Response(JSON.stringify({ api: switchTo }), { status: 200 }) : new Response('', { status: 404 })) : f(url, o); }
   if (wrap) bg.fetch = wrap(bg.fetch);
   vm.createContext(bg);
   for (const f of ['config.js', 'background.js']) vm.runInContext(read(f), bg, { filename: f });
@@ -66,7 +67,7 @@ async function harness(t, shift = 0, wrap = null) {
     return w;
   }
   const sse = record => { for (const f of es.listeners.message || []) f({ data: JSON.stringify(record) }); };
-  return { open, sse, store, toBackground, get w() { return w; }, close: () => w?.close() };
+  return { open, sse, store, toBackground, get w() { return w; }, close: () => { pageListeners.length = 0; w?.close(); w = null; } };
 }
 
 test('extension 3: one password through the Arabicss logins, calls, breaks, messages, logout', { skip: !JSDOM && 'jsdom not installed' }, async () => {
@@ -209,7 +210,7 @@ test('extension 3 collector: linked from the admin page, sends the day history a
       runtime: { onMessage: { addListener: f => listeners.push(f) }, onInstalled: { addListener: () => {} }, getURL: x => 'moz-extension://x/' + x },
       tabs: { query: async () => [], onRemoved: { addListener() {} }, sendMessage: async () => {} }, browserAction: { onClicked: { addListener() {} } }, notifications: { create: async () => {} } };
     const { JSDOM: J } = require('jsdom'), parser = new J('').window.DOMParser;
-    const bg = { console, URL, URLSearchParams, AbortController, setTimeout, clearTimeout, setInterval, performance, crypto: globalThis.crypto, Intl, Date, JSON, Math, Promise, Error, Number, String, Array, Object, Map, Set, structuredClone, DOMParser: parser, fetch, browser };
+    const bg = { console, URL, URLSearchParams, AbortController, AbortSignal, setTimeout, clearTimeout, setInterval, performance, crypto: globalThis.crypto, Intl, Date, JSON, Math, Promise, Error, Number, String, Array, Object, Map, Set, structuredClone, DOMParser: parser, fetch, browser };
     bg.globalThis = bg; vm.createContext(bg);
     for (const f of ['config.js', 'background.js']) vm.runInContext(read(f), bg, { filename: f });
     const tok = (await admin('POST', '/api/history', { action: 'token' })).body;
@@ -277,4 +278,13 @@ test('extension 3: a wrong password while the server answers — the screen stay
     assert.ok(w.document.getElementById('marsad-gate'), 'screen stays');
     assert.equal(w.document.getElementById('marsad-offline'), null);
   } finally { h.close(); await t.close(); }
+});
+
+// Karim 11-17 (the move to Cloudflare): every PC follows server.json, and only to a Marsad address.
+test('extension 3: the server address follows server.json, only Marsad addresses', { skip: !JSDOM && 'jsdom not installed' }, async () => {
+  for (const [to, want] of [['https://marsad.eldahan.workers.dev', 'https://marsad.eldahan.workers.dev'], ['https://evil.example.com', undefined], ['https://marsad.x.workers.dev/steal', undefined]]) {
+    const t = await start();
+    const h = await harness(t, 0, null, to);
+    try { await settle(300); assert.equal(h.store.marsadApi, want, to); } finally { h.close(); await t.close(); }
+  }
 });

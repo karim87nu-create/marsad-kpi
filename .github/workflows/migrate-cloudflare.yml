@@ -1,0 +1,28 @@
+# نقل بيانات المرصد من ChatGPT Sites لـ Cloudflare (Karim 11-17). Run by hand from Actions after «Deploy to Cloudflare».
+# mode «backup» = a trial copy (no passwords or keys); «export» = the real move (needs the published build with /api/migrate).
+name: Copy data to Cloudflare
+on:
+  workflow_dispatch:
+    inputs:
+      mode: { description: 'backup (trial) or export (the real move)', required: true, default: backup }
+      target: { description: 'the Cloudflare address (https://marsad.<name>.workers.dev)', required: true }
+jobs:
+  copy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Copy
+        env:
+          FROM: https://marsad-v2.karim87nu.chatgpt.site
+          TO: ${{ inputs.target }}
+          MODE: ${{ inputs.mode }}
+          MARSAD_ADMIN_PASSWORD: ${{ secrets.MARSAD_ADMIN_PASSWORD }}
+        run: node scripts/migrate-to-cloudflare.mjs
+      # The server keeps its key in memory: a fresh deploy makes it read the copied one.
+      - name: Restart the Cloudflare server
+        if: inputs.mode == 'export'
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: gh workflow run deploy-cloudflare.yml --ref main
+    permissions: { actions: write, contents: read }
