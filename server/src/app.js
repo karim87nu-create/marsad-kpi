@@ -148,7 +148,9 @@ function createApp({ db, config: input = {}, now = () => Date.now() }) {
         response = send(500, { error: 'server_error' });
       }
     }
-    for (const fn of afterRequest) { try { const p = fn(now(), request.method, url.pathname); if (p) waitUntil(Promise.resolve(p)); } catch {} }
+    // A copy in the shadow (the Cloudflare trial, Karim 11-17) runs no background work: no Telegram, no Talabat or
+    // website reading, no automatic transfer — it only answers what it is sent.
+    if (!config.shadow) for (const fn of afterRequest) { try { const p = fn(now(), request.method, url.pathname); if (p) waitUntil(Promise.resolve(p)); } catch {} }
     return response;
   };
   return app;
