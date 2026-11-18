@@ -21,12 +21,19 @@ function setup(app) {
 
   app.employeeByPin = async function employeeByPin(pin) {
     const e = await db.prepare('SELECT * FROM employees WHERE pin_lookup = ? AND deleted_at IS NULL').get(pinLookup(pin));
-    if (e) return await verifyPassword(pin, e.pin_hash) ? e : null;
+    if (e && e.pin_hash) return await verifyPassword(pin, e.pin_hash) ? e : null;
     // First login with an imported password: verify, then store it in the new format.
     const matches = [];
     for (const x of await legacyRows()) if (await app.legacy.verify(pin, x.legacy_pin_hash)) matches.push(x);
     if (matches.length > 1) fail(409, 'password_not_unique');
-    if (!matches.length) return null;
+    if (!matches.length) {
+      // The Cloudflare copy (Karim 11-18): the old server says whose password it is, and it is kept here from then on.
+      const id = app.adoptPin ? await app.adoptPin(pin) : null;
+      const e2 = id && await db.prepare('SELECT * FROM employees WHERE id = ? AND deleted_at IS NULL').get(id);
+      if (!e2) return null;
+      await db.prepare('UPDATE employees SET pin_hash = ?, pin_lookup = ?, legacy_pin_hash = NULL WHERE id = ?').run(await hashPassword(pin), pinLookup(pin), e2.id);
+      return db.prepare('SELECT * FROM employees WHERE id = ?').get(e2.id);
+    }
     await db.prepare('UPDATE employees SET pin_hash = ?, pin_lookup = ?, legacy_pin_hash = NULL WHERE id = ?').run(await hashPassword(pin), pinLookup(pin), matches[0].id);
     return db.prepare('SELECT * FROM employees WHERE id = ?').get(matches[0].id);
   };

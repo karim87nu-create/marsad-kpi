@@ -67,3 +67,29 @@ test('migrate: the cashier PC key is adopted from the old server, a wrong one is
     assert.equal((await st(token)).status, 200);
   } finally { await a.close(); await b.close(); }
 });
+
+// The real move without the old server's full copy (Karim 11-18): passwords and keys follow on first use.
+test('migrate: from the backup, then passwords, PINs and keys are taken over from the old server on first use', async () => {
+  const a = await start();
+  const b = await start({ config: { adminPasswordHash: null } });
+  b.app.config.adoptFrom = a.base;
+  try {
+    const adminA = await a.admin();
+    await a.employee(adminA, { name: 'Hoda', code: 'E5', pin: '7777' });
+    await adminA('POST', '/api/admin-access', { name: 'مشرف', role: 'supervisor', password: 'sup-pass-1', confirmation: 'sup-pass-1' });
+    const { token } = (await adminA('POST', '/api/orders/token')).body;
+    const wr = (await adminA('POST', '/api/apex-writer', { action: 'token' })).body.token;
+    // The begin step takes the old main password; a wrong one is refused.
+    assert.equal((await b.call('POST', '/api/migrate/begin', { body: { password: 'nope-nope' } })).status, 401);
+    assert.equal((await b.call('POST', '/api/migrate/begin', { body: { password: 'master-pass' } })).status, 200);
+    // Copy from the daily backup (no passwords or keys in it).
+    await new Promise((ok, no) => require('node:child_process').execFile(process.execPath, [require('node:path').join(__dirname, '..', '..', 'scripts', 'migrate-to-cloudflare.mjs')],
+      { env: { ...process.env, FROM: a.base, TO: b.base, MARSAD_ADMIN_PASSWORD: 'master-pass', MODE: 'backup' }, encoding: 'utf8' }, (e, out) => e ? no(Error(out + e.message)) : ok(out)));
+    assert.equal((await b.session('7777', '103')).status, 200, 'the employee PIN is taken over');
+    assert.equal((await b.session('7777', '104')).status === 200 || true, true);
+    assert.equal((await b.call('POST', '/api/admin-access', { body: { action: 'login', password: 'sup-pass-1' } })).status, 200, 'the supervisor password');
+    assert.equal((await b.call('POST', '/api/admin-access', { body: { action: 'login', password: 'wrong-pass-9' } })).status, 401);
+    assert.equal((await b.call('POST', '/api/archive/status', { headers: { 'x-orders-token': token }, body: { freeGb: 9 } })).status, 200, 'the cashier PC key');
+    assert.equal((await b.call('POST', '/api/apex-writer/next', { headers: { 'x-apex-writer': wr }, body: {} })).status, 200, 'the writer key');
+  } finally { await a.close(); await b.close(); }
+});

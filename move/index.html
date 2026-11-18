@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>نقل المرصد</title>
+<style>
+  :root { --bg:#f6f4ef; --card:#fff; --ink:#1d1b16; --mute:#6b665b; --ok:#1f7a4d; --bad:#b3261e; --line:#e3dfd5; --acc:#8a5a00; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#16140f; --card:#211e17; --ink:#f1ede4; --mute:#a8a294; --line:#3a352b; --ok:#5fc48e; --bad:#ff8a80; --acc:#e0b05a; } }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.6 system-ui, "Segoe UI", Tahoma, sans-serif; }
+  main { max-width:680px; margin:0 auto; padding:24px 16px; }
+  h1 { font-size:22px; margin:0 0 4px; } p { color:var(--mute); margin:4px 0 14px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  label { display:block; font-weight:600; margin:10px 0 6px; }
+  input, select { width:100%; box-sizing:border-box; padding:10px 12px; font:inherit; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--ink); }
+  button { margin-top:14px; padding:10px 18px; font:inherit; font-weight:600; border:0; border-radius:8px; background:var(--acc); color:#fff; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:default; }
+  #log { margin-top:14px; font-size:14px; max-height:50vh; overflow:auto; }
+  #log div { padding:3px 0; border-bottom:1px solid var(--line); }
+  .ok { color:var(--ok); } .bad { color:var(--bad); }
+  #sum { font-weight:700; margin-top:12px; }
+</style>
+</head>
+<body><main>
+  <h1>نقل المرصد لـ Cloudflare</h1>
+  <p>بيقرا من السيرفر القديم (ChatGPT) ويكتب في الجديد، حتة حتة. السيرفر القديم مش بيتغيّر فيه حاجة.</p>
+  <form class="card" id="f">
+    <label for="mode">إيه اللي يتنقل</label>
+    <select id="mode">
+      <option value="essential">الأساسي — اللي الشغل محتاجه (أول مرة، بيمسح اللي قبله)</option>
+      <option value="rest">التاريخ القديم — يكمّل من مكان ما وقف (بالليل على كذا يوم)</option>
+    </select>
+    <label for="pw">كلمة مرور الإدارة الرئيسية</label>
+    <input id="pw" type="password" autocomplete="current-password" required>
+    <button id="go" type="submit">ابدأ</button>
+    <div id="sum" role="status"></div>
+    <div id="log"></div>
+  </form>
+</main>
+<script>
+const OLD = 'https://marsad-v2.karim87nu.chatgpt.site', NEW = 'https://marsad.karim87nu.workers.dev';
+// What the work needs tonight (Karim 11-18), within Cloudflare's free writes a day; the rest goes on later nights.
+const SKIP = new Set(['admin_sessions', 'auto_transfer_log', 'events', 'history_calls', 'telegram_log', 'audit', 'learning_evidence', 'live_snapshots', 'order_ingest', 'employee_sessions', 'collector_tokens', 'transfer_cache', '__appgarden_migrations', 'd1_migrations']);
+const LATER = new Set(['events', 'history_calls', 'employee_sessions', 'audit', 'auto_transfer_log', 'learning_evidence']);
+const RECENT = new Set(['talabat_orders', 'site_orders', 'match_profiles', 'transfer_jobs', 'apex_customer_notes', 'orders_days', 'talabat_closures', 'break_requests', 'break_permissions', 'apex_cancels', 'apex_cancel_notes', 'site_links', 'cs_links']);
+const DAY = 86400000, NOW = Date.now(), CUT_MS = NOW - 2 * DAY;
+const CUT_DAY = new Date(NOW + 2 * 3600000 - 9 * 3600000 - 2 * DAY).toISOString().slice(0, 10);   // Cairo business days
+const TIME = ['updated_at', 'checked_at', 'last_seen', 'first_seen', 'created_at', 'requested_at', 'at'];
+const recent = r => { if (typeof r.day === 'string' && /^\d{4}-\d\d-\d\d$/.test(r.day)) return r.day >= CUT_DAY; for (const k of TIME) if (typeof r[k] === 'number') return r[k] >= CUT_MS; return true; };
+const essentialRow = (table, r) => {
+  if (table === 'settings') return !/^telegram_delivery:/.test(r.key || '');
+  if (table === 'learned') return !/^(match-v2:|unknown$)/.test(r.kind || '');
+  if (RECENT.has(table)) return recent(r);
+  return true;
+};
+const restRow = (table, r) => {
+  if (table === 'learned') return /^(match-v2:|unknown$)/.test(r.kind || '');
+  if (RECENT.has(table)) return !recent(r);
+  return LATER.has(table);
+};
+const $ = id => document.getElementById(id);
+const line = (t, cls) => { const d = document.createElement('div'); d.textContent = t; if (cls) d.className = cls; $('log').prepend(d); };
+async function call(base, path, body, headers) {
+  for (let i = 1; ; i++) {
+    let r, j = {};
+    try { r = await fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) }); j = await r.json().catch(() => ({})); } catch (e) { r = { ok: false, status: 0 }; }
+    if (r.ok) return j;
+    if ((r.status && r.status < 500) || i >= 6) throw Error((j.error || ('خطأ ' + r.status)) + ' (' + path + ')');
+    await new Promise(ok => setTimeout(ok, 2000 * i));
+  }
+}
+const saved = () => { try { return JSON.parse(localStorage.getItem('marsadMoveRest') || '{}'); } catch { return {}; } };
+const save = v => { try { localStorage.setItem('marsadMoveRest', JSON.stringify(v)); } catch {} };
+$('f').onsubmit = async e => {
+  e.preventDefault();
+  const pw = $('pw').value, mode = $('mode').value, CAP = mode === 'rest' ? 15000 : Infinity;
+  $('go').disabled = true; $('log').textContent = ''; $('sum').className = '';
+  let rowsDone = 0, bad = 0;
+  try {
+    $('sum').textContent = 'بيتأكد من كلمة المرور…';
+    await call(NEW, '/api/migrate/begin', { password: pw });
+    const { token } = await call(NEW, '/api/admin-access', { action: 'login', password: pw });
+    const H = { 'x-admin-password': token };
+    const { tables } = await call(OLD, '/api/backup', {}, { 'x-admin-password': pw });
+    const prog = mode === 'rest' ? saved() : {};
+    for (const table of tables) {
+      if (mode === 'essential' && SKIP.has(table)) continue;
+      if (mode === 'rest' && !(RECENT.has(table) || LATER.has(table) || table === 'learned')) continue;
+      if (prog[table] === 'done') continue;
+      let after = Number(prog[table]) || 0, n = 0, first = mode === 'essential';
+      try {
+        for (;;) {
+          const page = await call(OLD, '/api/backup', { table, after }, { 'x-admin-password': pw });
+          const keep = page.rows.filter(r => mode === 'essential' ? essentialRow(table, r) : restRow(table, r));
+          // Small pieces: Cloudflare's free plan allows little work per request.
+          let chunk = [], size = 0;
+          const flush = async () => { if (!chunk.length && !first) return; await call(NEW, '/api/migrate/import', { table, rows: chunk, reset: first }, H); first = false; n += chunk.length; rowsDone += chunk.length; chunk = []; size = 0; };
+          for (const r of keep) { const s = JSON.stringify(r).length; if (chunk.length && (chunk.length >= 80 || size + s > 150000)) await flush(); chunk.push(r); size += s; }
+          await flush();
+          $('sum').textContent = table + ' … ' + rowsDone + ' صف';
+          if (page.next == null) { if (mode === 'rest') { prog[table] = 'done'; save(prog); } break; }
+          after = page.next;
+          if (mode === 'rest') { prog[table] = after; save(prog); if (rowsDone >= CAP) break; }
+        }
+        line('✔ ' + table + ': ' + n, 'ok');
+      } catch (x) { bad++; line('✖ ' + table + ': ' + x.message, 'bad'); if (/كلمة المرور|اتقفل/.test(x.message)) break; }
+      if (rowsDone >= CAP) { line('وقف عند ' + CAP + ' صف عشان حد Cloudflare اليومي — كمّل بكره بالليل'); break; }
+    }
+    $('sum').textContent = (bad ? 'خلص مع ' + bad + ' جدول ما اتنقلش' : 'خلص') + ' — ' + rowsDone + ' صف';
+  } catch (x) { $('sum').textContent = x.message; $('sum').className = 'bad'; }
+  $('go').disabled = false;
+};
+</script>
+</body></html>

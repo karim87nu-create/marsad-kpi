@@ -121,6 +121,13 @@ function setup(app) {
       // Karim 09-11 («انتظار العملاء مش قاري»): a refresh whose answer was lost (a server error, a dropped connection)
       // used to burn the link for good, and the live queue stopped until someone re-linked the connector. The same
       // refresh is accepted again for 10 minutes, and the old one is closed and the new one opened together.
+      // The Cloudflare copy (Karim 11-18): a link made on the old server is checked there once, then a new one is issued here.
+      if (!row && app.adoptCollector && await app.adoptCollector(String(b.refreshToken || ''))) {
+        const token = (ctx.now + TOKEN_MS) + '.' + randomToken(24), refresh = (ctx.now + REFRESH_MS) + '.' + randomToken(24);
+        await db.prepare('INSERT INTO collector_tokens (token_hash, refresh_hash, created_at, token_expires_at, refresh_expires_at) VALUES (?,?,?,?,?)')
+          .run(sha256(token), sha256(refresh), ctx.now, ctx.now + TOKEN_MS, ctx.now + REFRESH_MS);
+        return { token, refreshToken: refresh };
+      }
       if (!row || row.refresh_expires_at <= ctx.now || (row.revoked_at && ctx.now - row.revoked_at > 10 * 60000)) fail(401, 'collector_refresh_invalid');
       const token = (ctx.now + TOKEN_MS) + '.' + randomToken(24), refresh = (ctx.now + REFRESH_MS) + '.' + randomToken(24);
       await db.batch([

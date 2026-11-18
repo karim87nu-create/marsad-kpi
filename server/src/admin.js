@@ -35,7 +35,8 @@ function setup(app) {
         return { id: a.id, name: a.name, role: roleOf(a, cs) };
       }
     }
-    return null;
+    // The Cloudflare copy (Karim 11-18): a password this server doesn't know yet is checked once on the old server.
+    return app.adoptAdmin ? app.adoptAdmin(password) : null;
   }
 
   async function accountIdentity(id) {
