@@ -22,6 +22,25 @@ import { APEX_SECTIONS } from './apex-sections.js';
 import { siteApexItems } from './site-items.js';
 import { canonicalStore } from './store-names.js';
 import { sitePaymentChoice } from './site-payment-choice.js';
+// Karim 11-19 «الاوردرات الي فيها ساندوتشات رول أو ملفوف يتضرب ملفوف من غير كومنت، الا لو كومبو»: a sandwich asked
+// rolled (رول / ملفوف / عيش سوري) is Apex's «… ملفوف» item (the plain sandwich's number + 1), with no comment; a combo has
+// no rolled item, so it keeps the word as a comment.
+const ROLL_RE = /رول|ملفوف|سور[يى]|\broll(?:ed)?\b|\bwrap\b/i;
+let ROLLED = null;
+const rolledOf = no => {
+  if (!ROLLED) { ROLLED = new Map(); for (const [n, name] of Object.entries(APEX_NAMES)) { if (!/ملفوف/.test(name) || !/^\d{7}$/.test(n)) continue;
+    const base = String(Number(n) - 1).padStart(7, '0'); if (/سان?دو[يى]?تش/.test(APEX_NAMES[base] || '') && !/كومبو|ملفوف/.test(APEX_NAMES[base])) ROLLED.set(base, n); } }
+  return ROLLED.get(String(no));
+};
+function rolled(o) {
+  const pick = o.apexPick || (o.apex?.length === 1 ? o.apex[0].no : null);
+  const words = [o.name, o.nameShown, o.sizeOption, ...(o.freeOptions || []), ...(o.modifiers || [])].filter(Boolean).join(' ');
+  if (!pick || !ROLL_RE.test(words)) return o;
+  const to = rolledOf(pick), isRolled = /ملفوف/.test(APEX_NAMES[pick] || '');
+  if (!to && !isRolled) return o;   // a combo or not a sandwich: the word stays as a comment
+  const no = to || String(pick);
+  return { ...o, apex: [{ no, name: APEX_NAMES[no] || null }], apexPick: no, freeOptions: (o.freeOptions || []).filter(t => !ROLL_RE.test(t) || String(t).replace(ROLL_RE, '').replace(/عيش|خبز|bread|[\s:،,()-]/gi, '').length > 0), modifiers: (o.modifiers || []).filter(t => !ROLL_RE.test(t) || String(t).replace(ROLL_RE, '').replace(/عيش|خبز|bread|[\s:،,()-]/gi, '').length > 0) };
+}
 let APEX_ITEM_LIST = Object.entries(APEX_NAMES).map(([no, name]) => ({ no, name, price: APEX_PRICES[no] ?? null }));
 // Karim 11-19 review: a new item on Apex (or one missing from the built-in list) was «صنف مش معروف على Apex» until a code
 // change. The writer sends Apex's items every hour; items the list does not have are added, with their online price.
@@ -639,9 +658,9 @@ function setup(app) {
           return { name: o.name, qty: addonCount(o, Number(x.qty) || 1, apex), price: Number(o.price), apex };
         });
         const free = opts.filter(o => o !== sizeOpt && !(Number(o.price) > 0)).map(o => (Number(o.qty) > 1 ? o.qty + '× ' : '') + o.name);
-        return { qty: x.qty, name: x.name, ...(x.nameShown ? { nameShown: x.nameShown } : {}), price: x.price ?? null, ...(x.note ? { note: x.note } : {}), modifiers: x.modifiers || [], modifiersComplete: x.modifierComplete === true || !withApex || isSite, size: size ? size[2] : null, apex, ...(apexPick ? { apexPick } : {}),
+        return rolled({ qty: x.qty, name: x.name, ...(x.nameShown ? { nameShown: x.nameShown } : {}), price: x.price ?? null, ...(x.note ? { note: x.note } : {}), modifiers: x.modifiers || [], modifiersComplete: x.modifierComplete === true || !withApex || isSite, size: size ? size[2] : null, apex, ...(apexPick ? { apexPick } : {}),
           // The size picks the Apex item itself (ربع كيلو نيفة): it is neither an add-on nor a comment.
-          addons, sizeOption: sizeOpt ? sizeOpt.name : null, freeOptions: opts.length ? free : (x.modifiers || []).filter(m => !WEIGHTS.some(w => w[0].test(wName(m))) && !DISC_WORDS.test(m)), itemDiscounts };
+          addons, sizeOption: sizeOpt ? sizeOpt.name : null, freeOptions: opts.length ? free : (x.modifiers || []).filter(m => !WEIGHTS.some(w => w[0].test(wName(m))) && !DISC_WORDS.test(m)), itemDiscounts });
       };
       const list = [];
 
@@ -1402,4 +1421,4 @@ function setup(app) {
   });
 }
 
-export { setup, talabatPayment, talabatDiscounts, sitePayment, apexBranchOf, siteLines };
+export { setup, talabatPayment, talabatDiscounts, sitePayment, apexBranchOf, siteLines, rolled };

@@ -23,6 +23,8 @@ import { APEX_PRICES } from './menu-seed.js';
 
 export const MODES = ['off', 'trial', 'on'];
 const QUIET = new Set(['لسه واصل', 'أوردر مجدول', 'تفاصيل الأوردر لسه ماوصلتش', 'لسه ما اتقبلش على طلبات', 'أوردر قديم — غالباً اتسجل بإيد', 'اتحوّل للفرع على الموقع — غالباً اتسجل بإيد']);
+// A branch's own place in the customer's words (the website's area and address).
+const SITE_PLACES = [{ no: 3, re: /مدين?ت[يى]|مدنت[يى]|madinaty/i }, { no: 2, re: /مدين[هة] ?نصر|nasr ?city/i }, { no: 1, re: /التجمع|تجمع خامس|tagamo|new cairo|القاهر[هة] الجديد[هة]/i }];
 const TICK_MS = 60000, SETTLE_MS = 60000, MAX_AGE_MS = 20 * 60000, ALERT_MS = 2 * 60000, LATE_MAX_MS = 60 * 60000;
 // Waits on the system, not on a person: staff are not asked to enter the order for these in its first 10 minutes.
 const SYSTEM_WAIT = new Set(['لسه واصل', 'مستني قراءة بطاقة العميل من Apex', 'تفاصيل الأوردر لسه ماوصلتش', 'هاشتاج طلبات لسه ماظهرش', 'لسه ما اتقبلش على طلبات']);
@@ -129,7 +131,16 @@ export function decide(o, x) {
   // to one branch on Apex: that is its branch (never when the area is listed for two branches).
   if (!branch && o.source === 'site' && loc && !pickup) {
     const owners = [...new Set((x.locations || []).filter(l => Number(l.no) === loc).map(l => l.branch).filter(v => v != null).map(Number))];
-    if (owners.length === 1) branch = owners[0];
+    // Karim 11-19 (receipt «مدينتي / B12 عمارة 59 مجموعة 124» went to مدينة نصر): Apex lists «مدينتي» for another branch
+    // too. The customer's own words naming one branch's place decide the branch, then that branch's copy of the area
+    // (none for it → the area check below stops it for staff).
+    // Only when the area's own name is that place and the customer's words don't name another one.
+    const said = String(normArabic([o.customer?.siteArea, o.customer?.talabatArea, o.customer?.address].filter(Boolean).join(' ')) || '');
+    const areaName = String(normArabic((x.locations || []).find(l => Number(l.no) === loc)?.name || ''));
+    const ofArea = SITE_PLACES.filter(p => p.re.test(areaName)).map(p => p.no), named = SITE_PLACES.filter(p => p.re.test(said)).map(p => p.no);
+    if (ofArea.length === 1 && named.every(n => n === ofArea[0]) && owners.length !== 1 || (ofArea.length === 1 && owners.length === 1 && owners[0] !== ofArea[0] && named.every(n => n === ofArea[0]))) {
+      branch = ofArea[0]; loc = x.groups ? areaForBranch(loc, branch, x.locations, x.groups) : loc;
+    } else if (owners.length === 1) branch = owners[0];
   }
   if (!branch) why.push('الفرع مش واضح');
   let service = null;
