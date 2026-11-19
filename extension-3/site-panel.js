@@ -32,7 +32,10 @@
     // Every change at once; the same picture again at most once a minute (so delivered = gone from the board stays fresh).
     if (key === last && now - lastAt < 60000) return;
     last = key; lastAt = now;
+    // Karim 11-19 «اوردرات الويب سايت بتتأخر … وساعات مش بتظهر»: a picture the Marsad did not take (server busy) used
+    // to count as sent, so the same orders waited a minute or more. Now it is sent again with the panel's next refresh.
+    const forget = () => { if (last === key) { last = ''; lastAt = 0; } };
     browser.runtime.sendMessage({ type: 'SITE_PANEL', board, orders, serverTime: e.data.data.serverTime || null })
-      .then(r => { if (board === 'central' && Array.isArray(r?.assign)) r.assign.forEach(a => assign(a, orders)); }).catch(() => {});
+      .then(r => { if (!r?.ok) return forget(); if (board === 'central' && Array.isArray(r.assign)) r.assign.forEach(a => assign(a, orders)); }).catch(forget);
   });
 })();
