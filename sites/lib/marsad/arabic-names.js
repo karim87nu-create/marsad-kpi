@@ -68,7 +68,14 @@ Object.assign(NAMES, {
   zarkawy: 'زرقاوي', elzarkawy: 'الزرقاوي', hanna: 'حنا', hanein: 'حنين', haneen: 'حنين', madeleine: 'مادلين', madlen: 'مادلين', nermo: 'نيرمو', basma: 'بسمة',
   yomna: 'يمنى', youmna: 'يمنى', jomana: 'جمانة', jumana: 'جمانة', farida: 'فريدة', fareeda: 'فريدة', roqaya: 'رقية', ruqaya: 'رقية', retaj: 'رتاج', lojain: 'لجين',
   logain: 'لجين', loujain: 'لجين', mostafa: 'مصطفى', abdelmonem: 'عبدالمنعم', abdelmoneim: 'عبدالمنعم', monem: 'منعم', abdo: 'عبده', badawy: 'بدوي', badawi: 'بدوي',
-  sherkasy: 'شركسي', cherkasy: 'شركسي', elnamy: 'النامي', namy: 'نامي', manam: 'منعم', fawzy: 'فوزي', fawzi: 'فوزي', ghareeb: 'غريب', gharib: 'غريب', elgharib: 'الغريب', gazzar: 'جزار', elgazzar: 'الجزار', sherif: 'شريف',
+  sherkasy: 'شركسي', cherkasy: 'شركسي', elnamy: 'النامي', namy: 'نامي', manam: 'منعم', fawzy: 'فوزي', fawzi: 'فوزي', ghareeb: 'غريب', gharib: 'غريب', elgharib: 'الغريب',
+  khalifa: 'خليفة', khalifah: 'خليفة', hashim: 'هاشم', hashem: 'هاشم', gafar: 'جعفر', gaafar: 'جعفر', jafar: 'جعفر', jaafar: 'جعفر', nawara: 'نوارة', mehanna: 'مهنا', mohanna: 'مهنا',
+  arnaout: 'أرناؤوط', arnaut: 'أرناؤوط', akil: 'عقيل', aqeel: 'عقيل', akeel: 'عقيل', aqil: 'عقيل', rafik: 'رفيق', rafeek: 'رفيق', rafiq: 'رفيق', shamy: 'شامي', shami: 'شامي', dosari: 'دوسري',
+  aldosari: 'الدوسري', eldosari: 'الدوسري', tabey: 'تابعي', eltabey: 'التابعي', tabei: 'تابعي', refai: 'رفاعي', elrefai: 'الرفاعي', rifai: 'رفاعي', refaey: 'رفاعي', elrefaey: 'الرفاعي', shaza: 'شذى',
+  shazza: 'شذى', mary: 'ماري', marie: 'ماري', marine: 'مارين', hana: 'هنا', dimitri: 'ديمتري', demetry: 'دميتري', dimitry: 'دميتري', tanious: 'طانيوس', tanios: 'طانيوس', sheikh: 'شيخ', shaikh: 'شيخ',
+  elsheikh: 'الشيخ', elshaikh: 'الشيخ', elshayekh: 'الشايخ', shayekh: 'شايخ', saad: 'سعد', saadeldin: 'سعد الدين', nooreldin: 'نور الدين', noureldin: 'نور الدين', salaheldin: 'صلاح الدين', ezzeldin: 'عز الدين',
+  sayf: 'سيف', badreldin: 'بدر الدين', hossameldin: 'حسام الدين', emadeldin: 'عماد الدين', alaaeldin: 'علاء الدين', gamaleldin: 'جمال الدين', kamaleldin: 'كمال الدين', diaa: 'ضياء', diaaeldin: 'ضياء الدين',
+  moussa: 'موسى', mousa: 'موسى', musa: 'موسى', yasmine: 'ياسمين', yasmeen: 'ياسمين', jasmine: 'ياسمين', amer: 'عامر', aamer: 'عامر', gazzar: 'جزار', elgazzar: 'الجزار', sherif: 'شريف',
 });
 
 // The longer list (arabic-names-extra.js) adds to this one; a word here wins.
