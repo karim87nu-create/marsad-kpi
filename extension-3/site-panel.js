@@ -45,14 +45,28 @@
   // 10 s, but after failures it waits up to a minute, and a tab left behind can stop. When no fresh list came for 25 s,
   // the panel's own «تحديث الآن» is pressed; after 2 minutes with nothing, the page is reloaded. Never within 10 s of a
   // «إرسال للفرع» press, and never while someone is choosing or typing on the page.
+  // Backoff (11-19, the website refused every device on the network): the extra pushes only happen while the panel is
+  // really silent, and each one that brings no list makes the next wait twice as long (reload: 2 min → 4 → … → 30 min;
+  // button: 25 s → … → 5 min). The reload step is kept in sessionStorage because a reload restarts this script. A list
+  // that arrives puts everything back to the start. A page that is an error page never runs this script at all.
+  const KEY = 'marsadSiteBackoff';
+  const load = () => { try { const v = JSON.parse(sessionStorage.getItem(KEY) || '{}'); return { reloads: Math.min(Number(v.reloads) || 0, 4), lastReload: Number(v.lastReload) || 0 }; } catch { return { reloads: 0, lastReload: 0 }; } };
+  const save = v => { try { sessionStorage.setItem(KEY, JSON.stringify(v)); } catch {} };
+  let pushes = 0, nextPushAt = 0;
+  window.addEventListener('message', e => {
+    if (e.source !== window || !e.data || e.data.__marsadSite !== 1 || !Array.isArray(e.data.data?.orders)) return;
+    pushes = 0; nextPushAt = 0; save({ reloads: 0, lastReload: 0 });
+  });
   setInterval(() => {
     const now = Date.now(), quiet = now - seenAt;
     if (quiet < 25000 || now - assignedAt < 10000) return;
     const a = document.activeElement;
     if (a && a !== document.body && a.matches?.('select,input,textarea,[contenteditable="true"]')) return;
     if (document.querySelector('[role="dialog"]:not([hidden]),.eldahan-ops-modal.show,dialog[open]')) return;
-    if (quiet > 120000 && now - reloadAt > 120000) { reloadAt = now; location.reload(); return; }
+    const st = load(), gap = Math.min(120000 * 2 ** st.reloads, 30 * 60000);
+    if (quiet > gap && now - st.lastReload > gap) { save({ reloads: st.reloads + 1, lastReload: now }); location.reload(); return; }
+    if (now < nextPushAt) return;
     const btn = [...document.querySelectorAll('button[data-action="refresh"]')].find(b => !b.disabled);
-    if (btn) { seenAt = now - 15000; btn.click(); }   // asked again in 10 s if the answer does not come
+    if (btn) { pushes++; nextPushAt = now + Math.min(25000 * 2 ** pushes, 300000); btn.click(); }
   }, 5000);
 })();
