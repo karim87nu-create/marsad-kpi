@@ -35,6 +35,20 @@ if (Test-Path (Join-Path $here 'allow_live.txt')) { $AllowLive = $true }
 $logFile = Join-Path $here 'writer_log.txt'
 function L($m){ try { if ((Test-Path $logFile) -and (Get-Item $logFile).Length -gt 5MB) { Move-Item $logFile ($logFile + '.old') -Force }; Add-Content $logFile ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '  ' + $m) -Encoding UTF8 } catch {} }
 
+# The receipt prints about 40 letters of the address on one line and cuts the rest (Karim 11-19, Apex 705575:
+# «شارع الفريق اول علي عامر، الشقة: شقه على اليمين، عماره رقم 8» printed as «لفريق اول علي عامر، الشقة: شقه على اليمين»):
+# the flat and floor go to their own fields and the common words get short.
+function Compact-Address($c) {
+  $a = [string]$c.address; $floor = [string]$c.floor; $flat = [string]$c.flat
+  if (-not $floor.Trim() -and $a -match '(?:الدور|الطابق)\s*[:：]\s*([^،,—]+)') { $floor = $Matches[1].Trim() }
+  if (-not $flat.Trim() -and $a -match 'الشق[ةه]\s*[:：]\s*([^،,—]+)') { $flat = $Matches[1].Trim() }
+  $a = $a -replace '\s*[—،,]?\s*(?:الدور|الطابق|الشق[ةه])\s*[:：]\s*[^—،,]*', ''
+  $a = $a -replace '\s*[،,]\s*(?:القاهرة|Cairo|Egypt|مصر)\s*(?=[—،,]|$)', ''
+  $a = $a -replace '(^|[\s،,])شارع\s+', '$1ش ' -replace 'عمار[ةه]\s*(?:رقم\s*)?(?=\d)', 'ع ' -replace '(?:مبنى|بناية)\s*(?:رقم\s*)?(?=\d)', 'ع ' -replace 'رقم\s+(?=\d)', ''
+  $a = (($a -replace '\s*[،,]\s*', '، ') -replace '\s{2,}', ' ').Trim().Trim('،', ',', '—', '-').Trim()
+  return @{ addr = $a; floor = $floor.Trim(); flat = $flat.Trim() }
+}
+
 # ===== the server's address (Karim 11-17: the move to Cloudflare without stopping work) =====
 # Follows server.json on the GitHub page every 5 minutes and keeps it in server_url.txt; only Marsad addresses.
 $SwitchUrl = 'https://karim87nu-create.github.io/marsad-kpi/server.json'
@@ -373,9 +387,10 @@ function Write-Order($c, $job, [string]$mode){
   }
   $cmd.CommandText = $decl + $Batch
   # The address loses the floor/flat parts and «، القاهرة»: Apex keeps 100 characters of it (Karim 01-11: «String or binary data would be truncated»).
-  $p = @{ '@Exec' = $(if ($mode -eq 'shadow') { 0 } else { 1 }); '@IsTest' = $(if ($mode -eq 'test') { 1 } else { 0 }); '@PayWay' = $(if ($job.payment -eq 'paid') { 'Ledge' } else { 'Cash' }); '@Floor' = $(if ($null -ne $job.customer.floor) { [string]$job.customer.floor } elseif ([string]$job.customer.address -match '(?:الدور|الطابق)\s*[:：]\s*([^،,—\-]+)') { $Matches[1].Trim() } else { '' }); '@Flat' = $(if ($null -ne $job.customer.flat) { [string]$job.customer.flat } elseif ([string]$job.customer.address -match 'الشقة\s*[:：]\s*([^،,—\-]+)') { $Matches[1].Trim() } else { '' }); '@Pos' = $WriterPos; '@LocationNo' = [int]$job.locationNo; '@ServiceItem' = [string]$TalabatServiceItem; '@RefPos' = $(if ($mode -eq 'test') { $RefPosTest } else { $RefPos }); '@Branch' = [int]$job.branchNo
+  $ca = Compact-Address $job.customer
+  $p = @{ '@Exec' = $(if ($mode -eq 'shadow') { 0 } else { 1 }); '@IsTest' = $(if ($mode -eq 'test') { 1 } else { 0 }); '@PayWay' = $(if ($job.payment -eq 'paid') { 'Ledge' } else { 'Cash' }); '@Floor' = $ca.floor; '@Flat' = $ca.flat; '@Pos' = $WriterPos; '@LocationNo' = [int]$job.locationNo; '@ServiceItem' = [string]$TalabatServiceItem; '@RefPos' = $(if ($mode -eq 'test') { $RefPosTest } else { $RefPos }); '@Branch' = [int]$job.branchNo
           '@Marker' = ('M' + $(if ($job.source -eq 'site') { 'S' } else { 'T' }) + ':' + $job.ref); '@Kind' = [string]$job.source; '@Phone' = [string]$job.customer.phone
-          '@Label' = [string]$job.label; '@Address' = ((([string]$job.customer.address) -replace '\s*—\s*(?:الدور|الطابق|الشقة)\s*[:：]\s*[^—]*', '') -replace '\s*[،,]\s*(?:القاهرة|Cairo|Egypt|مصر)\s*(?=—|$)', '').Trim(); '@Sign' = [string]$job.sign; '@SignNote' = [string]$job.signNote; '@Remarks' = [string]$job.note
+          '@Label' = [string]$job.label; '@Address' = $ca.addr; '@Sign' = [string]$job.sign; '@SignNote' = [string]$job.signNote; '@Remarks' = [string]$job.note
           '@NoTpl' = $(if ($mode -eq 'test' -and $job.noTemplate) { 1 } else { 0 }); '@AreaService' = $(if ($job.areaService -ne $null -and "$($job.areaService)" -ne '') { [decimal]$job.areaService } else { [decimal]-1 }); '@RestDiscount' = [decimal]$job.restaurantDiscount; '@Target' = $(if ($job.targetTotal) { [decimal]$job.targetTotal } else { [decimal]0 }); '@AddPrinted' = $(if ($AddPrintedOrders) { 1 } else { 0 }); '@PrintedFlag' = $PrintedFlag; '@UserNo' = $WriterUserNo; '@Pickup' = $(if ($job.pickup) { 1 } else { 0 })
           '@NotePercent' = $(if ($job.apexCustomerBenefit) { [decimal]$job.apexCustomerBenefit.percent } else { [decimal]0 })
           '@NoteAmount' = $(if ($job.apexCustomerBenefit) { [decimal]$job.apexCustomerBenefit.amount } else { [decimal]0 })
