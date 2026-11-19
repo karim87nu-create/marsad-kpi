@@ -41,6 +41,19 @@ function rolled(o) {
   const no = to || String(pick);
   return { ...o, apex: [{ no, name: APEX_NAMES[no] || null }], apexPick: no, freeOptions: (o.freeOptions || []).filter(t => !ROLL_RE.test(t) || String(t).replace(ROLL_RE, '').replace(/عيش|خبز|bread|[\s:،,()-]/gi, '').length > 0), modifiers: (o.modifiers || []).filter(t => !ROLL_RE.test(t) || String(t).replace(ROLL_RE, '').replace(/عيش|خبز|bread|[\s:،,()-]/gi, '').length > 0) };
 }
+// Karim 11-19 (#4251, Apex 706024: 3 «حمام محشو» each with «ممبار» and «ورق عنب» — Talabat 318 and 303 — went as 1 each):
+// Talabat's live screen gives an add-on's count and price for ONE dish, its order page for all of them. When the order's
+// subtotal only adds up with the add-ons times the dishes, they are made per line (count and price × dishes).
+export function perDish(items, subtotal) {
+  if (!(subtotal > 0) || !Array.isArray(items) || !items.some(x => Number(x?.qty) > 1 && (x.options || []).some(o => Number(o?.price) > 0))) return items;
+  const pos = v => (Number(v) > 0 ? Number(v) : 0);
+  const asIs = items.reduce((t, x) => t + pos(x.price) + (x.options || []).reduce((u, o) => u + pos(o.price), 0), 0);
+  const times = items.reduce((t, x) => t + pos(x.price) + (x.options || []).reduce((u, o) => u + pos(o.price) * (Number(x.qty) || 1), 0), 0);
+  const near = v => Math.abs(v - subtotal) <= Math.max(5, subtotal * 0.01);
+  if (near(asIs) || !near(times)) return items;
+  return items.map(x => (Number(x.qty) > 1 ? { ...x, options: (x.options || []).map(o => Number(o?.price) > 0 ? { ...o, price: Math.round(Number(o.price) * x.qty * 100) / 100, ...(Number(o.qty) > 0 ? { qty: Number(o.qty) * x.qty } : {}) } : o),
+    modifiers: (x.modifiers || []).map(m => String(m).replace(/^(\d+)×\s*/, (_, n) => (Number(n) * x.qty) + '× ')) } : x));
+}
 let APEX_ITEM_LIST = Object.entries(APEX_NAMES).map(([no, name]) => ({ no, name, price: APEX_PRICES[no] ?? null }));
 // Karim 11-19 review: a new item on Apex (or one missing from the built-in list) was «صنف مش معروف على Apex» until a code
 // change. The writer sends Apex's items every hour; items the list does not have are added, with their online price.
@@ -670,7 +683,7 @@ function setup(app) {
       for (const o of tm.rows) {
         if (isCancelled(o.status)) continue;
         const p = tProfiles.get(o.id) || {}, a = tm.matches.get(o.id), bill = p.bill || [];
-        const items = parseJson(o.items, []).map(x => itemOut(x, true));
+        const items = perDish(parseJson(o.items, []), Number(o.subtotal)).map(x => itemOut(x, true));
         // The bill's discount lines are the order's total; the lines under the dishes count only when the bill shows none (never both).
         // Under the dishes = the restaurant's discount (deducted); in the bill summary = Talabat's (special mark).
         // A bill line that only repeats the dishes' discount total is the same money, not a second discount.

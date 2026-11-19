@@ -41,3 +41,18 @@ test('comments: Talabat and the website written the same way; choice words only 
   assert.equal(applyChoiceWords(words, P), words, "the customer's own sentence is never changed");
   assert.equal(applyChoiceWords(talabat, []), talabat);
 });
+
+// Karim 11-19 (#4251, Apex 706024): add-ons per dish on Talabat's live screen are made per line when the subtotal says so.
+test('add-ons counted for all the dishes (3 pigeons, each with ممبار and ورق عنب)', () => {
+  const { perDish } = require('../src/transfer.js');
+  const it = [{ qty: 3, name: 'Stuffed Pigeon', price: 762, options: [{ qty: 1, name: 'ممبار', price: 106 }, { qty: 1, name: 'ورق عنب', price: 101 }], modifiers: ['1× ممبار', '1× ورق عنب'] }, { qty: 1, name: 'كفتة', price: 0, options: [{ qty: 1, name: 'ربع كيلو', price: 319 }] }];
+  const r = perDish(it, 1702);
+  assert.deepEqual(r[0].options.map(o => [o.qty, o.price]), [[3, 318], [3, 303]]);
+  assert.equal(perDish(it, 1288), it, 'already per line: unchanged');
+  assert.equal(perDish(it, 0), it);
+});
+
+test('the items-gap guard is off unless set from the admin page (11-12: price differences do not stop)', () => {
+  const { TUNE } = require('../src/tune.js');
+  assert.equal(TUNE.itemsGapPct, 0);
+});

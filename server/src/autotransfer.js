@@ -182,6 +182,10 @@ export function decide(o, x) {
     else if (o.source === 'talabat') {
       const tItems = o.subtotal ?? billAmount(o, /^(?:المجموع الفرعي|subtotal)$/i);
       if (tItems == null) why.push('مجموع الأصناف على طلبات مش ظاهر');
+      // Karim 11-19 (#4251: Apex got 1 ممبار and 1 ورق عنب for 3 of each): Apex's lines far under what the customer paid
+      // for the items means something is missing or a count is wrong — a person checks it. The limit is in «إعدادات التشغيل».
+      else if (TUNE.itemsGapPct > 0 && tItems > 0 && T(apexItems) < tItems * (1 - TUNE.itemsGapPct / 100) && tItems - T(apexItems) > 50)
+        why.push('مجموع الأصناف على Apex (' + Math.round(T(apexItems)) + ') أقل من طلبات (' + Math.round(tItems) + ') — اتأكد من العدد');
       // Free delivery from Talabat (Pro, offers: the delivery line 0 or missing) is not a price difference (Karim 11-11).
       const delFee = billAmount(o, /توصيل|delivery/i), tDel = (delFee || 0) + (billAmount(o, /رسوم الخدمة|service/i) || 0);
       if (service != null && delFee > 0 && !freeDelivery(o) && Math.abs(T(service) + T(Number(APEX_PRICES[TALABAT_FEE_NO]) || 7.02) - tDel) > 10) warnings.push('فرق سعر التوصيل بين Apex وطلبات');
