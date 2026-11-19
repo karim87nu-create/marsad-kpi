@@ -3,7 +3,7 @@
 import { RULES } from './time.js';
 import { setExtraRules, norm } from './transfer-rules.js';
 import { parseJson } from './order-match.js';
-import { TUNE_DEFS, TUNE_LISTS, applyTune, tuneWord } from './tune.js';
+import { TUNE_DEFS, TUNE_LISTS, TUNE_PAIR_LISTS, applyTune, tuneWord } from './tune.js';
 
 const DEFAULT = { openHour: RULES.openHour, closeHour: RULES.operatingEndHour };
 const EVERY_MS = 60000;
@@ -34,14 +34,21 @@ function setup(app) {
     await app.requireAdmin(ctx);
     const t = applyTune(parseJson(await setting('tune'), null));
     return { hours: { openHour: RULES.openHour, closeHour: RULES.operatingEndHour }, defaults: DEFAULT, rules: setExtraRules(parseJson(await setting('transfer_rules_extra'), null)),
-      tune: { defs: TUNE_DEFS, lists: TUNE_LISTS, values: t.values, words: t.words } };
+      tune: { defs: TUNE_DEFS, lists: TUNE_LISTS, pairLists: TUNE_PAIR_LISTS, values: t.values, words: t.words, pairs: t.pairs } };
   });
   // One number or one word at a time: { key, value } | { key, reset: true } | { list, word, remove? }.
   app.route('PUT', '/api/ops-settings/tune', async ctx => {
     const who = await app.requireAdmin(ctx, 'admin');
     const b = ctx.body || {}, cur = applyTune(parseJson(await setting('tune'), null));
     let what;
-    if (b.list) {
+    if (b.pairs) {
+      if (!TUNE_PAIR_LISTS.some(l => l.key === b.pairs)) fail(400, 'قايمة مش معروفة');
+      const from = String(b.from || '').replace(/\s+/g, ' ').trim(), to = String(b.to || '').replace(/\s+/g, ' ').trim();
+      if (from.length < 2) fail(400, 'اكتب الكلام اللي يتغيّر');
+      cur.pairs[b.pairs] = cur.pairs[b.pairs].filter(x => tuneWord(x.from) !== tuneWord(from));
+      if (!b.remove) cur.pairs[b.pairs].unshift({ from, to });
+      what = { pairs: b.pairs, from, to, remove: !!b.remove };
+    } else if (b.list) {
       if (!TUNE_LISTS.some(l => l.key === b.list)) fail(400, 'قايمة مش معروفة');
       const w = tuneWord(b.word); if (w.length < 2) fail(400, 'اكتب الكلمة');
       cur.words[b.list] = cur.words[b.list].filter(x => x !== w);
@@ -56,7 +63,7 @@ function setup(app) {
     const saved = applyTune(cur);
     await put('tune', saved);
     await app.audit?.('tune', null, { actor: who.name, ...what });
-    return { ok: true, values: saved.values, words: saved.words };
+    return { ok: true, values: saved.values, words: saved.words, pairs: saved.pairs };
   });
   // The cashier PC asks for the word lists (every 10 minutes).
   app.route('POST', '/api/apex-writer/note-rules', async ctx => {
