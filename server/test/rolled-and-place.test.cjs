@@ -56,3 +56,13 @@ test('the items-gap guard is off unless set from the admin page (11-12: price di
   const { TUNE } = require('../src/tune.js');
   assert.equal(TUNE.itemsGapPct, 0);
 });
+
+// Karim 11-19 (#4251, Apex 706024: «ع 244 الاندلس 1، 244 الاندلس 1 - …» and the landmark lost).
+test('address: the building once, the landmark to the special mark, not read as the flat', async () => {
+  const { deliveryAddress, splitAddressLandmark } = await import('../src/delivery-fields.js');
+  const a = deliveryAddress('244 الاندلس ١ - التجمع الثالث - امام ماونتن ديونز، القاهرة — مبنى: 244 الاندلس ١ — الدور: 3 — الشقة: 6 — علامة مميزة: امام شقة 6, ماونتن ديونز شارع جانبي خلفي مش الرئيسي', ['التجمع الخامس طلبات']);
+  assert.equal(a.floor, '3'); assert.equal(a.flat, '6');
+  assert.equal(a.street, '244 الاندلس ١ - التجمع الثالث - امام ماونتن ديونز');
+  assert.match(a.mark, /^امام شقة 6.*مش الرئيسي$/);
+  assert.deepEqual(splitAddressLandmark(a.street), { street: '244 الاندلس ١ - التجمع الثالث', landmark: 'امام ماونتن ديونز' });
+});

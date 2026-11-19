@@ -53,7 +53,8 @@ async function harness(t, shift = 0, wrap = null, switchTo = null) {
     current = 'https://41.38.207.218' + route;
     const dom = new JSDOM('<!doctype html><html><head></head><body>' + body + '</body></html>', { runScripts: 'outside-only', pretendToBeVisual: true, virtualConsole: new VirtualConsole(), url: current });
     w = dom.window;
-    w.postMessage = (data, target) => { if (target === w.location.origin) setTimeout(() => w.dispatchEvent(new w.MessageEvent('message', { data, origin: w.location.origin, source: w })), 0); };
+    // The page's own messages, delivered a moment later — never to a window the test already closed (the timing failure seen 11-19).
+    { const win = w; win.postMessage = (data, target) => { if (target === win.location.origin) setTimeout(() => { if (w === win && win.document) win.dispatchEvent(new win.MessageEvent('message', { data, origin: win.location.origin, source: win })); }, 0); }; }
     w.browser = { runtime: { sendMessage: toBackground, getURL: x => 'moz-extension://x/' + x, onMessage: { addListener: f => pageListeners.push(f) } } };
     es.listeners = {};
     w.EventSource = class { constructor(url) { this.url = url; this.readyState = 1; } addEventListener(type, fn) { (es.listeners[type] ||= []).push(fn); } close() { this.readyState = 2; } };

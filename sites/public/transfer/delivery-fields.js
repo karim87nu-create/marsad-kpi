@@ -91,6 +91,10 @@ export function deliveryAddress(value, zone = '') {
   };
   // Floor and flat said inside a part («مجموعة 45 عمارة 5 شقة 32», «الدور: الارضي»), then labelled parts.
   const val = '([\\d٠-٩۰-۹]+[A-Za-z\\u0621-\\u064a]?|[A-Za-z]\\d*|' + FLOOR_WORDS + ')';
+  // Karim 11-19 (#4251: «علامة مميزة: امام شقة 6، ماونتن ديونز شارع جانبي…» lost): the customer's landmark is taken out
+  // whole first (before «شقة 6» inside it is read as the flat) and goes to the special mark, never into the address.
+  const marks = [];
+  value = String(value || '').replace(/(?:^|\s*[—|]\s*)(?:علام[ةه]\s+مميز[ةه]|landmark|nearest landmark|directions?)\s*[:：]\s*([^—|]+)/giu, (all, m) => { const t = m.replace(/\s+/g, ' ').trim().replace(/^[،,.\s]+|[،,.\s]+$/g, ''); if (t) marks.push(t); return ' — '; });
   let text = apexText(value)
     .replace(new RegExp('(?:الدور|الطابق|دور|floor)\\s*[:：]?\\s*' + val + '(?![\\p{L}\\p{N}])', 'giu'), (all, v) => { if (!floor) floor = v.trim(); return ' '; })
     .replace(new RegExp('(?:الشقة|الشقه|شقة|شقه|apartment|apt\\.?|flat)\\s*[:：]?\\s*' + val + '(?![\\p{L}\\p{N}])', 'giu'), (all, v) => { if (!flat) flat = v.trim(); return ' '; });
@@ -112,7 +116,9 @@ export function deliveryAddress(value, zone = '') {
   const kept = [];
   for (const p of [...parts].sort((a, b) => key(b.seg).length - key(a.seg).length)) {
     const k = key(p.seg);
-    if (!k || kept.some(q => key(q.seg) === k || (k.length >= 3 && (' ' + key(q.seg) + ' ').includes(' ' + k + ' ')))) continue;
+    // A building part also counts without its «عمارة» word («عمارة 244 الاندلس 1» when the street starts «244 الاندلس 1 - …»).
+    const k2 = p.building ? key(p.seg.replace(/^عمار[ةه]\s+/, '')) : k;
+    if (!k || kept.some(q => key(q.seg) === k || (k.length >= 3 && (' ' + key(q.seg) + ' ').includes(' ' + k + ' ')) || (k2 !== k && k2.length >= 3 && (' ' + key(q.seg) + ' ').includes(' ' + k2 + ' ')))) continue;
     kept.push(p);
   }
   const order = new Map(parts.map((p, i) => [p, i]));
@@ -122,7 +128,7 @@ export function deliveryAddress(value, zone = '') {
     // A name with no number and no building word is usually the street or the place («عبد الرحمن صدقي، مبنى: 31»).
     : (BUILDING.test(p.seg) || p.building) && /[\d٠-٩]/.test(p.seg) ? 2 : !/[\d٠-٩]/.test(p.seg) && !BUILDING.test(p.seg) ? 2.5 : p.building ? 1.5 : /^[\d٠-٩]/.test(p.seg) ? 1.5 : 1;
   kept.sort((a, b) => rank(b) - rank(a) || order.get(a) - order.get(b));
-  return { floor: apexText(floor), flat: apexText(flat), street: kept.map(p => p.seg).join('، ') };
+  return { floor: apexText(floor), flat: apexText(flat), street: kept.map(p => p.seg).join('، '), ...(marks.length ? { mark: apexText(marks.join('/')) } : {}) };
 }
 export function splitDeliveryAddress(value, max = 100) {
   const words = String(value || '').trim().split(/\s+/).filter(Boolean);
@@ -264,7 +270,7 @@ export function splitAddressLandmark(street) {
     const head = part.slice(0, m.index).trim(), tail = part.slice(m.index).trim();
     // Only when what is left is still an address («شارع جامع الفتح» is not cut to «شارع»).
     if (head && !(head.split(/\s+/).length >= 2 && /[\d٠-٩]|شارع|ش\s|ع\s|عمار|برج|فيلا|مجموع|بلوك|block/i.test(head))) { keep.push(part); continue; }
-    if (head) keep.push(head);
+    if (head) keep.push(head.replace(/[\s\-–—]+$/u, ''));
     marks.push(tail.replace(/^ب?ال?عمار[ةه]\s+/, 'في العمارة '));
   }
   // «عمارة 287 ب» when «287 ب» is already in the address: once.

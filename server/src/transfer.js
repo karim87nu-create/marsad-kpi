@@ -1041,8 +1041,9 @@ function setup(app) {
       // Karim 11-15: the street and building in the address, what shows the way in the special mark — the address in full
       // when the mark has no room for it.
       const addrSplit = splitAddressLandmark(address.street);
-      let addressLine = splitDeliveryAddress(addrSplit.street), sign = deliveryMark(apexText(signBase), [addrSplit.landmark, addressLine.extra].filter(Boolean).join('/'), 100);
-      if (sign == null) { addressLine = splitDeliveryAddress(address.street); sign = deliveryMark(apexText(signBase), addressLine.extra, 100); }
+      let addressLine = splitDeliveryAddress(addrSplit.street), sign = deliveryMark(apexText(signBase), [addrSplit.landmark, address.mark, addressLine.extra].filter(Boolean).join('/'), 100);
+      if (sign == null) { addressLine = splitDeliveryAddress(address.street); sign = deliveryMark(apexText(signBase), [address.mark, addressLine.extra].filter(Boolean).join('/'), 100); }
+      if (sign == null) sign = deliveryMark(apexText(signBase), addressLine.extra, 100);   // the landmark too long: the comment keeps the order's words
       if (sign == null) fail(409, 'تكملة العنوان أكبر من مساحة العلامة المميزة — اختصر العنوان قبل التسجيل');
       const room = 100 - Array.from(sign === '.' ? '' : sign).length - (sign && sign !== '.' ? 3 : 0);
       const signNote = room >= 8 ? apexText(compactDeliveryComment(noteSplit.delivery, room)) : '';
