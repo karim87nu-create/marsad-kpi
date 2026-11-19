@@ -13,6 +13,7 @@ function server(env) {
     noFirstSetup: env.MARSAD_NO_SETUP === '1',
     adoptFrom: env.MARSAD_ADOPT_FROM || undefined,
     shadow: env.MARSAD_SHADOW === '1',
+    lightBackground: true,
     telegramApi: env.TELEGRAM_API || undefined,
     openaiKey: env.OPENAI_API_KEY || undefined,
     telegramTimer: 'requests',
