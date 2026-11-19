@@ -112,7 +112,7 @@ test('comment on Apex: no choice-group headings or «(ضمن الوجبة)», we
   const assert = require('node:assert/strict');
   assert.equal(deliveryComment({ source: 'site', note: 'فرع الاستلام: مدينة نصر', items: [{ name: 'حواوشي كومبو', freeOptions: ['اختيارات السلطة المجانية: طحينة × 2 (ضمن الوجبة)'] }] }), 'حواوشي: طحينة ×2');
   assert.equal(deliveryComment({ source: 'talabat', note: '', items: [{ name: 'Kofta', freeOptions: ['رول'] }, { name: 'Rice', freeOptions: [] }] }), 'رول');
-  assert.equal(deliveryComment({ source: 'talabat', note: '', items: [{ name: 'Kofta', freeOptions: ['سلطة طحينة'] }, { name: 'Rice', freeOptions: ['رول'] }] }), 'الصنف 1: طحينة | الصنف 2: رول');
+  assert.equal(deliveryComment({ source: 'talabat', note: '', items: [{ name: 'Kofta', freeOptions: ['سلطة طحينة'] }, { name: 'Rice', freeOptions: ['رول'] }] }), 'الصنف 1: سلطة طحينة | الصنف 2: رول');   // 11-19: rewording only from the admin page
   assert.equal(deliveryLabel('// ', 'talabat', 'paid', '5223'), 'عميل/طلبات/مدفوع/#5223');
   assert.equal(deliveryLabel('محمد /', 'talabat', 'cash', '1207'), 'محمد/طلبات/كاش/#1207');
 });
@@ -150,6 +150,6 @@ test('address: street and building kept, landmark apart, building said once', as
 test('comment: dish choices short after the customer words (receipt of 703733)', async () => {
   const { deliveryComment } = await import('../src/delivery-fields.js');
   assert.equal(deliveryComment({ source: 'site', note: 'من غير بصل', items: [{ name: '1/2ك صدور مشوية', freeOptions: ['سلطة طحينة', 'بابا غنوج', 'خيار مخلل'] }, { name: '1/4كيلو كفتة', freeOptions: ['سلطة طحينة'] }, { name: 'نصف فرخة مشوية', freeOptions: ['سلطة طحينة'] }] }),
-    'من غير بصل | صدور: طحينة/بابا/مخلل | كفتة: طحينة | فرخة: طحينة');
+    'من غير بصل | صدور: سلطة طحينة/بابا غنوج/خيار مخلل | كفتة: سلطة طحينة | فرخة: سلطة طحينة');   // 11-19: rewording only from the admin page
   assert.equal(deliveryComment({ source: 'site', note: '', items: [{ name: 'كفتة', freeOptions: ['سلطة بلدي', 'عيش بلدي'] }] }), 'كفتة: سلطة بلدي/عيش بلدي', 'never two things to one word');
 });

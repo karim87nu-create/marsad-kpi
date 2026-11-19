@@ -7,13 +7,13 @@
 // The employee claims an order (so two people do not enter it twice) and marks it entered; the order then
 // turns «في Apex» only when the monitor actually sees it on Apex. Automatic transfer to Apex stays off until
 // the bridge is proven (numbering under live work and the branch delivery); this page never writes to Apex.
-import { TUNE } from './tune.js';
+import { TUNE, TUNE_PAIRS } from './tune.js';
 import { areaRule, itemRule } from './transfer-rules.js';
 import { businessDay, dayWindow, iso, validDate, addDays } from './time.js';
 import { takeTransferBuildLease, waitForTransferBuild } from './transfer-build-lease.js';
 import { CANCELLED_SQL, isCancelled, sourceCanTransfer, handoffPending } from './transfer-cancellation.js';
 import { parseJson } from './order-match.js';
-import { deliveryPhone, deliveryLabel, deliveryAddress, splitDeliveryAddress, deliveryMark, compactDeliveryComment, deliveryNotes, apexText, splitDeliveryComment, splitAddressLandmark, shortenChoiceParts } from './delivery-fields.js';
+import { deliveryPhone, deliveryLabel, deliveryAddress, splitDeliveryAddress, deliveryMark, compactDeliveryComment, deliveryNotes, apexText, splitDeliveryComment, splitAddressLandmark, applyChoiceWords } from './delivery-fields.js';
 import { parseApexCustomerNote, normArabic, guessApexItem, usefulCardNotes } from './apex-customer-notes.js';
 import { areaGroups, areaKey, areaInAddress } from './apex-areas.js';
 import { knownNos, itemKey } from './items.js';
@@ -1035,7 +1035,7 @@ function setup(app) {
       const signNote = room >= 8 ? apexText(compactDeliveryComment(noteSplit.delivery, room)) : '';
       // What did not fit in the mark stays in the comment, never lost.
       const signLeft = noteSplit.delivery && signNote !== apexText(compactDeliveryComment(noteSplit.delivery, 1000)) ? noteSplit.delivery : '';
-      const translatedNote = apexText(compactDeliveryComment(shortenChoiceParts([noteSplit.order, signLeft].filter(Boolean).join(' | ')), 200));   // no «?» on Apex (11-14)
+      const translatedNote = apexText(compactDeliveryComment(applyChoiceWords([noteSplit.order, signLeft].filter(Boolean).join(' | '), TUNE_PAIRS.choiceWords), 200));   // no «?» on Apex (11-14)
       // Karim 11-15: nothing of an earlier order on the receipt — what this order does not say is written 0 (Apex prints the card).
       const deliveryFields = { address: addressLine.main || '0', floor: address.floor || '0', flat: address.flat || '0' };
       // Karim 11-14 «الهاشتاج سعات مش بيتكتب في طلبات»: the hashtag is the server's own (the order's code from the Talabat

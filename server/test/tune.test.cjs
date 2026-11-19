@@ -23,6 +23,10 @@ test('operating settings: numbers and word lists from the admin page, with limit
     assert.equal((await t.call('POST', '/api/apex-writer/note-rules', { body: {}, headers: { 'x-apex-writer': 'bad' } })).status, 401);
     assert.equal((await admin('PUT', '/api/ops-settings/tune', { key: 'scheduledLeadMin', reset: true })).status, 200);
     d = (await admin('GET', '/api/ops-settings')).body.tune; assert.equal(d.values.scheduledLeadMin, 60);
+    assert.equal((await admin('PUT', '/api/ops-settings/tune', { pairs: 'choiceWords', from: 'سلطة طحينة', to: 'طحينة' })).status, 200);
+    assert.deepEqual((await admin('GET', '/api/ops-settings')).body.tune.pairs.choiceWords, [{ from: 'سلطة طحينة', to: 'طحينة' }]);
+    await admin('PUT', '/api/ops-settings/tune', { pairs: 'choiceWords', from: 'سلطه طحينه', remove: true });
+    assert.deepEqual((await admin('GET', '/api/ops-settings')).body.tune.pairs.choiceWords, [], 'ة/ه alike');
     await admin('PUT', '/api/ops-settings/tune', { list: 'foodWords', word: 'برغل', remove: true });
     assert.deepEqual((await admin('GET', '/api/ops-settings')).body.tune.words.foodWords, []);
   } finally { await t.close(); }
