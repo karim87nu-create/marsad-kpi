@@ -23,6 +23,9 @@ function setup(app) {
     return { table, rows, next: rows.length === PAGE ? rows[rows.length - 1]._rowid : null };
   });
 
+  // Only the new copy takes data in (Karim 11-19 review): on the running server a pull or import with a reset would
+  // replace live tables, so both answer 404 there whoever calls them.
+  const target = () => { if (!app.config.adoptFrom && !app.config.migrateFrom) fail(404, 'not_found'); };
   const locked = async () => !!(await db.prepare("SELECT value FROM settings WHERE key = 'migration_locked'").get())?.value;
   async function write(table, rows, reset) {
     if (!(await tables()).includes(table)) return 0;   // a table the new code no longer has
@@ -54,6 +57,7 @@ function setup(app) {
     return { status: r.status, j };
   }
   app.route('POST', '/api/migrate/pull', async ctx => {
+    target();
     if (await locked()) fail(409, 'النقل اتقفل');
     const pw = String(ctx.header('x-old-password') || '');
     if (!pw) fail(401, 'اكتب كلمة المرور الرئيسية');
@@ -146,6 +150,7 @@ function setup(app) {
   });
 
   app.route('POST', '/api/migrate/import', async ctx => {
+    target();
     await master(ctx);
     if (await locked()) fail(409, 'النقل اتقفل');
     const b = ctx.body || {}, table = String(b.table || '');

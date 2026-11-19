@@ -9,6 +9,8 @@ const { start } = require('./helpers.cjs');
 test('migrate: everything copied (employee passwords and settings keep working), then locked', async () => {
   const a = await start(), b = await start();
   try {
+    assert.equal((await b.call('POST', '/api/migrate/import', { headers: { 'x-admin-password': 'master-pass' }, body: { table: 'employees', rows: [], reset: true } })).status, 404, 'the running server takes no import');
+    b.app.config.migrateFrom = a.base;
     const adminA = await a.admin();
     await a.employee(adminA, { name: 'Sara', code: 'E7', pin: '4321' });
     await adminA('POST', '/api/admin-access', { name: 'مشرف', role: 'supervisor', password: 'sup-pass-1', confirmation: 'sup-pass-1' });
