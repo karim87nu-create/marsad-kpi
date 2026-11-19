@@ -469,9 +469,17 @@ browser.runtime.onInstalled.addListener(async ({ reason }) => {
   if (reason !== 'update') return;
   for (const t of await browser.tabs.query({}).catch(() => [])) {
     let u; try { u = new URL(t.url); } catch { continue; }
-    if (u.hostname === 'partner-app.talabat.com' && await store.get(TALABAT, null)) {
+    // Karim 11-19 review: after an update the website panels and the branches' Live Orders tabs (no link needed) stopped
+    // feeding the Marsad until someone reloaded them. They get their scripts back like the linked screens.
+    if (u.hostname === 'eldahan.com.eg' && SITE_LIVE.test(t.url || '')) {
+      try { await browser.tabs.executeScript(t.id, { file: 'config.js' }); await browser.tabs.executeScript(t.id, { file: 'site-panel.js' }); }
+      catch { browser.tabs.reload(t.id).catch(() => {}); }
+      continue;
+    }
+    if (u.hostname === 'partner-app.talabat.com' && (await store.get(TALABAT, null) || u.pathname.startsWith('/live-orders'))) {
       try {
         await browser.tabs.executeScript(t.id, { file: 'config.js' });
+        await browser.tabs.executeScript(t.id, { file: 'names.js' });   // the names the monitor writes in Arabic (3.1.50)
         await browser.tabs.executeScript(t.id, { file: 'talabat-monitor.js' });
       } catch {}
       continue;
