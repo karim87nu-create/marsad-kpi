@@ -834,14 +834,6 @@
         hh('div', { className: 'row', style: 'gap:6px;margin-top:4px' }, [input, btn('إضافة', () => input.value.trim() && put({ list: l.key, word: input.value.trim() }))]),
         hh('div', { className: 'row', style: 'gap:6px;flex-wrap:wrap;margin-top:4px' }, (d.words[l.key] || []).length ? d.words[l.key].map(w => btn(w + ' ✕', () => confirm('امسح «' + w + '»؟') && put({ list: l.key, word: w, remove: true }), 'ghost small')) : [h('span', { className: 'muted', textContent: 'مفيش' })])]));
     }
-    for (const l of d.pairLists || []) {
-      const from = h('input', { placeholder: 'الكلام اللي يتغيّر', style: 'width:12em' }), to = h('input', { placeholder: 'يتكتب بداله (فاضي = يتشال)', style: 'width:12em' });
-      const list = (d.pairs || {})[l.key] || [];
-      parts.push(h('h4', { textContent: l.label }), h('p', { className: 'muted', textContent: l.help }),
-        hh('div', { className: 'row', style: 'gap:6px' }, [from, to, btn('إضافة', () => from.value.trim() && put({ pairs: l.key, from: from.value.trim(), to: to.value.trim() }))]),
-        hh('div', { style: 'margin-top:6px' }, list.length ? list.map(x => hh('div', { className: 'row', style: 'gap:8px;align-items:center;margin:3px 0' }, [
-          h('span', { textContent: '«' + x.from + '» ← ' + (x.to ? '«' + x.to + '»' : '(يتشال)') }), btn('امسح', () => confirm('امسح «' + x.from + '»؟') && put({ pairs: l.key, from: x.from, remove: true }), 'ghost small')])) : [h('span', { className: 'muted', textContent: 'مفيش — الاختيارات بتتكتب زي ما جت من طلبات والموقع' })]));
-    }
     box.replaceChildren(...parts);
   }
   $('hoursForm') && ($('hoursForm').onsubmit = async e => {

@@ -28,16 +28,13 @@ test('website branch from the customer place, not from an area Apex lists for an
   assert.equal(d.ok, true, d.why.join()); assert.equal(d.body.branchNo, 3); assert.equal(d.body.locationNo, 370);
 });
 
-// Karim 11-19: the same comment for both sources; any rewording of the choices only from the admin page.
-test('comments: Talabat and the website written the same way; choice words only from the admin list', async () => {
-  const { deliveryComment, applyChoiceWords } = await import('../src/delivery-fields.js');
+// Karim 11-19 «لسه فيه فرق في طريقه الكومنتات بين الموقع وطلبات»: the same comment for both sources.
+test('comments: Talabat and the website written the same way', async () => {
+  const { deliveryComment, shortenChoiceParts } = await import('../src/delivery-fields.js');
   const talabat = deliveryComment({ source: 'talabat', items: [{ name: 'Mixed Grill', apex: [{ no: '1', name: 'ميكس جريل' }], apexPick: '1', freeOptions: ['سلطة طحينة'] }, { name: 'Half Chicken', apex: [{ no: '2', name: 'نص فرخة مشوية' }], apexPick: '2', freeOptions: ['سلطة بابا غنوج'] }] });
-  const site = deliveryComment({ source: 'site', items: [{ name: 'ميكس جريل', apex: [{ no: '1', name: 'ميكس جريل' }], apexPick: '1', freeOptions: ['سلطة طحينة'] }, { name: 'نص فرخة', apex: [{ no: '2', name: 'نص فرخة مشوية' }], apexPick: '2', freeOptions: ['سلطة بابا غنوج'] }] });
-  assert.equal(talabat, 'ميكس: سلطة طحينة | فرخة: سلطة بابا غنوج', 'no built-in rewording'); assert.equal(site, talabat);
-  const P = [{ from: 'سلطة طحينة', to: 'طحينة' }, { from: 'سلطة بابا غنوج', to: 'بابا' }, { from: 'ضمن الوجبة', to: '' }];
-  assert.equal(applyChoiceWords(talabat, P), 'ميكس: طحينة | فرخة: بابا');
-  assert.equal(applyChoiceWords('الصنف 1: سلطه طحينه ضمن الوجبه', P), 'الصنف 1: طحينة');
+  const site = deliveryComment({ source: 'site', items: [{ name: 'ميكس جريل', apex: [{ no: '1', name: 'ميكس جريل' }], apexPick: '1', freeOptions: ['طحينة'] }, { name: 'نص فرخة', apex: [{ no: '2', name: 'نص فرخة مشوية' }], apexPick: '2', freeOptions: ['بابا غنوج'] }] });
+  assert.equal(talabat, 'ميكس: طحينة | فرخة: بابا'); assert.equal(site, talabat);
+  assert.equal(shortenChoiceParts('الصنف 1: سلطة بابا غنوج | الصنف 2: طحينة سلطة'), 'الصنف 1: بابا | الصنف 2: طحينة', 'translated late');
   const words = 'ارجو ان يكون التسويه زياده والكفته متحمره كويس وارسال السلطه طحينه وبابا غنوج';
-  assert.equal(applyChoiceWords(words, P), words, "the customer's own sentence is never changed");
-  assert.equal(applyChoiceWords(talabat, []), talabat);
+  assert.equal(shortenChoiceParts(words), words, "the customer's own sentence is never changed");
 });

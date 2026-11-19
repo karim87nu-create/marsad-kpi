@@ -18,19 +18,11 @@ export const TUNE_LISTS = [
 ];
 export const TUNE = Object.fromEntries(TUNE_DEFS.map(d => [d.key, d.def]));
 export const TUNE_WORDS = { foodWords: [], okWords: [] };
-// Replacements in the dishes' choices on Apex («سلطة طحينة» → «طحينة»), set from the admin page only (Karim 11-19).
-export const TUNE_PAIR_LISTS = [
-  { key: 'choiceWords', label: 'كلام الأصناف على Apex (استبدال)', help: 'بيتطبق على اختيارات الأصناف في الكومنت (زي «الصنف 1: سلطة طحينة») لطلبات والموقع، ومش بيغيّر كلام العميل نفسه. مثال: «سلطة طحينة» ← «طحينة». سيب الخانة التانية فاضية عشان الكلمة تتشال.' },
-];
-export const TUNE_PAIRS = { choiceWords: [] };
 const word = w => String(w || '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/[ً-ٟـ]/g, '').replace(/\s+/g, ' ').trim().slice(0, 40);
 export function applyTune(saved) {
   const s = saved && typeof saved === 'object' ? saved : {};
   for (const d of TUNE_DEFS) { const v = Number(s.values?.[d.key]); TUNE[d.key] = Number.isInteger(v) && v >= d.min && v <= d.max ? v : d.def; }
   for (const l of TUNE_LISTS) TUNE_WORDS[l.key] = [...new Set((Array.isArray(s.words?.[l.key]) ? s.words[l.key] : []).map(word).filter(w => w.length >= 2))].slice(0, 500);
-  for (const l of TUNE_PAIR_LISTS) { const seen = new Set(); TUNE_PAIRS[l.key] = (Array.isArray(s.pairs?.[l.key]) ? s.pairs[l.key] : [])
-    .map(x => ({ from: String(x?.from || '').replace(/\s+/g, ' ').trim().slice(0, 60), to: String(x?.to || '').replace(/\s+/g, ' ').trim().slice(0, 60) }))
-    .filter(x => x.from.length >= 2 && !seen.has(word(x.from)) && seen.add(word(x.from))).slice(0, 300); }
-  return { values: { ...TUNE }, words: { foodWords: [...TUNE_WORDS.foodWords], okWords: [...TUNE_WORDS.okWords] }, pairs: { choiceWords: TUNE_PAIRS.choiceWords.map(x => ({ ...x })) } };
+  return { values: { ...TUNE }, words: { foodWords: [...TUNE_WORDS.foodWords], okWords: [...TUNE_WORDS.okWords] } };
 }
 export { word as tuneWord };

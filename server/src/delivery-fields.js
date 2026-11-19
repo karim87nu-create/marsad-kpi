@@ -198,21 +198,18 @@ function cleanChoice(value) {
 }
 // Common free sides as the kitchen says them, short (the receipt has room for one line).
 // Never two things to one word («سلطة بلدي» and «عيش بلدي» stay apart).
-// Karim 11-19 «لو حاطط حاجه تخص موضوع التعليق علي الأصناف ده شيلها ونا هظبطها من صفحه الاداره»: no built-in rewording of
-// the dishes' choices. The replacements are «الإدارة ← إعدادات التشغيل ← كلام الأصناف», applied on the server for every order.
-const shortChoice = v => String(v || '').trim();
-const normWord = t => String(t || '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/[\u064b-\u065f\u0640]/g, '');
-const escRe = t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-// pairs: [{ from, to }] from the admin page; whole words, ة/ه and ى/ي alike. Only the dishes' choice pieces
-// («الصنف 1: سلطة طحينة», or a piece of 3 words or less) — never the customer's own sentences.
-export function applyChoiceWords(text, pairs) {
-  const list = (Array.isArray(pairs) ? pairs : []).filter(x => x && String(x.from || '').trim());
-  if (!list.length) return String(text || '');
-  const one = p => { let x = p; for (const { from, to } of list) {
-    const pat = normWord(String(from).trim()).split(/\s+/).map(w => escRe(w).replace(/ا/g, '[اأإآ]').replace(/ه/g, '[هة]').replace(/ي/g, '[يى]')).join('\\s+');
-    x = x.replace(new RegExp('(^|[\\s:،,/|(])' + pat + '(?=$|[\\s:،,/|)×])', 'gu'), (m, pre) => pre + String(to || '').trim()); }
-    return x.replace(/\s{2,}/g, ' ').trim(); };
-  return String(text || '').split(/\s*\|\s*/).map(p => /^[^:：]{1,30}[:：]\s/.test(p) || p.split(/\s+/).length <= 3 ? one(p) : p).join(' | ');
+const SHORT_CHOICE = [[/^سلط[ةه]\s+طحين[ةه]$/u, 'طحينة'], [/^(?:سلط[ةه]\s+)?بابا\s*غنوج$/u, 'بابا'], [/^خيار\s*مخلل$/u, 'مخلل'], [/^طماطم\s*متبل[ةه]$/u, 'طماطم'],
+  [/^(?:أرز|ارز|رز)\s*بسمتي$/u, 'بسمتي'], [/^بطاطس\s*محمر[ةه]$/u, 'بطاطس']];
+function shortChoice(v) { let x = String(v || '').trim(); for (const [re, to] of SHORT_CHOICE) x = x.replace(re, to); return shortenChoices(x).trim(); }
+// Karim 11-19 «لسه فيه فرق في طريقه الكومنتات بين الموقع وطلبات»: Talabat's choices reach Arabic only after translation
+// («سلطة طحينة», «طحينة سلطة»), the website's are short («طحينة»). The same short words for both, wherever they appear.
+const SHORT_ANY = [[/(?:سلط[ةه]\s+)?طحين[ةه](?:\s+سلط[ةه])?/gu, 'طحينة'], [/(?:سلط[ةه]\s+)?بابا\s*غنوج(?:\s+سلط[ةه])?/gu, 'بابا'],
+  [/(?:سلط[ةه]\s+)?طماطم\s*متبل[ةه](?:\s+سلط[ةه])?/gu, 'طماطم'], [/(?:سلط[ةه]\s+)?خيار\s*مخلل/gu, 'مخلل'], [/مخلل\s+خيار/gu, 'مخلل'],
+  [/^بلد[يى]\s+(?:خبز|عيش)$/gu, 'خبز بلدي']];
+export function shortenChoices(text) { let x = String(text || ''); for (const [re, to] of SHORT_ANY) x = x.replace(re, to); return x; }
+// In a whole comment: only the dishes' choice pieces («الصنف 1: سلطة طحينة», «سلطة بابا غنوج») — never the customer's sentences.
+export function shortenChoiceParts(text) {
+  return String(text || '').split(/\s*\|\s*/).map(p => /^[^:：]{1,30}[:：]\s/.test(p) || p.split(/\s+/).length <= 3 ? shortenChoices(p) : p).join(' | ');
 }
 export function deliveryComment(order) {
   const clean = s => String(s || '').split(/\s*[|\n]\s*/).map(stripPlatformNotes).map(cleanOptionComment)
