@@ -41,18 +41,20 @@
     browser.runtime.sendMessage({ type: 'SITE_PANEL', board, orders, serverTime: e.data.data.serverTime || null })
       .then(r => { if (!r?.ok) return forget(); if (board === 'central' && Array.isArray(r.assign)) r.assign.forEach(a => assign(a, orders)); }).catch(forget);
   });
-  // Karim 11-19 «الاضافه تعمل ريفرش لصفحات اللايف للموقع … وميقصرش علي التحويل للفرع»: the panel refreshes itself every
-  // 10 s, but after failures it waits up to a minute, and a tab left behind can stop. When no fresh list came for 25 s,
-  // the panel's own «تحديث الآن» is pressed; after 2 minutes with nothing, the page is reloaded. Never within 10 s of a
-  // «إرسال للفرع» press, and never while someone is choosing or typing on the page.
-  setInterval(() => {
+  // Karim 11-19 «الويب سايت عمل بلوك للاي بي بتاع الشبكه»: the keep-alive pressed «تحديث الآن» every 10 s and reloaded every
+  // 2 minutes whenever no list came — on every branch board too, and harder once the site refused. Now: the central panel
+  // only; at most one press a minute and one reload every 15 minutes; and nothing at all for 20 minutes after the site
+  // refuses (an error answer), so the extension never adds to what the panel itself asks.
+  let quietUntil = 0, pressedAt = 0;
+  window.addEventListener('message', e => { if (e.source === window && e.data && e.data.__marsadSiteStatus != null) quietUntil = Date.now() + 20 * 60000; });
+  if (board === 'central') setInterval(() => {
     const now = Date.now(), quiet = now - seenAt;
-    if (quiet < 25000 || now - assignedAt < 10000) return;
+    if (now < quietUntil || quiet < 60000 || now - assignedAt < 10000 || now - pressedAt < 60000) return;
     const a = document.activeElement;
     if (a && a !== document.body && a.matches?.('select,input,textarea,[contenteditable="true"]')) return;
     if (document.querySelector('[role="dialog"]:not([hidden]),.eldahan-ops-modal.show,dialog[open]')) return;
-    if (quiet > 120000 && now - reloadAt > 120000) { reloadAt = now; location.reload(); return; }
+    if (quiet > 5 * 60000 && now - reloadAt > 15 * 60000) { reloadAt = now; location.reload(); return; }
     const btn = [...document.querySelectorAll('button[data-action="refresh"]')].find(b => !b.disabled);
-    if (btn) { seenAt = now - 15000; btn.click(); }   // asked again in 10 s if the answer does not come
-  }, 5000);
+    if (btn) { pressedAt = now; btn.click(); }
+  }, 10000);
 })();

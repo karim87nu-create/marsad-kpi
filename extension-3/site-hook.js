@@ -7,13 +7,13 @@
   const of = window.fetch;
   if (typeof of === 'function') window.fetch = function (...a) {
     const p = of.apply(this, a);
-    try { const u = String(a[0]?.url || a[0] || ''); if (WANT.test(u)) p.then(r => r.clone().text().then(t => hand(u, t))).catch(() => {}); } catch {}
+    try { const u = String(a[0]?.url || a[0] || ''); if (WANT.test(u)) p.then(r => { if (!r.ok) window.postMessage({ __marsadSiteStatus: r.status }, location.origin); return r.clone().text().then(t => hand(u, t)); }).catch(() => window.postMessage({ __marsadSiteStatus: 0 }, location.origin)); } catch {}
     return p;
   };
   const open = XMLHttpRequest.prototype.open, send = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.open = function (m, u) { this.__marsadUrl = u; return open.apply(this, arguments); };
   XMLHttpRequest.prototype.send = function () {
-    if (WANT.test(String(this.__marsadUrl || ''))) this.addEventListener('load', () => { try { if (!this.responseType || this.responseType === 'text') hand(this.__marsadUrl, this.responseText); } catch {} });
+    if (WANT.test(String(this.__marsadUrl || ''))) this.addEventListener('load', () => { try { if (this.status && this.status >= 400) window.postMessage({ __marsadSiteStatus: this.status }, location.origin); if (!this.responseType || this.responseType === 'text') hand(this.__marsadUrl, this.responseText); } catch {} });
     return send.apply(this, arguments);
   };
 })();
