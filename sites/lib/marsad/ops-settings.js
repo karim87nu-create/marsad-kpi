@@ -34,34 +34,45 @@ function setup(app) {
     await app.requireAdmin(ctx);
     const t = applyTune(parseJson(await setting('tune'), null));
     return { hours: { openHour: RULES.openHour, closeHour: RULES.operatingEndHour }, defaults: DEFAULT, rules: setExtraRules(parseJson(await setting('transfer_rules_extra'), null)),
-      tune: { defs: TUNE_DEFS, lists: TUNE_LISTS, pairLists: TUNE_PAIR_LISTS, values: t.values, words: t.words, pairs: t.pairs } };
+      tune: { defs: TUNE_DEFS, lists: TUNE_LISTS, pairLists: TUNE_PAIR_LISTS, values: t.values, words: t.words, pairs: t.pairs, changed: (r => ({ words: Object.keys(r?.words || {}), pairs: Object.keys(r?.pairs || {}) }))(parseJson(await setting('tune'), null)) } };
   });
   // One number or one word at a time: { key, value } | { key, reset: true } | { list, word, remove? }.
   app.route('PUT', '/api/ops-settings/tune', async ctx => {
     const who = await app.requireAdmin(ctx, 'admin');
-    const b = ctx.body || {}, cur = applyTune(parseJson(await setting('tune'), null));
+    // Only what was changed is kept; a list never touched stays the one Claude set (its «الأصلي»), and «رجّع الأصلي» drops the change.
+    const b = ctx.body || {}, raw = parseJson(await setting('tune'), null) || {}, cur = applyTune(raw);
+    raw.values = raw.values || {}; raw.words = raw.words || {}; raw.pairs = raw.pairs || {};
     let what;
     if (b.pairs) {
       if (!TUNE_PAIR_LISTS.some(l => l.key === b.pairs)) fail(400, 'قايمة مش معروفة');
-      const from = String(b.from || '').replace(/\s+/g, ' ').trim(), to = String(b.to || '').replace(/\s+/g, ' ').trim();
-      if (from.length < 2) fail(400, 'اكتب الكلام اللي يتغيّر');
-      cur.pairs[b.pairs] = cur.pairs[b.pairs].filter(x => tuneWord(x.from) !== tuneWord(from));
-      if (!b.remove) cur.pairs[b.pairs].unshift({ from, to });
-      what = { pairs: b.pairs, from, to, remove: !!b.remove };
+      if (b.reset) { delete raw.pairs[b.pairs]; what = { pairs: b.pairs, reset: true }; }
+      else {
+        const from = String(b.from || '').replace(/\s+/g, ' ').trim(), to = String(b.to || '').replace(/\s+/g, ' ').trim();
+        if (from.length < 2) fail(400, 'اكتب الكلام اللي يتغيّر');
+        const list = cur.pairs[b.pairs].filter(x => tuneWord(x.from) !== tuneWord(from));
+        if (!b.remove) list.unshift({ from, to });
+        raw.pairs[b.pairs] = list; what = { pairs: b.pairs, from, to, remove: !!b.remove };
+      }
     } else if (b.list) {
       if (!TUNE_LISTS.some(l => l.key === b.list)) fail(400, 'قايمة مش معروفة');
-      const w = tuneWord(b.word); if (w.length < 2) fail(400, 'اكتب الكلمة');
-      cur.words[b.list] = cur.words[b.list].filter(x => x !== w);
-      if (!b.remove) { cur.words[b.list].unshift(w); if (cur.words[b.list].length > 500) fail(400, 'القايمة كبيرة؛ امسح القديم الأول'); }
-      what = { list: b.list, word: w, remove: !!b.remove };
+      if (b.reset) { delete raw.words[b.list]; what = { list: b.list, reset: true }; }
+      else {
+        const w = tuneWord(b.word); if (w.length < 2) fail(400, 'اكتب الكلمة');
+        const list = cur.words[b.list].filter(x => x !== w);
+        if (!b.remove) { list.unshift(w); if (list.length > 500) fail(400, 'القايمة كبيرة؛ امسح القديم الأول'); }
+        raw.words[b.list] = list; what = { list: b.list, word: w, remove: !!b.remove };
+      }
     } else {
       const d = TUNE_DEFS.find(x => x.key === b.key); if (!d) fail(400, 'إعداد مش معروف');
-      const v = b.reset ? d.def : Number(b.value);
-      if (!Number.isInteger(v) || v < d.min || v > d.max) fail(400, 'الرقم لازم يكون من ' + d.min + ' لـ ' + d.max);
-      cur.values[d.key] = v; what = { key: d.key, value: v };
+      if (b.reset) { delete raw.values[d.key]; what = { key: d.key, reset: true }; }
+      else {
+        const v = Number(b.value);
+        if (!Number.isInteger(v) || v < d.min || v > d.max) fail(400, 'الرقم لازم يكون من ' + d.min + ' لـ ' + d.max);
+        raw.values[d.key] = v; what = { key: d.key, value: v };
+      }
     }
-    const saved = applyTune(cur);
-    await put('tune', saved);
+    await put('tune', raw);
+    const saved = applyTune(raw);
     await app.audit?.('tune', null, { actor: who.name, ...what });
     return { ok: true, values: saved.values, words: saved.words, pairs: saved.pairs };
   });

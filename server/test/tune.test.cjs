@@ -19,15 +19,20 @@ test('operating settings: numbers and word lists from the admin page, with limit
     assert.equal((await admin('PUT', '/api/ops-settings/tune', { list: 'okWords', word: 'كبيرة' })).status, 200);
     const token = (await admin('POST', '/api/apex-writer', { action: 'token' })).body.token;
     const rules = (await t.call('POST', '/api/apex-writer/note-rules', { body: {}, headers: { 'x-apex-writer': token } })).body;
-    assert.deepEqual(rules, { foodWords: ['برغل'], okWords: ['كبيره'] });
+    assert.equal(rules.foodWords[0], 'برغل'); assert.ok(rules.foodWords.includes('فريك'), 'the list Claude set stays, editable');
+    assert.equal(rules.okWords[0], 'كبيره'); assert.ok(rules.okWords.includes('يكون'));
     assert.equal((await t.call('POST', '/api/apex-writer/note-rules', { body: {}, headers: { 'x-apex-writer': 'bad' } })).status, 401);
     assert.equal((await admin('PUT', '/api/ops-settings/tune', { key: 'scheduledLeadMin', reset: true })).status, 200);
     d = (await admin('GET', '/api/ops-settings')).body.tune; assert.equal(d.values.scheduledLeadMin, 60);
     assert.equal((await admin('PUT', '/api/ops-settings/tune', { pairs: 'choiceWords', from: 'سلطة طحينة', to: 'طحينة' })).status, 200);
-    assert.deepEqual((await admin('GET', '/api/ops-settings')).body.tune.pairs.choiceWords, [{ from: 'سلطة طحينة', to: 'طحينة' }]);
+    assert.deepEqual((await admin('GET', '/api/ops-settings')).body.tune.pairs.choiceWords[0], { from: 'سلطة طحينة', to: 'طحينة' });
     await admin('PUT', '/api/ops-settings/tune', { pairs: 'choiceWords', from: 'سلطه طحينه', remove: true });
-    assert.deepEqual((await admin('GET', '/api/ops-settings')).body.tune.pairs.choiceWords, [], 'ة/ه alike');
+    assert.ok(!(await admin('GET', '/api/ops-settings')).body.tune.pairs.choiceWords.some(x => x.from === 'سلطة طحينة'), 'ة/ه alike');
     await admin('PUT', '/api/ops-settings/tune', { list: 'foodWords', word: 'برغل', remove: true });
-    assert.deepEqual((await admin('GET', '/api/ops-settings')).body.tune.words.foodWords, []);
+    assert.ok(!(await admin('GET', '/api/ops-settings')).body.tune.words.foodWords.includes('برغل'));
+    assert.deepEqual((await admin('GET', '/api/ops-settings')).body.tune.changed.words.sort(), ['foodWords', 'okWords']);
+    await admin('PUT', '/api/ops-settings/tune', { list: 'foodWords', reset: true });
+    const back = (await admin('GET', '/api/ops-settings')).body.tune; assert.ok(back.words.foodWords.includes('برغل') && back.words.foodWords.includes('فريك'), 'the original back');
+    assert.deepEqual(back.changed.words, ['okWords']);
   } finally { await t.close(); }
 });

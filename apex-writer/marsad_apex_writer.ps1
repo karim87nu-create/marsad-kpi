@@ -60,8 +60,10 @@ function Flush-Pending {
 }
 $AskPattern = '(?:^|[\s،,.])(?:بدل|بدال|بدلا|بدلاً|مكان)\s|instead|replace|substitut|\bswap\b|\bchange\b|(?:^|[\s،,.])غير(?:ي|وا|ها|و|ولي|لي)?\s|(?:يكون|تكون|يبقى|تبقى|خليه|خليها|خلي|عايزه|عايزها|عاوزه|عاوزها|عايز|عاوز|ممكن|ياريت)\s'
 $NoteStop = @('يكون','تكون','يبقي','تبقي','خليه','خليها','خلي','عايز','عايزه','عايزها','عاوز','عاوزه','عاوزها','ممكن','لو','سمحت','شكرا','بدل','بدال','بدلا','مكان','مش','غير','غيري','غيروا','كده','كدا','بس','فقط','واحد','اتنين','تلاته','اوردر','الاوردر','طلب','الطلب','زياده','بدون','من','في','علي','مع','عن','او','ولا','لان','علشان','عشان','كمان','برضه','برضو','ياريت','حاجه','نوع','صنف','الصنف','مصري','مصريه','سبايسي','حار','عادي','كبير','صغير','وسط','نص','ربع','كيلو','كويس','قوي','اوي','جدا','تاني','تانيه','الي','اللي','ده','دي','دا','هو','هي','انا','احنا','حضرتك','لحضرتك','الف','المكان','يا','جنب','لوحده','لوحدها','كتير','قليل','شويه','خالص','ابدا','تقيل','خفيف','مستوي','مستويه','مشوي','مقلي','نار','سخن','ساقع','بارد','معاه','معاها','بيه','بيها','عليه','عليها','الباب','الدور','الشقه','العماره','تليفون','رن','اتصل','قبل','بعد','الوصول','توصيل','مفيش','فيه','موجود','تيجي','يجي','بسرعه','سريع','ابيض','احمر','ملح','سكر','توابل','بهارات','حلو','طازه','فريش','مظبوط','زي','نفس','الصوره','اكتر','اقل','اكبر','اصغر','كوكاكولا','كوكا','كولا','سبرايت','فانتا','ميرندا','شويبس','سوري','ملفوف','ارجو','رجاء','برجاء','الرجاء','يرجي','فضلك','لوسمحت','سمحتو','سمحتوا','معلش','ابعت','ابعتو','ابعتوا','حط','حطو','حطوا','ضيف','ضيفو','ضيفوا','زود','زودو','زودوا','اعمل','اعملو','اعملوا','خلو','خلوا','الاكل','اكل','كله','كلها','محتاج','محتاجه','عايزين','عاوزين','يكونو','يكونوا')   # Karim 11-19: a drink swap is fine; «عيش سوري» = the wrapped bread we have
-# Karim 11-19 «موضوع الفريك وكده … شيلها ونا هظبطها من صفحه الاداره»: no built-in list of foods. Only the words in
-# «الإدارة ← إعدادات التشغيل ← أكلات مش عندنا» can stop an order (and «كلام عادي» never does). An empty list stops nothing.
+# Karim 11-19 «اعدادات الاداره تشمل كل حاجه … والي انت ظابطه يبقي ظاهر»: the two word lists are «الإدارة ← إعدادات
+# التشغيل» (أكلات مش عندنا / كلام عادي), asked every 10 minutes. The copies below are only used until the Marsad first answers.
+$FoodWords = New-Object 'System.Collections.Generic.HashSet[string]'
+foreach ($f in ('فريك ارز بسمتي شعريه مكرونه معكرونه اسباجتي بشاميل برغل عدس فول طعميه فلافل بطاطس بطاطا شيبسي بيتزا برجر بيرجر شاورما كبده سجق حواوشي كفته كباب ريش فراخ دجاج فرخه حمام بط وز ديك رومي سمك جمبري كاليماري لحمه لحم ضاني بتلو عجالي مخ ممبار كوارع كرشه لسان سلطه طحينه غنوج متبل حمص تبوله فتوش زبادي خيار طماطم بصل توم ليمون فلفل جزر كوسه بادنجان بتنجان ملوخيه بامي بسله فاصوليا سبانخ خضار سوتيه عيش خبز شامي فرنساوي بلدي صاج توست كايزر جبنه شيدر موتزاريلا قشطه زبده سمن عسل مربي كاتشب مايونيز مسترده صوص باربكيو رانش توميه شطه مخلل طرشي زيتون دره كريمه شوربه كشري محشي عنب كرنب فطير فطيره كريب كنافه بسبوسه بلبن كيك تورته فراوله موز تفاح جوافه مانجو برتقال كبيبه سمبوسك رقاق بانيه استربس اسكالوب شيش طاووق كوردون مشروم مشويات اوزي فته كوسا' -split ' ')) { [void]$FoodWords.Add($f) }
 $script:menuWords = $null; $script:menuAt = [datetime]::MinValue
 function Norm-Ar([string]$t) { return ((($t -replace '[أإآ]', 'ا') -replace 'ة', 'ه' -replace 'ى', 'ي' -replace 'ث', 'ت' -replace 'ذ', 'د' -replace 'ظ', 'ض') -replace '[ً-ٟـ]', '').ToLower() }
 function Menu-Words($c) {
@@ -77,14 +79,14 @@ function Known-Food($w, $set) {
   return $false
 }
 # Words added from «الإدارة ← إعدادات التشغيل» (Karim 11-19: no publish, no new copy here): asked every 10 minutes.
-$script:xFood = New-Object 'System.Collections.Generic.HashSet[string]'; $script:xOk = New-Object 'System.Collections.Generic.HashSet[string]'; $script:rulesAt = [datetime]::MinValue
+$script:xFood = New-Object 'System.Collections.Generic.HashSet[string]'; $script:xOk = New-Object 'System.Collections.Generic.HashSet[string]'; $script:rulesAt = [datetime]::MinValue; $script:rulesLoaded = $false
 function Note-Rules {
   if (((Get-Date) - $script:rulesAt).TotalMinutes -lt 10) { return }
   $script:rulesAt = Get-Date
   $r = Api '/api/apex-writer/note-rules' @{}
   $f = New-Object 'System.Collections.Generic.HashSet[string]'; foreach ($w in @($r.foodWords)) { if ($w) { [void]$f.Add((Norm-Ar ([string]$w))) } }
   $o = New-Object 'System.Collections.Generic.HashSet[string]'; foreach ($w in @($r.okWords)) { if ($w) { [void]$o.Add((Norm-Ar ([string]$w))) } }
-  $script:xFood = $f; $script:xOk = $o
+  $script:xFood = $f; $script:xOk = $o; $script:rulesLoaded = $true
 }
 # The first word of a request that is in no item name, or $null.
 function Needs-Person($job, $c) {
@@ -103,8 +105,13 @@ function Needs-Person($job, $c) {
       if (-not $set) { $set = Menu-Words $c }
       $want = ($cands -join ' ') -replace '(^|\s)(?:ال)?رز(?=\s|$)', '$1ارز'
       foreach ($w in ($want -split '[^ء-ي]+')) {
-        if ($w.Length -lt 3 -or $NoteStop -contains $w -or $NoteStop -contains ($w -replace '^ال', '') -or (Known-Food $w $script:xOk)) { continue }
-        if (-not (Known-Food $w $script:xFood)) { continue }   # only the admin page's foods stop an order
+        if ($script:rulesLoaded) {   # the admin page's lists
+          if ($w.Length -lt 3 -or (Known-Food $w $script:xOk)) { continue }
+          if (-not (Known-Food $w $script:xFood)) { continue }
+        } else {                      # until the Marsad answers: the same lists as shipped
+          if ($w.Length -lt 3 -or $NoteStop -contains $w -or $NoteStop -contains ($w -replace '^ال', '')) { continue }
+          if (-not (Known-Food $w $FoodWords)) { continue }
+        }
         if (-not (Known-Food $w $set)) { return $w }
       }
     }
