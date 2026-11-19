@@ -232,7 +232,12 @@
       // Karim 11-19 (#4251): the customer's landmark («علامة مميزة» on Talabat's receipt) was not read, whatever the page calls it.
       const landmark = (() => { for (const [k, v] of Object.entries(a)) { if (/^(?:street|area|city|building|floor|apartment|lat|lng|latitude|longitude|id|type|label|block|zip|postcode|country)$/i.test(k)) continue;
         if (/landmark|direction|additional|instruction|description|note|comment|extra|hint/i.test(k)) { const t = typeof v === 'string' ? v : typeof v?.text === 'string' ? v.text : ''; if (t.trim()) return t.trim().slice(0, 200); } } return ''; })();
-      const address = [a.street, a.area, a.city].filter(Boolean).join('، ') + [a.building && 'مبنى: ' + a.building, a.floor && 'الدور: ' + a.floor, a.apartment && 'الشقة: ' + a.apartment, landmark && 'علامة مميزة: ' + landmark].filter(Boolean).map(x => ' — ' + x).join('');
+      // Karim 11-19 (#4250 went to Apex as «ع 143» only): every other text Talabat keeps in the address (block, compound,
+      // district, a full line…) is read too, after the street — never coordinates or ids. Repeats are removed on the server.
+      const KNOWN = /^(?:street|area|city|building|floor|apartment|lat|lng|latitude|longitude|id|.*Id|type|label|zip|postcode|country|countryCode|.*code)$/i;
+      const extra = Object.entries(a).filter(([k, v]) => !KNOWN.test(k) && !/landmark|direction|additional|instruction|description|note|comment|extra|hint/i.test(k) && typeof v === 'string' && v.trim() && !/^[-\d.\s]+$/.test(v.trim()) || (k === 'block' && v))
+        .map(([k, v]) => (/^block$/i.test(k) ? 'بلوك ' : '') + String(v).trim().slice(0, 120));
+      const address = [a.street, ...extra, a.area, a.city].filter(Boolean).join('، ') + [a.building && 'مبنى: ' + a.building, a.floor && 'الدور: ' + a.floor, a.apartment && 'الشقة: ' + a.apartment, landmark && 'علامة مميزة: ' + landmark].filter(Boolean).map(x => ' — ' + x).join('');
       const bill = [{ k: 'المجموع الفرعي', text: 'المجموع الفرعي | ' + money2(pay.itemsTotalPrice) }];
       for (const f of o.fees || []) bill.push({ k: String(f.name || ''), text: f.name + ' | ' + money2(f.value) });
       // Item discounts split by who funds them: «ممول من قبلك» (the restaurant, deducted on Apex), «ممول من قبل Talabat».
