@@ -200,15 +200,27 @@ function cleanChoice(value) {
 // Never two things to one word («سلطة بلدي» and «عيش بلدي» stay apart).
 const SHORT_CHOICE = [[/^سلط[ةه]\s+طحين[ةه]$/u, 'طحينة'], [/^(?:سلط[ةه]\s+)?بابا\s*غنوج$/u, 'بابا'], [/^خيار\s*مخلل$/u, 'مخلل'], [/^طماطم\s*متبل[ةه]$/u, 'طماطم'],
   [/^(?:أرز|ارز|رز)\s*بسمتي$/u, 'بسمتي'], [/^بطاطس\s*محمر[ةه]$/u, 'بطاطس']];
-function shortChoice(v) { let x = String(v || '').trim(); for (const [re, to] of SHORT_CHOICE) x = x.replace(re, to); return x.trim(); }
+function shortChoice(v) { let x = String(v || '').trim(); for (const [re, to] of SHORT_CHOICE) x = x.replace(re, to); return shortenChoices(x).trim(); }
+// Karim 11-19 «لسه فيه فرق في طريقه الكومنتات بين الموقع وطلبات»: Talabat's choices reach Arabic only after translation
+// («سلطة طحينة», «طحينة سلطة»), the website's are short («طحينة»). The same short words for both, wherever they appear.
+const SHORT_ANY = [[/(?:سلط[ةه]\s+)?طحين[ةه](?:\s+سلط[ةه])?/gu, 'طحينة'], [/(?:سلط[ةه]\s+)?بابا\s*غنوج(?:\s+سلط[ةه])?/gu, 'بابا'],
+  [/(?:سلط[ةه]\s+)?طماطم\s*متبل[ةه](?:\s+سلط[ةه])?/gu, 'طماطم'], [/(?:سلط[ةه]\s+)?خيار\s*مخلل/gu, 'مخلل'], [/مخلل\s+خيار/gu, 'مخلل'],
+  [/^بلد[يى]\s+(?:خبز|عيش)$/gu, 'خبز بلدي']];
+export function shortenChoices(text) { let x = String(text || ''); for (const [re, to] of SHORT_ANY) x = x.replace(re, to); return x; }
+// In a whole comment: only the dishes' choice pieces («الصنف 1: سلطة طحينة», «سلطة بابا غنوج») — never the customer's sentences.
+export function shortenChoiceParts(text) {
+  return String(text || '').split(/\s*\|\s*/).map(p => /^[^:：]{1,30}[:：]\s/.test(p) || p.split(/\s+/).length <= 3 ? shortenChoices(p) : p).join(' | ');
+}
 export function deliveryComment(order) {
   const clean = s => String(s || '').split(/\s*[|\n]\s*/).map(stripPlatformNotes).map(cleanOptionComment)
     .filter(x => x && !SITE_META.test(x)).join('، ').trim();
   const parts = [clean(order.scheduledAt ? deliveryNotes(order.note, order.scheduledAt).note : order.note)];
   const items = order.items || [];
   const withChoices = items.filter(i => (i.freeOptions || []).some(v => cleanChoice(v))).length;
-  const firstWord = item => { const a = /[\u0621-\u064a]/.test(item.nameShown || '') ? item.nameShown : /[\u0621-\u064a]/.test(item.name || '') ? item.name : '';
-    return String(a).replace(/[()\[\]\d\/]+/g, ' ').split(/\s+/).filter(w => w.length > 1 && !/^(?:ك|كيلو|ربع|نص|نصف|عرض|وجب[ةه]|طبق|طاجن)$/.test(w))[0] || ''; };
+  // The dish's label: the Apex item it goes as (the same for Talabat's English names and the website's Arabic ones).
+  const apexName = item => { const pick = item.apexPick || (item.apex?.length === 1 ? item.apex[0].no : null); return (item.apex || []).find(a => String(a.no) === String(pick))?.name || ''; };
+  const firstWord = item => { const a = [apexName(item), item.nameShown, item.name].find(v => /[\u0621-\u064a]/.test(v || '')) || '';
+    return String(a).replace(/[()\[\]\d\/]+/g, ' ').split(/\s+/).filter(w => w.length > 1 && !/^(?:ك|كيلو|ربع|نص|نصف|عرض|وجب[ةه]|طبق|طاجن|ساندو[يى]?تش|سندوتش|صيني[ةه]|ال)$/.test(w))[0] || ''; };
   const words = items.map(firstWord);
   for (const [n, item] of items.entries()) {
     // Karim 11-16: the receipt prints one line of the comment (~35 letters, Apex 703733): the dish's choices short —

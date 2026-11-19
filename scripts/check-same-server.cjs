@@ -12,5 +12,7 @@ for (const f of fs.readdirSync(site)) {
   else if (!fs.readFileSync(n).equals(fs.readFileSync(path.join(site, f)))) bad.push('different: ' + f);
 }
 for (const f of fs.readdirSync(node)) if (!NODE_ONLY.has(f) && !fs.existsSync(path.join(site, f))) bad.push('missing in sites/lib/marsad: ' + f);
+// The transfer page builds the same comment and address in the browser (Karim 11-19: the page's copy was a version behind).
+for (const f of ['delivery-fields.js']) { const pub = path.join(root, 'sites/public/transfer', f); if (fs.existsSync(pub) && !fs.readFileSync(pub).equals(fs.readFileSync(path.join(site, f)))) bad.push('different (transfer page copy): ' + f); }
 if (bad.length) { console.error('server/src and sites/lib/marsad differ:\n  ' + bad.join('\n  ') + '\nCopy the change to both places.'); process.exit(1); }
 console.log('server/src and sites/lib/marsad are the same');
