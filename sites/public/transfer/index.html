@@ -200,6 +200,8 @@ function plain(e) {
     [/later day is open|stale/i, 'Apex فاتح يوم تاني — كلم المشرف'], [/timed out|Unable to connect|remote name|connection/i, 'Apex مش بيرد دلوقتي — جرب تاني بعد دقيقة'],
     [/Arithmetic overflow/i, 'Apex رفض الأوردر بسبب رقم مش مظبوط فيه — سجله بإيدك وبلغ المشرف'], [/no Apex order of this kind today/i, 'مفيش أوردر من النوع ده على Apex النهارده لسه — سجل أول واحد بإيدك'],
     [/customer note changed|customer changed before/i, 'بطاقة العميل على Apex اتغيرت بعد ما اتقرت (غالبًا أوردر تاني للعميل خد الخصم) — استنى دقيقة لحد ما البطاقة تتقري تاني، راجع الخصم وابعته تاني'],
+    // Karim 11-19 (#5873): the server did not take the writer's answer — the order may already be on Apex.
+    [/remote server returned an error|Internal Server Error|\(5\d\d\)/i, 'السيرفر ماستلمش رد جهاز الكاشير — دوّر على الكود في Apex الأول، ممكن يكون اتسجل. لو مش موجود سجله بإيدك'],
     [/فرق كبير|مش زي الأوردر/, null]];
   for (const [re, msg] of M) if (re.test(t)) return msg || t;
   return /[\u0600-\u06ff]/.test(t) ? t : 'حصلت مشكلة على Apex — سجله بإيدك وبلغ المشرف';

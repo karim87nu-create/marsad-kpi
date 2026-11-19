@@ -350,10 +350,19 @@ function setup(app) {
       const outNos = new Set([...(snap.lateOut || []), ...(snap.online || [])].filter(a => a.out).map(a => String(a.no)));
       await app.talabatCancelNotes(m.rows, m.matches, outNos, now).catch(() => 0);
     }
+    // Karim 11-19 «راجع رسائل التيليجرام أنها تناسب اخر حاجه وصلنالها»: with the automatic transfer, «not on Apex» says
+    // where the order stands on the transfer page (waiting for the cashier PC, stopped and why, taken by someone).
+    const jobs = new Map((await db.prepare("SELECT ref, state, result, employee_name FROM transfer_jobs WHERE source = 'talabat' AND day = ?").all(day)).map(j => [String(j.ref), j]));
+    const where = id => { const j = jobs.get(String(id)); if (!j) return '\nلسه محدش بعته من صفحة التحويل';
+      if (/^auto_(pending|sending|retry_pending)$/.test(j.state)) return '\nمستني جهاز الكاشير يسجله — دوّر على الكود في Apex قبل ما تسجله بإيدك';
+      if (j.state === 'auto_failed') { const e = String(parseJson(j.result, {})?.error || '').replace(/\s+/g, ' ').slice(0, 120); return '\nالتحويل الآلي وقف' + (e && /[\u0600-\u06ff]/.test(e) ? ': ' + e : ''); }
+      if (j.state === 'claimed') return '\n' + (j.employee_name || 'موظف') + ' قال هيسجله بإيده';
+      if (j.state === 'entered') return '\n' + (j.employee_name || 'موظف') + ' قال إنه سجله — بس مش ظاهر على Apex بالكود';
+      return ''; };
     for (const o of m.rows) {
       const store = o.store ? '\nالفرع: ' + storeName(o.store) : '', ref = o.id; // the short #code staff use; the long id only when there is no code
       if (m.hasApex && o.accepted_at && !m.matches.get(o.id) && o.status !== 'CANCELLED' && now - o.accepted_at > NOT_ENTERED_MIN * 60000 && now - o.accepted_at < 3 * 3600000)
-        out.push({ key: 'talabat:notEntered:' + o.id, kind: 'talabatNotEntered', target: 'online', text: '🛵 طلبات | ⚠️ أوردر اتقبل على طلبات ولسه ماتضربش على Apex\n' + talabatReference(o) + store + '\nاتقبل الساعة ' + clock(o.accepted_at) + '، وبقاله ' + Math.round((now - o.accepted_at) / 60000) + ' دقيقة' + (o.subtotal ? '\nقيمة الأوردر: ' + Math.round(o.subtotal) + ' ج' : '') });
+        out.push({ key: 'talabat:notEntered:' + o.id, kind: 'talabatNotEntered', target: 'online', text: '🛵 طلبات | ⚠️ أوردر اتقبل على طلبات ولسه ماتضربش على Apex\n' + talabatReference(o) + store + '\nاتقبل الساعة ' + clock(o.accepted_at) + '، وبقاله ' + Math.round((now - o.accepted_at) / 60000) + ' دقيقة' + (o.subtotal ? '\nقيمة الأوردر: ' + Math.round(o.subtotal) + ' ج' : '') + where(o.id) });
       if (cancelReady(o) && now - o.cancelled_at < 3 * 3600000)
         out.push({ key: 'talabat:cancel:' + o.id, kind: 'talabatCancel', target: 'branches', branch: m.matches.get(o.id)?.branch || o.store || null, text: '🛵 طلبات | ❌ أوردر اتلغى على طلبات\n' + talabatReference(o) + store + '\nاتلغى الساعة ' + clock(o.cancelled_at) + (o.cancel_owner ? '\nالإلغاء على: ' + o.cancel_owner : '') + (o.cancel_reason ? '\nالسبب: ' + o.cancel_reason : '') + (o.subtotal ? '\nقيمة الأوردر: ' + Math.round(o.subtotal) + ' ج' : '') +
           (m.matches.get(o.id) ? det.extra(m.matches.get(o.id).no) : '') });

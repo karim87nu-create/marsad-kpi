@@ -25,7 +25,8 @@ function setup(app) {
   };
   // The serial comes from Apex as a decimal ("659.0"); shown as the plain number.
   const num = v => String(v ?? '').replace(/\.0+$/, '');
-  const head = r => '🖥️ Apex | أوردر ' + (r.sn ? num(r.sn) + ' (' + num(r.order_no) + ')' : num(r.order_no)) + (r.branch ? ' — ' + r.branch : '');
+  // Only the small serial staff see (Karim: never the big order number); the big one only when there is no serial.
+  const head = r => '🖥️ Apex | أوردر ' + (r.sn ? num(r.sn) : num(r.order_no)) + (r.branch ? ' — ' + r.branch : '');
 
   // From each push of the monitor (orders.js calls it with the payload's cancelNotes).
   app.apexCancelNotes = async (list, now) => {

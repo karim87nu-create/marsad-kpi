@@ -1058,9 +1058,12 @@ for (;;) {
       # first time, for someone to call the customer; sent again, it goes through.
       $ask = $(if ($mode -eq 'live') { $cn = Open-Db $mode; try { Needs-Person $job $cn } catch { L "note check: $($_.Exception.Message)"; $null } finally { $cn.Close() } } else { $null })
       if ($mode -eq 'live' -and $ask -and -not (Held-Before $job)) {
-        Hold-Mark $job
-        [void](Api '/api/apex-writer/result' @{ source = $job.source; ref = $job.ref; db = $mode; ok = $false; error = ('العميل طالب «' + $ask + '» ومش موجود في أصناف Apex — كلّم العميل وبعدين ابعته تاني') })
-        L ("held for a person: " + $job.source + ':' + $job.ref + ' «' + $ask + '»')
+        # Marked held only once the server took it (11-19 review): a lost answer would let the next round write it unchecked.
+        try {
+          [void](Api '/api/apex-writer/result' @{ source = $job.source; ref = $job.ref; db = $mode; ok = $false; error = ('العميل طالب «' + $ask + '» ومش موجود في أصناف Apex — كلّم العميل وبعدين ابعته تاني') })
+          Hold-Mark $job
+          L ("held for a person: " + $job.source + ':' + $job.ref + ' «' + $ask + '»')
+        } catch { L ("hold not taken, asked again next round: " + $job.source + ':' + $job.ref + ' — ' + $_.Exception.Message) }
         $job = $null
         continue
       }

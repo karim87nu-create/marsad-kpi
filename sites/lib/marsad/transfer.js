@@ -137,6 +137,15 @@ function siteLines(items) {
 
 function setup(app) {
   const { db, fail } = app;
+  // Karim 11-19 «لي في فروقات بين الموقع وطلبات وبنتعامل كأن كل حاجه منهم شغل لوحده»: one reading of an order for both
+  // sources — its row and day, and the customer's phone, address and area from its profile — so a fix reaches both.
+  const SRC = {
+    talabat: { table: 'talabat_orders', key: r => String(r), cols: 'day, NULL AS scheduled_at', customer: p => p || {} },
+    site: { table: 'site_orders', key: r => Number(r), cols: 'day, scheduled_at', customer: p => p?.customer || {} },
+  };
+  const orderRow = (source, ref, extra = '') => db.prepare(`SELECT ${SRC[source].cols}${extra} FROM ${SRC[source].table} WHERE id = ?`).get(SRC[source].key(ref));
+  const customerOf = (source, profile) => { const c = SRC[source].customer(profile);
+    return { phone: c.phoneDisplay || c.phone || c.mobileDisplay || c.mobile || '', address: c.address || '', area: c.area || '' }; };
   const queueCache = new Map(), QUEUE_CACHE_MS = 4000;
   // Anything that changes the orders (a push from a screen or the monitor, a link, a claim, the writer's answer) rebuilds it.
   // The Talabat screens and the cashier PC push every few seconds: clearing on each push meant every employee's refresh
@@ -156,8 +165,13 @@ function setup(app) {
     const c = await db.prepare('SELECT rules FROM telegram_config WHERE id = 1').get();
     const rules = parseJson(c?.rules, {}); if (rules.transferFailed === false) return;
     const branch = APEX_BRANCHES.find(b => b.no === Number(payload.branchNo))?.name;
+    // Karim 11-19: what to do depends on why. The customer asked for something not on Apex → call, then send again; no
+    // answer from the cashier PC → the order may already be on Apex (#5873, 705824): look for its code before entering it.
+    const todo = /العميل طالب/.test(why) ? 'كلّم العميل، وبعدين ابعته تاني من صفحة التحويل أو سجّله بإيدك'
+      : /مارد/.test(why) ? 'دوّر على الكود في Apex الأول — ممكن يكون اتسجل وجهاز الكاشير مبلّغش. لو مش موجود سجّله بإيدك'
+      : 'سجّله على Apex بإيدك دلوقتي (بالكود في خانة الاسم)';
     const text = '🔴 التحويل الآلي | ' + (source === 'talabat' ? 'طلبات' : 'الموقع') + ' ' + (payload.code ? '#' + payload.code : ref) + (branch ? ' — ' + branch : '') +
-      '\n' + why + (payload.by ? '\nبعته: ' + payload.by : '') + '\nسجّله على Apex بإيدك دلوقتي (بالكود في خانة الاسم)';
+      '\n' + why + (payload.by ? '\nبعته: ' + payload.by : '') + '\n' + todo;
     await db.prepare("INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, sent_at, target) VALUES (?, 'transferFailed', NULL, ?, ?, NULL, 'online')").run(key, text, now);
   }
   // Sent to the writer and not answered in 3 minutes: the writer on the cashier PC is not working.
@@ -495,7 +509,10 @@ function setup(app) {
       const learned = new Map();
       if (app.learn) for (const [n, m] of await app.learn.pairs('match-v2:item:talabat')) { const ok = new Map([...m].filter(([, c]) => c >= 2)); if (ok.size) learned.set(n, ok); }
       const itemHistory = app.learn ? await itemsLearned() : new Map();
-      const siteItemHistory = app.learn ? await app.learn.pairs('transfer:item:site') : new Map();
+      // What staff chose on Apex for a line counts for both sources (Karim 11-19): the same dish name on Talabat and the website.
+      const siteOnly = app.learn ? await app.learn.pairs('transfer:item:site') : new Map();
+      const mergeHistory = (x, y) => { const out = new Map([...x].map(([k, m]) => [k, new Map(m)])); for (const [k, m] of y) { const t = out.get(k) || new Map(); for (const [no, c] of m) t.set(no, (t.get(no) || 0) + c); out.set(k, t); } return out; };
+      const siteItemHistory = mergeHistory(siteOnly, itemHistory), talabatItemHistory = mergeHistory(itemHistory, siteOnly);
       // Apex items for a Talabat name: the item map first; else (live orders name add-ons in Arabic, «ممبار») the Apex item
       // with exactly that name, or the only one whose name holds it.
       const arKey = v => String(v || '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/[ًٌٍَُِّْ]/g, '').replace(/\s+/g, ' ').trim();
@@ -524,7 +541,7 @@ function setup(app) {
         let apexPick = null;
         const isSite = withApex === 'site';
         if (withApex && !isSite && apex.length > 1) {
-          const seen = itemHistory.get(lineKey(x)), top = seen && [...seen].filter(([no]) => apex.some(a => a.no === no)).sort((u, v) => v[1] - u[1]);
+          const seen = talabatItemHistory.get(lineKey(x)), top = seen && [...seen].filter(([no]) => apex.some(a => a.no === no)).sort((u, v) => v[1] - u[1]);
           const all = top ? top.reduce((t, c) => t + c[1], 0) : 0;
           if (top?.length && top[0][1] >= 2 && top[0][1] >= all * 0.7) apexPick = top[0][0];
         }
@@ -730,7 +747,7 @@ function setup(app) {
     if (!app.learn || !locationNo) return;
     if (Object.values(PICKUP_AREAS).some(x => x.no === Number(locationNo))) return;   // a «استلام» area teaches nothing about an area (11-15)
     const d = parseJson((await db.prepare('SELECT data FROM match_profiles WHERE source = ? AND ref = ?').get(source, ref))?.data, {});
-    const area = source === 'talabat' ? d?.area : d?.customer?.area;
+    const area = customerOf(source, d).area;
     if (area && normArabic(area)) {
       const evidence = source === 'talabat' ? String(ref) : 'site:' + ref;
       await app.learn.record('transfer:area', normArabic(area).slice(0, 120), String(locationNo), evidence).catch(() => {});
@@ -743,7 +760,7 @@ function setup(app) {
     if (!app.learn || !payload || payload.source !== source || String(payload.ref) !== String(ref)) return;
     const chosen = new Set((payload.items || []).filter(x => !x.free).map(x => String(x.itemNo)));
     if (chosen.size) {
-      const row = await db.prepare(source === 'talabat' ? 'SELECT day, items FROM talabat_orders WHERE id = ?' : 'SELECT day, scheduled_at FROM site_orders WHERE id = ?').get(ref);
+      const row = await orderRow(source, ref, source === 'talabat' ? ', items' : '');
       if (row) {
         const order = (await baseFor(orderDay(row), now)).list.find(o => o.source === source && String(o.ref) === String(ref));
         if (order) {
@@ -781,7 +798,7 @@ function setup(app) {
     const me = await who(ctx), b = ctx.body;
     const source = ['talabat', 'site'].includes(b.source) ? b.source : null, ref = String(b.ref || '');
     if (!source || !/^\d{1,20}$/.test(ref)) fail(400, 'أوردر غير صحيح');
-    const row = await db.prepare(source === 'talabat' ? 'SELECT day FROM talabat_orders WHERE id = ?' : 'SELECT day, scheduled_at FROM site_orders WHERE id = ?').get(ref);
+    const row = await orderRow(source, ref);
     if (!row) fail(404, 'الأوردر مش موجود');
     const job = await db.prepare('SELECT * FROM transfer_jobs WHERE source = ? AND ref = ?').get(source, ref);
     if (job && !['released', 'auto_failed', 'auto_preview'].includes(job.state) && !(job.state === 'claimed' && ctx.now - job.at > CLAIM_MS) && (job.employee_id !== me.id || job.state !== 'claimed')) fail(409, 'الأوردر محجوز أو اتبعت بالفعل');
@@ -990,7 +1007,7 @@ function setup(app) {
   app.transferAutoJob = async (b, now) => {
     const me = { id: null, name: 'المرصد آلي', staff: false };
     const source = b.source, ref = String(b.ref);
-    const row = source === 'talabat' ? await db.prepare('SELECT day FROM talabat_orders WHERE id = ?').get(ref) : await db.prepare('SELECT day, scheduled_at FROM site_orders WHERE id = ?').get(Number(ref));
+    const row = await orderRow(source, ref);
     if (!row) fail(404, 'الأوردر مش موجود');
     const dueDay = orderDay(row);
     await assertNotAlreadyOnApex(source, ref, dueDay, now);
@@ -1007,7 +1024,7 @@ function setup(app) {
     const me = await who(ctx);
     const b = ctx.body, source = b.source === 'talabat' || b.source === 'site' ? b.source : null, ref = String(b.ref || '').slice(0, 40);
     if (!source || !/^\d{1,20}$/.test(ref)) fail(400, 'أوردر غير صحيح');
-    const row = source === 'talabat' ? await db.prepare('SELECT day FROM talabat_orders WHERE id = ?').get(ref) : await db.prepare('SELECT day, scheduled_at FROM site_orders WHERE id = ?').get(Number(ref));
+    const row = await orderRow(source, ref);
     if (!row) fail(404, 'الأوردر مش موجود');
     const dueDay = orderDay(row);
     if (['claim', 'entered', 'auto'].includes(b.action)) await assertNotAlreadyOnApex(source, ref, dueDay, ctx.now);
@@ -1048,8 +1065,7 @@ function setup(app) {
       const areaService = pickup ? 0 : Number.isFinite(Number(area?.service)) && area?.service !== null ? Number(area.service) : null;
       if (!pickup && (!area || areaService == null)) fail(400, 'المنطقة مش موجودة أو سعر توصيلها مش ظاهر على Apex');
       const profile = parseJson((await db.prepare('SELECT data FROM match_profiles WHERE source = ? AND ref = ?').get(source, ref))?.data, {});
-      const phone = source === 'talabat' ? (profile.phoneDisplay || profile.phone || profile.mobileDisplay || profile.mobile) : (profile.customer?.phoneDisplay || profile.customer?.phone || profile.customer?.mobileDisplay || profile.customer?.mobile);
-      const address = source === 'talabat' ? profile.address : profile.customer?.address;
+      const { phone, address } = customerOf(source, profile);
       const payload = JSON.stringify({ v: 1, source, ref, branchNo, locationNo, payment, areaService, ...(pickup ? { pickup: true } : {}),
         customer: { phone: deliveryPhone(phone), address: String(address || '').slice(0, 360) } });
       await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at, payload, result) VALUES (?,?,?,'entered',?,?,?,?,?,?,NULL)
@@ -1084,9 +1100,7 @@ function setup(app) {
   // reading Apex with the short form then hashing the displayed form left the card
   // lookup unlinked, so the transfer page kept saying it was still waiting.
   const profilePhone = (source, p) => {
-    const raw = source === 'talabat'
-      ? (p.phoneDisplay || p.phone || p.mobileDisplay || p.mobile)
-      : (p.customer?.phoneDisplay || p.customer?.phone || p.customer?.mobileDisplay || p.customer?.mobile);
+    const raw = customerOf(source, p).phone;
     return deliveryPhone(phoneOut(deliveryPhone(raw)));
   };
   app.route('POST', '/api/apex-writer/customer-notes/pending', async ctx => {
@@ -1152,9 +1166,8 @@ function setup(app) {
       if (!source || !/^\d{1,20}$/.test(ref)) continue;
       const profile = await db.prepare('SELECT data FROM match_profiles WHERE source = ? AND ref = ?').get(source, ref);
       if (!profile || profilePhone(source, parseJson(profile.data, {})) !== deliveryPhone(x.phone)) continue;
-      const orderTable = source === 'talabat' ? 'talabat_orders' : 'site_orders', pk = source === 'talabat' ? 'id' : 'id';
-      const dayRow = await db.prepare(`SELECT day${source === 'site' ? ', scheduled_at' : ''} FROM ${orderTable} WHERE ${pk} = ?`).get(source === 'talabat' ? ref : Number(ref));
-      const effectiveDay = source === 'site' && dayRow?.scheduled_at ? businessDay(Number(dayRow.scheduled_at)) : dayRow?.day;
+      const dayRow = await orderRow(source, ref);
+      const effectiveDay = orderDay(dayRow);
       if (!dayRow || effectiveDay !== x.day) continue;
       const status = x.status === 'found' && x.custNo ? 'found' : x.status === 'none' ? 'none' : 'error';
       const note = status === 'found' ? String(x.note || '').slice(0, 1000) : '';
