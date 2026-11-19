@@ -490,6 +490,12 @@ browser.runtime.onInstalled.addListener(async ({ reason }) => {
     } catch {}
   }
 });
+// The website's central panel and branch boards must keep running (Karim 11-19): Firefox may unload a tab left in the
+// background; such a tab is loaded again at once.
+const SITE_LIVE = /^https:\/\/eldahan\.com\.eg\/(eldahan-operations-central|eldahan-branch-board)\//;
+const wakeSite = t => { if (t?.discarded && SITE_LIVE.test(t.url || '')) browser.tabs.reload(t.id).catch(() => {}); };
+try { browser.tabs.onUpdated.addListener((id, change, t) => { if (change.discarded) wakeSite(t); }, { properties: ['discarded'] }); } catch {}
+setInterval(() => { browser.tabs.query({ url: 'https://eldahan.com.eg/*' }).then(ts => ts.forEach(wakeSite)).catch(() => {}); }, 60000);
 browser.browserAction?.onClicked.addListener(() => browser.tabs.create({ url: browser.runtime.getURL('collector.html') }));
 
 // ---------- Updates (Karim 01-11: the staff PCs stayed on 3.1.19/3.1.20 while 3.1.33 was out) ----------
