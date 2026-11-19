@@ -22,6 +22,7 @@ import { APEX_PRICES } from './menu-seed.js';
 
 export const MODES = ['off', 'trial', 'on'];
 const QUIET = new Set(['لسه واصل', 'أوردر مجدول', 'تفاصيل الأوردر لسه ماوصلتش', 'لسه ما اتقبلش على طلبات', 'أوردر قديم — غالباً اتسجل بإيد', 'اتحوّل للفرع على الموقع — غالباً اتسجل بإيد']);
+const SCHEDULED_LEAD_MS = 60 * 60000;
 const TICK_MS = 60000, SETTLE_MS = 60000, MAX_AGE_MS = 20 * 60000, ALERT_MS = 2 * 60000, LATE_MAX_MS = 60 * 60000;
 // Waits on the system, not on a person: staff are not asked to enter the order for these in its first 10 minutes.
 const SYSTEM_WAIT = new Set(['لسه واصل', 'مستني قراءة بطاقة العميل من Apex', 'تفاصيل الأوردر لسه ماوصلتش', 'هاشتاج طلبات لسه ماظهرش', 'لسه ما اتقبلش على طلبات']);
@@ -88,7 +89,9 @@ export function decide(o, x) {
   // goes, up to an hour.
   if (age > MAX_AGE_MS && !(age <= LATE_MAX_MS && x.waitedOnSystem?.(o))) why.push('أوردر قديم — غالباً اتسجل بإيد');
   if (o.source === 'site' && o.sentToBranch) why.push('اتحوّل للفرع على الموقع — غالباً اتسجل بإيد');
-  if (o.scheduled) why.push('أوردر مجدول');
+  // Karim 11-19 «ميبقاش محتاج تحويل من الموظف غير العميل الي ليه ملاحظه»: a booked order goes by itself an hour before
+  // its time (the booking time is written next to the name, as staff do); one with no time stays with staff.
+  if (o.scheduled && !(Date.parse(o.scheduledAt || '') - x.now <= SCHEDULED_LEAD_MS)) why.push('أوردر مجدول');
   if (o.source === 'talabat' && /^(?:NEW|PENDING|WAITING|RECEIVED|PLACED|UNACCEPTED)/i.test(String(o.status || ''))) why.push('لسه ما اتقبلش على طلبات');
   if (o.source === 'talabat' && !String(o.code || '').replace(/\D/g, '')) why.push('هاشتاج طلبات لسه ماظهرش');   // Karim 11-14: never written without it
   if (!o.items?.length) { why.push(o.detailRead ? 'مفيش أصناف' : 'تفاصيل الأوردر لسه ماوصلتش'); return { ok: false, why, quiet: why.every(w => QUIET.has(w)) }; }

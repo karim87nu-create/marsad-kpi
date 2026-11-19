@@ -32,6 +32,10 @@ test('auto transfer: decides only on certain orders and says why not', () => {
   assert.match(why({ at: new Date(NOW - 25 * 60000).toISOString() }), /أوردر قديم/);
   assert.equal(decide(base({ at: new Date(NOW - 25 * 60000).toISOString() }), X).quiet, true);
   assert.match(why({ source: 'site', sentToBranch: true }), /اتحوّل للفرع على الموقع/);
+  // 11-19: a booked order goes by itself an hour before its time; one with no time stays with staff.
+  assert.match(why({ scheduled: true, scheduledAt: new Date(NOW + 2 * 3600000).toISOString(), at: new Date(NOW + 2 * 3600000).toISOString() }), /مجدول/);
+  assert.doesNotMatch(why({ scheduled: true, scheduledAt: new Date(NOW + 50 * 60000).toISOString(), at: new Date(NOW + 50 * 60000).toISOString() }), /مجدول/);
+  assert.match(why({ scheduled: true }), /مجدول/);
   assert.match(why({ items: [{ qty: 1, name: 'Kofta', price: P, modifiersComplete: true, apex: [{ no: KOFTA }, { no: '0108001' }], addons: [] }] }), /أكتر من اختيار/);
   assert.match(why({ items: [{ qty: 1, name: 'Kofta', price: P, modifiersComplete: false, apex: [{ no: KOFTA }], addons: [] }] }), /الإضافات مش ظاهرة/);
   assert.match(why({ payment: 'mixed' }), /كاش ولا مدفوع/);
