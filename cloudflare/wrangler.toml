@@ -18,7 +18,7 @@ database_id = "9d084dda-233d-47be-b901-56f8e911a4d4"   # created 11-17 from the 
 
 [vars]
 MARSAD_NO_SETUP = "1"   # the main password comes only from the move page (/move/)
-MARSAD_SHADOW = "1"   # trial copy: no background work until the switch
+MARSAD_SHADOW = "0"   # the live server since 11-19 (Karim); "1" = a trial copy with no background work
 MARSAD_ADOPT_FROM = "https://marsad-v2.karim87nu.chatgpt.site"   # the cashier PC key is checked there once
 
 [observability]
