@@ -38,6 +38,24 @@ function L($m){ try { if ((Test-Path $logFile) -and (Get-Item $logFile).Length -
 # The receipt prints about 40 letters of the address on one line and cuts the rest (Karim 11-19, Apex 705575:
 # «شارع الفريق اول علي عامر، الشقة: شقه على اليمين، عماره رقم 8» printed as «لفريق اول علي عامر، الشقة: شقه على اليمين»):
 # the flat and floor go to their own fields and the common words get short.
+# ===== a customer's note that asks to change something: a person sees it first (Karim 11-19) =====
+$HeldFile = Join-Path $here 'held_notes.json'
+$AskPattern = '(?:^|[\s،,.])(?:بدل|بدال|بدلا|بدلاً|مكان)\s|instead|replace|substitut|\bswap\b|\bchange\b|(?:^|[\s،,.])غير(?:ي|وا|ها|و|ولي|لي)?\s|(?:يكون|تكون|يبقى|تبقى|خليه|خليها|خلي|عايزه|عايزها|عاوزه|عاوزها)\s.{1,40}?\sمش\s|\sمش\s.{1,30}?\s(?:يكون|تكون|يبقى|تبقى)(?:\s|$)'
+function Needs-Person($job) {
+  $texts = @([string]$job.note) + @($job.items | ForEach-Object { [string]$_.note })
+  foreach ($t in $texts) {
+    if (-not $t) { continue }
+    foreach ($part in ($t -split '\s*\|\s*')) { if ($part -match 'هدية بدل خصم') { continue }; if ($part -match $AskPattern) { return $part.Trim() } }   # the system's own gift line is not a request
+  }
+  return $null
+}
+function Held-Before($job) { try { if (Test-Path $HeldFile) { return @(Get-Content $HeldFile -Raw | ConvertFrom-Json) -contains ($job.source + ':' + $job.ref) } } catch {}; return $false }
+function Hold-Mark($job) {
+  try { $l = @(); if (Test-Path $HeldFile) { $l = @(Get-Content $HeldFile -Raw | ConvertFrom-Json) }
+    $l = @($l + ($job.source + ':' + $job.ref)) | Select-Object -Last 300
+    Set-Content -Path $HeldFile -Value (ConvertTo-Json @($l) -Compress) -Encoding UTF8 } catch {}
+}
+
 function Compact-Address($c) {
   $a = [string]$c.address; $floor = [string]$c.floor; $flat = [string]$c.flat
   if (-not $floor.Trim() -and $a -match '(?:الدور|الطابق)\s*[:：]\s*([^،,—]+)') { $floor = $Matches[1].Trim() }
@@ -981,6 +999,16 @@ for (;;) {
     if ($n.job) {
       $job = $n.job; $mode = [string]$n.mode
       if ($mode -eq 'live' -and -not $AllowLive) { throw 'live mode is locked on this PC ($AllowLive)' }
+      # A customer asking to change something (Karim 11-19, Apex 705701 «الحمام يكون محشي فريك مش رز» — we have no freekeh)
+      # goes back to the transfer page the first time, for someone to call the customer; sent again, it goes through.
+      $ask = Needs-Person $job
+      if ($mode -eq 'live' -and $ask -and -not (Held-Before $job)) {
+        Hold-Mark $job
+        [void](Api '/api/apex-writer/result' @{ source = $job.source; ref = $job.ref; db = $mode; ok = $false; error = ('العميل طالب تغيير: «' + $ask + '» — كلّم العميل وبعدين ابعته تاني') })
+        L ("held for a person: " + $job.source + ':' + $job.ref + ' «' + $ask + '»')
+        $job = $null
+        continue
+      }
       if ($mode -eq 'live' -and $WriterUserNo -eq 0) { throw 'no Apex user for the writer yet ($WriterUserNo)' }
       $c = Open-Db $mode
       # Apex's own Talabat orders start with the «خدمة» service line; the employee's lines follow.
