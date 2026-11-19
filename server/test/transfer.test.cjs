@@ -160,6 +160,10 @@ test('automatic transfer: off by default, cash only, frozen order handed to the 
     assert.equal(n.job.resume, true, 'the one in flight comes back until answered, never a second one');
     assert.equal((await w('/api/apex-writer/result', { source: 'talabat', ref: '3977600001', ok: true, db: 'test', orderNo: 701, shiftSerial: 5, branchOrderNo: 3496, total: 300 })).status, 200);
     assert.equal((await w('/api/apex-writer/result', { source: 'talabat', ref: '3977600001', ok: true })).status, 409);
+    // #5873 (11-19): the written order's answer was lost and a failure reported; the kept answer, sent again, makes it done.
+    t.app.db.raw.prepare("UPDATE transfer_jobs SET state = 'auto_failed' WHERE ref = '3977600001'").run();
+    assert.equal((await w('/api/apex-writer/result', { source: 'talabat', ref: '3977600001', ok: false, error: 'x' })).status, 409, 'a failure never replaces another state');
+    assert.equal((await w('/api/apex-writer/result', { source: 'talabat', ref: '3977600001', ok: true, db: 'test', orderNo: 701, shiftSerial: 5, branchOrderNo: 3496, total: 300 })).status, 200);
     assert.equal((await w('/api/apex-writer/next')).body.job, null);
     const job2 = (await as('GET', '/api/transfer/queue?day=2026-10-22')).body.orders[0].job;
     assert.equal(job2.state, 'auto_done'); assert.equal(job2.result.orderNo, 701);

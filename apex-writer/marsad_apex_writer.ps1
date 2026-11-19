@@ -42,6 +42,22 @@ function L($m){ try { if ((Test-Path $logFile) -and (Get-Item $logFile).Length -
 # «لو تبديل عادي، بس لو فيه صنف مش موجود دي المشكله»: a swap or request goes to the branch as before, unless it names
 # a food word that is in none of Apex's item names (705701 «الحمام يكون محشي فريك مش رز» — no freekeh here).
 $HeldFile = Join-Path $here 'held_notes.json'
+# An order written on Apex whose answer the server didn't take (Karim 11-19 17:50, #5873: Apex 705824 written, then the server
+# answered 500 and the page said «سجله بإيدك» — a second copy waiting to happen). The answer is kept here and sent again
+# until the server takes it; a written order is never reported as failed.
+$PendingFile = Join-Path $here 'pending_results.json'
+function Pending-Load { try { if (Test-Path $PendingFile) { return @(Get-Content $PendingFile -Raw -Encoding UTF8 | ConvertFrom-Json) } } catch {}; return @() }
+function Pending-Save($list) { try { if (@($list).Count) { Set-Content -Path $PendingFile -Value (ConvertTo-Json @($list) -Depth 6 -Compress) -Encoding UTF8 } elseif (Test-Path $PendingFile) { Remove-Item $PendingFile -Force } } catch {} }
+# 409 = the server already has an answer for this order (it took the first one and then failed): nothing to send again.
+function Taken($e) { try { return ([int]$e.Exception.Response.StatusCode -eq 409) } catch { return $false } }
+function Send-Result($res) {
+  for ($i = 0; $i -lt 3; $i++) { try { [void](Api '/api/apex-writer/result' $res); return $true } catch { if (Taken $_) { return $true }; L "result not taken ($($i + 1)): $($_.Exception.Message)"; Start-Sleep -Seconds 3 } }
+  Pending-Save (@(Pending-Load) + @($res)); L ("result kept to send again: " + $res.source + ':' + $res.ref + ' order ' + $res.orderNo); return $false
+}
+function Flush-Pending {
+  $left = @(); foreach ($res in @(Pending-Load)) { try { [void](Api '/api/apex-writer/result' $res); L ("kept result sent: " + $res.source + ':' + $res.ref) } catch { if (Taken $_) { L ("kept result already there: " + $res.source + ':' + $res.ref) } else { $left += $res } } }
+  Pending-Save $left
+}
 $AskPattern = '(?:^|[\s،,.])(?:بدل|بدال|بدلا|بدلاً|مكان)\s|instead|replace|substitut|\bswap\b|\bchange\b|(?:^|[\s،,.])غير(?:ي|وا|ها|و|ولي|لي)?\s|(?:يكون|تكون|يبقى|تبقى|خليه|خليها|خلي|عايزه|عايزها|عاوزه|عاوزها|عايز|عاوز|ممكن|ياريت)\s'
 $NoteStop = @('يكون','تكون','يبقي','تبقي','خليه','خليها','خلي','عايز','عايزه','عايزها','عاوز','عاوزه','عاوزها','ممكن','لو','سمحت','شكرا','بدل','بدال','بدلا','مكان','مش','غير','غيري','غيروا','كده','كدا','بس','فقط','واحد','اتنين','تلاته','اوردر','الاوردر','طلب','الطلب','زياده','بدون','من','في','علي','مع','عن','او','ولا','لان','علشان','عشان','كمان','برضه','برضو','ياريت','حاجه','نوع','صنف','الصنف','مصري','مصريه','سبايسي','حار','عادي','كبير','صغير','وسط','نص','ربع','كيلو','كويس','قوي','اوي','جدا','تاني','تانيه','الي','اللي','ده','دي','دا','هو','هي','انا','احنا','حضرتك','لحضرتك','الف','المكان','يا','جنب','لوحده','لوحدها','كتير','قليل','شويه','خالص','ابدا','تقيل','خفيف','مستوي','مستويه','مشوي','مقلي','نار','سخن','ساقع','بارد','معاه','معاها','بيه','بيها','عليه','عليها','الباب','الدور','الشقه','العماره','تليفون','رن','اتصل','قبل','بعد','الوصول','توصيل','مفيش','فيه','موجود','تيجي','يجي','بسرعه','سريع','ابيض','احمر','ملح','سكر','توابل','بهارات','حلو','طازه','فريش','مظبوط','زي','نفس','الصوره','اكتر','اقل','اكبر','اصغر','كوكاكولا','كوكا','كولا','سبرايت','فانتا','ميرندا','شويبس','سوري','ملفوف','ارجو','رجاء','برجاء','الرجاء','يرجي','فضلك','لوسمحت','سمحتو','سمحتوا','معلش','ابعت','ابعتو','ابعتوا','حط','حطو','حطوا','ضيف','ضيفو','ضيفوا','زود','زودو','زودوا','اعمل','اعملو','اعملوا','خلو','خلوا','الاكل','اكل','كله','كلها','محتاج','محتاجه','عايزين','عاوزين','يكونو','يكونوا')   # Karim 11-19: a drink swap is fine; «عيش سوري» = the wrapped bread we have
 # Only a food word can be «something we don't have» (Karim 11-19 17:42 «الفراخ تكون قطع كبيره مش صغيره» held for «كبيره»):
@@ -1029,7 +1045,8 @@ for (;;) {
   try { Apply-Cancels } catch { L "cancel: $($_.Exception.Message)" }
   try { Apply-CancelNotes } catch { L "cancel note: $($_.Exception.Message)" }
   try { Guard-Marks } catch { L "marks: $($_.Exception.Message)" }
-  $c = $null
+  $c = $null; $written = $false
+  try { Flush-Pending } catch { L "kept results: $($_.Exception.Message)" }
   try {
     $n = Api '/api/apex-writer/next' @{}
     $failures = 0
@@ -1055,6 +1072,7 @@ for (;;) {
       }
       Price-Lines $c $job
       $r = Write-Order $c $job $mode
+      $written = ($r.r -ne 'preview')
       $res = @{ source = $job.source; ref = $job.ref; db = $mode; ok = $true }
       if ($r.r -eq 'preview') {
         $res.preview = $true; $res.total = [double]$r.Total; $res.branchOrderNo = $r.BranchOrderNo
@@ -1069,7 +1087,7 @@ for (;;) {
         $res.gap = [math]::Round([double]$r.Gap, 2); $res.short = [math]::Round([double]$r.Short, 2); $res.before = [math]::Round([double]$r.Before, 2); $res.service = [double]$r.Service; $res.target = $job.targetTotal
         if ($r.r -eq 'written' -and [int]$r.SameBranchNo -gt 1) { $res.error = 'رقم الفرع اتكرر مع أوردر تاني؛ راجعه' }
       }
-      [void](Api '/api/apex-writer/result' $res)
+      [void](Send-Result $res)
       L ("job " + $job.source + ':' + $job.ref + ' -> ' + ($res | ConvertTo-Json -Compress))
       continue
     }
@@ -1082,7 +1100,7 @@ for (;;) {
     if ($job) { try { L ("  job " + $job.source + ':' + $job.ref + ' branch=' + $job.branchNo + ' loc=' + $job.locationNo + ' areaService=' + $job.areaService + ' pay=' + $job.payment + ' disc=' + $job.restaurantDiscount + ' target=' + $job.targetTotal + ' phoneLen=' + ([string]$job.customer.phone).Length + ' items=' + (($job.items | ForEach-Object { "$($_.itemNo)x$($_.qty)@$($_.price)" }) -join ',')) } catch {} }
     # A closed business day is waited out like a lost connection: the job stays with the writer and goes in as soon as
     # the day opens (Karim 10-11), instead of coming back to the employee as failed.
-    if ($job -and $_.Exception.Message -notmatch 'Unable to connect|timed out|remote name|business day is not open|has no open day') { try { [void](Api '/api/apex-writer/result' @{ source = $job.source; ref = $job.ref; ok = $false; error = $_.Exception.Message }) } catch {} }
+    if ($job -and -not $written -and $_.Exception.Message -notmatch 'Unable to connect|timed out|remote name|business day is not open|has no open day') { try { [void](Api '/api/apex-writer/result' @{ source = $job.source; ref = $job.ref; ok = $false; error = $_.Exception.Message }) } catch {} }
   } finally { if ($c) { try { $c.Close() } catch {} }; $job = $null }
   Start-Sleep -Seconds ([math]::Min(120, $PollSeconds * [math]::Max(1, $failures)))
 }

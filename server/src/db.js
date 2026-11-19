@@ -269,6 +269,7 @@ CREATE TABLE IF NOT EXISTS orders_days (day TEXT PRIMARY KEY, data TEXT NOT NULL
 CREATE TABLE IF NOT EXISTS site_orders (id INTEGER PRIMARY KEY, day TEXT NOT NULL, status TEXT, fulfillment TEXT, total REAL, created_at INTEGER NOT NULL, modified_at INTEGER, notes_at INTEGER, received_at INTEGER, transfer_at INTEGER, branch TEXT, out_at INTEGER, driver TEXT, delivered_at INTEGER, scheduled INTEGER NOT NULL DEFAULT 0, scheduled_at INTEGER, transfers INTEGER, gone_at INTEGER);
 CREATE INDEX IF NOT EXISTS site_orders_day ON site_orders(day);
 CREATE INDEX IF NOT EXISTS site_orders_created ON site_orders(created_at);
+CREATE INDEX IF NOT EXISTS site_orders_scheduled ON site_orders(scheduled_at);   -- the transfer page's «day or scheduled in it» reads (338k rows / 30 min, 11-19)
 CREATE TABLE IF NOT EXISTS talabat_orders (id TEXT PRIMARY KEY, day TEXT NOT NULL, vendor_id TEXT, store TEXT, status TEXT, billable TEXT, placed_at INTEGER, total REAL, received_at INTEGER, accept_seconds INTEGER, accepted_at INTEGER, picked_up_at INTEGER, delivered_at INTEGER, cancelled_at INTEGER, cancel_owner TEXT, cancel_reason TEXT, items TEXT, subtotal REAL, delivery_type TEXT, code TEXT, milestones TEXT, detail_at INTEGER, first_seen INTEGER NOT NULL, updated_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS talabat_orders_day ON talabat_orders(day);
 CREATE INDEX IF NOT EXISTS talabat_orders_updated ON talabat_orders(updated_at);   -- the «what to open next» query on every push (650k rows / 30 min, 11-19)

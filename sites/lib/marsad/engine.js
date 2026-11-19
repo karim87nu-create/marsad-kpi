@@ -340,7 +340,7 @@ function setup(app) {
   const LIVE_WINDOW_MS = 4 * 3600000;
   app.live = async function live(now = app.now()) {
     const today = businessDay(now), w = dayWindow(today);
-    const latestSql = 'SELECT s.*, (SELECT d.action FROM shift_decisions d WHERE d.session_id = s.id ORDER BY d.id DESC LIMIT 1) AS shift_decision FROM employee_sessions s WHERE s.id = (SELECT id FROM employee_sessions x WHERE x.employee_id = s.employee_id ORDER BY issued_at DESC, id DESC LIMIT 1)';
+    const latestSql = 'SELECT s.*, (SELECT d.action FROM shift_decisions d WHERE d.session_id = s.id ORDER BY d.id DESC LIMIT 1) AS shift_decision FROM employees e JOIN employee_sessions s ON s.id = (SELECT id FROM employee_sessions x WHERE x.employee_id = e.id ORDER BY issued_at DESC, id DESC LIMIT 1)';
     const [people, latest] = await Promise.all([names(), db.prepare(latestSql).all()]);
     // Recent events of today's latest sessions, through the (session_id, occurred_at) index, 40 sessions per query.
     const wanted = latest.filter(s => (s.revoked_at ?? s.expires_at) >= w.start), from = new Map(wanted.map(s => [s.id, Math.max(s.issued_at, now - LIVE_WINDOW_MS)]));

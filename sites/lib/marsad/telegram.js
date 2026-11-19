@@ -494,7 +494,7 @@ function setup(app) {
       // A disconnected sender must not replay an old backlog when Telegram comes back.
       await db.prepare("UPDATE telegram_log SET tries = 5, error = 'expired:stale' WHERE sent_at IS NULL AND tries < 5 AND created_at <= ?").run(now - OUTBOX_MAX_AGE_MS);
       for (let pass = 0, copied = true; pass < 2 && copied; pass++) { copied = false;
-      for (const r of await db.prepare('SELECT * FROM telegram_log WHERE sent_at IS NULL AND tries < 5 AND created_at > ? ORDER BY id LIMIT 500').all(now - OUTBOX_MAX_AGE_MS)) {
+      for (const r of await db.prepare('SELECT * FROM telegram_log WHERE sent_at IS NULL AND tries < 5 AND created_at > ? ORDER BY created_at, id LIMIT 500').all(now - OUTBOX_MAX_AGE_MS)) {
         if (sent >= 20) break;
         if (r.kind === 'ordersComment') continue; // Old queued comments are retained in the log, never sent on their own.
         if (r.kind === 'gap' && await db.prepare("SELECT 1 FROM telegram_log l WHERE l.kind = 'gap' AND l.employee_id = ? AND l.id != ? AND l.message_id IS NOT NULL AND l.sent_at IS NOT NULL AND l.error IS NULL AND NOT EXISTS (SELECT 1 FROM telegram_log x WHERE x.key = 'resolved:' || l.key) LIMIT 1").get(r.employee_id, r.id)) {

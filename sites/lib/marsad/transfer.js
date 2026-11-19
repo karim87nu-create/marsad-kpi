@@ -1311,7 +1311,10 @@ function setup(app) {
     const retryAt = shouldRetry ? ctx.now + (retryCount === 0 ? 15000 : 45000) : null;
     if (canRetryConnection) { result.retryCount = Math.min(2, retryCount + 1); if (retryAt) result.retryAt = retryAt; }
     const state = result.preview ? 'auto_preview' : result.ok ? 'auto_done' : shouldRetry ? 'auto_retry_pending' : 'auto_failed';
-    const r = await db.prepare("UPDATE transfer_jobs SET state = ?, result = ?, at = ? WHERE source = ? AND ref = ? AND state = 'auto_sending'")
+    // Karim 11-19 (#5873, Apex 705824): an order written on Apex is done even if a failure was reported for it before (the
+    // writer's answer was lost to a server error and sent again) — otherwise the page says «سجله بإيدك» and it goes in twice.
+    const written = state === 'auto_done' && result.orderNo != null;
+    const r = await db.prepare("UPDATE transfer_jobs SET state = ?, result = ?, at = ? WHERE source = ? AND ref = ? AND (state = 'auto_sending'" + (written ? " OR state IN ('auto_failed','auto_retry_pending','claimed')" : '') + ")")
       .run(state, JSON.stringify(result), retryAt || ctx.now, source, ref);
     if (!r.changes) fail(409, 'الأوردر مش في حالة إرسال');
     // Karim 11-14 (#4720402628): the customer's card on Apex changed after it was read (another order of the same
