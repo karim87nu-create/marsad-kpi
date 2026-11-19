@@ -13,7 +13,7 @@ export const TUNE_DEFS = [
 ];
 // Word lists for the cashier PC's «the customer asked for something we don't have» check (sent to it every 10 minutes).
 export const TUNE_LISTS = [
-  { key: 'foodWords', label: 'أكلات مش عندنا (الأوردر يقف ويتصل بالعميل)', help: 'لو العميل طلب كلمة من دول بدل حاجة («فريك بدل الرز») والكلمة مش في أصناف Apex، الأوردر بيرجع لصفحة التحويل أول مرة. اكتب الكلمة زي ما العميل بيكتبها.' },
+  { key: 'foodWords', label: 'أكلات مش عندنا (الأوردر يقف ويتصل بالعميل)', help: 'دي القايمة الوحيدة اللي بتوقف أوردر عشان ملاحظة: لو العميل طلب كلمة من دول بدل حاجة («فريك بدل الرز») والكلمة مش في أصناف Apex، الأوردر بيرجع لصفحة التحويل أول مرة. لو القايمة فاضية مفيش أوردر بيقف. اكتب الكلمة زي ما العميل بيكتبها.' },
   { key: 'okWords', label: 'كلام عادي مايوقفش الأوردر أبداً', help: 'لو أوردر وقف على كلمة مش أكلة (زي «كبيره»)، ضيفها هنا.' },
 ];
 export const TUNE = Object.fromEntries(TUNE_DEFS.map(d => [d.key, d.def]));
