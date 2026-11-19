@@ -38,14 +38,42 @@ function L($m){ try { if ((Test-Path $logFile) -and (Get-Item $logFile).Length -
 # The receipt prints about 40 letters of the address on one line and cuts the rest (Karim 11-19, Apex 705575:
 # «شارع الفريق اول علي عامر، الشقة: شقه على اليمين، عماره رقم 8» printed as «لفريق اول علي عامر، الشقة: شقه على اليمين»):
 # the flat and floor go to their own fields and the common words get short.
-# ===== a customer's note that asks to change something: a person sees it first (Karim 11-19) =====
+# ===== a customer asking for something we don't have: a person sees it first (Karim 11-19) =====
+# «لو تبديل عادي، بس لو فيه صنف مش موجود دي المشكله»: a swap or request goes to the branch as before, unless it names
+# a food word that is in none of Apex's item names (705701 «الحمام يكون محشي فريك مش رز» — no freekeh here).
 $HeldFile = Join-Path $here 'held_notes.json'
-$AskPattern = '(?:^|[\s،,.])(?:بدل|بدال|بدلا|بدلاً|مكان)\s|instead|replace|substitut|\bswap\b|\bchange\b|(?:^|[\s،,.])غير(?:ي|وا|ها|و|ولي|لي)?\s|(?:يكون|تكون|يبقى|تبقى|خليه|خليها|خلي|عايزه|عايزها|عاوزه|عاوزها)\s.{1,40}?\sمش\s|\sمش\s.{1,30}?\s(?:يكون|تكون|يبقى|تبقى)(?:\s|$)'
-function Needs-Person($job) {
+$AskPattern = '(?:^|[\s،,.])(?:بدل|بدال|بدلا|بدلاً|مكان)\s|instead|replace|substitut|\bswap\b|\bchange\b|(?:^|[\s،,.])غير(?:ي|وا|ها|و|ولي|لي)?\s|(?:يكون|تكون|يبقى|تبقى|خليه|خليها|خلي|عايزه|عايزها|عاوزه|عاوزها|عايز|عاوز|ممكن|ياريت)\s'
+$NoteStop = @('يكون','تكون','يبقي','تبقي','خليه','خليها','خلي','عايز','عايزه','عايزها','عاوز','عاوزه','عاوزها','ممكن','لو','سمحت','شكرا','بدل','بدال','بدلا','مكان','مش','غير','غيري','غيروا','كده','كدا','بس','فقط','واحد','اتنين','تلاته','اوردر','الاوردر','طلب','الطلب','زياده','بدون','من','في','علي','مع','عن','او','ولا','لان','علشان','عشان','كمان','برضه','برضو','ياريت','حاجه','نوع','صنف','الصنف','مصري','مصريه','سبايسي','حار','عادي','كبير','صغير','وسط','نص','ربع','كيلو','كويس','قوي','اوي','جدا','تاني','تانيه','الي','اللي','ده','دي','دا','هو','هي','انا','احنا','حضرتك','لحضرتك','الف','المكان','يا','جنب','لوحده','لوحدها','كتير','قليل','شويه','خالص','ابدا','تقيل','خفيف','مستوي','مستويه','مشوي','مقلي','نار','سخن','ساقع','بارد','معاه','معاها','بيه','بيها','عليه','عليها','الباب','الدور','الشقه','العماره','تليفون','رن','اتصل','قبل','بعد','الوصول','توصيل','مفيش','فيه','موجود','تيجي','يجي','بسرعه','سريع','ابيض','احمر','ملح','سكر','توابل','بهارات','حلو','طازه','فريش','مظبوط','زي','نفس','الصوره','اكتر','اقل','اكبر','اصغر')
+$script:menuWords = $null; $script:menuAt = [datetime]::MinValue
+function Norm-Ar([string]$t) { return ((($t -replace '[أإآ]', 'ا') -replace 'ة', 'ه' -replace 'ى', 'ي' -replace 'ث', 'ت' -replace 'ذ', 'د' -replace 'ظ', 'ض') -replace '[ً-ٟـ]', '').ToLower() }
+function Menu-Words($c) {
+  if ($script:menuWords -and ((Get-Date) - $script:menuAt).TotalHours -lt 1) { return $script:menuWords }
+  $set = New-Object 'System.Collections.Generic.HashSet[string]'
+  $cmd = $c.CreateCommand(); $cmd.CommandText = 'SELECT RTRIM(ItemName) FROM Items WITH (NOLOCK)'; $rd = $cmd.ExecuteReader()
+  try { while ($rd.Read()) { foreach ($w in ((Norm-Ar ([string]$rd.GetValue(0))) -split '[^ء-يa-z]+')) { if ($w.Length -ge 2) { [void]$set.Add($w); [void]$set.Add(($w -replace '^ال', '')) } } } } finally { $rd.Close() }
+  $script:menuWords = $set; $script:menuAt = Get-Date
+  return $set
+}
+function Known-Food($w, $set) {
+  foreach ($x in @($w, ($w -replace '^(?:وال|بال|فال|كال|لل)', ''), ($w -replace '^ال', ''), ($w -replace '^[وبفل]', ''), (($w -replace '^[وبفل]', '') -replace '^ال', ''))) { if ($x.Length -ge 2 -and $set.Contains($x)) { return $true } }
+  return $false
+}
+# The first word of a request that is in no item name, or $null.
+function Needs-Person($job, $c) {
   $texts = @([string]$job.note) + @($job.items | ForEach-Object { [string]$_.note })
+  $set = $null
   foreach ($t in $texts) {
     if (-not $t) { continue }
-    foreach ($part in ($t -split '\s*\|\s*')) { if ($part -match 'هدية بدل خصم') { continue }; if ($part -match $AskPattern) { return $part.Trim() } }   # the system's own gift line is not a request
+    foreach ($part in ($t -split '\s*\|\s*')) {
+      if ($part -match 'هدية بدل خصم' -or $part -notmatch $AskPattern) { continue }   # the system's own gift line; not a request
+      if (-not $set) { $set = Menu-Words $c }
+      # What the customer doesn't want («مش رز», «بدل البيبسي», «من غير بصل») is not what we need to have.
+      $want = ((Norm-Ar $part) -replace '(?:^|\s)(?:مش|بدل|بدال|بدلا|مكان|من غير|غير|بدون)\s+(?:ال)?[ء-ي]+', ' ') -replace '(^|\s)(?:ال)?رز(?=\s|$)', '$1ارز'
+      foreach ($w in ($want -split '[^ء-ي]+')) {
+        if ($w.Length -lt 3 -or $NoteStop -contains $w -or $NoteStop -contains ($w -replace '^ال', '')) { continue }
+        if (-not (Known-Food $w $set)) { return $w }
+      }
+    }
   }
   return $null
 }
@@ -999,12 +1027,12 @@ for (;;) {
     if ($n.job) {
       $job = $n.job; $mode = [string]$n.mode
       if ($mode -eq 'live' -and -not $AllowLive) { throw 'live mode is locked on this PC ($AllowLive)' }
-      # A customer asking to change something (Karim 11-19, Apex 705701 «الحمام يكون محشي فريك مش رز» — we have no freekeh)
-      # goes back to the transfer page the first time, for someone to call the customer; sent again, it goes through.
-      $ask = Needs-Person $job
+      # A customer asking for something not on our menu (Karim 11-19, Apex 705701 «فريك») goes back to the transfer page the
+      # first time, for someone to call the customer; sent again, it goes through.
+      $ask = $(if ($mode -eq 'live') { $cn = Open-Db $mode; try { Needs-Person $job $cn } catch { L "note check: $($_.Exception.Message)"; $null } finally { $cn.Close() } } else { $null })
       if ($mode -eq 'live' -and $ask -and -not (Held-Before $job)) {
         Hold-Mark $job
-        [void](Api '/api/apex-writer/result' @{ source = $job.source; ref = $job.ref; db = $mode; ok = $false; error = ('العميل طالب تغيير: «' + $ask + '» — كلّم العميل وبعدين ابعته تاني') })
+        [void](Api '/api/apex-writer/result' @{ source = $job.source; ref = $job.ref; db = $mode; ok = $false; error = ('العميل طالب «' + $ask + '» ومش موجود في أصناف Apex — كلّم العميل وبعدين ابعته تاني') })
         L ("held for a person: " + $job.source + ':' + $job.ref + ' «' + $ask + '»')
         $job = $null
         continue
