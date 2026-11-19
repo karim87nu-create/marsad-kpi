@@ -164,13 +164,13 @@ function setup(app) {
     const b = ctx.body || {}, key = String(b.key || '').slice(0, 80);
     if (!/^(apex|talabat):\d+$/.test(key)) fail(400, 'invalid_key');
     const day = validDate(String(b.day || '')) ? b.day : businessDay(ctx.now);
-    if (b.owner == null) { await db.prepare('DELETE FROM cancel_owners WHERE key = ?').run(key); await db.prepare("DELETE FROM learned WHERE kind = 'cancel:owner' AND ref = ?").run(key); return { ok: true }; }
+    if (b.owner == null) { await db.prepare('DELETE FROM cancel_owners WHERE key = ?').run(key); await db.prepare("DELETE FROM learned WHERE kind = 'cancel:owner' AND ref = ?").run(key); app.learn?.forget?.(); return { ok: true }; }
     if (!OWNERS[b.owner]) fail(400, 'invalid_owner');
     const rk = b.reasonKey ? String(b.reasonKey).slice(0, 160) : null;
     await db.prepare(`INSERT INTO cancel_owners (key, day, source, ref, owner, name, reason_key, by_name, at) VALUES (?,?,?,?,?,?,?,?,?)
       ON CONFLICT(key) DO UPDATE SET owner = excluded.owner, name = excluded.name, reason_key = excluded.reason_key, by_name = excluded.by_name, at = excluded.at`)
       .run(key, day, key.split(':')[0], key.split(':')[1], b.owner, b.name ? String(b.name).slice(0, 80) : null, rk, who.name, ctx.now);
-    if (rk && app.learn) { await db.prepare("DELETE FROM learned WHERE kind = 'cancel:owner' AND ref = ?").run(key); await app.learn.record('cancel:owner', rk, b.owner, key); }
+    if (rk && app.learn) { await db.prepare("DELETE FROM learned WHERE kind = 'cancel:owner' AND ref = ?").run(key); app.learn.forget(); await app.learn.record('cancel:owner', rk, b.owner, key); }
     await app.audit('cancel_owner', null, { actor: who.name, key, owner: b.owner });
     return { ok: true };
   });

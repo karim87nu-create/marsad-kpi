@@ -11,9 +11,19 @@ function setup(app) {
   // and dropped the moment anything new is learned here.
   const cache = new Map();
   const forget = () => cache.clear();
+  // Karim 11-19 «أخطاء السيرفر»: «D1 DB is overloaded» — every new fact used to empty this cache, so the next order read
+  // all 17,000 learned rows again (297 reads, 5 million rows in half an hour). New facts now go into the copy in place.
+  const TTL = 3 * 60000;
+  const touch = (kind, rows, ref) => {
+    for (const [k, c] of cache) {
+      if (k !== '*' && k !== kind) continue;
+      if (ref != null) c.rows = c.rows.filter(r => !(r.ref === ref && r.kind === kind && rows.some(n => n.a === r.a && n.b === r.b)));
+      c.rows.push(...rows);
+    }
+  };
   async function currentRows(kind) {
     const k = kind || '*', c = cache.get(k);
-    if (c && app.now() - c.at < 60000) return c.rows.slice();
+    if (c && app.now() - c.at < TTL) return c.rows.slice();
     const rows = await readRows(kind);
     cache.set(k, { at: app.now(), rows });
     return rows.slice();
@@ -29,19 +39,26 @@ function setup(app) {
   }
   const learn = app.learn = {
     async replace(source, ref, facts) {
-      forget();
       const data = JSON.stringify(facts), now = app.now();
       await db.batch([
         ...facts.map(f => db.prepare('INSERT INTO learned (kind,a,b,ref,value,at) VALUES (?,?,?,?,?,?) ON CONFLICT(kind,a,b,ref) DO NOTHING').bind(f.kind,f.a,f.b,String(ref),f.value ?? null,now)),
         db.prepare('INSERT INTO learning_evidence (source,ref,facts,at) VALUES (?,?,?,?) ON CONFLICT(source,ref) DO UPDATE SET facts=excluded.facts,at=excluded.at WHERE learning_evidence.facts != excluded.facts').bind(source,String(ref),data,now),
       ]);
+      // The evidence of one order from one source replaces what that order taught before (an empty list takes it back).
+      const r = String(ref), mine = k => k.startsWith('match-v2:') && k.endsWith(':' + source);
+      for (const [k, c] of cache) {
+        if (k !== '*' && !mine(k) && !facts.some(f => f.kind === k)) continue;
+        c.rows = c.rows.filter(x => !(x.ref === r && (mine(x.kind) || facts.some(f => f.kind === x.kind && f.a === x.a && f.b === x.b))));
+        c.rows.push(...facts.filter(f => k === '*' || f.kind === k).map(f => ({ ...f, ref: r, at: now })));
+      }
     },
     forget,
     async record(kind, a, b, ref, value = null, now = app.now()) {
       if (!a || !b || !ref) return;
-      forget();
+      const row = { kind, a: String(a).slice(0, 160), b: String(b).slice(0, 160), ref: String(ref).slice(0, 60), value, at: now };
       await db.prepare('INSERT INTO learned (kind, a, b, ref, value, at) VALUES (?,?,?,?,?,?) ON CONFLICT(kind, a, b, ref) DO UPDATE SET value = excluded.value, at = excluded.at')
-        .run(kind, String(a).slice(0, 160), String(b).slice(0, 160), String(ref).slice(0, 60), value, now);
+        .run(row.kind, row.a, row.b, row.ref, value, now);
+      touch(kind, [row], row.ref);
     },
     // kind -> Map(a -> Map(b -> evidence count))
     async pairs(kind) {
