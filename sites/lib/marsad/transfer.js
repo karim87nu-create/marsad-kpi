@@ -144,6 +144,21 @@ function setup(app) {
     site: { table: 'site_orders', key: r => Number(r), cols: 'day, scheduled_at', customer: p => p?.customer || {} },
   };
   const orderRow = (source, ref, extra = '') => db.prepare(`SELECT ${SRC[source].cols}${extra} FROM ${SRC[source].table} WHERE id = ?`).get(SRC[source].key(ref));
+  // Where an order stands on the transfer page, in the words of the Telegram messages (Talabat and website alike, 11-19).
+  app.transferWhere = async (source, refs) => {
+    const list = [...new Set((refs || []).map(String))]; const out = new Map();
+    for (let i = 0; i < list.length; i += 50) {
+      const part = list.slice(i, i + 50);
+      for (const j of await db.prepare('SELECT ref, state, result, employee_name FROM transfer_jobs WHERE source = ? AND ref IN (' + part.map(() => '?').join(',') + ')').all(source, ...part)) out.set(String(j.ref), j);
+    }
+    return id => { const j = out.get(String(id)); if (!j) return '\nلسه محدش بعته من صفحة التحويل';
+      if (/^auto_(pending|sending|retry_pending)$/.test(j.state)) return '\nمستني جهاز الكاشير يسجله — دوّر على الكود في Apex قبل ما تسجله بإيدك';
+      if (j.state === 'auto_failed') { const e = String(parseJson(j.result, {})?.error || '').replace(/\s+/g, ' ').slice(0, 120); return '\nالتحويل الآلي وقف' + (e && /[\u0600-\u06ff]/.test(e) ? ': ' + e : ''); }
+      if (j.state === 'auto_done') return '\nاتسجل على Apex' + (parseJson(j.result, {})?.shiftSerial != null ? ' برقم ' + parseJson(j.result, {}).shiftSerial : '');
+      if (j.state === 'claimed') return '\n' + (j.employee_name || 'موظف') + ' قال هيسجله بإيده';
+      if (j.state === 'entered') return '\n' + (j.employee_name || 'موظف') + ' قال إنه سجله';
+      return ''; };
+  };
   const customerOf = (source, profile) => { const c = SRC[source].customer(profile);
     return { phone: c.phoneDisplay || c.phone || c.mobileDisplay || c.mobile || '', address: c.address || '', area: c.area || '' }; };
   const queueCache = new Map(), QUEUE_CACHE_MS = 4000;

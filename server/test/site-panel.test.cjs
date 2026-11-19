@@ -184,7 +184,7 @@ test('website central panel: an order gone from the board before going out is ca
       paymentMethod: 'كاش عند الاستلام', total: 300, customer: { name: 'نوره', phone: '01097159082', address: 'شارع 9، النزهة الجديدة' }, financial: { due: 300, onlinePaid: 0, total: 300, rows: [] },
       items: [{ name: 'طحينة', quantity: 1, total: '25.00 EGP', details: [] }], ...extra });
     await push([order(40001), order(40002), order(40003, { stage: 3, driver: { name: 'علي' } })]);
-    t.app.db.raw.prepare("INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, at, result) VALUES ('site', '40002', '2026-11-10', 'auto_done', NULL, 'المرصد آلي', ?, ?)").run(t.app.now(), JSON.stringify({ orderNo: 777 }));
+    t.app.db.raw.prepare("INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, at, result) VALUES ('site', '40002', '2026-11-10', 'auto_done', NULL, 'المرصد آلي', ?, ?)").run(t.app.now(), JSON.stringify({ orderNo: 777, shiftSerial: 412 }));
     const status = id => t.app.db.raw.prepare('SELECT status FROM site_orders WHERE id = ?').get(id).status;
     const keep = order(40099);
     await push([keep]);
@@ -198,7 +198,7 @@ test('website central panel: an order gone from the board before going out is ca
     assert.ok(!q.includes('40001'), 'off the transfer page');
     const msgs = t.app.db.raw.prepare("SELECT key, target, text FROM telegram_log WHERE kind = 'siteCancelled' ORDER BY key").all();
     assert.deepEqual(msgs.map(m => [m.key, m.target]), [['site:cancel:40002', 'branches'], ['site:cancel:40002:online', 'online']]);
-    assert.match(msgs[0].text, /Apex 777/);
+    assert.match(msgs[0].text, /Apex 412/); assert.doesNotMatch(msgs[0].text, /777/, 'the small serial only');
     await push([keep]); assert.equal(t.app.db.raw.prepare("SELECT COUNT(*) n FROM telegram_log WHERE kind = 'siteCancelled'").get().n, 2, 'once');
   } finally { await t.close(); }
 });

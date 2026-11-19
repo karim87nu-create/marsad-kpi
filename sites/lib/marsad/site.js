@@ -408,9 +408,10 @@ function setup(app) {
     const more = o => { const a = mt.get(o.id);
       return (o.total ? '\nقيمة الأوردر: ' + Math.round(o.total) + ' ج' : '') +
         (a ? '\nالمطابقة مع Apex مؤكدة' : '\nالمطابقة مع Apex غير مؤكدة') + (a ? det.extra(a.no) : ''); };
+    const where = app.transferWhere ? await app.transferWhere('site', rows.filter(o => o.received_at && !o.transfer_at).map(o => o.id)) : () => '';
     for (const o of rows) {
       if (o.received_at && !o.transfer_at && now - o.received_at > TRANSFER_MIN * 60000)
-        list.push({ key: 'site:transfer:' + o.id, kind: 'siteTransfer', target: 'online', text: '🌐 الموقع | ⏳ أوردر وصل على الموقع ولسه ماتحوّلش لأي فرع\nرقم أوردر الموقع: #' + o.id + '\nوصل الساعة ' + clock(o.received_at) + '، وبقاله ' + Math.round((now - o.received_at) / 60000) + ' دقيقة' + more(o) });
+        list.push({ key: 'site:transfer:' + o.id, kind: 'siteTransfer', target: 'online', text: '🌐 الموقع | ⏳ أوردر وصل على الموقع ولسه ماتحوّلش لأي فرع\nرقم أوردر الموقع: #' + o.id + '\nوصل الساعة ' + clock(o.received_at) + '، وبقاله ' + Math.round((now - o.received_at) / 60000) + ' دقيقة' + more(o) + where(o.id) });
       if (o.fulfillment === 'delivery' && o.transfer_at && !o.out_at && now - o.transfer_at > PREP_MIN * 60000)
         list.push({ key: 'site:prep:' + o.id, kind: 'sitePrep', target: 'branches', branch: o.branch || null, text: '🌐 الموقع | 🟠 أوردر عدّى 30 دقيقة من التحويل ولسه ماخرجش للتوصيل\nالفرع: ' + (o.branch || 'غير معروف') + '\nرقم أوردر الموقع: #' + o.id + '\nاتحوّل للفرع الساعة ' + clock(o.transfer_at) + '، وبقاله ' + Math.round((now - o.transfer_at) / 60000) + ' دقيقة' + more(o) });
     }
@@ -442,7 +443,7 @@ function setup(app) {
     let res = {}; try { res = JSON.parse(j.result || '{}'); } catch {}
     const p = await db.prepare("SELECT data FROM match_profiles WHERE source = 'site' AND ref = ?").get(String(r.id));
     let num = r.id; try { num = JSON.parse(p?.data || '{}').panel?.number || r.id; } catch {}
-    const text = '🌐 الموقع | ❌ أوردر الموقع #' + num + ' اتلغى على الموقع وهو متسجل على Apex' + (res.orderNo ? ' (Apex ' + res.orderNo + ')' : '') +
+    const text = '🌐 الموقع | ❌ أوردر الموقع #' + num + ' اتلغى على الموقع وهو متسجل على Apex' + (res.shiftSerial != null ? ' (Apex ' + res.shiftSerial + ')' : '') +
       (r.branch ? '\nالفرع: ' + r.branch : '') + '\nالغوه على Apex وماتطلعوهوش';
     for (const [target, branch, suffix] of [['branches', r.branch || null, ''], ['online', null, ':online']])
       writes.push(db.prepare("INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, sent_at, target, branch) VALUES (?, 'siteCancelled', NULL, ?, ?, NULL, ?, ?)").bind('site:cancel:' + r.id + suffix, text, now, target, branch));
