@@ -51,6 +51,11 @@ const RX = rxOf(WORDS);
 // Comments and the dish's choices (11-16 Talabat #1574: «Replace Tahini with Yogurt Salads» was printed spelled out
 // letter by letter in Arabic): food words, and a word not known stays in English rather than spelled out.
 const FOOD = [
+  // Karim 11-19 review (Apex comments «I need pickled tomato instead…», «i want baladi bread with it»): the customer's usual phrases.
+  ['i need', 'عايز'], ['i want', 'عايز'], ['i would like', 'عايز'], ["i'd like", 'عايز'], ['can you', 'ياريت'], ['could you', 'ياريت'], ['can i have', 'عايز'],
+  ['pickled tomatoes', 'طماطم مخللة'], ['pickled tomato', 'طماطم مخللة'], ['pickled cucumber', 'خيار مخلل'], ['pickles', 'مخلل'], ['pickled', 'مخلل'],
+  ['baladi bread', 'عيش بلدي'], ['syrian bread', 'عيش سوري'], ['bread', 'عيش'], ['with it', 'معاه'], ['with them', 'معاهم'], ['for me', 'ليا'],
+  ['my order', 'الأوردر'], ['my orders', 'أوردراتي'], ['discount', 'خصم'], ['extra bag', 'كيس زيادة'], ['bag', 'كيس'], ['i have a', 'عندي'], ['i have', 'عندي'], ['discount on', 'خصم على'],
   ['replace tahini with yogurt salads', 'بدل الطحينة سلطة زبادي'], ['replace tahini with yogurt salad', 'بدل الطحينة سلطة زبادي'],
   ['instead of', 'بدل'], ['replace', 'بدل'], ['change', 'تغيير'], ['with', 'مع'], ['add', 'إضافة'], ['remove', 'من غير'], ['only', 'بس'],
   ['on the side', 'على جنب'], ['side', 'جنب'], ['less', 'قليل'], ['more', 'زيادة'], ['cold', 'ساقع'], ['hot', 'سخن'],

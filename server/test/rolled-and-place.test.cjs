@@ -66,3 +66,14 @@ test('address: the building once, the landmark to the special mark, not read as 
   assert.match(a.mark, /^امام شقة 6.*مش الرئيسي$/);
   assert.deepEqual(splitAddressLandmark(a.street), { street: '244 الاندلس ١ - التجمع الثالث', landmark: 'امام ماونتن ديونز' });
 });
+
+// Karim 11-19 review of the day's Apex addresses and comments.
+test('addresses and comments from the day on Apex', async () => {
+  const { deliveryAddress, deliveryComment } = await import('../src/delivery-fields.js');
+  const st = (a, z = ['التجمع الخامس طلبات']) => deliveryAddress(a, z).street;
+  assert.equal(st('التجمع الاول البنفسج 3 فيلا 69، مبنى: 69'), 'التجمع الاول البنفسج 3 فيلا 69', 'the villa number once');
+  assert.equal(st('طريق بدون اسم، مبنى: 229'), 'عمارة 229');
+  assert.equal(st('مبنى: 0، امام الجامعة'), 'امام الجامعة', 'no «عمارة 0»');
+  assert.equal(st('التجمع الخامس/حي الدبلوماسيين /شارع جمال عبد الناصر'), 'حي الدبلوماسيين، شارع جمال عبد الناصر', 'the website\'s «/» parts, the area once');
+  assert.equal(deliveryComment({ items: [{ name: 'صينيه اللمه', freeOptions: ['طحينة | بابا غنوج', 'ثومية'] }], note: 'إضافة خبز | اضافة خبز' }), 'إضافة خبز | اللمه: طحينة/بابا غنوج/ثومية');
+});

@@ -77,7 +77,8 @@ export function deliveryAddress(value, zone = '') {
   const key = s => String(s || '').trim().replace(/^(?:محافظة|governorate|منطقة|المنطقة|district|area)\s*[:：]?\s*/i, '')
     .normalize('NFKD').replace(/[ً-ٰٟـ]/g, '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, ' ').replace(/\s+/g, ' ').trim();
-  const areas = (Array.isArray(zone) ? zone : [zone]).map(s => String(s || '').trim()).filter(Boolean).sort((a, b) => b.length - a.length);
+  // The Apex area's name also without its «طلبات»/«الموقع» ending («التجمع الخامس طلبات» → «التجمع الخامس»).
+  const areas = [...new Set((Array.isArray(zone) ? zone : [zone]).map(s => String(s || '').trim()).filter(Boolean).flatMap(s => [s, s.replace(/\s+(?:طلبات|الموقع|موقع|اونلاين|أونلاين)$/, '')]))].filter(Boolean).sort((a, b) => b.length - a.length);
   const redundant = new Set(['مصر', 'egypt', 'القاهرة', 'القاهره الجديده', 'cairo', 'new cairo', 'الجيزة', 'giza', 'جمهورية مصر العربية'].map(key));
   const withoutArea = value => {
     const words = String(value || '').trim().split(/\s+/).filter(Boolean);
@@ -99,13 +100,16 @@ export function deliveryAddress(value, zone = '') {
     .replace(new RegExp('(?:الدور|الطابق|دور|floor)\\s*[:：]?\\s*' + val + '(?![\\p{L}\\p{N}])', 'giu'), (all, v) => { if (!floor) floor = v.trim(); return ' '; })
     .replace(new RegExp('(?:الشقة|الشقه|شقة|شقه|apartment|apt\\.?|flat)\\s*[:：]?\\s*' + val + '(?![\\p{L}\\p{N}])', 'giu'), (all, v) => { if (!flat) flat = v.trim(); return ' '; });
   const parts = [];
-  for (let seg of text.split(/[،,;؛\n—|]+/)) {
-    seg = seg.replace(/^[\s.\-–:：]+|[\s.\-–:：]+$/g, '').replace(/\s+/g, ' ').trim();
+  for (let seg of text.split(/[،,;؛\n—|]+|\s*\/\s*(?=[\u0621-\u064a])/)) {
+    seg = seg.replace(/^[\s.\-–:：\/]+|[\s.\-–:：\/]+$/g, '').replace(/\s+/g, ' ').trim();
     if (!seg) continue;
+    // Karim 11-19 review: Talabat's «طريق بدون اسم» (unnamed road) says nothing.
+    if (/^(?:طريق|شارع|ش)\s+(?:بدون|بلا|من غير)\s+اسم$|^unnamed road$/i.test(seg)) continue;
     // A label with nothing after it («الدور:», «الشقة:»): nothing to keep.
     if (/^(?:الدور|الطابق|دور|الشقة|الشقه|شقة|شقه|floor|flat|apartment|apt)\s*[:：]?$/i.test(seg)) continue;
     let building = false;
     const lab = seg.match(/^(?:مبنى|مبني|building|bldg)\s*[:：]?\s*(.+)$/i);
+    if (lab && /^[\s0٠\-–.]*$/.test(lab[1])) continue;   // «مبنى: 0»: no building
     if (lab) { seg = /^[\d٠-٩]/.test(lab[1]) ? 'عمارة ' + lab[1] : lab[1]; building = true; }
     seg = withoutArea(seg);
     if (!seg || redundant.has(key(seg))) continue;
@@ -118,6 +122,7 @@ export function deliveryAddress(value, zone = '') {
     const k = key(p.seg);
     // A building part also counts without its «عمارة» word («عمارة 244 الاندلس 1» when the street starts «244 الاندلس 1 - …»).
     const k2 = p.building ? key(p.seg.replace(/^عمار[ةه]\s+/, '')) : k;
+    if (p.building && /^[\d٠-٩]+[a-z\u0621-\u064a]?$/i.test(k2) && parts.some(q => q !== p && (' ' + key(q.seg) + ' ').includes(' ' + k2 + ' '))) continue;
     if (!k || kept.some(q => key(q.seg) === k || (k.length >= 3 && (' ' + key(q.seg) + ' ').includes(' ' + k + ' ')) || (k2 !== k && k2.length >= 3 && (' ' + key(q.seg) + ' ').includes(' ' + k2 + ' ')))) continue;
     kept.push(p);
   }
@@ -221,8 +226,9 @@ export function applyChoiceWords(text, pairs) {
   return String(text || '').split(/\s*\|\s*/).map(p => /^[^:：]{1,30}[:：]\s/.test(p) || p.split(/\s+/).length <= 3 ? one(p) : p).join(' | ');
 }
 export function deliveryComment(order) {
-  const clean = s => String(s || '').split(/\s*[|\n]\s*/).map(stripPlatformNotes).map(cleanOptionComment)
-    .filter(x => x && !SITE_META.test(x)).join('، ').trim();
+  const nk = x => x.replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/\s+/g, ' ').trim();
+  const clean = s => { const seen = new Set(); return String(s || '').split(/\s*[|\n]\s*/).map(stripPlatformNotes).map(cleanOptionComment)
+    .filter(x => x && !SITE_META.test(x) && !seen.has(nk(x)) && seen.add(nk(x))).join('، ').trim(); };
   const parts = [clean(order.scheduledAt ? deliveryNotes(order.note, order.scheduledAt).note : order.note)];
   const items = order.items || [];
   const withChoices = items.filter(i => (i.freeOptions || []).some(v => cleanChoice(v))).length;
@@ -234,14 +240,16 @@ export function deliveryComment(order) {
   for (const [n, item] of items.entries()) {
     // Karim 11-16: the receipt prints one line of the comment (~35 letters, Apex 703733): the dish's choices short —
     // «صدور: طحينة/بابا/مخلل» — after the customer's own words.
-    const free = [...new Set((item.freeOptions || []).map(v => shortChoice(cleanChoice(stripPlatformNotes(v)))).filter(Boolean))];
+    const free = [...new Set((item.freeOptions || []).flatMap(v => String(v || '').split(/\s*[|\n]\s*/)).map(v => shortChoice(cleanChoice(stripPlatformNotes(v)))).filter(Boolean))];
     // Two dishes with the same first word: by their number instead.
     const short = words[n] && words.filter(w => w === words[n]).length === 1 ? words[n] : '';
     const label = short || (withChoices > 1 ? 'الصنف ' + (n + 1) : '');
     if (free.length) parts.push((label ? label + ': ' : '') + free.join('/'));
-    if (item.note) parts.push(clean(item.note));
+    // The customer's note under a dish says which dish when there are more than one (Karim 11-19 review).
+    if (item.note) parts.push((items.length > 1 && (short || words[n]) ? (short || words[n]) + ': ' : '') + clean(item.note));
   }
-  return apexText([...new Set(parts.filter(Boolean))].join(' | '));
+  const once = new Set();
+  return apexText(parts.filter(p => p && !once.has(nk(p)) && once.add(nk(p))).join(' | '));
 }
 
 // Karim 11-15 «التعليقات الي تخص الديلفري تبقي في العلامه المميزه والي يخص الطلب نفسو يبقي في كومنت الاوردر»: the comment's
