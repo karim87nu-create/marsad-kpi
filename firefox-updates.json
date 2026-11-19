@@ -3,6 +3,16 @@
     "arabicss-kpi@eldahan.local": {
       "updates": [
         {
+          "version": "3.1.54",
+          "update_link": "https://karim87nu-create.github.io/marsad-kpi/releases/arabicss-kpi-3.1.54.xpi",
+          "update_hash": "sha256:57010de1f581e40db5b39f4a8c4646f3fb98ad715e02bc5f0e24eb4cbccc593b",
+          "applications": {
+            "gecko": {
+              "strict_min_version": "142.0"
+            }
+          }
+        },
+        {
           "version": "3.1.53",
           "update_link": "https://karim87nu-create.github.io/marsad-kpi/releases/arabicss-kpi-3.1.53.xpi",
           "update_hash": "sha256:bd9454bbe9cd1ab97e6099e7faa37df085c4e00cc39462c35087d9d4541dba22",
