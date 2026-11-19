@@ -32,8 +32,13 @@ test('Talabat clock reaches the actual background listener and enables a timesta
 });
 test('a connector update resumes linked Talabat tabs without changing the source account', async () => {
   const h = background(); await h.installed[0]({ reason: 'update' });
-  assert.deepEqual(h.injected, ['config.js', 'talabat-monitor.js']);
+  assert.deepEqual(h.injected, ['config.js', 'names.js', 'talabat-monitor.js']);
   const unlinked = background(false); await unlinked.installed[0]({ reason: 'update' }); assert.equal(unlinked.injected.length, 0);
+  // 11-19: a branch's Live Orders tab (no link) and the website's central panel get their scripts back too.
+  const live = background(false, [{ id: 5, url: 'https://partner-app.talabat.com/live-orders' }]); await live.installed[0]({ reason: 'update' });
+  assert.deepEqual(live.injected, ['config.js', 'names.js', 'talabat-monitor.js']);
+  const site = background(false, [{ id: 6, url: 'https://eldahan.com.eg/eldahan-operations-central/' }, { id: 4, url: 'https://eldahan.com.eg/menu/' }]); await site.installed[0]({ reason: 'update' });
+  assert.deepEqual(site.injected, ['config.js', 'site-panel.js']);
 });
 test('a connector update resumes the linked WhatsApp sender on an already open tab', async () => {
   const h = background(true, [{ id: 9, url: 'https://web.whatsapp.com/' }]);

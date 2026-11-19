@@ -2,6 +2,8 @@
 // No request of its own ever goes to the website. The one action: an order the Marsad already wrote on Apex that is still
 // without a branch on the central panel is sent to that branch with the panel's own «إرسال للفرع» (Karim 11-11).
 (() => {
+  // Put back after an update (background.js): never two copies in one page (two «إرسال للفرع» presses).
+  if (window.__marsadSitePanel === globalThis.MARSAD?.VERSION) return; window.__marsadSitePanel = globalThis.MARSAD?.VERSION;
   const s = document.createElement('script');
   s.src = browser.runtime.getURL('site-hook.js'); s.onload = () => s.remove();
   (document.head || document.documentElement).append(s);
