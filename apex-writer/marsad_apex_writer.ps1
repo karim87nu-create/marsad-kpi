@@ -490,6 +490,19 @@ function Write-Order($c, $job, [string]$mode){
 
 # Line prices: in shadow mode the employee's chosen items are priced from each candidate list so the shadow report
 # shows which list matches Apex's own entries. test/live use only the proven source.
+# Apex's items, every hour (Karim 11-19 review): a new item added on Apex is known to the Marsad without a code change.
+$script:itemsAt = [datetime]::MinValue
+function Push-Items {
+  if (((Get-Date) - $script:itemsAt).TotalMinutes -lt 60) { return }
+  $script:itemsAt = Get-Date
+  $c = Open-Db 'live'
+  try {
+    $cmd = $c.CreateCommand(); $cmd.CommandText = 'SELECT RTRIM(ItemNo) AS no, RTRIM(ItemName) AS name, OnlinePrice AS price FROM Items WITH (NOLOCK) WHERE ItemNo IS NOT NULL'
+    $t = New-Object System.Data.DataTable; $t.Load($cmd.ExecuteReader())
+    $list = @(foreach ($r in $t.Rows) { @{ no = [string]$r.no; name = [string]$r.name; price = $(if ($r.price -is [DBNull]) { $null } else { [math]::Round([double]$r.price, 2) }) } })
+  } finally { $c.Close() }
+  if ($list.Count) { $a = Api '/api/apex-writer/items' @{ items = $list }; if ($a.added) { L "apex items: $($a.added) new" } }
+}
 function Price-Lines($c, $job){
   foreach($l in $job.items){
     $cmd = $c.CreateCommand(); $cmd.CommandText = 'SELECT TOP 1 i.DeliveryPrice AS dp, i.OnlinePrice AS op, ib.Price AS bp, ib.OnPrice AS bo, (SELECT MIN(Price) FROM ItemsOnlineTypes WITH (NOLOCK) WHERE ItemNo = @i AND BranchNo = @b) AS ot FROM Items i WITH (NOLOCK) LEFT JOIN ItemsBranches ib WITH (NOLOCK) ON ib.ItemNo = i.ItemNo AND ib.BranchNo = @b WHERE i.ItemNo = @i'
@@ -1042,6 +1055,7 @@ for (;;) {
   try { if ((Get-Item $self).LastWriteTimeUtc -ne $selfStamp) { L 'script updated - restarting'; $mutex.ReleaseMutex(); $mutex.Dispose(); Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $self + '"'); exit 0 } } catch {}
   try { Self-Test } catch { L "self-test: $($_.Exception.Message)" }
   try { Apply-Stock } catch { L "stock: $($_.Exception.Message)" }
+  if ($AllowLive) { try { Push-Items } catch { L "items: $($_.Exception.Message)" } }
   try { Apply-Cancels } catch { L "cancel: $($_.Exception.Message)" }
   try { Apply-CancelNotes } catch { L "cancel note: $($_.Exception.Message)" }
   try { Guard-Marks } catch { L "marks: $($_.Exception.Message)" }

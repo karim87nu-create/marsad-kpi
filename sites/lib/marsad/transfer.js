@@ -21,7 +21,21 @@ import { APEX_SECTIONS } from './apex-sections.js';
 import { siteApexItems } from './site-items.js';
 import { canonicalStore } from './store-names.js';
 import { sitePaymentChoice } from './site-payment-choice.js';
-const APEX_ITEM_LIST = Object.entries(APEX_NAMES).map(([no, name]) => ({ no, name, price: APEX_PRICES[no] ?? null }));
+let APEX_ITEM_LIST = Object.entries(APEX_NAMES).map(([no, name]) => ({ no, name, price: APEX_PRICES[no] ?? null }));
+// Karim 11-19 review: a new item on Apex (or one missing from the built-in list) was «صنف مش معروف على Apex» until a code
+// change. The writer sends Apex's items every hour; items the list does not have are added, with their online price.
+// The built-in prices stay (the writer prices every order from Apex itself anyway).
+function addLiveItems(list) {
+  let added = 0;
+  for (const x of Array.isArray(list) ? list : []) {
+    const no = String(x?.no || '').trim(), name = String(x?.name || '').replace(/\s+/g, ' ').trim().slice(0, 120), price = Number(x?.price);
+    if (!/^\d{4,10}$/.test(no) || !name) continue;
+    if (!APEX_NAMES[no]) { APEX_NAMES[no] = name; added++; }
+    if (!(Number(APEX_PRICES[no]) > 0) && price > 0 && price < 100000) APEX_PRICES[no] = Math.round(price * 100) / 100;
+  }
+  if (added) APEX_ITEM_LIST = Object.entries(APEX_NAMES).map(([no, name]) => ({ no, name, price: APEX_PRICES[no] ?? null }));
+  return added;
+}
 import { sha256, randomToken } from './security.js';
 
 const orderDay = row => row?.scheduled_at ? businessDay(Number(row.scheduled_at)) : row?.day;
@@ -152,7 +166,7 @@ function setup(app) {
       for (const j of await db.prepare('SELECT ref, state, result, employee_name FROM transfer_jobs WHERE source = ? AND ref IN (' + part.map(() => '?').join(',') + ')').all(source, ...part)) out.set(String(j.ref), j);
     }
     return id => { const j = out.get(String(id)); if (!j) return '\nلسه محدش بعته من صفحة التحويل';
-      if (/^auto_(pending|sending|retry_pending)$/.test(j.state)) return '\nمستني جهاز الكاشير يسجله — دوّر على الكود في Apex قبل ما تسجله بإيدك';
+      if (/^auto_(pending|sending|retry_pending)$/.test(j.state)) return '\nمستني جهاز الكاشير يسجله — شوف الأوردر مضروب على Apex ولا لا قبل ما تسجله بإيدك';
       if (j.state === 'auto_failed') { const e = String(parseJson(j.result, {})?.error || '').replace(/\s+/g, ' ').slice(0, 120); return '\nالتحويل الآلي وقف' + (e && /[\u0600-\u06ff]/.test(e) ? ': ' + e : ''); }
       if (j.state === 'auto_done') return '\nاتسجل على Apex' + (parseJson(j.result, {})?.shiftSerial != null ? ' برقم ' + parseJson(j.result, {}).shiftSerial : '');
       if (j.state === 'claimed') return '\n' + (j.employee_name || 'موظف') + ' قال هيسجله بإيده';
@@ -183,7 +197,7 @@ function setup(app) {
     // Karim 11-19: what to do depends on why. The customer asked for something not on Apex → call, then send again; no
     // answer from the cashier PC → the order may already be on Apex (#5873, 705824): look for its code before entering it.
     const todo = /العميل طالب/.test(why) ? 'كلّم العميل، وبعدين ابعته تاني من صفحة التحويل أو سجّله بإيدك'
-      : /مارد/.test(why) ? 'دوّر على الكود في Apex الأول — ممكن يكون اتسجل وجهاز الكاشير مبلّغش. لو مش موجود سجّله بإيدك'
+      : /مارد/.test(why) ? 'شوف الأوردر مضروب على Apex ولا لا — ممكن يكون اتسجل وجهاز الكاشير مبلّغش. لو مش مضروب سجّله بإيدك'
       : 'سجّله على Apex بإيدك دلوقتي (بالكود في خانة الاسم)';
     const text = '🔴 التحويل الآلي | ' + (source === 'talabat' ? 'طلبات' : 'الموقع') + ' ' + (payload.code ? '#' + payload.code : ref) + (branch ? ' — ' + branch : '') +
       '\n' + why + (payload.by ? '\nبعته: ' + payload.by : '') + '\n' + todo;
@@ -1107,6 +1121,15 @@ function setup(app) {
     if (!given || !hashes.includes(sha256(given))) fail(401, 'مفتاح كاتب Apex غير صحيح');
   };
   app.apexWriterAuth = writer;
+  let liveItemsLoaded = false;
+  app.beforeRequest(async () => { if (liveItemsLoaded) return; liveItemsLoaded = true; addLiveItems(parseJson((await db.prepare("SELECT value FROM settings WHERE key = 'apex_items_live'").get().catch(() => null))?.value, [])); });
+  app.route('POST', '/api/apex-writer/items', async ctx => {
+    await writer(ctx);
+    const list = (Array.isArray(ctx.body?.items) ? ctx.body.items : []).slice(0, 5000).map(x => ({ no: String(x?.no || '').trim().slice(0, 12), name: String(x?.name || '').trim().slice(0, 120), price: Number(x?.price) || null })).filter(x => /^\d{4,10}$/.test(x.no) && x.name);
+    if (!list.length) return { ok: true, added: 0 };
+    await db.prepare("INSERT INTO settings (key, value) VALUES ('apex_items_live', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(JSON.stringify(list));
+    return { ok: true, added: addLiveItems(list) };
+  }, { limit: 1024 * 1024 });
   const isCashierDbConnectionFailure = r => !r?.ok && r?.db == null && !r?.orderNo && /cannot connect to rest(?:aurant|urant)/i.test(String(r?.error || ''));
   // The on-premises read-only Apex login is the only source of customer-card notes.
   // Staff see these on the transfer page BEFORE they choose to submit an order.

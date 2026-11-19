@@ -93,14 +93,22 @@ function setup(app) {
     }
     return n;
   };
+  // Karim 11-19 (Talabat and the website as one): a website order cancelled after it was written on Apex gets the same
+  // «لاغي» edit (kept with the website number as «site:<id>»), not only a message.
+  app.siteCancelNote = async ({ orderNo, ref, code, sn, branch, out }, now) => {
+    if (await mode() !== 'on' || !Number(orderNo) || out) return 0;
+    const r = await db.prepare('INSERT OR IGNORE INTO apex_cancel_notes (order_no, day, talabat_id, code, sn, branch, state, at) VALUES (?,?,?,?,?,?,?,?)')
+      .run(Number(orderNo), businessDay(now), 'site:' + ref, code ? String(code) : null, sn == null ? null : String(sn), branch || null, 'pending', now);
+    return r?.meta?.changes || r?.changes || 0;
+  };
   app.route('POST', '/api/apex-writer/cancel-note-next', async ctx => {
     await app.apexWriterAuth(ctx);
     if (await mode() !== 'on') return { orders: [] };
     // A copy the writer took and never answered for (writer stopped): tried once more, then left to the 5-minute rule.
     await db.prepare("UPDATE apex_cancel_notes SET state = 'failed', result = 'الكاتب ماردش' WHERE state = 'sending' AND at < ?").run(ctx.now - 5 * 60000);
-    const rows = await db.prepare("SELECT order_no FROM apex_cancel_notes WHERE state = 'pending' ORDER BY at LIMIT 10").all();
+    const rows = await db.prepare("SELECT order_no, talabat_id FROM apex_cancel_notes WHERE state = 'pending' ORDER BY at LIMIT 10").all();
     if (rows.length) await db.batch(rows.map(r => db.prepare("UPDATE apex_cancel_notes SET state = 'sending', at = ? WHERE order_no = ? AND state = 'pending'").bind(ctx.now, r.order_no)));
-    return { orders: rows.map(r => ({ orderNo: r.order_no, text: NOTE })) };
+    return { orders: rows.map(r => ({ orderNo: r.order_no, text: String(r.talabat_id || '').startsWith('site:') ? 'لاغي — الأوردر اتلغى على الموقع' : NOTE })) };
   });
   const NOTE_ST = { 1: 'الأوردر مش موجود على Apex (اتلغى قبل كده)', 2: 'خرج مع الطيار', 3: 'مكتوب عليه لاغي من قبل كده' };
   app.route('POST', '/api/apex-writer/cancel-note', async ctx => {

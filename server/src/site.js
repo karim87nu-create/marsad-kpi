@@ -445,6 +445,8 @@ function setup(app) {
     let num = r.id; try { num = JSON.parse(p?.data || '{}').panel?.number || r.id; } catch {}
     const text = '🌐 الموقع | ❌ أوردر الموقع #' + num + ' اتلغى على الموقع وهو متسجل على Apex' + (res.shiftSerial != null ? ' (Apex ' + res.shiftSerial + ')' : '') +
       (r.branch ? '\nالفرع: ' + r.branch : '') + '\nالغوه على Apex وماتطلعوهوش';
+    // The same «لاغي» edit as a Talabat cancel when the automatic cancel is on (not once it is with its pilot).
+    if (j.state === 'auto_done' || j.state === 'entered') await app.siteCancelNote?.({ orderNo: res.orderNo, ref: r.id, code: num, sn: res.shiftSerial, branch: r.branch, out: !!r.out_at }, now).catch(() => 0);
     for (const [target, branch, suffix] of [['branches', r.branch || null, ''], ['online', null, ':online']])
       writes.push(db.prepare("INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, sent_at, target, branch) VALUES (?, 'siteCancelled', NULL, ?, ?, NULL, ?, ?)").bind('site:cancel:' + r.id + suffix, text, now, target, branch));
   }
