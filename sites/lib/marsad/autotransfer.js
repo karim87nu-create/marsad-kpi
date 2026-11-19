@@ -13,6 +13,7 @@
 // Otherwise the order stays for the employee with the reason shown on the transfer page; when the mode is «on» and it is
 // still waiting after 2 minutes, the call center group is told on Telegram (once per order).
 // Modes (admin): off · trial (only records what would have been sent) · on.
+import { TUNE } from './tune.js';
 import { businessDay, iso } from './time.js';
 import { parseJson } from './order-match.js';
 import { deliveryComment } from './delivery-fields.js';
@@ -22,7 +23,6 @@ import { APEX_PRICES } from './menu-seed.js';
 
 export const MODES = ['off', 'trial', 'on'];
 const QUIET = new Set(['لسه واصل', 'أوردر مجدول', 'تفاصيل الأوردر لسه ماوصلتش', 'لسه ما اتقبلش على طلبات', 'أوردر قديم — غالباً اتسجل بإيد', 'اتحوّل للفرع على الموقع — غالباً اتسجل بإيد']);
-const SCHEDULED_LEAD_MS = 60 * 60000;
 const TICK_MS = 60000, SETTLE_MS = 60000, MAX_AGE_MS = 20 * 60000, ALERT_MS = 2 * 60000, LATE_MAX_MS = 60 * 60000;
 // Waits on the system, not on a person: staff are not asked to enter the order for these in its first 10 minutes.
 const SYSTEM_WAIT = new Set(['لسه واصل', 'مستني قراءة بطاقة العميل من Apex', 'تفاصيل الأوردر لسه ماوصلتش', 'هاشتاج طلبات لسه ماظهرش', 'لسه ما اتقبلش على طلبات']);
@@ -87,11 +87,11 @@ export function decide(o, x) {
   // Karim 11-16 «اللي مكتوب عليه غالبا قديم مش بيتحول حتى لو مش متسجل»: an order the Marsad saw as soon as it came and
   // that only waited on the system (the card on Apex, the server or the network) — nobody was asked to enter it — still
   // goes, up to an hour.
-  if (age > MAX_AGE_MS && !(age <= LATE_MAX_MS && x.waitedOnSystem?.(o))) why.push('أوردر قديم — غالباً اتسجل بإيد');
+  if (age > TUNE.autoMaxAgeMin * 60000 && !(age <= LATE_MAX_MS && x.waitedOnSystem?.(o))) why.push('أوردر قديم — غالباً اتسجل بإيد');
   if (o.source === 'site' && o.sentToBranch) why.push('اتحوّل للفرع على الموقع — غالباً اتسجل بإيد');
   // Karim 11-19 «ميبقاش محتاج تحويل من الموظف غير العميل الي ليه ملاحظه»: a booked order goes by itself an hour before
   // its time (the booking time is written next to the name, as staff do); one with no time stays with staff.
-  if (o.scheduled && !(Date.parse(o.scheduledAt || '') - x.now <= SCHEDULED_LEAD_MS)) why.push('أوردر مجدول');
+  if (o.scheduled && !(Date.parse(o.scheduledAt || '') - x.now <= TUNE.scheduledLeadMin * 60000)) why.push('أوردر مجدول');
   if (o.source === 'talabat' && /^(?:NEW|PENDING|WAITING|RECEIVED|PLACED|UNACCEPTED)/i.test(String(o.status || ''))) why.push('لسه ما اتقبلش على طلبات');
   if (o.source === 'talabat' && !String(o.code || '').replace(/\D/g, '')) why.push('هاشتاج طلبات لسه ماظهرش');   // Karim 11-14: never written without it
   if (!o.items?.length) { why.push(o.detailRead ? 'مفيش أصناف' : 'تفاصيل الأوردر لسه ماوصلتش'); return { ok: false, why, quiet: why.every(w => QUIET.has(w)) }; }
@@ -234,7 +234,7 @@ function setup(app) {
       const jobs = new Map(jobRows.map(j => [j.source + ':' + j.ref, j]));
       // Karim 11-14 (11-12 ليلاً the writer could not log in to Apex for two hours): while orders already handed to the
       // writer wait 4+ minutes, no new one is handed to it — they stay for the staff.
-      const writerStuck = jobRows.some(j => ['auto_pending', 'auto_sending'].includes(j.state) && now - j.at >= 4 * 60000);
+      const writerStuck = jobRows.some(j => ['auto_pending', 'auto_sending'].includes(j.state) && now - j.at >= TUNE.writerStuckMin * 60000);
       const out = [];
       for (const o of q.orders || []) {
         const k = o.source + ':' + o.ref, prev = seen.get(k);

@@ -78,6 +78,16 @@ function Known-Food($w, $set) {
   foreach ($x in @($w, ($w -replace '^(?:وال|بال|فال|كال|لل)', ''), ($w -replace '^ال', ''), ($w -replace '^[وبفل]', ''), (($w -replace '^[وبفل]', '') -replace '^ال', ''))) { if ($x.Length -ge 2 -and $set.Contains($x)) { return $true } }
   return $false
 }
+# Words added from «الإدارة ← إعدادات التشغيل» (Karim 11-19: no publish, no new copy here): asked every 10 minutes.
+$script:xFood = New-Object 'System.Collections.Generic.HashSet[string]'; $script:xOk = New-Object 'System.Collections.Generic.HashSet[string]'; $script:rulesAt = [datetime]::MinValue
+function Note-Rules {
+  if (((Get-Date) - $script:rulesAt).TotalMinutes -lt 10) { return }
+  $script:rulesAt = Get-Date
+  $r = Api '/api/apex-writer/note-rules' @{}
+  $f = New-Object 'System.Collections.Generic.HashSet[string]'; foreach ($w in @($r.foodWords)) { if ($w) { [void]$f.Add((Norm-Ar ([string]$w))) } }
+  $o = New-Object 'System.Collections.Generic.HashSet[string]'; foreach ($w in @($r.okWords)) { if ($w) { [void]$o.Add((Norm-Ar ([string]$w))) } }
+  $script:xFood = $f; $script:xOk = $o
+}
 # The first word of a request that is in no item name, or $null.
 function Needs-Person($job, $c) {
   $texts = @([string]$job.note) + @($job.items | ForEach-Object { [string]$_.note })
@@ -95,8 +105,8 @@ function Needs-Person($job, $c) {
       if (-not $set) { $set = Menu-Words $c }
       $want = ($cands -join ' ') -replace '(^|\s)(?:ال)?رز(?=\s|$)', '$1ارز'
       foreach ($w in ($want -split '[^ء-ي]+')) {
-        if ($w.Length -lt 3 -or $NoteStop -contains $w -or $NoteStop -contains ($w -replace '^ال', '')) { continue }
-        if (-not (Known-Food $w $FoodWords)) { continue }   # not a food word: never a reason to stop
+        if ($w.Length -lt 3 -or $NoteStop -contains $w -or $NoteStop -contains ($w -replace '^ال', '') -or (Known-Food $w $script:xOk)) { continue }
+        if (-not (Known-Food $w $FoodWords) -and -not (Known-Food $w $script:xFood)) { continue }   # not a food word: never a reason to stop
         if (-not (Known-Food $w $set)) { return $w }
       }
     }
@@ -1056,6 +1066,7 @@ for (;;) {
   try { Self-Test } catch { L "self-test: $($_.Exception.Message)" }
   try { Apply-Stock } catch { L "stock: $($_.Exception.Message)" }
   if ($AllowLive) { try { Push-Items } catch { L "items: $($_.Exception.Message)" } }
+  try { Note-Rules } catch { L "note rules: $($_.Exception.Message)" }
   try { Apply-Cancels } catch { L "cancel: $($_.Exception.Message)" }
   try { Apply-CancelNotes } catch { L "cancel note: $($_.Exception.Message)" }
   try { Guard-Marks } catch { L "marks: $($_.Exception.Message)" }

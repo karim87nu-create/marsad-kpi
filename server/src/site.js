@@ -1,3 +1,4 @@
+import { TUNE } from './tune.js';
 import { siteReference } from './order-identifiers.js';
 // الموقع (eldahan.com.eg): the server reads the WooCommerce orders and their notes with a read-only REST key, every
 // minute, and keeps per order only the times the reports need (received, sent to the branch, out with the driver,
@@ -410,9 +411,9 @@ function setup(app) {
         (a ? '\nالمطابقة مع Apex مؤكدة' : '\nالمطابقة مع Apex غير مؤكدة') + (a ? det.extra(a.no) : ''); };
     const where = app.transferWhere ? await app.transferWhere('site', rows.filter(o => o.received_at && !o.transfer_at).map(o => o.id)) : () => '';
     for (const o of rows) {
-      if (o.received_at && !o.transfer_at && now - o.received_at > TRANSFER_MIN * 60000)
+      if (o.received_at && !o.transfer_at && now - o.received_at > TUNE.siteTransferMin * 60000)
         list.push({ key: 'site:transfer:' + o.id, kind: 'siteTransfer', target: 'online', text: '🌐 الموقع | ⏳ أوردر وصل على الموقع ولسه ماتحوّلش لأي فرع\nرقم أوردر الموقع: #' + o.id + '\nوصل الساعة ' + clock(o.received_at) + '، وبقاله ' + Math.round((now - o.received_at) / 60000) + ' دقيقة' + more(o) + where(o.id) });
-      if (o.fulfillment === 'delivery' && o.transfer_at && !o.out_at && now - o.transfer_at > PREP_MIN * 60000)
+      if (o.fulfillment === 'delivery' && o.transfer_at && !o.out_at && now - o.transfer_at > TUNE.sitePrepMin * 60000)
         list.push({ key: 'site:prep:' + o.id, kind: 'sitePrep', target: 'branches', branch: o.branch || null, text: '🌐 الموقع | 🟠 أوردر عدّى 30 دقيقة من التحويل ولسه ماخرجش للتوصيل\nالفرع: ' + (o.branch || 'غير معروف') + '\nرقم أوردر الموقع: #' + o.id + '\nاتحوّل للفرع الساعة ' + clock(o.transfer_at) + '، وبقاله ' + Math.round((now - o.transfer_at) / 60000) + ' دقيقة' + more(o) });
     }
     // Each warning is answered when the order moves on: transferred, out for delivery, delivered, or cancelled.
@@ -542,7 +543,7 @@ function setup(app) {
     return { day, apex: { linked: m.hasList, count: m.apexCount, unmatched: m.unmatched || [] }, linked: !!await creds() || (Number(await setting('site_panel_at')) || 0) > ctx.now - 6 * 3600000, lastSync: iso(Number(await setting('site_panel_at')) || Number(await setting('site_sync_at')) || null), error: await setting('site_error'), live: day === businessDay(ctx.now),
       orders: rows.map(o => ({ id: o.id, status: o.status, fulfillment: o.fulfillment, excluded: EXCLUDED.has(o.status), scheduled: !!o.scheduled, branch: o.branch, driver: o.driver,
         total: o.total, transfers: o.transfers || 0, apex: m.matches.get(o.id) || null, matching: m.states?.get(o.id) || null, createdAt: iso(o.created_at), receivedAt: iso(o.received_at), transferAt: iso(o.transfer_at), outAt: iso(o.out_at), deliveredAt: iso(o.delivered_at), notesRead: !!o.notes_at })),
-      rules: { prep: PREP_MIN, delivery: DELIVERY_MIN, transfer: TRANSFER_MIN }, serverNow: iso(ctx.now) };
+      rules: { prep: TUNE.sitePrepMin, delivery: DELIVERY_MIN, transfer: TUNE.siteTransferMin }, serverNow: iso(ctx.now) };
   });
   app.siteSync = sync;
   // The transfer page's manual refresh asks for a fresh site snapshot without admin credentials.

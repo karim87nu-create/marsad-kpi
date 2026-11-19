@@ -7,6 +7,7 @@
 // The employee claims an order (so two people do not enter it twice) and marks it entered; the order then
 // turns «في Apex» only when the monitor actually sees it on Apex. Automatic transfer to Apex stays off until
 // the bridge is proven (numbering under live work and the branch delivery); this page never writes to Apex.
+import { TUNE } from './tune.js';
 import { areaRule, itemRule } from './transfer-rules.js';
 import { businessDay, dayWindow, iso, validDate, addDays } from './time.js';
 import { takeTransferBuildLease, waitForTransferBuild } from './transfer-build-lease.js';
@@ -207,7 +208,7 @@ function setup(app) {
   let lastStuck = 0;
   app.afterRequest(async now => {
     if (now - lastStuck < 60000) return; lastStuck = now;
-    const rows = await db.prepare("SELECT source, ref, at, payload FROM transfer_jobs WHERE state IN ('auto_pending', 'auto_sending', 'auto_retry_pending') AND at < ? AND at > ?").all(now - 3 * 60000, now - 6 * 3600000);
+    const rows = await db.prepare("SELECT source, ref, at, payload FROM transfer_jobs WHERE state IN ('auto_pending', 'auto_sending', 'auto_retry_pending') AND at < ? AND at > ?").all(now - TUNE.transferStuckMin * 60000, now - 6 * 3600000);
     for (const j of rows) {
       const p = parseJson(j.payload, {}); if (p.db !== 'live') continue;
       await transferAlert('transfer:stuck:' + j.source + ':' + j.ref, p, j.source, j.ref, 'مستني من ' + Math.round((now - j.at) / 60000) + ' دقيقة وكاتب Apex على جهاز الكاشير مارد', now);

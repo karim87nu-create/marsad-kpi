@@ -613,6 +613,7 @@
     $('systemCards').append(kpi('إضافات قديمة', old.length ? old.length + ' جهاز' : 'كله محدث', old.length ? 'warn' : 'good', old.length ? [...new Set(old.map(x => x.name + ' ' + x.version))].join(' · ') + ' — الأحدث ' + newest : 'الأحدث ' + (newest || '—')));
     renderWatch('sysWatch').catch(() => {});
     renderOpsSettings().catch(e => say('hoursNote', e.message));
+    renderTune().catch(e => { const b = $('tuneBox'); if (b) b.textContent = e.message; });
     auditRows = d.audit;
     table('auditTable', auditColumns, d.audit, { limit: 300 });
   }
@@ -807,6 +808,33 @@
       ...d.rules.items.map(r => ({ kind: 'item', type: 'صنف', key: r.name, src: '—', no: r.no, extra: '' }))];
     table('rulesTable', [{ title: 'النوع', get: r => r.type }, { title: 'الكلام', get: r => r.key }, { title: 'المصدر', get: r => r.src }, { title: 'رقم Apex', get: r => String(r.no) }, { title: 'يتضاف للعنوان', get: r => r.extra },
       { title: '', get: () => '', show: r => btn('امسح', async () => { if (!confirm('امسح القاعدة «' + r.key + '»؟')) return; try { await api('/api/ops-settings/rules', { method: 'PUT', body: { kind: r.kind, words: r.key, name: r.key, source: r.source || '', remove: true } }); renderOpsSettings(); } catch (e) { say('ruleNote', e.message); } }) }], rows, { empty: 'مفيش قواعد زيادة — النظام ماشي بالقواعد الأساسية واللي اتعلمه' });
+  }
+  // إعدادات التشغيل (Karim 11-19): every number the code used to fix, and the cashier PC's word lists.
+  async function renderTune() {
+    const panel = $('tunePanel'), box = $('tuneBox'); if (!panel || !box) return;
+    panel.hidden = !isAdmin(); if (!isAdmin()) return;
+    const d = (await api('/api/ops-settings')).tune; if (!d) return;
+    const put = async body => { try { await api('/api/ops-settings/tune', { method: 'PUT', body }); await renderTune(); } catch (x) { alert(x.message); } };
+    const parts = [], hh = (t, p, kids) => h(t, p, ...kids);
+    for (const g of [...new Set(d.defs.map(x => x.group))]) {
+      parts.push(h('h4', { textContent: g }));
+      for (const x of d.defs.filter(y => y.group === g)) {
+        const input = h('input', { type: 'number', min: x.min, max: x.max, value: d.values[x.key], style: 'width:6em' });
+        const changed = d.values[x.key] !== x.def;
+        parts.push(hh('div', { className: 'row', style: 'align-items:center;gap:8px;margin:6px 0' }, [
+          hh('label', { style: 'flex:1;min-width:16em' }, [h('b', { textContent: x.label }), h('br'), h('span', { className: 'muted', textContent: x.help + ' (من ' + x.min + ' لـ ' + x.max + ')' })]),
+          input, btn('حفظ', () => put({ key: x.key, value: Number(input.value) })),
+          changed ? btn('رجّع الأصلي (' + x.def + ')', () => put({ key: x.key, reset: true }), 'ghost small') : h('span', { className: 'muted', textContent: 'الأصلي' })]));
+      }
+    }
+    parts.push(h('h4', { textContent: 'كلام الملاحظات (جهاز الكاشير بياخده كل 10 دقايق)' }));
+    for (const l of d.lists) {
+      const input = h('input', { placeholder: 'كلمة واحدة', style: 'width:12em' });
+      parts.push(hh('div', { style: 'margin:8px 0' }, [h('b', { textContent: l.label }), h('br'), h('span', { className: 'muted', textContent: l.help }),
+        hh('div', { className: 'row', style: 'gap:6px;margin-top:4px' }, [input, btn('إضافة', () => input.value.trim() && put({ list: l.key, word: input.value.trim() }))]),
+        hh('div', { className: 'row', style: 'gap:6px;flex-wrap:wrap;margin-top:4px' }, (d.words[l.key] || []).length ? d.words[l.key].map(w => btn(w + ' ✕', () => confirm('امسح «' + w + '»؟') && put({ list: l.key, word: w, remove: true }), 'ghost small')) : [h('span', { className: 'muted', textContent: 'مفيش' })])]));
+    }
+    box.replaceChildren(...parts);
   }
   $('hoursForm') && ($('hoursForm').onsubmit = async e => {
     e.preventDefault(); const f = e.target;

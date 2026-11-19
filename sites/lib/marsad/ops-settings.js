@@ -3,6 +3,7 @@
 import { RULES } from './time.js';
 import { setExtraRules, norm } from './transfer-rules.js';
 import { parseJson } from './order-match.js';
+import { TUNE_DEFS, TUNE_LISTS, applyTune, tuneWord } from './tune.js';
 
 const DEFAULT = { openHour: RULES.openHour, closeHour: RULES.operatingEndHour };
 const EVERY_MS = 60000;
@@ -25,12 +26,42 @@ function setup(app) {
     readAt = now;
     applyHours(validHours(parseJson(await setting('operating_hours'), null)) || DEFAULT);
     setExtraRules(parseJson(await setting('transfer_rules_extra'), null));
+    applyTune(parseJson(await setting('tune'), null));
   }
   app.beforeRequest(async now => { if (now - readAt >= EVERY_MS) await load(now).catch(() => {}); });
 
   app.route('GET', '/api/ops-settings', async ctx => {
     await app.requireAdmin(ctx);
-    return { hours: { openHour: RULES.openHour, closeHour: RULES.operatingEndHour }, defaults: DEFAULT, rules: setExtraRules(parseJson(await setting('transfer_rules_extra'), null)) };
+    const t = applyTune(parseJson(await setting('tune'), null));
+    return { hours: { openHour: RULES.openHour, closeHour: RULES.operatingEndHour }, defaults: DEFAULT, rules: setExtraRules(parseJson(await setting('transfer_rules_extra'), null)),
+      tune: { defs: TUNE_DEFS, lists: TUNE_LISTS, values: t.values, words: t.words } };
+  });
+  // One number or one word at a time: { key, value } | { key, reset: true } | { list, word, remove? }.
+  app.route('PUT', '/api/ops-settings/tune', async ctx => {
+    const who = await app.requireAdmin(ctx, 'admin');
+    const b = ctx.body || {}, cur = applyTune(parseJson(await setting('tune'), null));
+    let what;
+    if (b.list) {
+      if (!TUNE_LISTS.some(l => l.key === b.list)) fail(400, 'قايمة مش معروفة');
+      const w = tuneWord(b.word); if (w.length < 2) fail(400, 'اكتب الكلمة');
+      cur.words[b.list] = cur.words[b.list].filter(x => x !== w);
+      if (!b.remove) { cur.words[b.list].unshift(w); if (cur.words[b.list].length > 500) fail(400, 'القايمة كبيرة؛ امسح القديم الأول'); }
+      what = { list: b.list, word: w, remove: !!b.remove };
+    } else {
+      const d = TUNE_DEFS.find(x => x.key === b.key); if (!d) fail(400, 'إعداد مش معروف');
+      const v = b.reset ? d.def : Number(b.value);
+      if (!Number.isInteger(v) || v < d.min || v > d.max) fail(400, 'الرقم لازم يكون من ' + d.min + ' لـ ' + d.max);
+      cur.values[d.key] = v; what = { key: d.key, value: v };
+    }
+    const saved = applyTune(cur);
+    await put('tune', saved);
+    await app.audit?.('tune', null, { actor: who.name, ...what });
+    return { ok: true, values: saved.values, words: saved.words };
+  });
+  // The cashier PC asks for the word lists (every 10 minutes).
+  app.route('POST', '/api/apex-writer/note-rules', async ctx => {
+    await app.apexWriterAuth(ctx);
+    return applyTune(parseJson(await setting('tune'), null)).words;
   });
   app.route('PUT', '/api/ops-settings/hours', async ctx => {
     const who = await app.requireAdmin(ctx, 'admin');
