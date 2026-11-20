@@ -717,11 +717,15 @@ function setup(app) {
       for (const o of sRows) {
         if (isCancelled(o.status)) continue;
         const p = sProfiles.get(String(o.id)) || {}, pay = p.payment || null, a = sm.matches.get(o.id);
+        // Karim 11-20 «المختلط»: part paid online + the rest cash is written as a cash order for what the driver collects (the
+        // panel's «المطلوب تحصيله»), the online part a restaurant discount «مدفوع أونلاين» — unless a discount line already says so.
+        const mixed = pay?.method === 'mixed' && Number(pay.onlinePaid) > 0.01 && Number(pay.due) > 0.01;
         const discounts = pay ? [...(pay.coupons || []).map(c => ({ text: 'كوبون ' + c.code, amount: c.amount, who: 'restaurant' })),
-          ...(!pay.coupons?.length && pay.discount ? [{ text: 'خصم الموقع', amount: pay.discount, who: 'restaurant' }] : [])] : [];
+          ...(!pay.coupons?.length && pay.discount ? [{ text: 'خصم الموقع', amount: pay.discount, who: 'restaurant' }] : []),
+          ...(mixed && !(pay.discountLines || []).some(l => /أون\s*لاين|اونلاين|online|محفظ|wallet|مدفوع/i.test(String(l.text || ''))) ? [{ text: 'مدفوع أونلاين', amount: Math.round(Number(pay.onlinePaid) * 100) / 100, who: 'restaurant' }] : [])] : [];
         list.push({ source: 'site', ref: String(o.id), code: String(p.panel?.number || o.id).replace(/\D/g, '') || String(o.id), at: iso(o.scheduled_at || o.created_at), status: o.status, out: !!o.out_at || !!o.delivered_at || o.status === 'completed', sentToBranch: !!o.transfer_at, branch: o.branch || null, apexBranch: apexBranchOf(o.branch), scheduled: !!o.scheduled && (!o.scheduled_at || Number(o.scheduled_at) > now),
           customer: { name: p.customer?.name || null, phone: phoneOut(p.customer?.phoneDisplay || p.customer?.phone || p.customer?.mobileDisplay || p.customer?.mobile), address: p.customer?.address || null, ...(p.customer?.area ? { siteArea: p.customer.area } : {}) },
-          target: o.total ?? null, payment: sitePayment(pay, o.total), paymentMethod: pay?.method || null, paymentTitle: pay?.title || null, note: pay?.note || null, scheduledAt: iso(o.scheduled_at), discounts, fees: pay?.fees || [], shipping: pay?.shipping ?? null, total: o.total ?? null,
+          target: mixed ? Number(pay.due) : o.total ?? null, payment: mixed ? 'cash' : sitePayment(pay, o.total), paymentMethod: pay?.method || null, paymentTitle: pay?.title || null, note: pay?.note || null, scheduledAt: iso(o.scheduled_at), discounts, fees: pay?.fees || [], shipping: pay?.shipping ?? null, total: o.total ?? null,
           fulfillment: o.fulfillment || null, ...(o.fulfillment === 'pickup' && PICKUP_AREAS[apexBranchOf(o.branch)] ? { areaGuess: { ...PICKUP_AREAS[apexBranchOf(o.branch)], how: 'pickup' } } : {}), items: siteLines(p.items || []).map(x => itemOut(x, 'site')), detailRead: !!p.items?.length,
           apex: a ? { no: a.no, sn: a.sn ?? null, user: a.user || null, how: a.how || null } : null, matching: sm.states?.get(o.id) || null, job: null });
       }
