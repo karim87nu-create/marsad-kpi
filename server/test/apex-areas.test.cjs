@@ -34,7 +34,7 @@ test('auto-transfer takes the branch\'s copy of a duplicated area', async () => 
   const { areaGroups } = await import('../src/apex-areas.js');
   const { decide } = await import('../src/autotransfer.js');
   const now = Date.parse('2026-11-14T12:00:00Z');
-  const o = { source: 'site', ref: '1', at: new Date(now - 120000).toISOString(), apexBranch: 3, payment: 'cash', customer: { siteArea: 'مدينتي' },
+  const o = { source: 'site', ref: '1', at: new Date(now - 120000).toISOString(), apexBranch: 3, payment: 'cash', customer: { siteArea: 'مدينتي', address: 'B12 عمارة 59' },
     areaGuess: { no: 361, seen: 0, how: 'name' }, items: [{ name: 'ورق عنب', qty: 1, price: 100, apex: [{ no: '0103002' }], pick: '0103002' }],
     apexCustomerNote: { status: 'none', checkedAt: new Date(now - 1000).toISOString() } };
   const d = decide(o, { now, locations: LOCS, groups: areaGroups(LOCS) });

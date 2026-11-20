@@ -24,6 +24,9 @@ test('auto transfer: decides only on certain orders and says why not', () => {
   assert.equal(ok.body.locationNo, 218); assert.equal(ok.body.branchNo, 1); assert.equal(ok.body.payment, 'cash');
   assert.equal(ok.body.customer.nameEn, undefined, 'the machine Arabic is not learned as a staff translation');
   const why = o => decide(base(o), X).why.join(' · ');
+  // 11-20 (receipt #31675): a delivery whose address is only the area is not written; with a street it is.
+  assert.match(why({ customer: { ...base().customer, address: 'التجمع الخامس', talabatArea: 'التجمع الخامس' } }), /العنوان فيه المنطقة بس/);
+  assert.doesNotMatch(why(), /العنوان فيه المنطقة بس/);
   assert.equal(decide(base({ apex: { no: 5 } }), X), null, 'already on Apex');
   assert.equal(decide(base({ job: { state: 'claimed' } }), X), null, 'with somebody');
   assert.match(why({ at: new Date(NOW - 10000).toISOString() }), /لسه واصل/);
