@@ -8,6 +8,7 @@ const SITE_ITEMS = {
   'عرض صينية العزومة وفر 260 جنيه': ['0115019'],
   'عرض ميكس جريل وفر 96 جنيه': ['0115014'],
   'عروض حواوشي الدهان': ['0117068'],
+  'عرض كفتة مشوية وفر 91 جنيه': ['0117069'],
   'عروض الدهان ربع كفته و ارز بسمتي': ['0115016'],
   'عروض الدهان كفتة وملوخية': ['0117065'],
   'عروض الدهان وجبة شيش طاووق': ['0117066'],
@@ -160,7 +161,7 @@ export function siteApexItems(name, { size = null, text = '', apexName = null } 
   const e = INDEX.get(siteKey(name));
   if (!e) return null;
   let nos = e.nos.slice();
-  if (size && nos.length > 1 && apexName) { const s = nos.filter(no => size[1].test(apexName.get(no) || '')); if (s.length) nos = s; }
+  if (size && nos.length > 1 && apexName) { const s = nos.filter(no => size[1].test(apexName.get(no) || '')); if (s.length || e.weighed) nos = s; }
   if (nos.length > 1 && e.by.length) {
     const t = String(text || '').replace(/[أإآ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه');
     const hit = e.by.find(([re]) => re.test(t));

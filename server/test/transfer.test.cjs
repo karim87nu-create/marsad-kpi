@@ -436,11 +436,14 @@ test('a weight under the dish is its size, never a paid add-on («1 كيلو» 1
       detail: { customer: { name: 'K', phone: '01000000009' }, items: [
         item('Veal Ribs', [{ qty: 1, name: '1 كيلو', price: 1509 }, { qty: 1, name: 'نص سوى', price: 0 }]),
         item('Veal Ribs', [{ qty: 1, name: '‏١ کیلو', price: 1509 }]),
+        item('Veal Ribs', [{ qty: 1, name: 'Third Kilo', price: 580 }]),
         item('Kofta', [{ qty: 1, name: 'Quarter Kilo', price: 214 }, { qty: 2, name: 'Basmati Rice', price: 71 }])], bill: [] } }] } });
     const o = (await t.call('GET', '/api/transfer/queue?day=2026-10-22', { headers: { 'x-transfer-session': sara } })).body.orders.find(x => x.ref === '3977600009');
     assert.equal(o.items[0].size, 'كيلو'); assert.equal(o.items[0].sizeOption, '1 كيلو'); assert.deepEqual(o.items[0].addons, []);
     assert.equal(o.items[1].size, 'كيلو', 'Persian letters, Arabic digit, direction mark'); assert.deepEqual(o.items[1].addons, []);
-    assert.equal(o.items[2].size, 'ربع كيلو'); assert.deepEqual(o.items[2].addons.map(a => a.name), ['Basmati Rice'], 'a real add-on stays one');
+    assert.deepEqual(o.items[2].apex.map(a => a.no), ['0108031'], 'a third kilo of veal ribs must not become lamb');
+    assert.equal(o.items[3].size, 'ربع كيلو'); assert.deepEqual(o.items[3].apex.map(a => a.no), ['0108004']);
+    assert.deepEqual(o.items[3].addons.map(a => a.name), ['Basmati Rice'], 'a real add-on stays one');
   } finally { await t.close(); }
 });
 

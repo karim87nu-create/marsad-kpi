@@ -103,7 +103,7 @@ export const MENU_SEED = {
 "0104018"
 ],
 "grilled chicken breast sandwich": [
-"0104017"
+"0104016"
 ],
 "grilled chicken breast sandwich combo": [
 "0104018"
@@ -130,7 +130,7 @@ export const MENU_SEED = {
 "0108001",
 "0108002",
 "0108003",
-"0109001"
+"0108004"
 ],
 "grilled liver": [
 "0108048",
@@ -232,7 +232,7 @@ export const MENU_SEED = {
 "0110003"
 ],
 "kofta meal": [
-"0116001"
+"0109004"
 ],
 "kofta meal offer": [
 "0116001"
@@ -274,7 +274,7 @@ export const MENU_SEED = {
 "0109020"
 ],
 "large mixed grill platter offer": [
-"0109020"
+"0116010"
 ],
 "lentil soup": [
 "0102006"
@@ -496,13 +496,13 @@ export const MENU_SEED = {
 "0113005"
 ],
 "shish tawook meal": [
-"0107019"
+"0109009"
 ],
 "shish tawook meal offer": [
-"0107019"
+"0116004"
 ],
 "shish tawook sandwich": [
-"263"
+"0104007"
 ],
 "shish tawook sandwich combo": [
 "0104009"
@@ -544,10 +544,10 @@ export const MENU_SEED = {
 "0108008"
 ],
 "tarb sandwich": [
-"0104015"
+"0104022"
 ],
 "tarb sandwich combo": [
-"0104003"
+"0104024"
 ],
 "the gathering plate": [
 "0111004"
@@ -585,7 +585,7 @@ export const MENU_SEED = {
 "veal ribs": [
 "0108029",
 "0108030",
-"0108027",
+"0108031",
 "0108032"
 ],
 "veal ribs - ready to cook": [

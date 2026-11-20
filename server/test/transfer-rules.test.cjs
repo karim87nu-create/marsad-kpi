@@ -47,6 +47,36 @@ test('transfer rules: confirmed areas and dishes', async () => {
   assert.equal(itemRule({ name: 'بيتزا سلامي' }), null);
 });
 
+test('audited catalog dishes retain their Apex codes by source, offer, and weight', async () => {
+  const { itemRule } = await import('../src/transfer-rules.js');
+  const { knownNos } = await import('../src/items.js');
+  const { siteApexItems } = await import('../src/site-items.js');
+  const { APEX_NAMES } = await import('../src/menu-seed.js');
+  for (const [name, no, size] of [
+    ['عرض ربع كفتة مشوية', '218'], ['عرض الحواوشى', '111'],
+    ['Kofta Meal', '0109004'], ['Grilled Kofta', '0108004', 'ربع كيلو'],
+    ['Veal Ribs', '0108031', 'تلت كيلو'], ['Shish Tawook Meal', '0109009'],
+    ['Shish Tawook Meal Offer', '0116004'], ['Large Mixed Grill Platter Offer', '0116010'],
+    ['Large Mixed Grill Platter', '0109020'], ['Tarb Sandwich Combo', '0104024'],
+    ['ساندويتش طرب ملفوف', '0104023'],
+  ]) assert.equal(itemRule({ name, size }, 'talabat'), no, name);
+  assert.deepEqual(knownNos('Kofta Sandwich Combo'), ['0104003']);
+  assert.deepEqual(knownNos('Kofta Sandwich'), ['0104001']);
+  assert.deepEqual(knownNos('Kofta Meal'), ['0109004']);
+  assert.deepEqual(knownNos('Veal Ribs'), ['0108029', '0108030', '0108031', '0108032']);
+  for (const [name, no] of [
+    ['عرض كفتة مشوية وفر 91 جنيه', '0117069'], ['عروض الدهان ربع كفته و ارز بسمتي', '0115016'],
+    ['عروض الدهان كفتة وملوخية', '0117065'],
+  ]) {
+    assert.equal(siteApexItems(name).pick, no);
+    assert.equal(itemRule({ name }, 'site'), null);
+  }
+  const apexName = new Map(Object.entries(APEX_NAMES));
+  assert.equal(siteApexItems('ريش بتلو - ربع كيلو', { size: [null, /1\/3/], apexName }).pick, '0108031');
+  apexName.delete('0108031');
+  assert.deepEqual(siteApexItems('ريش بتلو - ربع كيلو', { size: [null, /1\/3/], apexName }).nos, []);
+});
+
 test('auto transfer: a confirmed area goes, and «المستقبل» is written in the address', async () => {
   const { decide } = await import('../src/autotransfer.js');
   const now = Date.parse('2026-11-16T19:30:00+02:00');

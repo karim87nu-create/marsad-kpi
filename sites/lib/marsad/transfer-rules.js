@@ -52,7 +52,7 @@ export function areaRule(words, source) {
 }
 
 // Dishes: the order's name (Talabat's or the website's) → the Apex item; a sandwich by its bread («ملفوف» or not).
-const wrapped = item => { const t = norm([item.sizeOption, ...(item.freeOptions || []), ...(item.modifiers || [])].filter(Boolean).join(' ')); return /ملفوف|رول|roll|wrap/.test(t) && !/بلدي|baladi/.test(t); };
+const wrapped = item => { const t = norm([item.name, item.nameShown, item.sizeOption, ...(item.freeOptions || []), ...(item.modifiers || [])].filter(Boolean).join(' ')); return /ملفوف|رول|roll|wrap/.test(t) && !/بلدي|baladi/.test(t); };
 const ITEMS = [
   [/^بطاطس محمره$/, '0103005'], [/^محشي مشكل$/, '0103004'], [/^ثوميه$/, '0101006'],
   [/^بيبسي( علب)?$/, '0202001'], [/^سفن ?اب( علب)?$/, '0202002'], [/^ميرندا( برتقال)?( علب)?$/, '0202003'],
@@ -62,16 +62,27 @@ const ITEMS = [
   [/^طبق كباب وكفته ضاني$/, '0109011'],
 ];
 // Talabat sells the meal, the quarter-kilo offer, and the molokhia offer as distinct products.
+const byWeight = (i, codes) => codes[['كيلو', 'نص كيلو', 'تلت كيلو', 'ربع كيلو'].indexOf(i.size)] || null;
 const TALABAT_ITEMS = [
+  [/^(?:veal ribs|ريش بتلو)$/, i => byWeight(i, ['0108029', '0108030', '0108031', '0108032'])],
+  [/^(?:kofta|grilled kofta|كفته(?: مشويه)?)$/, i => byWeight(i, ['0108001', '0108002', '0108003', '0108004'])],
+  [/^(?:kofta meal|وجب[هة] كفته)$/, '0109004'],
+  [/^(?:shish tawook meal|وجبه شيش طاوو?[قك])$/, '0109009'],
+  [/^(?:shish tawook meal offer|عرض وجبه شيش(?: طاوو?[قك])?(?: طلبات)?)$/, '0116004'],
+  [/^(?:large mixed grill platter offer|عرض طبق ميكس جريل كبير)$/, '0116010'],
+  [/^(?:large mixed grill platter|طبق ميكس جريل كبير)$/, '0109020'],
+  [/^(?:tarb sandwich combo|ساندو[يت]+ش طرب كومبو)$/, '0104024'],
+  [/^(?:tarb sandwich|ساندو[يت]+ش طرب(?: ملفوف)?)$/, i => wrapped(i) ? '0104023' : '0104022'],
+  [/^(?:hawawshi offer|عرض الحواوشي)$/, '111'],
   [/^(?:عرض وجبه كفته(?: طلبات)?|kofta meal offer)$/, '0116001'],
-  [/^(?:عرض ربع(?: كيلو)? كفته(?: طلبات)?|1\/4 grilled kofta offer)$/, '218'],
+  [/^(?:عرض ربع(?: كيلو)? كفته(?: مشويه| طلبات)?|1\/4 grilled kofta offer)$/, '218'],
   [/^(?:عرض (?:وجبه|(?:تلت|ثلث)(?: كيلو)?) كفته و\s*ملوخيه(?: طلبات)?|kofta and molokhia meal offer)$/, '315'],
 ];
 
 export function itemRule(item, source) {
   const t = norm(item?.name); if (!t) return null;
   for (const r of extra.items) if (t === r.name) return r.no;
-  if (source === 'talabat') for (const [re, no] of TALABAT_ITEMS) if (re.test(t)) return no;
+  if (source === 'talabat') for (const [re, no] of TALABAT_ITEMS) if (re.test(t)) return typeof no === 'function' ? no(item) : no;
   for (const [re, no] of ITEMS) if (re.test(t)) return typeof no === 'function' ? no(item) : no;
   return null;
 }

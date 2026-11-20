@@ -62,7 +62,7 @@ function compareItems(talabat, apex, { learned = new Map(), ratio = 1.13 } = {})
   // An empty line (null) in either list is skipped, never a crash of the whole day.
   const T = (talabat || []).filter(x => x && typeof x === 'object').map((x, i) => ({ ...x, i, unit: x.price && x.qty ? x.price / x.qty : null })), A = (apex || []).filter(x => x && typeof x === 'object').map((x, i) => ({ ...x, i }));
   const usedA = new Set(), pairs = [];
-  const known = t => [...(learned.get(key(t.name))?.keys() || []), ...(SEED[key(t.name)] || []), ...(SEED_VARIANTS.get(variantKey(t.name)) || [])];
+  const known = t => knownNos(t.name, learned);
   // Names and quantities identify dishes; menu prices drift a little, so only a price far off
   // the usual Talabat/Apex ratio (wrong weight or size, e.g. 1/4 vs 1/2 kilo) blocks a match.
   const priceFar = (t, a) => !!(t.unit && a.price) && Math.abs(t.unit / a.price - ratio) / ratio > 0.25;
@@ -117,6 +117,6 @@ function compareItems(talabat, apex, { learned = new Map(), ratio = 1.13 } = {})
 }
 
 // The Apex item numbers a Talabat dish name is known to be (learned from sure links, or the starting list).
-const knownNos = (name, learned = new Map()) => [...new Set([...(learned.get(key(name))?.keys() || []), ...(SEED[key(name)] || []), ...(SEED_VARIANTS.get(variantKey(name)) || [])].map(x => String(x).trim()))];
+const knownNos = (name, learned = new Map()) => [...new Set([...(learned.get(key(name))?.keys() || []), ...(SEED[key(name)] || SEED_VARIANTS.get(variantKey(name)) || [])].map(x => String(x).trim()))];
 export { compareItems, wordScore, knownNos, SEED, WORDS, key as itemKey };
 
