@@ -51,6 +51,10 @@ function scheduledOrderAt(order, anchor = Date.now()) {
   for (const meta of order?.meta_data || []) if (/(?:schedule|appointment|delivery.*(?:date|time)|(?:date|time).*delivery|موعد|تاريخ.*توصيل)/i.test(String(meta?.key || ''))) {
     const at = scheduledAtFrom(meta?.value, anchor); if (at) return at;
   }
+  // Karim 11-20 (receipt #31688 «T15 الموعد المطلوب: 2026-11-20…»): the central panel sends the appointment only inside the customer's
+  // note, as «الموعد المطلوب: 2026-11-20T15:00» (Cairo time).
+  const m = String(order?.customer?.note || '').replace(/[٠-٩]/g, c => String(c.charCodeAt(0) - 0x660)).match(/الموعد\s+المطلوب\s*[:：]?\s*(\d{4})-(\d{2})-(\d{2})[T\s]+(\d{1,2}):(\d{2})/);
+  if (m) { const at = cairoToUtc(+m[1], +m[2], +m[3], +m[4], +m[5]); if (Number.isFinite(at) && at > 0) return at; }
   return null;
 }
 function isScheduledOrder(order) {

@@ -21,11 +21,18 @@ function setup(app) {
       c.rows.push(...rows);
     }
   };
+  // Karim 11-20 (slow reports, measured: «SELECT * FROM learned WHERE kind = ? AND NOT EXISTS…» 9 times in one request, 127,000
+  // rows): a copy of the server read the learned rows once per kind. Now the first read takes every kind at once and each kind is
+  // taken from it (rows that come from the evidence of an order are marked, so a kind that never read evidence does not get them).
   async function currentRows(kind) {
-    const k = kind || '*', c = cache.get(k);
-    if (c && app.now() - c.at < TTL) return c.rows.slice();
-    const rows = await readRows(kind);
-    cache.set(k, { at: app.now(), rows });
+    const k = kind || '*', c = cache.get(k), now = app.now();
+    if (c && now - c.at < TTL) return c.rows.slice();
+    let all = cache.get('*');
+    if (!all || now - all.at >= TTL) { all = { at: now, rows: await readRows(undefined) }; cache.set('*', all); }
+    if (!kind) return all.rows.slice();
+    const scoped = kind.startsWith('match-v2:');
+    const rows = all.rows.filter(r => r.kind === kind && (scoped || !r._ev));
+    cache.set(k, { at: all.at, rows });
     return rows.slice();
   }
   async function readRows(kind) {
@@ -34,7 +41,7 @@ function setup(app) {
     // history for every kind, including transfer kinds with no active evidence.
     const legacy = await db.prepare("SELECT * FROM learned WHERE " + (kind ? "kind = ? AND " : "") + "NOT EXISTS (SELECT 1 FROM learning_evidence e WHERE e.ref = learned.ref AND learned.kind LIKE 'match-v2:%:' || e.source)").all(...(kind ? [kind] : []));
     const active = kind && !scope ? [] : await db.prepare('SELECT * FROM learning_evidence' + (scope ? ' WHERE source = ?' : '')).all(...(scope ? [scope] : []));
-    for (const row of active) for (const f of JSON.parse(row.facts)) if (!kind || f.kind === kind) legacy.push({ ...f, ref: row.ref, at: row.at });
+    for (const row of active) for (const f of JSON.parse(row.facts)) if (!kind || f.kind === kind) legacy.push({ ...f, ref: row.ref, at: row.at, _ev: true });
     return legacy;
   }
   const learn = app.learn = {
@@ -75,6 +82,9 @@ function setup(app) {
     async unknown(source, what, sample, now = app.now()) {
       await db.prepare('INSERT INTO learned (kind, a, b, ref, value, at) VALUES (?,?,?,?,NULL,?) ON CONFLICT(kind, a, b, ref) DO NOTHING')
         .run('unknown', String(source).slice(0, 40), String(what).slice(0, 160), String(sample || '-').slice(0, 60), now);
+      // Into the copies already read here (once per value): the first read now takes every kind at once.
+      const row = { kind: 'unknown', a: String(source).slice(0, 40), b: String(what).slice(0, 160), ref: String(sample || '-').slice(0, 60), value: null, at: now };
+      for (const [k, c] of cache) if ((k === '*' || k === 'unknown') && !c.rows.some(r => r.kind === 'unknown' && r.a === row.a && r.b === row.b && r.ref === row.ref)) c.rows.push(row);
     },
   };
 

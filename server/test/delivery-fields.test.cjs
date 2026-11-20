@@ -153,3 +153,24 @@ test('comment: dish choices short after the customer words (receipt of 703733)',
     'من غير بصل | صدور: سلطة طحينة/بابا غنوج/خيار مخلل | كفتة: سلطة طحينة | فرخة: سلطة طحينة');   // 11-19: rewording only from the admin page
   assert.equal(deliveryComment({ source: 'site', note: '', items: [{ name: 'كفتة', freeOptions: ['سلطة بلدي', 'عيش بلدي'] }] }), 'كفتة: سلطة بلدي/عيش بلدي', 'never two things to one word');
 });
+
+test('11-20 #31688: «الموعد المطلوب: ...T15:00» in the note is the appointment, never a note', async () => {
+  const { deliveryNotes } = await import('../src/delivery-fields.js');
+  assert.deepEqual(deliveryNotes('الموعد المطلوب: 2026-11-20T15:00 | من غير بصل'), { note: 'من غير بصل', appointment: 'حجز 20/11 3:00م' });
+  assert.deepEqual(deliveryNotes('الموعد المطلوب: ٢٠٢٦-١١-٢٠ ٠٩:٣٠'), { note: '', appointment: 'حجز 20/11 9:30ص' });
+});
+
+test('11-20 #31688: a panel order whose appointment is only in the note is a booked order at that time', async () => {
+  const t0 = cairoToUtc(2026, 11, 20, 13, 0, 0), s = m => Math.floor((t0 + m * 60000) / 1000);
+  const t = await start({ at: t0 + 5 * 60000 });
+  try {
+    const admin = await t.admin();
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const order = { id: 31688, number: '31688', status: 'app-preparing', statusLabel: 'جاري التنفيذ', stage: 1, fulfillment: 'delivery', createdAt: s(0), branchAssignedAt: s(1), branchId: 'tagamoa', branchName: 'التجمع',
+      lastActionAt: s(2), paymentMethod: 'كاش عند الاستلام', total: 500, driver: null, customer: { name: 'أماني', phone: '01224426526', address: 'التجمع الخامس', note: 'الموعد المطلوب: 2026-11-20T15:00' },
+      financial: { currency: 'EGP', due: 500, onlinePaid: 0, total: 500, rows: [] }, items: [{ name: 'طاجن ورق عنب', quantity: 1, total: '500.00 EGP', parent: '', addon: false, details: [] }] };
+    assert.equal((await t.call('POST', '/api/site/panel', { headers: { 'x-talabat-token': token }, body: { board: 'central', orders: [order] } })).status, 200);
+    const row = t.app.db.raw.prepare('SELECT scheduled, scheduled_at FROM site_orders WHERE id = 31688').get();
+    assert.equal(row.scheduled, 1); assert.equal(row.scheduled_at, cairoToUtc(2026, 11, 20, 15, 0, 0));
+  } finally { await t.close(); }
+});

@@ -28,6 +28,9 @@ export function deliveryNotes(value, scheduledAt = null) {
   }
   const note = String(value || '').split(/[|\n،]+/).filter(part=>{
     const text=western(part).trim();
+    // «الموعد المطلوب: 2026-11-20T15:00» (the central panel's own words): the appointment, not a note for the kitchen.
+    const iso=text.match(/^الموعد\s+المطلوب\s*[:：]?\s*(\d{4})-(\d{2})-(\d{2})[T\s]+(\d{1,2}):(\d{2})(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/);
+    if(iso){ if(!appointment){ const h=Number(iso[4]); appointment='حجز '+Number(iso[3])+'/'+Number(iso[2])+' '+(h%12||12)+':'+iso[5]+(h>=12?'م':'ص'); } return false; }
     // Only standalone appointment metadata. Never consume cooking/delivery instructions.
     const m=text.match(/^(?:(?:موعد|ميعاد)\s*(?:التوصيل|الاستلام|الحجز)?|حجز|scheduled\s*(?:delivery|pickup)?|delivery\s*time)\s*[:：-]?\s*(?:(\d{1,4}[\/.\-]\d{1,2}(?:[\/.\-]\d{1,4})?)\s*)?(?:الساعة\s*)?(\d{1,2})(?::(\d{2}))?\s*(ص|م|am|pm)\s*$/i);
     if(!m || Number(m[2])<1 || Number(m[2])>12 || Number(m[3]||0)>59)return true;
