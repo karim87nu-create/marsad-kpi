@@ -388,6 +388,10 @@ function d1Adapter(d1) {
       out.forEach((r, i) => note(list[i].sql, r.meta));
       return out.map(r => ({ rows: r.results, changes: r.meta?.changes ?? 0, lastInsertRowid: Number(r.meta?.last_row_id ?? 0) }));
     },
+    // Karim 11-20 (slow reports): this copy's counters now, and what changed since — so a slow request can name its heaviest statements.
+    snapshot: () => new Map([...stats].map(([k, x]) => [k, { n: x.n, rows: x.rows, ms: x.ms }])),
+    diffTop: (snap, n = 5) => [...stats.values()].map(x => { const b = snap?.get(x.sql); return { sql: x.sql, n: x.n - (b?.n || 0), rows: x.rows - (b?.rows || 0), ms: Math.round(x.ms - (b?.ms || 0)) }; })
+      .filter(x => x.n > 0).sort((a, b) => b.rows - a.rows || b.ms - a.ms).slice(0, n),
     heaviest: (n = 15) => [...stats.values()].sort((a, b) => b.rows - a.rows).slice(0, n).map(x => ({ ...x, ms: Math.round(x.ms) })),
   };
 }

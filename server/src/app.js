@@ -3,7 +3,7 @@ import { createSigner, createLimiter, hashPassword, randomToken } from './securi
 import { createLegacy } from './legacy.js';
 import { migrate, schemaReady } from './db.js';
 // Raised with each change worth checking after a publish (shown by /api/health).
-const BUILD = '2026-11-20.5';
+const BUILD = '2026-11-20.6';
 
 class HttpError extends Error {
   constructor(status, code, extra) {
@@ -109,7 +109,13 @@ function createApp({ db, config: input = {}, now = () => Date.now() }) {
     try { url = new URL(request.url); } catch { return send(400, { error: 'bad_url' }); }
     // build: which code is deployed (checked from outside after each publish; no secrets).
     if (url.pathname === '/health' || url.pathname === '/api/health') return send(200, { ok: true, build: BUILD });
-    if (url.pathname === '/api/health/errors') return send(200, { build: BUILD, since: startedAt, errors: recentErrors, heaviest: db.heaviest ? db.heaviest() : null, transferBuilds: app.transferBuildStats ? app.transferBuildStats() : null });
+    // Slow requests are kept in the database (a copy of the server lives minutes only, so its own counters are lost): the path,
+    // seconds and the heaviest statements — never query values, bodies or tokens.
+    if (url.pathname === '/api/health/errors') {
+      let slow = []; try { slow = JSON.parse((await db.prepare("SELECT value FROM settings WHERE key = 'slow_requests'").get())?.value || '[]'); } catch {}
+      return send(200, { build: BUILD, since: startedAt, errors: recentErrors, slow, heaviest: db.heaviest ? db.heaviest() : null, transferBuilds: app.transferBuildStats ? app.transferBuildStats() : null });
+    }
+    const t0 = Date.now(), snap = db.snapshot ? db.snapshot() : null;
     const route = routes.get(request.method + ' ' + url.pathname);
     if (!route) return send(404, { error: 'not_found' });
     let response;
@@ -147,6 +153,16 @@ function createApp({ db, config: input = {}, now = () => Date.now() }) {
         recentErrors.length = Math.min(recentErrors.length, 30);
         response = send(500, { error: 'server_error' });
       }
+    }
+    const took = Date.now() - t0;
+    if (took >= 1500 && url.pathname.startsWith('/api/') && !config.shadow) {
+      const entry = { at: new Date(now()).toISOString(), path: request.method + ' ' + url.pathname, status: response.status, seconds: Math.round(took / 100) / 10, top: db.diffTop ? db.diffTop(snap, 4) : [] };
+      waitUntil((async () => {
+        try {
+          const cur = JSON.parse((await db.prepare("SELECT value FROM settings WHERE key = 'slow_requests'").get())?.value || '[]');
+          await db.prepare("INSERT INTO settings (key, value) VALUES ('slow_requests', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(JSON.stringify([entry, ...cur].slice(0, 30)));
+        } catch {}
+      })());
     }
     // A copy in the shadow (the Cloudflare trial, Karim 11-17) runs no background work: no Telegram, no Talabat or
     // website reading, no automatic transfer — it only answers what it is sent.
