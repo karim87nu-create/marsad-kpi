@@ -371,7 +371,7 @@ BEGIN TRY
     UPDATE dbo.Customers SET Phone = CASE WHEN ISNULL(RTRIM(Phone), '') = '' THEN @Phone ELSE Phone END, CType = ISNULL(CType, N'أفراد'), Note = ISNULL(Note, '.'),
       Name = CASE WHEN @Label <> '' THEN LEFT(@Label, 50) ELSE Name END,
       Address = CASE WHEN @Address <> '' THEN LEFT(@Address, 100) ELSE Address END,
-      LocationNo = CASE WHEN @Pickup = 1 THEN LocationNo ELSE ISNULL(@LocationNo, LocationNo) END, UBranchNo = @Branch,   -- Karim 11-11: a pickup («استلام فرع») never replaces the customer's own area
+      LocationNo = ISNULL(@LocationNo, LocationNo), UBranchNo = @Branch,   -- Karim 11-20 (receipt #31675 printed the card's old area 150): Apex prints the card, so a pickup («استلام فرع») writes the branch's pickup area on it too (the next delivery writes its own area back, like its address)
       FloorNo = CASE WHEN @Floor <> '' THEN LEFT(@Floor, 20) ELSE FloorNo END, FlatNo = CASE WHEN @Flat <> '' THEN LEFT(@Flat, 20) ELSE FlatNo END,   -- none in the order: the saved ones stay
       Sign = @NewSign
     WHERE CustNo = @Cust;
