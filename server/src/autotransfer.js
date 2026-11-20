@@ -18,7 +18,7 @@ import { businessDay, iso } from './time.js';
 import { parseJson } from './order-match.js';
 import { deliveryComment, deliveryAddress } from './delivery-fields.js';
 import { normArabic } from './apex-customer-notes.js';
-import { areaGroups, areaForBranch } from './apex-areas.js';
+import { areaGroups, areaForBranch, PICKUP_AREAS } from './apex-areas.js';
 import { APEX_PRICES } from './menu-seed.js';
 
 export const MODES = ['off', 'trial', 'on'];
@@ -115,7 +115,7 @@ export function decide(o, x) {
   let branch = Number(o.apexBranch) || null;
   const pickup = o.fulfillment === 'pickup';   // website or Talabat (11-15)
   let loc = null, locHow = null;
-  if (pickup) { loc = o.areaGuess?.how === 'pickup' ? Number(o.areaGuess.no) : null; locHow = 'pickup'; }
+  if (pickup) { loc = PICKUP_AREAS[branch]?.no ?? null; locHow = 'pickup'; }
   // Learned: chosen 2+ times and at least 80% of the times (one area name staff put on two Apex areas is not certain).
   else if (o.areaGuess && Number(o.areaGuess.seen) >= 2 && !(o.areaGuess.share < 0.8)) { loc = Number(o.areaGuess.no); locHow = 'learned'; }
   else if (o.areaGuess?.how === 'name') { loc = Number(o.areaGuess.no); locHow = 'name'; }
@@ -144,7 +144,8 @@ export function decide(o, x) {
   }
   if (!branch) why.push('الفرع مش واضح');
   let service = null;
-  if (!loc) why.push(o.areaGuess && Number(o.areaGuess.seen) >= 2 ? 'المنطقة دي الموظفين اختاروا لها أكتر من منطقة على Apex'
+  if (pickup && !loc && branch) why.push('استلام الفرع مش متعرّف على Apex');
+  if (!loc && !pickup) why.push(o.areaGuess && Number(o.areaGuess.seen) >= 2 ? 'المنطقة دي الموظفين اختاروا لها أكتر من منطقة على Apex'
     : (o.customer?.talabatArea || o.customer?.siteArea) ? 'منطقة «' + (o.customer.talabatArea || o.customer.siteArea) + '» لسه ما اتعلمتش على Apex' : 'منطقة العميل مش ظاهرة في الأوردر');
   else if (!pickup) {
     // Karim 11-14: an area Apex has twice — the one this branch serves («مدينتي» 361 is listed for another branch, «مدنتى» 370 for Madinaty).

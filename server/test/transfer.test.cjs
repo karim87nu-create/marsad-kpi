@@ -457,7 +457,21 @@ test('transfer page: the areas are there before the cashier sends the new day', 
     const okey = (await admin('POST', '/api/orders/token')).body.token;
     await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': okey }, body: { v: 1, day: '2026-10-22', online: [], locations: [{ no: 370, name: 'مدينتى', branch: 3, service: 39.47 }] } });
     const tok = (await t.call('POST', '/api/transfer/login', { body: { pin: '1111' } })).body.token;
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const placedAt = new Date(t.clock.now - 180000).toISOString();
+    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: [
+      { id: '3977600081', store: 'الدهان مدينتي ساوث بارك', status: 'ACCEPTED', placedAt, detail: { deliveryType: 'delivery' } },
+      { id: '3977600082', store: 'الدهان مدينتي ساوث بارك', status: 'ACCEPTED', placedAt, detail: { deliveryType: 'SELF_PICKUP' } },
+    ] } });
     const q = (await t.call('GET', '/api/transfer/queue?day=2026-10-23', { headers: { 'x-transfer-session': tok } })).body;
     assert.deepEqual((q.locations || []).map(l => l.no), [370]);
+    for (const [ref, pickup, locationNo, areaService] of [['3977600081', false, 370, 39.47], ['3977600082', true, 372, 0]]) {
+      const r = await t.call('POST', '/api/transfer/job', { headers: { 'x-transfer-session': tok }, body: {
+        source: 'talabat', ref, action: 'entered', payment: 'cash', branchNo: 3, ...(pickup ? {} : { locationNo })
+      } });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      const job = JSON.parse(t.app.db.raw.prepare('SELECT payload FROM transfer_jobs WHERE ref = ?').get(ref).payload);
+      assert.deepEqual([job.locationNo, job.areaService, !!job.pickup], [locationNo, areaService, pickup]);
+    }
   } finally { await t.close(); }
 });

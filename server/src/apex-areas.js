@@ -5,6 +5,8 @@
 // both (so «سراي القبة» 38.50 and «سرايا القبة» 42.50 stay apart). Admin can keep two apart, or put two together.
 import { normArabic } from './apex-customer-notes.js';
 
+export const PICKUP_AREAS = { 1: { no: 353, name: 'استلام فرع التجمع' }, 2: { no: 268, name: 'استلام مدينة نصر' }, 3: { no: 372, name: 'استلام فرع مدينتي' } };
+
 const DROP = new Set(['طلبات', 'talabat', 'جديد', 'new']);
 export function areaKey(name) {
   const words = normArabic(String(name || '').replace(/[.\-–_/\\|,،:؛]+/g, ' ')).split(' ').filter(w => w && !DROP.has(w));
@@ -101,7 +103,7 @@ export function areaInAddress(address, locations, branch, groups, prefer) {
   if (text.trim().length < 3) return null;
   let best = null, tie = false;
   for (const l of locations || []) {
-    const no = Number(l?.no); if (!Number.isInteger(no)) continue;
+    const no = Number(l?.no); if (!Number.isInteger(no) || /استلام/.test(String(l.name || ''))) continue;
     if (branch != null && l.branch != null && Number(l.branch) !== Number(branch)) continue;
     const w = words(l.name).filter(x => x !== 'طلبات'); const name = w.join(' ');
     if (name.replace(/ /g, '').length < 4 || !text.includes(' ' + name + ' ')) continue;

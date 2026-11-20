@@ -133,19 +133,24 @@ test('website pickup (Karim 11-11): written on the branch\'s «استلام فر
     const sara = (await t.call('POST', '/api/transfer/login', { body: { pin: '1111' } })).body.token;
     const as = (method, path, body) => t.call(method, path, { body, headers: { 'x-transfer-session': sara } });
     const { token } = (await admin('POST', '/api/talabat/token')).body;
-    const order = { id: 30950, number: '30950', status: 'app-preparing', stage: 0, fulfillment: 'pickup', createdAt: s(0), branchId: 'nasr-city', branchName: 'مدينة نصر',
+    const order = { id: 30950, number: '30950', status: 'app-preparing', stage: 0, fulfillment: 'pickup', createdAt: s(0), branchId: 'nasr-city',
       paymentMethod: 'كاش عند الاستلام', total: 105, customer: { name: 'عميل', phone: '01011112222', address: '5 شارع مكرم عبيد، الدور 3، شقة 9' },
       financial: { due: 105, dueLabel: 'المطلوب تحصيله', onlinePaid: 0, rows: [{ amount: 105, label: 'الأصناف' }] }, items: [{ name: 'ورق عنب', quantity: 1, total: '105.00 EGP', details: [] }] };
     await t.call('POST', '/api/site/panel', { headers: { 'x-talabat-token': token }, body: { board: 'central', orders: [order] } });
     const okey = (await admin('POST', '/api/orders/token')).body.token;
-    await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': okey }, body: { v: 1, day: '2026-11-11', online: [], locations: [{ no: 19, name: 'مكرم عبيد', branch: 2, service: 34.5 }, { no: 268, name: 'استلام مدينة نصر.', branch: 2, service: 0 }] } });
+    await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': okey }, body: { v: 1, day: '2026-11-11', online: [], locations: [{ no: 19, name: 'مكرم عبيد', branch: 2, service: 34.5 }] } });
     const wt = (await admin('POST', '/api/apex-writer', { action: 'token' })).body.token;
     const w = (path, body) => t.call('POST', path, { body: body || {}, headers: { 'x-apex-writer': wt } });
     const pend = (await w('/api/apex-writer/customer-notes/pending')).body.pending;
     assert.equal(pend.length, 1);
     await w('/api/apex-writer/customer-notes/result', { results: pend.map(x => ({ ...x, status: 'none' })) });
-    t.advance(9000); await as('GET', '/api/transfer/queue?day=2026-11-11');
-    const r = await as('POST', '/api/transfer/job', { source: 'site', ref: '30950', action: 'auto', payment: 'cash', branchNo: 2, locationNo: 19, items: [{ itemNo: '0103002', qty: 1 }],
+    t.advance(9000);
+    const queue = (await as('GET', '/api/transfer/queue?day=2026-11-11')).body;
+    assert.equal(queue.orders.find(o => o.ref === '30950').apexBranch, 2);
+    assert.equal(queue.orders.find(o => o.ref === '30950').areaGuess.no, 268);
+    assert.equal(queue.pickupAreas[2].no, 268);
+    assert.ok(queue.locations.every(l => l.no !== 268));
+    const r = await as('POST', '/api/transfer/job', { source: 'site', ref: '30950', action: 'auto', payment: 'cash', branchNo: 2, items: [{ itemNo: '0103002', qty: 1 }],
       code: '30950', customer: { name: 'عميل', phone: '01011112222', address: '5 شارع مكرم عبيد، الدور 3، شقة 9' } });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     const p = JSON.parse(t.app.db.raw.prepare("SELECT payload FROM transfer_jobs WHERE ref = '30950'").get().payload);

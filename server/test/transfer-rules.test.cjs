@@ -88,3 +88,18 @@ test('auto transfer: a confirmed area goes, and «المستقبل» is written 
   assert.equal(d.body.locationNo, 371);
   assert.equal(d.body.customer.address, 'عمارة 5 - المستقبل');
 });
+
+test('auto transfer uses the assigned branch pickup even before the daily areas arrive', async () => {
+  const { decide } = await import('../src/autotransfer.js');
+  const now = Date.parse('2026-11-20T19:30:00+02:00');
+  const base = { ref: '9', code: '9', at: new Date(now - 180000).toISOString(), apexBranch: 2,
+    fulfillment: 'pickup', payment: 'cash', customer: { name: 'عميل', phone: '01000000000' },
+    subtotal: 50, items: [{ name: 'بطاطس', qty: 1, price: 50, modifiersComplete: true, apex: [{ no: '0103005' }] }],
+    apexCustomerNote: { status: 'none', checkedAt: new Date(now - 60000).toISOString() } };
+  for (const source of ['site','talabat']) {
+    const verdict = decide({ ...base, source }, { now, locations: [] });
+    assert.deepEqual(verdict.why, []);
+    assert.equal(verdict.body.locationNo, 268);
+  }
+  assert.deepEqual(decide({ ...base, source: 'site', apexBranch: null }, { now, locations: [] }).why, ['الفرع مش واضح']);
+});

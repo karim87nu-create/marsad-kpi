@@ -296,7 +296,7 @@ const discountSum = (o, who) => (o.discounts || []).filter(d => d.who === who).r
 const addressParts = deliveryAddress;
 function specialMarkFor(o, p, platformAmount) {
   const cu = o.customer || {}, addressRaw = p?.arabic?.address || cu.address;
-  const ad = addressParts(addressRaw, [
+  const ad = o.fulfillment === 'pickup' ? { street: '' } : addressParts(addressRaw, [
     (data.locations || []).find(l => String(l.no) === String(p?.loc))?.name, cu.talabatArea, cu.siteArea, cu.area
   ]);
   const addressLine = splitDeliveryAddress(ad.street);
@@ -332,7 +332,7 @@ function ticketCalc(o, fl, p) {
   fl.forEach((i, n) => { const pr = apexPrices.get(p.items?.[n]); if (pr == null) missing++; else items += pr * (qtyOf(p, i, n) || 1); });
   const fee = o.source === 'talabat' ? (apexPrices.get('0114006') || 7.02) : 0;
   const loc = (data.locations || []).find(l => String(l.no) === String(p.loc) && (l.branch == null || String(l.branch) === String(p.branch))) || (data.locations || []).find(l => String(l.no) === String(p.loc));
-  const service = loc?.service ?? null, off = rest + (paid ? plat : 0);
+  const service = o.fulfillment === 'pickup' && p.loc ? 0 : loc?.service ?? null, off = rest + (paid ? plat : 0);
   const before = service == null ? null : r2(T(items) + T(fee) + T(service) - off);
   const gap = before == null || want == null ? null : r2(before - want);
   const back = gap != null && gap < 0 ? Math.min(-gap, off) : 0, left = gap != null && gap < 0 ? r2(-gap - back) : 0;
@@ -421,31 +421,31 @@ function card(o) {
   p.signature = signature;
   fl.forEach((i, n) => { if (!p.items[n]) p.items[n] = firstPick(i); });
   const freeJob = !o.job || ['released', 'auto_failed', 'auto_preview'].includes(o.job.state), mineOrFree = freeJob || o.job.mine;
+  const pickup = o.fulfillment === 'pickup';
+  if (!p.branchManual && o.apexBranch) p.branch = o.apexBranch;
+  const pickupArea = pickup && (data.pickupAreas?.[p.branch] ||
+    (String(p.branch) === String(o.apexBranch) && o.areaGuess?.how === 'pickup' ? o.areaGuess : null));
+  if (pickup) {
+    p.loc = pickupArea?.no || '';
+    p.locGuess = pickupArea ? 'pickup' : false;
+  } else if (!p.locManual) {
+    const known = o.areaGuess && areaList().some(l => String(l.no) === String(o.areaGuess.no) &&
+      !/استلام/.test(l.name) && (!p.branch || !l.branches.length || l.branches.some(b => String(b) === String(p.branch))));
+    pickArea(p, known ? String(o.areaGuess.no) : '');
+    p.locGuess = known && (o.areaGuess.how || 'learned');
+  }
   const c = ticketCalc(o, fl, p);
   const cu = o.customer || {}, addressRaw = p.arabic?.address || cu.address, ad = addressParts(addressRaw, [
     (data.locations || []).find(l => String(l.no) === String(p.loc))?.name, cu.talabatArea, cu.siteArea, cu.area
   ]), addressLine = splitDeliveryAddress(ad.street), specialMark = specialMarkFor(o, p, c.plat);
-  // Branch and area: the area decides the branch (Apex's own rule); the list shows the chosen branch's areas.
   let branchSel = '', areaSel = '', areaNote = '';
   if (auto || mineOrFree) {
     const all = areaList();
     const zeroFee = l => l.service != null && Number.isFinite(Number(l.service)) && Number(l.service) === 0;
-    const deliveryArea = () => true;
-    // Karim 10-11: the Apex area chosen before for the same Talabat area comes first.
-    if (!p.loc && !p.locTried && o.areaGuess && all.some(l => String(l.no) === String(o.areaGuess.no) && deliveryArea(l))) {
-      p.locTried = true; pickArea(p, String(o.areaGuess.no)); p.locGuess = o.areaGuess.how === 'pickup' ? 'pickup' : 'learned';
-    }
-    if (!p.loc && !p.locTried && (cu.address || cu.area || cu.talabatArea)) {
-      p.locTried = true;
-      const nz = v => String(v || '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/[ًٌٍَُِّْـ]/g, '').replace(/[^؀-ۿa-z0-9 ]/gi, ' ').replace(/\s+/g, ' ').trim();
-      const addr = ' ' + nz((cu.talabatArea || '') + ' ' + (cu.area || '') + ' ' + (cu.address || '')) + ' ';
-      const hit = all.filter(l => deliveryArea(l) && nz(l.name).length >= 3 && addr.includes(' ' + nz(l.name) + ' ')).sort((a, b) => nz(b.name).length - nz(a.name).length)[0];
-      if (hit) { pickArea(p, hit.no); p.locGuess = true; }
-    }
     const bname = no => (data.branches || []).find(b => String(b.no) === String(no))?.name || ('فرع ' + no);
     branchSel = '<select data-pick="branch" aria-label="الفرع على Apex"><option value="">اختار الفرع…</option>' + (data.branches || []).map(b => '<option value="' + b.no + '"' + (String(p.branch) === String(b.no) ? ' selected' : '') + '>' + esc(b.name) + '</option>').join('') + '</select>';
     const areas = all.filter(l => !p.branch || !l.branches.length || l.branches.some(b => String(b) === String(p.branch)));
-    areaSel = '<select data-pick="loc" aria-label="المنطقة على Apex"><option value="">اختار المنطقة…</option>' + areas.map(l => '<option value="' + l.no + '"' + (String(p.loc) === String(l.no) ? ' selected' : '') + '>' + esc(l.name) + (zeroFee(l) && o.fulfillment !== 'pickup' ? ' — رسوم التوصيل 0 ج' : '') + '</option>').join('') + '</select>';
+    areaSel = pickup ? (pickupArea ? '<span class="ok">' + esc(pickupArea.name) + '</span>' : '') : '<select data-pick="loc" aria-label="المنطقة على Apex"><option value="">اختار المنطقة…</option>' + areas.map(l => '<option value="' + l.no + '"' + (String(p.loc) === String(l.no) ? ' selected' : '') + '>' + esc(l.name) + (zeroFee(l) && o.fulfillment !== 'pickup' ? ' — رسوم التوصيل 0 ج' : '') + '</option>').join('') + '</select>';
     const selectedArea = all.find(l => String(l.no) === String(p.loc));
     areaNote = o.fulfillment === 'pickup' ? '<div class="warn">استلام من الفرع — بيتسجل على «استلام فرع» بتاع الفرع اللي تختاره، من غير عنوان ولا دور ولا شقة</div>' : selectedArea && zeroFee(selectedArea) ? '<div class="muted">المنطقة المختارة هتتسجل كما هي، حتى لو رسوم التوصيل على Apex صفر.</div>' : p.moved ? '<div class="warn">الفرع اتغير لـ ' + esc(bname(p.branch)) + ' عشان المنطقة تبعه</div>' : p.locGuess === 'learned' ? '<div class="muted">اتختارت تلقائيًا من الأوردرات السابقة لنفس المنطقة' + (cu.talabatArea ? ' («' + esc(cu.talabatArea) + '»)' : '') + ' — تقدر تغيّرها لو لزم</div>' : p.locGuess ? '<div class="muted">اتختارت من العنوان — تقدر تغيّرها لو لزم</div>' : '';
   }
@@ -749,12 +749,12 @@ $('list').addEventListener('change', async e => {
   const el = e.target.closest('[data-pick]'); if (!el) return;
   const c = el.closest('.card'), p = picks[c.dataset.k]; if (!p) return;
   if (el.dataset.pick === 'branch') {
-    p.branch = el.value; p.moved = false;
+    p.branch = el.value; p.branchManual = true; p.moved = false;
     const a = areaList().find(l => String(l.no) === String(p.loc));
-    if (a && a.branches.length && !a.branches.some(b => String(b) === String(p.branch))) { p.loc = ''; p.locGuess = false; }   // its area is another branch's
+    if (a && a.branches.length && !a.branches.some(b => String(b) === String(p.branch))) { p.loc = ''; p.locGuess = false; p.locManual = false; }   // its area is another branch's
     render(true); return;
   }
-  if (el.dataset.pick === 'loc') { pickArea(p, el.value); render(true); return; }
+  if (el.dataset.pick === 'loc') { p.locManual = !!el.value; pickArea(p, el.value); if (p.moved) p.branchManual = true; render(true); return; }
   if (el.dataset.pick === 'sec') { (p.secs || (p.secs = {}))[Number(el.dataset.n)] = el.value === '' ? null : Number(el.value); p.open = true; render(true); return; }
   if (el.dataset.pick === 'item') {
     const v = el.value.trim(); if (!v) return;
