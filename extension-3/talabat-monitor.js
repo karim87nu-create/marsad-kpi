@@ -651,8 +651,19 @@
       const fromOptions = options.length > 0 || !hasExpandIcon;   // options found, or nothing to expand: the list is complete
       const modifierComplete = fromOptions || (productModifierExpanded(control) && !iconStillCollapsed);
       const mods = fromOptions ? options.map(o => (o.qty == null ? '?' : o.qty) + '× ' + o.name) : modifiers;   // the count as Talabat shows it (all the dishes together)
+      const noteLabel = /^(?:customer (?:note|comment)|special instructions?|item (?:note|comment)|ملاحظات? العميل|تعليمات خاصة)\s*[:：]?\s*/i;
+      const noteElement = [...p.querySelectorAll('[data-testid]')].find(el =>
+        /(?:comment|instructions?|(?:^|[-_])notes?(?:$|[-_]))/i.test(el.dataset.testid) &&
+        !el.closest('[data-testid^="existing-option__"]'));
+      const labelledNote = l.slice(2).map((value, index) =>
+        noteLabel.test(value) ? value.replace(noteLabel, '').trim() || l[index + 3] : '').find(Boolean);
+      // Some live drawers show unlabelled preparation instructions beneath the product.
+      const instruction = l.slice(2).find(value => !isMoney(value) && !isLabel(value) &&
+        /(?:^|\s)(?:كل الوجبات|(?:بدل|بدال|من غير|بدون)\s)/i.test(value) &&
+        !options.some(option => option.name === value));
+      const note = ((noteElement?.innerText || '').replace(noteLabel, '').trim() || labelledNote || instruction || '').slice(0, 200);
       d.items.push({ qty: Number((l[0] || '').replace(/[^\d]/g, '')) || 1, name, price: money(l.find(x => /E£|EGP/.test(x))), modifiers: [...new Set(mods)],
-        options, discountLines, modifierRead: mods.length > 0 || modifierComplete, modifierComplete });
+        ...(note ? { note } : {}), options, discountLines, modifierRead: mods.length > 0 || modifierComplete, modifierComplete });
     }
     // The list time has seconds (placedAt); the timeline only minutes. Received = placed, accepted = received + "Accepted in".
     if (d.receivedAt && Number.isFinite(placed) && Math.abs(Date.parse(d.receivedAt) - Math.floor(placed / 60000) * 60000) < 60000) d.receivedAt = new Date(placed).toISOString();

@@ -69,6 +69,11 @@ test('a note under a Talabat dish reaches the transfer page and the order commen
       id: '4712756256', store: 'الدهان سيتي ستار مول، مكرم عبيد', status: 'ACCEPTED', placedAt: new Date(now - 60000).toISOString(), total: 256.63,
       detail: { customer: { name: 'M & K', phone: '01204749876', address: 'صلاح سالم 10' }, items: [{ name: 'عرض وجبة نص دجاجة مشوية', qty: 1, price: 299, note: '** عايز سلطه زبادي بدل البطاطس ومخلل بدل طحينه', modifierRead: true, modifierComplete: true }], bill: [] }
     }] } });
+    const reread = await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: [{
+      id: '4712756256', store: 'الدهان سيتي ستار مول، مكرم عبيد', status: 'ACCEPTED', placedAt: new Date(now - 60000).toISOString(), total: 256.63,
+      detail: { items: [{ name: 'عرض وجبة نص دجاجة مشوية', qty: 1, price: 299, modifierRead: true, modifierComplete: true }] }
+    }] } });
+    assert.equal(reread.status, 200);
     const sara = (await t.call('POST', '/api/transfer/login', { body: { pin: '1111' } })).body.token;
     const o = (await t.call('GET', '/api/transfer/queue?day=2026-11-11', { headers: { 'x-transfer-session': sara } })).body.orders.find(x => x.ref === '4712756256');
     assert.equal(o.items[0].note, 'عايز سلطه زبادي بدل البطاطس ومخلل بدل طحينه');

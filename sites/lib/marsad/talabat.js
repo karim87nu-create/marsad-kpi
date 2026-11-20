@@ -129,7 +129,7 @@ function setup(app) {
     for (const u of unknown.slice(0, 20)) await app.learn?.unknown(...u, now);
     const accepted = [], priorRows = new Map(), seen = new Set();
     const ids = [...new Set(list.filter(o => o && typeof o === 'object').map(o => String(o.id || '').replace(/\D/g, '').slice(0, 20)).filter(id => id.length >= 6))];
-    const priorSql = `SELECT t.id,t.status,i.observed_at,p.data AS profile FROM talabat_orders t
+    const priorSql = `SELECT t.id,t.status,t.items,i.observed_at,p.data AS profile FROM talabat_orders t
       LEFT JOIN order_ingest i ON i.source='talabat' AND i.ref=t.id
       LEFT JOIN match_profiles p ON p.source='talabat' AND p.ref=t.id WHERE t.id IN `;
     for (let offset = 0; offset < ids.length; offset += 50) {
@@ -174,12 +174,24 @@ function setup(app) {
         if (bill?.length) old.bill = bill;   // the bill lines as Talabat shows them, for the transfer page
         orderWrites.push(db.prepare("INSERT INTO match_profiles (source, ref, data) SELECT 'talabat',?,? WHERE " + guard + " ON CONFLICT(source, ref) DO UPDATE SET data = excluded.data").bind(id, JSON.stringify(old), id, guardTime));
       }
-      const items = d && Array.isArray(d.items) ? JSON.stringify(d.items.slice(0, 60).map(x => ({ qty: Number(x.qty) || 1, name: String(PRODUCT_NAME.get(String(x.productId || '')) || x.name || '').slice(0, 120), ...(x.productId ? { productId: String(x.productId).slice(0, 20), nameShown: String(x.name || '').slice(0, 120) } : {}), price: Number(x.price) || null,
-        modifiers: Array.isArray(x.modifiers) ? [...new Set(x.modifiers.map(v => String(v || '').trim().slice(0, 120)).filter(Boolean))].slice(0, 20) : [], modifierRead: x.modifierRead === true, modifierComplete: x.modifierComplete === true,
-        // The customer's note under the dish (Karim 11-11, #753: «عايز سلطه زبادي بدل البطاطس ومخلل بدل طحينه» was lost).
-        ...(x.note ? { note: String(x.note).replace(/^\s*\*+\s*/, '').trim().slice(0, 200) } : {}),
-        options: Array.isArray(x.options) ? x.options.slice(0, 20).map(v => ({ qty: Number(v?.qty) > 0 ? Number(v.qty) : null, name: String(v?.name || '').slice(0, 120), price: Number(v?.price) || null, ...(v?.productId ? { productId: String(v.productId).slice(0, 20) } : {}) })).filter(v => v.name) : [],
-        discountLines: Array.isArray(x.discountLines) ? x.discountLines.slice(0, 6).map(v => String(v || '').trim().slice(0, 160)).filter(Boolean) : [] }))) : null;
+      const previousItems = parseJson(prior?.items, []);
+      const incomingItems = Array.isArray(d?.items) ? d.items.slice(0, 60) : null;
+      const itemName = item => String(item?.nameShown || item?.name || '').trim().toLowerCase();
+      const previousNote = item => {
+        // A drawer without the note must not erase it. Only carry it when the line is unambiguous in both reads.
+        const sameLine = other => itemName(other) === itemName(item) && (Number(other.qty) || 1) === (Number(item.qty) || 1);
+        const matches = previousItems.filter(sameLine);
+        return matches.length === 1 && incomingItems.filter(sameLine).length === 1 ? matches[0].note : null;
+      };
+      const items = incomingItems ? JSON.stringify(incomingItems.map(x => {
+        const note = String(x.note || previousNote(x) || '').replace(/^\s*\*+\s*/, '').trim().slice(0, 200);
+        return { qty: Number(x.qty) || 1, name: String(PRODUCT_NAME.get(String(x.productId || '')) || x.name || '').slice(0, 120), ...(x.productId ? { productId: String(x.productId).slice(0, 20), nameShown: String(x.name || '').slice(0, 120) } : {}), price: Number(x.price) || null,
+          modifiers: Array.isArray(x.modifiers) ? [...new Set(x.modifiers.map(v => String(v || '').trim().slice(0, 120)).filter(Boolean))].slice(0, 20) : [], modifierRead: x.modifierRead === true, modifierComplete: x.modifierComplete === true,
+          // The customer's note under the dish (Karim 11-11, #753: «عايز سلطه زبادي بدل البطاطس ومخلل بدل طحينه» was lost).
+          ...(note ? { note } : {}),
+          options: Array.isArray(x.options) ? x.options.slice(0, 20).map(v => ({ qty: Number(v?.qty) > 0 ? Number(v.qty) : null, name: String(v?.name || '').slice(0, 120), price: Number(v?.price) || null, ...(v?.productId ? { productId: String(v.productId).slice(0, 20) } : {}) })).filter(v => v.name) : [],
+          discountLines: Array.isArray(x.discountLines) ? x.discountLines.slice(0, 6).map(v => String(v || '').trim().slice(0, 160)).filter(Boolean) : [] };
+      })) : null;
       orderWrites.push(db.prepare(`INSERT INTO talabat_orders (id, day, vendor_id, store, status, billable, placed_at, total, received_at, accept_seconds, accepted_at, picked_up_at, delivered_at,
           cancelled_at, cancel_owner, cancel_reason, items, subtotal, delivery_type, milestones, detail_at, first_seen, updated_at)
         SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE ${guard}

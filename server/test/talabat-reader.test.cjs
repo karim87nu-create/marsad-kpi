@@ -111,7 +111,7 @@ test('Talabat details: options are read from their own elements even while the p
  const s=fs.readFileSync(path.join(__dirname,'../../extension-3/talabat-monitor.js'),'utf8');
  const code=s.slice(s.indexOf('  const T ='),s.indexOf('  // ---------- the operating day'))+'\n'+s.slice(s.indexOf('  const expandedProductKeys'),s.indexOf('  async function expandProductModifiers'))+'\n'+s.slice(s.indexOf('  function readDetail('),s.indexOf('  // ---------- one cycle'));
  const html='<div data-testid="order-details-drawer__content"><b data-testid="details-order-id">4687126962</b><div data-testid="milestone-for__ACCEPTED_originally_ACCEPTED">02:00</div>'+
-  '<div data-testid="order-content"><div data-testid="existing-product__3114762236"><div tabindex="0" role="button" aria-expanded="false"><p>1×</p><p>Boneless Fawteh Kaware</p><p>E£362.00</p></div></div>'+
+  '<div data-testid="order-content"><div data-testid="existing-product__3114762236"><div tabindex="0" role="button" aria-expanded="false"><p>1×</p><p>Boneless Fawteh Kaware</p><p>E£362.00</p></div><p>كل الوجبات ارز ابيض بدل الاصفر، السلطات ٤ طحينة ٢ مخلل بلدي ٢ خيار مخلل</p></div>'+
   '<div data-testid="existing-product__3114762411"><p>1×</p><p>Grilled Chicken Breasts</p><p>E£285.00</p><button aria-expanded="false">expand_more</button><div hidden>'+
   '<div data-testid="existing-option__3114763475_for_3114762411"><p>1×</p><div><p>Quarter Kilo</p></div><p>E£214.00</p></div>'+
   '<div data-testid="existing-option__3114877476_for_3114762411"><p>2×</p><div><p>Basmati Rice</p></div><p>E£71.00</p></div></div></div></div>'+
@@ -123,6 +123,8 @@ test('Talabat details: options are read from their own elements even while the p
   const r=JSON.parse(w.eval('(()=>{'+code+';const clockAfter=()=>null;return JSON.stringify(readDetail("4687126962"));})()'));
   const [plain, chicken]=r.detail.items;
   assert.equal(plain.name,'Boneless Fawteh Kaware'); assert.deepEqual(plain.modifiers,[]); assert.equal(plain.modifierComplete,true);
+  assert.equal(plain.note,'كل الوجبات ارز ابيض بدل الاصفر، السلطات ٤ طحينة ٢ مخلل بلدي ٢ خيار مخلل');
+  assert.equal(chicken.note,undefined);
   assert.equal(chicken.name,'Grilled Chicken Breasts'); assert.equal(chicken.price,285);
   assert.deepEqual(chicken.options,[{qty:1,name:'Quarter Kilo',price:214},{qty:2,name:'Basmati Rice',price:71}]);
   assert.deepEqual(chicken.modifiers,['1× Quarter Kilo','2× Basmati Rice']); assert.equal(chicken.modifierComplete,true);
