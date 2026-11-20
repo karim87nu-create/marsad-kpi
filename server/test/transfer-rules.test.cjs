@@ -12,6 +12,8 @@ test('transfer rules: confirmed areas and dishes', async () => {
   assert.equal(a('التجمع الأول - ميراج سيتي').no, 355);
   assert.equal(a('التجمع 3').no, 356);
   assert.equal(a('الشروق - الحي الثاني شرق').no, 371);
+  assert.equal(a('الشروق - الحي السابع').no, 371, '11-20 #5972: the city first decides, not مدينة نصر\'s «الحي السابع»');
+  assert.equal(a('مدينتي - الحي السابع').no, 370);
   assert.equal(a('الشروق - المنطقة الثامنة‎‎').no, 371);
   assert.equal(a('مدينتي - منطقة الفيلات (ف4)').no, 370);
   assert.equal(a('عباسية 3').no, 26);
