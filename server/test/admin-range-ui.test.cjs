@@ -37,7 +37,9 @@ test('admin from/to selection loads the selected period in summary and followup'
   await until(()=>/آخر|الفترة/.test(w.document.getElementById('kpiPeriod').textContent) && w.document.getElementById('day').value!==w.document.getElementById('dayTo').value);
   // التشغيل الآلي: the Talabat screens, the Apex writer and the stops moved out of «الإدارة».
   w.document.querySelector('[data-view="auto"]').click();
-  await until(()=>!w.document.getElementById('view-auto').hidden);
+  await until(()=>!w.document.getElementById('view-auto').hidden
+    && w.document.getElementById('apexCancelStatus').textContent
+    && w.document.getElementById('apexAreasTable').textContent);
   assert.equal(w.document.getElementById('autoWatch'), null, 'the parts\' status is on «حالة النظام» only');
   assert.ok(w.document.getElementById('view-auto').contains(w.document.getElementById('apexWriterPanel')));
   assert.ok(w.document.getElementById('view-auto').contains(w.document.getElementById('stockPanel')));
