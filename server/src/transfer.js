@@ -327,7 +327,7 @@ function setup(app) {
     for (const r of await db.prepare(`SELECT id FROM talabat_orders WHERE day=? AND ${CANCELLED_SQL}`).all(day)) cancelled.add('talabat:' + r.id);
     for (const r of await db.prepare(`SELECT id FROM site_orders WHERE (day=? OR (scheduled_at>=? AND scheduled_at<?)) AND ${CANCELLED_SQL}`).all(day,window.start,window.end)) cancelled.add('site:' + r.id);
     const snap = { locations: base.locations };
-    const jobs = new Map((await db.prepare('SELECT * FROM transfer_jobs WHERE day = ?').all(day)).map(j => [j.source + ':' + j.ref, j]));
+    const jobs = new Map((await db.prepare('SELECT source, ref, state, employee_name, employee_id, payment, note, at, result FROM transfer_jobs WHERE day = ?').all(day)).map(j => [j.source + ':' + j.ref, j]));
     const customerNotes = new Map((await db.prepare('SELECT source, ref, cust_no, note, status, checked_at, phone_hash FROM apex_customer_notes WHERE day = ?').all(day)).map(n => [
       n.source + ':' + n.ref, { custNo: n.cust_no, status: n.status, checkedAt: iso(n.checked_at), phone_hash: n.phone_hash, ...parseApexCustomerNote(n.note) }
     ]));

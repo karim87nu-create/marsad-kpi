@@ -3,7 +3,7 @@ import { createSigner, createLimiter, hashPassword, randomToken } from './securi
 import { createLegacy } from './legacy.js';
 import { migrate, schemaReady } from './db.js';
 // Raised with each change worth checking after a publish (shown by /api/health).
-const BUILD = '2026-11-20.11';
+const BUILD = '2026-11-20.12';
 
 class HttpError extends Error {
   constructor(status, code, extra) {
@@ -151,7 +151,9 @@ function createApp({ db, config: input = {}, now = () => Date.now() }) {
         // (time, path, the error's own first words; no request data, no secrets) are readable at /api/health/errors.
         recentErrors.unshift({ at: new Date(now()).toISOString(), path: request.method + ' ' + url.pathname, error: String(e?.message || e).replace(/\s+/g, ' ').slice(0, 200) });
         recentErrors.length = Math.min(recentErrors.length, 30);
-        response = send(500, { error: 'server_error' });
+        const busyQueue = request.method === 'GET' && url.pathname === '/api/transfer/queue' &&
+          /D1.{0,40}(?:overload|too many resources)/i.test([e?.message, e?.cause?.message].filter(Boolean).join(' '));
+        response = busyQueue ? send(503, { error: 'قاعدة البيانات عليها ضغط مؤقت' }) : send(500, { error: 'server_error' });
       }
     }
     const took = Date.now() - t0;

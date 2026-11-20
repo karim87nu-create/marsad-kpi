@@ -14,34 +14,36 @@ function setup(app) {
   // Karim 11-19 «أخطاء السيرفر»: «D1 DB is overloaded» — every new fact used to empty this cache, so the next order read
   // all 17,000 learned rows again (297 reads, 5 million rows in half an hour). New facts now go into the copy in place.
   const TTL = 3 * 60000;
+  const matching = kind => kind?.startsWith('match-v2:');
+  const sourceOf = kind => matching(kind) ? kind.split(':').at(-1) : null;
   const touch = (kind, rows, ref) => {
     for (const [k, c] of cache) {
-      if (k !== '*' && k !== kind) continue;
+      if (k !== '*' && k !== kind && (!sourceOf(kind) || k !== 'source:' + sourceOf(kind))) continue;
       if (ref != null) c.rows = c.rows.filter(r => !(r.ref === ref && r.kind === kind && rows.some(n => n.a === r.a && n.b === r.b)));
       c.rows.push(...rows);
     }
   };
-  // Karim 11-20 (slow reports, measured: «SELECT * FROM learned WHERE kind = ? AND NOT EXISTS…» 9 times in one request, 127,000
-  // rows): a copy of the server read the learned rows once per kind. Now the first read takes every kind at once and each kind is
-  // taken from it (rows that come from the evidence of an order are marked, so a kind that never read evidence does not get them).
+  // Load one indexed kind, or the matching facts for one platform. Only the admin history needs every kind.
   async function currentRows(kind) {
-    const k = kind || '*', c = cache.get(k), now = app.now();
-    if (c && now - c.at < TTL) return c.rows.slice();
-    let all = cache.get('*');
-    if (!all || now - all.at >= TTL) { all = { at: now, rows: await readRows(undefined) }; cache.set('*', all); }
-    if (!kind) return all.rows.slice();
-    const scoped = kind.startsWith('match-v2:');
-    const rows = all.rows.filter(r => r.kind === kind && (scoped || !r._ev));
-    cache.set(k, { at: all.at, rows });
-    return rows.slice();
+    const now = app.now(), scope = sourceOf(kind), k = scope ? 'source:' + scope : kind || '*';
+    let c = cache.get(k);
+    if (!c || now - c.at >= TTL) {
+      const rows = await readRows(scope ? null : kind, scope);
+      c = { at: now, rows };
+      cache.set(k, c);
+    }
+    return scope ? c.rows.filter(r => r.kind === kind) : c.rows.slice();
   }
-  async function readRows(kind) {
-    const scope = kind?.startsWith('match-v2:') ? kind.split(':').at(-1) : null;
-    // Keep kind/source predicates indexable. The nullable OR scanned the entire
-    // history for every kind, including transfer kinds with no active evidence.
-    const legacy = await db.prepare("SELECT * FROM learned WHERE " + (kind ? "kind = ? AND " : "") + "NOT EXISTS (SELECT 1 FROM learning_evidence e WHERE e.ref = learned.ref AND learned.kind LIKE 'match-v2:%:' || e.source)").all(...(kind ? [kind] : []));
-    const active = kind && !scope ? [] : await db.prepare('SELECT * FROM learning_evidence' + (scope ? ' WHERE source = ?' : '')).all(...(scope ? [scope] : []));
-    for (const row of active) for (const f of JSON.parse(row.facts)) if (!kind || f.kind === kind) legacy.push({ ...f, ref: row.ref, at: row.at, _ev: true });
+  async function readRows(kind, scope) {
+    const predicate = kind ? 'kind = ? AND ' : scope ? "kind >= 'match-v2:' AND kind < 'match-v2;' AND substr(kind, -length(?) - 1) = ':' || ? AND " : '';
+    const legacy = await db.prepare("SELECT kind, a, b, ref, value, at FROM learned WHERE " + predicate +
+      "NOT EXISTS (SELECT 1 FROM learning_evidence e WHERE e.ref = learned.ref AND learned.kind LIKE 'match-v2:%:' || e.source)")
+      .all(...(kind ? [kind] : scope ? [scope, scope] : []));
+    if (kind) return legacy;
+    const active = await db.prepare('SELECT source, ref, facts, at FROM learning_evidence' + (scope ? ' WHERE source = ?' : '')).all(...(scope ? [scope] : []));
+    for (const row of active) for (const f of JSON.parse(row.facts)) {
+      if (!scope || sourceOf(f.kind) === scope) legacy.push({ ...f, ref: row.ref, at: row.at });
+    }
     return legacy;
   }
   const learn = app.learn = {
@@ -54,9 +56,9 @@ function setup(app) {
       // The evidence of one order from one source replaces what that order taught before (an empty list takes it back).
       const r = String(ref), mine = k => k.startsWith('match-v2:') && k.endsWith(':' + source);
       for (const [k, c] of cache) {
-        if (k !== '*' && !mine(k) && !facts.some(f => f.kind === k)) continue;
+        if (k !== '*' && k !== 'source:' + source && !facts.some(f => f.kind === k)) continue;
         c.rows = c.rows.filter(x => !(x.ref === r && (mine(x.kind) || facts.some(f => f.kind === x.kind && f.a === x.a && f.b === x.b))));
-        c.rows.push(...facts.filter(f => k === '*' || f.kind === k).map(f => ({ ...f, ref: r, at: now })));
+        c.rows.push(...facts.filter(f => k === '*' || f.kind === k || (mine(f.kind) && k === 'source:' + source)).map(f => ({ ...f, ref: r, at: now })));
       }
     },
     forget,
@@ -82,7 +84,7 @@ function setup(app) {
     async unknown(source, what, sample, now = app.now()) {
       await db.prepare('INSERT INTO learned (kind, a, b, ref, value, at) VALUES (?,?,?,?,NULL,?) ON CONFLICT(kind, a, b, ref) DO NOTHING')
         .run('unknown', String(source).slice(0, 40), String(what).slice(0, 160), String(sample || '-').slice(0, 60), now);
-      // Into the copies already read here (once per value): the first read now takes every kind at once.
+      // Update the cached unknown-kind and admin-history rows in this copy.
       const row = { kind: 'unknown', a: String(source).slice(0, 40), b: String(what).slice(0, 160), ref: String(sample || '-').slice(0, 60), value: null, at: now };
       for (const [k, c] of cache) if ((k === '*' || k === 'unknown') && !c.rows.some(r => r.kind === 'unknown' && r.a === row.a && r.b === row.b && r.ref === row.ref)) c.rows.push(row);
     },
