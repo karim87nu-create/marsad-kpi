@@ -6,8 +6,8 @@ export function sitePaymentChoice(method, payment, confirmation, manual = false,
   const expected = method === 'cod' || method === 'mixed' ? 'cash' : method === 'online' ? 'paid' : null;
   const conflict = (expected && payment !== expected) || method === 'online-unpaid';
   if (!conflict) return { override: null };
-  if (manual && confirmation?.from === method && confirmation?.to === payment && confirmation?.confirmed === true) {
-    return { override: { from: method, to: payment } };
-  }
+  // Karim 11-20: the dispatcher's choice is never refused — it is written with who changed it and from what (the page's old
+  // confirmation no longer has to match). Only the unattended transfer keeps to the source.
+  if (manual) return { override: { from: method, to: payment } };
   return { error: 'طريقة الدفع مختلفة عن الموقع — حدّث الصفحة وأكّد تغيير طريقة الدفع قبل التحويل' };
 }
