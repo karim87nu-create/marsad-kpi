@@ -744,7 +744,7 @@ function setup(app) {
           if (choices.length) line.apex = choices.map(no => ({ no, name: apexName.get(no) }));
           // Karim 11-16: a dish he confirmed (transfer-rules.js).
           // Karim 11-16 «اكيد الي قلته هو الي يمشي»: it comes before what staff chose or what was learned.
-          { const no = itemRule(kind === 'item' ? item : { name: line.name }); if (no && apexName.has(no)) { line.apex = [{ no, name: apexName.get(no) }]; line.byRule = true; delete line.apexPick; } }
+          { const no = itemRule(kind === 'item' ? item : { name: line.name }, order.source); if (no && apexName.has(no)) { line.apex = [{ no, name: apexName.get(no) }]; line.byRule = true; delete line.apexPick; } }
         }
       }
       list.sort((x, y) => (x.apex ? 1 : 0) - (y.apex ? 1 : 0) || String(x.at || '').localeCompare(String(y.at || '')));

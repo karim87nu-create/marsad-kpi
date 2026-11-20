@@ -60,11 +60,18 @@ const ITEMS = [
   [/^kofta roll sandwich$/, '0104002'], [/^kebab sandwich$/, i => wrapped(i) ? '0104011' : '0104010'],
   [/^ساندوتش كبده اسكندراني/, i => wrapped(i) ? '0104020' : '0104019'],
   [/^طبق كباب وكفته ضاني$/, '0109011'],
-  [/^عرض وجبه كفته$/, '218'],   // Karim 11-16: «عرض ربع كيلو كفته طلبات»   // «المفروض بالوجبه»: the meal, whatever the weight
 ];
-export function itemRule(item) {
+// Talabat sells the meal, the quarter-kilo offer, and the molokhia offer as distinct products.
+const TALABAT_ITEMS = [
+  [/^(?:عرض وجبه كفته(?: طلبات)?|kofta meal offer)$/, '0116001'],
+  [/^(?:عرض ربع(?: كيلو)? كفته(?: طلبات)?|1\/4 grilled kofta offer)$/, '218'],
+  [/^(?:عرض (?:وجبه|(?:تلت|ثلث)(?: كيلو)?) كفته و\s*ملوخيه(?: طلبات)?|kofta and molokhia meal offer)$/, '315'],
+];
+
+export function itemRule(item, source) {
   const t = norm(item?.name); if (!t) return null;
   for (const r of extra.items) if (t === r.name) return r.no;
+  if (source === 'talabat') for (const [re, no] of TALABAT_ITEMS) if (re.test(t)) return no;
   for (const [re, no] of ITEMS) if (re.test(t)) return typeof no === 'function' ? no(item) : no;
   return null;
 }

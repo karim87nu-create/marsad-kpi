@@ -38,7 +38,12 @@ test('transfer rules: confirmed areas and dishes', async () => {
   assert.equal(itemRule({ name: 'Kebab Sandwich', freeOptions: ['ملفوف'] }), '0104011');
   assert.equal(itemRule({ name: 'Kebab Sandwich', freeOptions: ['بلدي'] }), '0104010');
   assert.equal(itemRule({ name: 'طبق كباب وكفتة ضانى', sizeOption: 'ربع كيلو' }), '0109011');
-  assert.equal(itemRule({ name: 'عرض وجبة كفته' }), '218');
+  for (const [name, no] of [
+    ['عرض وجبة كفته', '0116001'], ['عرض وجبه كفتة طلبات', '0116001'], ['Kofta Meal Offer', '0116001'],
+    ['عرض ربع كيلو كفته طلبات', '218'], ['1/4 Grilled Kofta Offer', '218'],
+    ['عرض وجبة كفتة وملوخية طلبات', '315'], ['عرض تلت كفتة وملوخية', '315'], ['Kofta and Molokhia Meal Offer', '315'],
+  ]) assert.equal(itemRule({ name }, 'talabat'), no, name);
+  assert.equal(itemRule({ name: 'عرض وجبة كفتة' }, 'site'), null);
   assert.equal(itemRule({ name: 'بيتزا سلامي' }), null);
 });
 
