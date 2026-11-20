@@ -27,6 +27,9 @@ test('auto transfer: decides only on certain orders and says why not', () => {
   // 11-20 (receipt #31675): a delivery whose address is only the area is not written; with a street it is.
   assert.match(why({ customer: { ...base().customer, address: 'التجمع الخامس', talabatArea: 'التجمع الخامس' } }), /العنوان فيه المنطقة بس/);
   assert.doesNotMatch(why(), /العنوان فيه المنطقة بس/);
+  // A pickup has no address by design (zeros on Apex): never held for it, and it goes to the branch's «استلام» area.
+  const pk = decide(base({ fulfillment: 'pickup', customer: { name: 'كريم', phone: '01000000001', address: '' }, areaGuess: { no: 218, how: 'pickup' } }), X);
+  assert.doesNotMatch(pk.why.join(' '), /العنوان فيه المنطقة بس/); assert.equal(pk.ok, true, pk.why.join(' · ')); assert.equal(pk.body.locationNo, 218);
   assert.equal(decide(base({ apex: { no: 5 } }), X), null, 'already on Apex');
   assert.equal(decide(base({ job: { state: 'claimed' } }), X), null, 'with somebody');
   assert.match(why({ at: new Date(NOW - 10000).toISOString() }), /لسه واصل/);
