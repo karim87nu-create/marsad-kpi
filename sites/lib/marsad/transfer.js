@@ -103,7 +103,9 @@ function talabatPayment(bill, liveBadge) {
   const fromBill = line ? payWord(String(line.text).split(' | ').slice(1).join(' | ')) : null;
   return fromBill || payWord(liveBadge) || null;
 }
-function sitePayment(p) {
+// Karim 11-20 (website order fully covered by a discount, the customer pays 0): how it is paid changes nothing — cash, so it is never held for that.
+function sitePayment(p, total) {
+  if (total != null && Number.isFinite(Number(total)) && Number(total) === 0 && p?.method !== 'mixed') return 'cash';
   if (!p?.method) return null;
   if (p.method === 'cod') return 'cash';
   if (p.method === 'unknown') return null;
@@ -719,7 +721,7 @@ function setup(app) {
           ...(!pay.coupons?.length && pay.discount ? [{ text: 'خصم الموقع', amount: pay.discount, who: 'restaurant' }] : [])] : [];
         list.push({ source: 'site', ref: String(o.id), code: String(p.panel?.number || o.id).replace(/\D/g, '') || String(o.id), at: iso(o.scheduled_at || o.created_at), status: o.status, out: !!o.out_at || !!o.delivered_at || o.status === 'completed', sentToBranch: !!o.transfer_at, branch: o.branch || null, apexBranch: apexBranchOf(o.branch), scheduled: !!o.scheduled && (!o.scheduled_at || Number(o.scheduled_at) > now),
           customer: { name: p.customer?.name || null, phone: phoneOut(p.customer?.phoneDisplay || p.customer?.phone || p.customer?.mobileDisplay || p.customer?.mobile), address: p.customer?.address || null, ...(p.customer?.area ? { siteArea: p.customer.area } : {}) },
-          target: o.total ?? null, payment: sitePayment(pay), paymentMethod: pay?.method || null, paymentTitle: pay?.title || null, note: pay?.note || null, scheduledAt: iso(o.scheduled_at), discounts, fees: pay?.fees || [], shipping: pay?.shipping ?? null, total: o.total ?? null,
+          target: o.total ?? null, payment: sitePayment(pay, o.total), paymentMethod: pay?.method || null, paymentTitle: pay?.title || null, note: pay?.note || null, scheduledAt: iso(o.scheduled_at), discounts, fees: pay?.fees || [], shipping: pay?.shipping ?? null, total: o.total ?? null,
           fulfillment: o.fulfillment || null, ...(o.fulfillment === 'pickup' && PICKUP_AREAS[apexBranchOf(o.branch)] ? { areaGuess: { ...PICKUP_AREAS[apexBranchOf(o.branch)], how: 'pickup' } } : {}), items: siteLines(p.items || []).map(x => itemOut(x, 'site')), detailRead: !!p.items?.length,
           apex: a ? { no: a.no, sn: a.sn ?? null, user: a.user || null, how: a.how || null } : null, matching: sm.states?.get(o.id) || null, job: null });
       }
@@ -903,8 +905,8 @@ function setup(app) {
       // Unattended transfers follow the source. Staff may explicitly confirm a correction.
       let paymentOverride = null;
       if (source === 'site') {
-        const sp = parseJson((await db.prepare("SELECT data FROM match_profiles WHERE source = 'site' AND ref = ?").get(ref))?.data, {}), m = sp.payment?.method, so = await db.prepare('SELECT fulfillment, branch FROM site_orders WHERE id = ?').get(Number(ref));
-        const decision = sitePaymentChoice(m, payment, b.paymentOverride, manual);
+        const sp = parseJson((await db.prepare("SELECT data FROM match_profiles WHERE source = 'site' AND ref = ?").get(ref))?.data, {}), m = sp.payment?.method, so = await db.prepare('SELECT fulfillment, branch, total FROM site_orders WHERE id = ?').get(Number(ref));
+        const decision = sitePaymentChoice(m, payment, b.paymentOverride, manual, Number(so?.total) === 0);
         if (decision.error) fail(409, decision.error);
         if (decision.override) paymentOverride = { ...decision.override, by: me.name, employeeId: me.id, at: now };
         const siteBranch = apexBranchOf(so?.branch);
