@@ -13,7 +13,7 @@ function setup(app) {
   const forget = () => cache.clear();
   // Karim 11-19 «أخطاء السيرفر»: «D1 DB is overloaded» — every new fact used to empty this cache, so the next order read
   // all 17,000 learned rows again (297 reads, 5 million rows in half an hour). New facts now go into the copy in place.
-  const TTL = 3 * 60000;
+  const TTL = 10 * 60000;   // 11-21: a cold copy reads ~95,000 rows; new facts still go into the copy in place
   const matching = kind => kind?.startsWith('match-v2:');
   const sourceOf = kind => matching(kind) ? kind.split(':').at(-1) : null;
   const touch = (kind, rows, ref) => {
