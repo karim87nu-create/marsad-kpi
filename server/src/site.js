@@ -1,6 +1,6 @@
 import { TUNE } from './tune.js';
 import { withDeliveryPlaces } from './delivery-fields.js';
-import { siteReference } from './order-identifiers.js';
+import { referenceEvidence, siteReference } from './order-identifiers.js';
 // الموقع (eldahan.com.eg): the server reads the WooCommerce orders and their notes with a read-only REST key, every
 // minute, and keeps per order only the times the reports need (received, sent to the branch, out with the driver,
 // delivered) plus the branch and driver names. Matching fields are stored separately for order reconciliation.
@@ -116,6 +116,9 @@ function panelAddress(order) {
   return [text, ...fields.filter(([label, v]) => v && v !== '0' && !text.includes(label + ': ' + v)).map(([label, v]) => label + ': ' + v)].filter(Boolean).join(' — ');
 }
 const SITE_BRANCH_OF_APEX = { 1: 'tagamoa-cloud', 2: 'nasr-city', 3: 'madinaty-craft-zone' };
+const APEX_BRANCH_LABELS = { 'tagamoa-cloud': /^(?:فرع )?التجمع(?: |$)/, 'nasr-city': /^(?:فرع )?مدينة نصر(?: |$)/, 'madinaty-craft-zone': /^(?:فرع )?مدينتي(?: |$)/ };
+const siteCancelled = (status, label) => /cancel|failed|refund/i.test(status) || /ملغ|اتلغ/.test(label);
+const siteDelivered = (stage, status, label) => stage >= 4 || /(?:^|-)(?:complete|completed|delivered)$/i.test(status) || /تم التوصيل|تم التسليم/.test(label);
 
 function setup(app) {
   const { db, fail } = app;
@@ -128,6 +131,50 @@ function setup(app) {
   // with customer, items, money, branch, driver and stage. Times the reports need are kept from the first push that saw
   // them (sent to a branch = the panel's own time; out / delivered = the first push at that stage).
   const num = v => { const n = Number(String(v ?? '').replace(/[^\d.\-]/g, '')); return Number.isFinite(n) ? n : null; };
+  async function dispatchFromApex(orders, now) {
+    const open = orders.filter(o => Number.isSafeInteger(Number(o?.id)) && Number(o.id) > 0 && Number(o.createdAt) > 1e9 &&
+      Object.hasOwn(APEX_BRANCH_LABELS, o.branchId) && o.fulfillment === 'delivery' && !o.driver && (Number(o.stage) || 0) < 3 &&
+      !siteCancelled(o.status, o.statusLabel) && !siteDelivered(Number(o.stage), o.status, o.statusLabel));
+    if (!open.length) return [];
+    const day = businessDay(now);
+    const snapshots = (await db.prepare('SELECT data FROM orders_days WHERE day IN (?, ?) AND received_at >= ?')
+      .all(day, addDays(day, -1), now - 5 * 60000)).map(r => parseJson(r.data, {}));
+    const cancelled = new Set(snapshots.flatMap(d => [...(d?.cancels || []), ...(d?.cancelNotes || [])]).map(a => String(a.no)));
+    const apex = new Map(snapshots.flatMap(d => d?.online || []).filter(a => a.kind === 'الموقع').map(a => [String(a.no), a]));
+    if (!apex.size) return [];
+    const names = app.apexNameMap ? await app.apexNameMap() : {};
+    const dispatch = [], apexUses = new Map();
+    for (let i = 0; i < open.length; i += 90) {
+      const part = open.slice(i, i + 90), ids = part.map(o => Number(o.id)), qs = ids.map(() => '?').join(',');
+      const manual = new Map((await db.prepare(`SELECT site_id, apex_no FROM site_links WHERE site_id IN (${qs})`).all(...ids))
+        .map(r => [Number(r.site_id), r.apex_no]));
+      const jobs = new Map((await db.prepare(`SELECT ref, state, payload, result FROM transfer_jobs WHERE source = 'site' AND ref IN (${qs})`).all(...ids.map(String)))
+        .map(r => [Number(r.ref), r]));
+      for (const o of part) {
+        const id = Number(o.id), job = jobs.get(id), payload = parseJson(job?.payload, {}), result = parseJson(job?.result, {});
+        const writerNo = job?.state === 'auto_done' && payload?.db === 'live' && (!result?.db || result.db === 'live') && !result?.preview &&
+          SITE_BRANCH_OF_APEX[Number(payload.branchNo)] === o.branchId ? result?.orderNo : null;
+        const hasManual = manual.has(id);
+        const matches = [...apex.values()].filter(a => {
+          if (!APEX_BRANCH_LABELS[o.branchId].test(String(a.branch || '').trim())) return false;
+          if (hasManual) return String(a.no) === String(manual.get(id));
+          const ref = referenceEvidence({ source: 'site', id }, a);
+          if (ref.conflict) return false;
+          if (writerNo != null) return String(a.no) === String(writerNo);
+          return ref.exact || westernDigits(a.tag).trim().replace(/^#/, '') === String(id);
+        });
+        if (matches.length !== 1) continue;
+        const [a] = matches, out = Date.parse(a.out), driver = String(names[a.pilot] || a.pilot || '').trim();
+        if (cancelled.has(String(a.no)) || !Number.isFinite(out) || out > now + 60000 || out < Number(o.createdAt) * 1000 - 5 * 60000 ||
+          !/\p{L}/u.test(driver) || driver.length > 80) continue;
+        const apexNo = String(a.no);
+        apexUses.set(apexNo, (apexUses.get(apexNo) || 0) + 1);
+        dispatch.push({ orderId: id, driver, apexNo });
+      }
+    }
+    return dispatch.filter(a => apexUses.get(a.apexNo) === 1).map(({ orderId, driver }) => ({ orderId, driver }));
+  }
+
   app.route('POST', '/api/site/panel', async ctx => {
     await app.extensionAuth(ctx);
     const list = (Array.isArray(ctx.body?.orders) ? ctx.body.orders : []).slice(0, 300), now = ctx.now, writes = [];
@@ -146,8 +193,8 @@ function setup(app) {
       const id = Number(o?.id); if (!Number.isInteger(id) || id <= 0) continue;
       const created = Number(o.createdAt) > 1e9 ? Number(o.createdAt) * 1000 : null; if (!created) continue;
       const stage = Number(o.stage) || 0, status = String(o.status || '').slice(0, 40), label = String(o.statusLabel || '');
-      const cancelled = /cancel|failed|refund/i.test(status) || /ملغ|اتلغ/.test(label);
-      const done = !cancelled && (stage >= 4 || /complete|deliver/i.test(status) || /تم التوصيل|تم التسليم/.test(label));
+      const cancelled = siteCancelled(status, label);
+      const done = !cancelled && siteDelivered(stage, status, label);
       const old = olds.get(id) || null;
       const assigned = Number(o.branchAssignedAt) > 1e9 ? Number(o.branchAssignedAt) * 1000 : null;
       const scheduledAt = scheduledOrderAt(o, created) || old?.scheduled_at || null;
@@ -258,7 +305,8 @@ function setup(app) {
         }
       }
     }
-    return { ok: true, saved: list.length, assign };
+    const dispatch = ctx.body?.board === 'branch' && ctx.body?.dispatchFromApex === true ? await dispatchFromApex(list, now) : [];
+    return { ok: true, saved: list.length, assign, dispatch };
   }, { limit: 2 * 1024 * 1024 });   // 11-11: the day's board passed 256 KB at 19:42 and every push was refused
 
   // The key and secret are stored encrypted with the server secret (like the Telegram bot token).

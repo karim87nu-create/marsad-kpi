@@ -1,6 +1,5 @@
 // The website's central panel / branch boards: passes what the panel itself loaded to the Marsad (through background.js).
-// No request of its own ever goes to the website. The one action: an order the Marsad already wrote on Apex that is still
-// without a branch on the central panel is sent to that branch with the panel's own «إرسال للفرع» (Karim 11-11).
+// Uses the panel's own controls to send orders to branches and mirror confirmed Apex driver assignments.
 (() => {
   // Put back after an update (background.js): never two copies in one page (two «إرسال للفرع» presses).
   if (window.__marsadSitePanel === globalThis.MARSAD?.VERSION) return; window.__marsadSitePanel = globalThis.MARSAD?.VERSION;
@@ -26,6 +25,76 @@
     const s2 = document.querySelector('[data-branch-select="' + id + '"]'), b2 = document.querySelector('button[data-action="assign"][data-order="' + id + '"]');
     if (s2 && b2 && !b2.disabled) { if (s2.value !== a.branchId) s2.value = a.branchId; assignedAt = Date.now(); b2.click(); }
   };
+  const driverName = name => String(name || '').normalize('NFKC').replace(/[\p{M}ـ\u200e\u200f]/gu, '')
+    .replace(/[أإآٱ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه').replace(/\s+/g, ' ').trim().toLowerCase();
+  const isEditing = except => (document.activeElement !== except && document.activeElement?.matches('select,input,textarea,[contenteditable="true"]')) ||
+    document.querySelector('[role="dialog"]:not([hidden]),.eldahan-ops-modal.show,dialog[open]');
+  const dispatchTries = new Map();
+  let dispatching = false, openedDriverForm = null, operatorActions = 0;
+  for (const event of ['pointerdown', 'keydown']) {
+    document.addEventListener(event, e => { if (e.isTrusted) operatorActions++; }, true);
+  }
+  const dispatchOrder = async ({ orderId, driver }) => {
+    if (dispatching || isEditing() || Date.now() - (dispatchTries.get(orderId) || 0) < 25000) return;
+    const button = action => {
+      const b = document.querySelector('button[data-order="' + orderId + '"][data-action="' + action + '"]');
+      return b && !b.disabled ? b : null;
+    };
+    const form = () => document.querySelector('input[data-driver-search="' + orderId + '"]');
+    const unownedForm = () => [...document.querySelectorAll('input[data-driver-search]')].some(input => input !== openedDriverForm);
+    if (unownedForm() || !['prepare', 'ready-pickup', 'dispatch'].some(button) && !form()) return;
+    const waitFor = async lookup => {
+      for (let i = 0; i < 40; i++) {
+        const value = lookup();
+        if (value) return value;
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+      return null;
+    };
+    const click = b => { assignedAt = Date.now(); b.click(); };
+    const started = operatorActions;
+    const interrupted = () => started !== operatorActions || isEditing(openedDriverForm) || unownedForm();
+    dispatching = true;
+    dispatchTries.set(orderId, Date.now());
+    try {
+      let dispatch = button('dispatch');
+      if (!dispatch && !form()) {
+        let ready = button('ready-pickup');
+        if (!ready) {
+          const prepare = button('prepare');
+          if (!prepare) return;
+          click(prepare);
+          ready = await waitFor(() => button('ready-pickup'));
+        }
+        if (!ready || interrupted()) return;
+        click(ready);
+        dispatch = await waitFor(() => button('dispatch'));
+      }
+      let input = form();
+      if (!input) {
+        if (!dispatch || interrupted()) return;
+        click(dispatch);
+        input = await waitFor(form);
+        openedDriverForm = input;
+      }
+      if (!input || input !== openedDriverForm || interrupted()) return;
+      const wanted = driverName(driver);
+      const options = [...(input.list?.options || [])].filter(option =>
+        driverName(option.value.replace(/\s+-\s+\+?[\d٠-٩۰-۹][\d٠-٩۰-۹\s()-]*$/, '')) === wanted);
+      if (!wanted || options.length !== 1) return;
+      const value = options[0].value;
+      input.value = value;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      const submit = await waitFor(() => form()?.value === value && button('dispatch-submit'));
+      if (submit && !interrupted()) {
+        click(submit);
+        await waitFor(() => !button('dispatch-submit'));
+      }
+    } finally {
+      dispatching = false;
+    }
+  };
   window.addEventListener('message', e => {
     if (e.source !== window || !e.data || e.data.__marsadSite !== 1 || !Array.isArray(e.data.data?.orders)) return;
     seenAt = Date.now();
@@ -38,8 +107,16 @@
     // Karim 11-19 «اوردرات الويب سايت بتتأخر … وساعات مش بتظهر»: a picture the Marsad did not take (server busy) used
     // to count as sent, so the same orders waited a minute or more. Now it is sent again with the panel's next refresh.
     const forget = () => { if (last === key) { last = ''; lastAt = 0; } };
-    browser.runtime.sendMessage({ type: 'SITE_PANEL', board, orders, serverTime: e.data.data.serverTime || null })
-      .then(r => { if (!r?.ok) return forget(); if (board === 'central' && Array.isArray(r.assign)) r.assign.forEach(a => assign(a, orders)); }).catch(forget);
+    browser.runtime.sendMessage({ type: 'SITE_PANEL', board, dispatchFromApex: board === 'branch', orders, serverTime: e.data.data.serverTime || null })
+      .then(async r => {
+        if (!r?.ok) return forget();
+        if (board === 'central' && Array.isArray(r.assign)) r.assign.forEach(a => assign(a, orders));
+        if (board !== 'branch' || !Array.isArray(r.dispatch)) return;
+        for (const a of r.dispatch) {
+          if (navigator.locks) await navigator.locks.request('marsad-site-dispatch-' + a.orderId, { ifAvailable: true }, lock => lock && dispatchOrder(a));
+          else await dispatchOrder(a);
+        }
+      }).catch(forget);
   });
   // Karim 11-19 «الاضافه تعمل ريفرش لصفحات اللايف للموقع … وميقصرش علي التحويل للفرع»: the panel refreshes itself every
   // 10 s, but after failures it waits up to a minute, and a tab left behind can stop. When no fresh list came for 25 s,
@@ -59,7 +136,7 @@
   });
   setInterval(() => {
     const now = Date.now(), quiet = now - seenAt;
-    if (quiet < 25000 || now - assignedAt < 10000) return;
+    if (dispatching || quiet < 25000 || now - assignedAt < 10000) return;
     const a = document.activeElement;
     if (a && a !== document.body && a.matches?.('select,input,textarea,[contenteditable="true"]')) return;
     if (document.querySelector('[role="dialog"]:not([hidden]),.eldahan-ops-modal.show,dialog[open]')) return;

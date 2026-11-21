@@ -202,14 +202,17 @@ const waSender = sender => { try { return new URL(sender.url).hostname === 'web.
 async function siteMessage(m, sender) {
   let host = ''; try { host = new URL(sender.url).hostname; } catch {}
   if (!sender.tab || host !== 'eldahan.com.eg') throw Error('invalid_sender');
+  const dispatchFromApex = m.board === 'branch' && m.dispatchFromApex === true && new URL(sender.url).pathname === '/eldahan-branch-board/';
   const t = await store.get(TALABAT, null);
   const r = await api('/api/site/panel', { method: 'POST', headers: { 'content-type': 'application/json', ...(t?.token ? { 'x-talabat-token': t.token } : { 'x-device-token': globalThis.MARSAD.DEVICE_TOKEN }) },
-    body: JSON.stringify({ board: m.board === 'central' ? 'central' : 'branch', orders: Array.isArray(m.orders) ? m.orders.slice(0, 300) : [], serverTime: m.serverTime || null }), timeout: 30000 });
+    body: JSON.stringify({ board: m.board === 'central' ? 'central' : 'branch', dispatchFromApex, orders: Array.isArray(m.orders) ? m.orders.slice(0, 300) : [], serverTime: m.serverTime || null }), timeout: 30000 });
   if (!r.ok) return { ok: false, status: r.status };
   const d = r.json() || {};
   // Only the central panel may be told to send an order to a branch, and only to the panel's own branch keys.
   const assign = m.board === 'central' && Array.isArray(d.assign) ? d.assign.filter(a => Number.isInteger(a?.orderId) && /^[a-z0-9-]{2,40}$/.test(a?.branchId || '')).slice(0, 20) : [];
-  return { ok: true, assign };
+  const dispatch = dispatchFromApex && Array.isArray(d.dispatch) ? d.dispatch.filter(a =>
+    Number.isSafeInteger(a?.orderId) && a.orderId > 0 && typeof a.driver === 'string' && a.driver.length <= 80).slice(0, 20) : [];
+  return { ok: true, assign, dispatch };
 }
 async function talabatMessage(m, sender) {
   if (m.type === 'TALABAT_LINK' && adminSender(sender)) {
