@@ -19,7 +19,7 @@ function setup(app) {
 
   // Karim 11-16 «الشكوى تتربط بالأوردر»: the order number the customer gives (Talabat's number or its #code, the website's
   // order, or Apex's number / serial) → the Apex order: its branch, who entered it and the pilot. That day and the day before.
-  async function orderOf(no, day) {
+  async function orderOf(no, day, platform) {
     const q = String(no || '').replace(/\D/g, ''); if (!q || !validDate(day)) return null;
     const names = app.apexNameMap ? await app.apexNameMap() : {}, nm = u => u ? names[u] || u : null;
     for (const d of [day, prevDay(day)]) {
@@ -28,9 +28,9 @@ function setup(app) {
       const of = (platform, a, branch) => a ? { platform, apexNo: String(a.no), sn: a.sn != null ? String(a.sn).replace(/\.0+$/, '') : null, branch: branchName(a.branch || branch), employee: nm(a.user),
         pilot: nm(a.pilot || late.get(String(a.no))?.pilot) || null, at: a.at ? Date.parse(a.at) : null, out: a.out ? Date.parse(a.out) : null, day: d }
         : { platform, apexNo: null, sn: null, branch: branchName(branch), employee: null, pilot: null, at: null, out: null, day: d };
-      const tal = await db.prepare('SELECT id, store FROM talabat_orders WHERE day = ? AND (id = ? OR code = ?) LIMIT 1').get(d, q, q).catch(() => null);
+      const tal = !platform || platform === 'طلبات' ? await db.prepare('SELECT id, store FROM talabat_orders WHERE day = ? AND (id = ? OR code = ?) ORDER BY (id = ?) DESC LIMIT 1').get(d, q, q, q) : null;
       if (tal) { const m = app.talabat ? await app.talabat.matchDay(d).catch(() => null) : null; return of('طلبات', m?.matches.get(tal.id), tal.store); }
-      if (q.length >= 4 && q.length <= 7) {
+      if (!platform || platform === 'الموقع') {
         const site = await db.prepare('SELECT id, branch FROM site_orders WHERE day = ? AND id = ?').get(d, Number(q)).catch(() => null);
         if (site && app.site) {
           const rows = await db.prepare('SELECT * FROM site_orders WHERE day = ?').all(d);
@@ -39,6 +39,7 @@ function setup(app) {
           return of('الموقع', a ? { ...full, ...a, user: full?.user || a.user } : null, site.branch);
         }
       }
+      if (platform === 'طلبات' || platform === 'الموقع') continue;
       // Apex's own number or the serial the branch sees.
       const lists = ['online', 'open', 'lateOut', 'cancels'].flatMap(k => snap?.[k] || []);
       const a = lists.find(x => String(x.no) === q) || lists.find(x => String(x.sn ?? '').replace(/\.0+$/, '') === q);
@@ -50,10 +51,10 @@ function setup(app) {
   app.route('GET', '/api/cs/order', async ctx => {
     await app.requireAdmin(ctx, 'csRead');
     const day = validDate(String(ctx.query.day || '')) ? ctx.query.day : businessDay(ctx.now);
-    return { order: await orderOf(ctx.query.no, day) };
+    return { order: await orderOf(ctx.query.no, day, ctx.query.platform) };
   });
   const saveLink = async (id, v) => {
-    const l = v.orderNo ? await orderOf(v.orderNo, v.day) : null;
+    const l = v.orderNo ? await orderOf(v.orderNo, v.day, v.platform) : null;
     if (!l) { await db.prepare('DELETE FROM cs_links WHERE entry_id = ?').run(id); return null; }
     await db.prepare('INSERT INTO cs_links (entry_id, platform, apex_no, sn, branch, employee, pilot, at, out_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(entry_id) DO UPDATE SET platform = excluded.platform, apex_no = excluded.apex_no, sn = excluded.sn, branch = excluded.branch, employee = excluded.employee, pilot = excluded.pilot, at = excluded.at, out_at = excluded.out_at')
       .run(id, l.platform, l.apexNo, l.sn, l.branch, l.employee, l.pilot, l.at, l.out);
@@ -77,15 +78,29 @@ function setup(app) {
     for (const r of manual) { const x = ratings.get(key(r.day, r.branch)) || { day: r.day, branch: r.branch }; ratings.set(key(r.day, r.branch), { ...x, rating: r.rating ?? x.rating ?? null, competitor: r.competitor ?? x.competitor ?? null, by: r.by_name }); }
     // The website's customer ratings (the app's rating of each order, and the review form), with the order's branch.
     const site = [
-      ...(await db.prepare('SELECT r.order_id, r.rating, r.comment, o.day, o.branch FROM site_ratings r JOIN site_orders o ON o.id = r.order_id WHERE o.day BETWEEN ? AND ?').all(from, to).catch(() => []))
-        .map(r => ({ day: r.day, platform: 'الموقع', branch: r.branch, orderNo: String(r.order_id), rating: r.rating, comment: r.comment, auto: 'rating' })),
-      ...(await db.prepare('SELECT * FROM site_reviews WHERE day BETWEEN ? AND ?').all(from, to).catch(() => []))
-        .map(r => ({ day: r.day, platform: 'الموقع', branch: null, customer: r.reviewer, phone: r.phone, rating: r.rating, comment: [r.product, r.review].filter(Boolean).join(': ') || null, auto: 'review' }))];
-    const talabat = reviews.map(r => ({ day: r.day, platform: 'طلبات', branch: r.branch, orderNo: r.order_id, rating: r.rating, comment: r.text, auto: 'talabat' }));
+      ...(await db.prepare('SELECT r.order_id, r.rating, r.comment, o.day, o.branch FROM site_ratings r JOIN site_orders o ON o.id = r.order_id WHERE o.day BETWEEN ? AND ?').all(from, to))
+        .map(r => ({ day: r.day, platform: 'الموقع', branch: branchName(r.branch), orderNo: String(r.order_id), rating: r.rating, comment: r.comment, auto: 'rating' })),
+      ...(await db.prepare('SELECT r.*, o.branch FROM site_reviews r LEFT JOIN site_orders o ON o.id = r.order_id WHERE r.day BETWEEN ? AND ?').all(from, to))
+        .map(r => ({ day: r.day, platform: 'الموقع', branch: branchName(r.branch), orderNo: r.order_id == null ? null : String(r.order_id), customer: r.reviewer, phone: r.phone, rating: r.rating, comment: r.review ? [r.product, r.review].filter(Boolean).join(': ') : null, auto: 'review' }))];
+    const talabat = reviews.map(r => ({ day: r.day, platform: 'طلبات', branch: branchName(r.branch), orderNo: r.order_id, rating: r.rating, comment: r.text, auto: 'talabat' }));
     // Karim 11-16 «التعليقات الايجابيه ... نخليها تلقائي»: every 5-star rating with words, from Talabat and the website.
     const positive = [...talabat, ...site].filter(r => r.rating === 5 && r.comment && String(r.comment).trim().length >= 2)
       .map(r => ({ day: r.day, platform: r.platform, branch: branchName(r.branch), customer: r.customer || null, orderNo: r.orderNo || null, comment: r.comment }));
-    return { from, to, me: { name: who.name, role: who.role }, platforms: PLATFORMS, reached: REACHED, entries: rows.map(r => shape(r, links.get(r.id))), positive, talabat, ratings: [...ratings.values()].sort((a, b) => a.day.localeCompare(b.day) || a.branch.localeCompare(b.branch)), site };
+    const entries = rows.map(r => shape(r, links.get(r.id)));
+    const orderKey = (platform, no) => no ? platform + ':' + String(no).replace(/^#\s*/, '') : null;
+    const latest = new Map();
+    for (const e of entries) {
+      const k = orderKey(e.platform, e.orderNo);
+      if (k && !latest.has(k)) latest.set(k, e);
+    }
+    const matched = new Set();
+    const platformFeedback = [...talabat, ...site].map(r => {
+      const e = latest.get(orderKey(r.platform, r.orderNo));
+      if (!e || matched.has(e.id)) return r;
+      matched.add(e.id);
+      return { ...r, customer: r.customer || e.customer, phone: r.phone || e.phone, complaint: e.complaint, reached: e.reached, action: e.action, followupId: e.id };
+    });
+    return { from, to, me: { name: who.name, role: who.role }, platforms: PLATFORMS, reached: REACHED, entries, platformFeedback, positive, talabat, ratings: [...ratings.values()].sort((a, b) => a.day.localeCompare(b.day) || a.branch.localeCompare(b.branch)), site };
   });
 
   const read = (b, now) => {
@@ -99,7 +114,7 @@ function setup(app) {
     return v;
   };
   // The order's branch when the employee did not choose one.
-  const withBranch = async v => { if (!v.branch && v.orderNo) v.branch = (await orderOf(v.orderNo, v.day))?.branch || null; if (!v.branch) fail(400, 'اختار الفرع (أو اكتب رقم أوردر المرصد يعرفه)'); return v; };
+  const withBranch = async v => { if (!v.branch && v.orderNo) v.branch = (await orderOf(v.orderNo, v.day, v.platform))?.branch || null; if (!v.branch) fail(400, 'اختار الفرع (أو اكتب رقم أوردر المرصد يعرفه)'); return v; };
   // Each customer-service user changes only their own lines; admin and supervisors any.
   const own = async (who, id) => { const e = await db.prepare('SELECT by_name FROM cs_entries WHERE id = ?').get(id); if (!e) fail(404, 'السطر مش موجود');
     if (who.role === 'cs' && e.by_name !== who.name) fail(403, 'السطر ده سجّله ' + (e.by_name || 'حد تاني') + '؛ تعدّل سطورك بس'); return e; };

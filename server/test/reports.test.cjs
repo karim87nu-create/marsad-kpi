@@ -73,10 +73,23 @@ test('admin «التقارير Excel»: the seven files of a period, right to le
     await admin('POST', '/api/cs', { day: '2026-11-14', platform: 'طلبات', branch: 'مدينة نصر', rating: 1, comment: 'food arrived very cold', reached: 'تم التواصل', action: 'تم الاعتذار للعميل' });
     await admin('POST', '/api/cs', { day: '2026-11-14', platform: 'الموقع', branch: 'مدينتي', rating: 5, comment: 'ممتاز' });
     await admin('POST', '/api/cs/rating', { day: '2026-11-14', branch: 'مدينة نصر', rating: 5, competitor: 4.7 });
+    const db = t.app.db.raw;
+    db.prepare('INSERT INTO talabat_reviews (order_id,vendor,branch,day,at,rating,text,seen_at) VALUES (?,?,?,?,?,?,?,?)')
+      .run('10001', 'HF_EG;608556', 'مدينة نصر', '2026-11-14', t.clock.now, 1, 'تقييم من طلبات', t.clock.now);
+    db.prepare('INSERT INTO talabat_orders (id,day,vendor_id,status,cancel_owner,cancel_reason,total,first_seen,updated_at) VALUES (?,?,?,?,?,?,?,?,?)')
+      .run('10001', '2026-11-14', 'HF_EG;608556', 'CANCELLED', 'Vendor', 'صنف غير متاح', 100, t.clock.now, t.clock.now);
+    db.prepare('INSERT INTO site_orders (id,day,status,branch,total,created_at) VALUES (?,?,?,?,?,?)')
+      .run(10001, '2026-11-14', 'cancelled', 'مدينتي', 120, t.clock.now);
+    db.prepare('INSERT INTO site_channels (id,via) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET via=excluded.via').run(10001, 'rest-api');
+    db.prepare('INSERT INTO site_ratings (order_id,rating,comment,at) VALUES (?,?,?,?)').run(10001, 2, 'تقييم من الموقع', t.clock.now);
+    await admin('POST', '/api/cs', { day: '2026-11-14', platform: 'طلبات', branch: 'مدينة نصر', orderNo: '10001', rating: 5, action: 'تمت المتابعة' });
+    const lookup = '/api/cs/order?day=2026-11-14&no=10001&platform=';
+    assert.equal((await admin('GET', lookup + encodeURIComponent('طلبات'))).body.order.platform, 'طلبات');
+    assert.equal((await admin('GET', lookup + encodeURIComponent('الموقع'))).body.order.platform, 'الموقع');
     const token = await t.login(), root = path.join(__dirname, '../../sites/public/admin');
     const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
     dom = new JSDOM(html, { url: 'http://localhost/admin/#exports', runScripts: 'outside-only', pretendToBeVisual: true });
-    const w = dom.window; w.sessionStorage.setItem('marsadAdminToken', token); w.MARSAD_API = t.base; w.fetch = (u, o) => fetch(u, o);
+    const w = dom.window; w.sessionStorage.setItem('marsadAdminToken', token); w.MARSAD_API = t.base; w.fetch = (u, o) => fetch(u, o); w.AbortController = AbortController; w.AbortSignal = AbortSignal;
     w.confirm = () => true;
     const scripts = [...html.matchAll(/<script src="([^"?]+)/g)].map(m => m[1]).filter(f => f !== 'config.js' && fs.existsSync(path.join(root, f)));
     for (const f of scripts) w.eval(fs.readFileSync(path.join(root, f), 'utf8'));
@@ -95,10 +108,18 @@ test('admin «التقارير Excel»: the seven files of a period, right to le
       ['تحليل الأسباب', 'تفاصيل الإلغاءات', 'نسبه الالغاءات', 'وقت غلق طلبات والتقييم', 'الكومنتات والشكاوي', 'اجمالي'], ['طلبات', 'الموقع'], ['تقييم QA', 'المعايير', 'النسبه', 'Dashboard']]), 'each file with the team\'s own sheets');
     const cc = files[0].sheets[0].rows;
     assert.equal(cc[3][1].v, DAYS['2026-11-14'].full.totals.kinds.Hotline + DAYS['2026-11-15'].full.totals.kinds.Hotline, 'the Hotline orders of the two days');
+    const aggregate = Object.values(DAYS).map(d => d.report);
+    assert.equal(cc[3][2].v, aggregate.reduce((n, d) => n + d.answered, 0), 'received uses Arabix success count');
+    assert.equal(cc[3][5].v, aggregate.reduce((n, d) => n + (d.recordedCalls ?? d.calls), 0), 'incoming includes short abandons');
+    const cancels = files.find(f => /^الالغاءات/.test(f.name)).sheets[1].rows.slice(2);
+    assert.deepEqual(Array.from(cancels, r => [r[3], r[9]]).sort(), [['APP', '10001'], ['Talabat', '10001']], 'platform cancellations are independent of Apex and of matching IDs');
     const q = files.find(f => /^QA1/.test(f.name)).sheets;
     assert.equal(JSON.stringify(q[0].rows.slice(3).map(r => [r[1], r[17].v])), JSON.stringify([['اماني احمد', 1], ['اماني احمد', 0.917]]));
     const cs = files.find(f => /خدمة العملاء/.test(f.name)).sheets[0].rows;
     assert.equal(JSON.stringify(cs[1].slice(1, 6).map(c => c.v)), JSON.stringify([0, 0, 0, 0, 1]), 'Nasr City: one 1-star rating on Talabat');
+    assert.ok(cs.some(r => r[4] === '10001' && r[7] === 'تمت المتابعة'), 'platform review retains manual follow-up');
+    const website = files.find(f => /خدمة العملاء/.test(f.name)).sheets[1].rows;
+    assert.ok(website.some(r => r[4] === '10001' && r[2] === 2), 'matching numeric ID retains the website rating');
     assert.match(cs[1][1].f, /^COUNTIFS\(/, 'counted by a formula from the list');
     if (process.env.REPORT_OUT) for (const f of files) fs.writeFileSync(path.join(process.env.REPORT_OUT, f.name + '.xlsx'), Buffer.from(await f.blob.arrayBuffer()));
   } finally { dom?.window.close(); await t.close(); }

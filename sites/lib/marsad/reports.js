@@ -3,8 +3,10 @@
 // files: the call center report, the branches' sales by platform and payment, the orders by branch and source, the
 // cancellations, Talabat's closing time. From Apex (the cashier monitor's day), Arabicss, the website and Talabat.
 // A finished day is kept once built.
-import { businessDay, addDays, validDate } from './time.js';
+import { businessDay, addDays, validDate, iso } from './time.js';
 import { parseJson } from './order-match.js';
+import { branchName } from './cs.js';
+import { BRANCHES as TALABAT_BRANCHES } from './stock.js';
 
 const r2 = v => Math.round((Number(v) || 0) * 100) / 100;
 const ORDER_QUEUE = '7671';   // «طلب أوردر»: a missed call there is an order that may be lost
@@ -17,7 +19,7 @@ export async function reportDay(app, day, now) {
   let calls = null;
   try {
     const d = await app.heavy('day', day, now), r = d?.history?.report;
-    if (r) calls = { calls: r.calls, answered: r.answered, abandoned: r.abandoned, afterHours: r.afterHours,
+    if (r) calls = { calls: r.calls, recordedCalls: r.recordedCalls ?? r.calls, shortAbandoned: r.shortAbandoned ?? 0, answered: r.answered, abandoned: r.abandoned, afterHours: r.afterHours,
       orderQueueMissed: (d.history.queues || []).filter(q => String(q.queue) === ORDER_QUEUE).reduce((n, q) => n + (q.abandoned || 0), 0) };
   } catch {}
   const branches = new Map(), B = name => branches.get(name) || branches.set(name, { name, kinds: {}, sales: [], offers: { talabat: 0, site: 0 }, site: { app: 0, web: 0, other: 0 }, cancels: {} }).get(name);
@@ -53,6 +55,40 @@ export async function reportDay(app, day, now) {
 
 function setup(app) {
   const { db } = app;
+  app.route('GET', '/api/reports/platform-cancels', async ctx => {
+    await app.requireAdmin(ctx);
+    const today = businessDay(ctx.now), to = String(ctx.query.to || ''), from = String(ctx.query.from || '');
+    if (!validDate(from) || !validDate(to) || from > to || to > today || to >= addDays(from, 62)) app.fail(400, 'اختار فترة صحيحة');
+    const [talabat, site] = await Promise.all([
+      db.prepare(`SELECT day, vendor_id, store, COUNT(*) AS n FROM talabat_orders
+        WHERE day BETWEEN ? AND ? GROUP BY day, vendor_id, store`).all(from, to),
+      db.prepare(`SELECT day, branch, c.via, COUNT(*) AS n FROM site_orders
+        LEFT JOIN site_channels c USING (id) WHERE day BETWEEN ? AND ?
+        AND status NOT IN ('failed','wallet-failed','checkout-draft','trash') GROUP BY day, branch, c.via`).all(from, to),
+    ]);
+    const [talabatCancels, siteCancels] = await Promise.all([
+      db.prepare(`SELECT day, id, code, vendor_id, store, status, cancelled_at, cancel_owner, cancel_reason, total, subtotal
+        FROM talabat_orders WHERE day BETWEEN ? AND ? AND status IN ('CANCELLED','REJECTED')`).all(from, to),
+      db.prepare(`SELECT day, id, branch, gone_at, status, total, c.via FROM site_orders
+        LEFT JOIN site_channels c USING (id) WHERE day BETWEEN ? AND ? AND status = 'cancelled'`).all(from, to),
+    ]);
+    const talBranch = x => branchName(TALABAT_BRANCHES.find(b => b.outlet.split(';').at(-1) === String(x.vendor_id || '').split(';').at(-1))?.name || x.store);
+    const sitePlatform = x => /rest-api|app/i.test(x.via || '') ? 'APP' : 'WEB';
+    const platformTotals = [
+      ...talabat.map(x => ({ day: x.day, branch: talBranch(x), platform: 'Talabat', orders: x.n })),
+      ...site.map(x => ({ day: x.day, branch: branchName(x.branch), platform: sitePlatform(x), orders: x.n })),
+    ];
+    const list = [
+      ...talabatCancels.map(x => ({ day: x.day, orderNo: x.id, code: x.code, branch: talBranch(x), platform: 'Talabat', status: x.status, at: iso(x.cancelled_at),
+        amount: x.total ?? x.subtotal, reason: x.cancel_reason, owner: String(x.cancel_owner || '').replace(/^Owner:\s*/i, '') || null })),
+      ...siteCancels.map(x => ({ day: x.day, orderNo: String(x.id), branch: branchName(x.branch), platform: sitePlatform(x), status: x.status, observedAt: iso(x.gone_at), amount: x.total, reason: null, owner: null })),
+    ];
+    const dates = new Map();
+    for (let day = from; day <= to; day = addDays(day, 1)) dates.set(day, { day, closedAt: {} });
+    const closures = await db.prepare('SELECT day, branch, name, outlet, started_at FROM talabat_closures WHERE day BETWEEN ? AND ? ORDER BY started_at').all(from, to);
+    for (const row of closures) dates.get(row.day).closedAt[row.branch || row.name || row.outlet] = row.started_at;
+    return { days: [...dates.values()], list: list.sort((a, b) => b.day.localeCompare(a.day) || (b.at || '').localeCompare(a.at || '')), platformTotals };
+  });
   app.route('GET', '/api/reports/days', async ctx => {
     await app.requireAdmin(ctx);
     const today = businessDay(ctx.now), to = validDate(String(ctx.query.to || '')) ? ctx.query.to : addDays(today, -1);
@@ -62,7 +98,7 @@ function setup(app) {
     const out = [];
     for (const d of days) {
       const done = d < today;
-      if (done) { const hit = parseJson((await db.prepare('SELECT data FROM report_days WHERE day = ?').get(d).catch(() => null))?.data, null); if (hit) { out.push(hit); continue; } }
+      if (done) { const hit = parseJson((await db.prepare('SELECT data FROM report_days WHERE day = ?').get(d).catch(() => null))?.data, null); if (hit?.calls?.recordedCalls != null) { out.push(hit); continue; } }
       const v = await reportDay(app, d, ctx.now);
       // Kept only when the day is complete (Apex and the calls both there), so a day read early is built again.
       if (done && v.linked && v.calls) await db.prepare('INSERT INTO report_days (day, data, at) VALUES (?,?,?) ON CONFLICT(day) DO UPDATE SET data = excluded.data, at = excluded.at').run(d, JSON.stringify(v), ctx.now).catch(() => {});

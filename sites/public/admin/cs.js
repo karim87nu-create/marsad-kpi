@@ -24,11 +24,12 @@ window.MarsadCs = function MarsadCs(ctx) {
     orderNo.onchange = async () => {
       if (!orderNo.value.trim()) { found.textContent = ''; return; }
       found.textContent = 'بيدور…';
-      try { const r = await api('/api/cs/order?no=' + encodeURIComponent(orderNo.value.trim()) + '&day=' + day.value); const o = r.order;
+      try { const r = await api('/api/cs/order?no=' + encodeURIComponent(orderNo.value.trim()) + '&day=' + day.value + '&platform=' + encodeURIComponent(platform.value)); const o = r.order;
         found.textContent = o ? linkText(o) : 'مالقيتش الأوردر ده في اليوم ده أو اللي قبله';
         if (o?.branch && !branch.value && [...branch.options].some(x => x.value === o.branch)) branch.value = o.branch;
         if (o?.platform && [...platform.options].some(x => x.value === o.platform)) platform.value = o.platform;
       } catch (x) { found.textContent = x.message; } };
+    platform.onchange = orderNo.onchange;
     const rating = sel(['5', '4', '3', '2', '1'], e.rating == null ? '' : String(e.rating), 'من غير تقييم');
     const comment = h('textarea', { rows: 2, value: e.comment || '', placeholder: 'تعليق العميل زي ما كتبه' }), complaint = h('input', { value: e.complaint || '', placeholder: 'الشكوى باختصار (بارد، تأخير، جودة الأرز…)' });
     const reached = sel(data.reached, e.reached, 'اتواصلنا؟'), action = h('input', { value: e.action || '', placeholder: 'اللي اتعمل (اعتذار، خصم 10% الأوردر الجاي…)' });
@@ -72,7 +73,7 @@ window.MarsadCs = function MarsadCs(ctx) {
     pagesPanel();
     try {
       data = await api('/api/cs?from=' + state.day + '&to=' + state.to);
-      const l = data.entries, rated = l.filter(e => e.rating != null), low = rated.filter(e => e.rating < 5);
+      const l = data.entries, online = data.platformFeedback || [], rated = [...online, ...l.filter(e => !['طلبات', 'الموقع'].includes(e.platform))].filter(e => e.rating != null), low = rated.filter(e => e.rating < 5);
       $('csCards').replaceChildren(kpi('سطور', l.length, 'info'), kpi('شكاوى', l.filter(e => e.complaint).length, l.some(e => e.complaint) ? 'warn' : 'good'),
         kpi('تقييمات أقل من 5', low.length, low.length ? 'warn' : 'good', rated.length ? Math.round(low.length / rated.length * 100) + '% من ' + rated.length : ''),
         kpi('اتواصلنا', l.filter(e => e.reached === 'تم التواصل').length, '', 'من ' + l.filter(e => e.complaint || (e.rating != null && e.rating < 5)).length + ' محتاجين تواصل'));
@@ -94,16 +95,19 @@ window.MarsadCs = function MarsadCs(ctx) {
       table('csPositive', [{ title: 'اليوم', get: x => x.day }, { title: 'المنصة', get: x => x.platform }, { title: 'الفرع', get: x => x.branch || '' }, { title: 'رقم الطلب', get: x => x.orderNo || '' }, { title: 'التعليق', get: x => x.comment, cls: () => 'wrap' }],
         data.positive || [], { pageSize: 30, empty: 'مفيش تعليقات إيجابية في الفترة دي' });
       const stars = [];
-      for (const p of data.platforms) for (const b of BRANCHES) { const x = rated.filter(e => e.platform === p && e.branch === b); if (!x.length) continue; stars.push({ p, b, n: x.length, c: [5, 4, 3, 2, 1].map(s => x.filter(e => e.rating === s).length) }); }
+      for (const p of data.platforms) for (const b of [...BRANCHES, 'فرع غير معروف']) { const x = rated.filter(e => e.platform === p && (BRANCHES.includes(e.branch) ? e.branch : 'فرع غير معروف') === b); if (!x.length) continue; stars.push({ p, b, n: x.length, c: [5, 4, 3, 2, 1].map(s => x.filter(e => e.rating === s).length) }); }
       table('csStars', [{ title: 'المنصة', get: x => x.p }, { title: 'الفرع', get: x => x.b }, ...[5, 4, 3, 2, 1].map((s, i) => ({ title: s + ' ★', get: x => x.c[i], type: 'number' })), { title: 'الإجمالي', get: x => x.n, type: 'number' },
         { title: 'أقل من 5', get: x => (x.n - x.c[0]) / x.n * 100, show: x => Math.round((x.n - x.c[0]) / x.n * 100) + '%', type: 'number' }, { title: 'سئ (1)', get: x => x.c[4] / x.n * 100, show: x => Math.round(x.c[4] / x.n * 100) + '%', type: 'number' }], stars, { empty: 'مفيش تقييمات متسجلة' });
+      const followed = new Set(online.map(e => e.followupId).filter(Boolean));
+      const manualById = new Map(l.map(e => [e.id, e]));
+      const display = [...online.map(e => ({ ...e, followup: manualById.get(e.followupId) })), ...l.filter(e => !followed.has(e.id))].sort((a, b) => b.day.localeCompare(a.day));
       table('csTable', [{ title: 'اليوم', get: e => e.day }, { title: 'المنصة', get: e => e.platform }, { title: 'الفرع', get: e => e.branch }, { title: 'التقييم', get: e => e.rating, show: e => e.rating == null ? '—' : pill(e.rating + ' ★', e.rating >= 5 ? 'ok' : e.rating >= 3 ? 'warn' : 'bad'), type: 'number' },
         { title: 'العميل', get: e => [e.customer, e.phone].filter(Boolean).join(' · ') }, { title: 'رقم الطلب', get: e => e.orderNo || '' }, { title: 'الأوردر', get: e => linkText(e.link), cls: () => 'wrap' }, { title: 'التعليق', get: e => e.comment || '', cls: () => 'wrap' }, { title: 'الشكوى', get: e => e.complaint || '', cls: () => 'wrap' },
-        { title: 'اتواصلنا؟', get: e => e.reached || '' }, { title: 'الإجراء', get: e => e.action || '', cls: () => 'wrap' }, { title: 'سجّله', get: e => e.by || '' },
-        { title: '', get: () => '', show: e => !canWrite() || !mine(e) ? '' : h('span', { className: 'inline' },
-          h('button', { type: 'button', className: 'ghost small', textContent: 'تعديل', onclick: () => { editing = e; form(); $('csForm').scrollIntoView({ behavior: 'smooth' }); } }),
-          h('button', { type: 'button', className: 'ghost small', textContent: 'مسح', onclick: async () => { if (!confirm('مسح السطر ده؟')) return; try { await api('/api/cs', { method: 'DELETE', body: { id: e.id } }); await render(); } catch (x) { showError(x); } } })) }],
-      l, { pageSize: 50, empty: 'مفيش سطور في الفترة دي' });
+        { title: 'اتواصلنا؟', get: e => e.reached || '' }, { title: 'الإجراء', get: e => e.action || '', cls: () => 'wrap' }, { title: 'سجّله', get: e => e.auto ? e.platform + ' (تلقائي)' : e.by || '' },
+        { title: '', get: () => '', show: e => !(e.followup || e).id || !canWrite() || !mine(e.followup || e) ? '' : h('span', { className: 'inline' },
+          h('button', { type: 'button', className: 'ghost small', textContent: 'تعديل', onclick: () => { editing = e.followup || e; form(); $('csForm').scrollIntoView({ behavior: 'smooth' }); } }),
+          h('button', { type: 'button', className: 'ghost small', textContent: 'مسح', onclick: async () => { if (!confirm('مسح السطر ده؟')) return; try { await api('/api/cs', { method: 'DELETE', body: { id: (e.followup || e).id } }); await render(); } catch (x) { showError(x); } } })) }],
+      display, { pageSize: 50, empty: 'مفيش سطور في الفترة دي' });
     } catch (x) { showError(x); }
   }
   return { render };

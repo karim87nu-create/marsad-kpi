@@ -35,15 +35,19 @@ window.MarsadExports = function MarsadExports(ctx) {
   async function callCenter() {
     const list = await days(), H = v => ({ v, s: 'head', b: true });
     const c = k => sum(list, d => d.calls?.[k]), hot = sum(list, d => d.hotline);
-    const calls = c('calls'), missed = c('abandoned'), ans = c('answered');
+    const calls = c('calls'), missed = c('abandoned'), ans = c('answered'), incoming = c('recordedCalls');
+    const hasCalls = list.some(d => d.calls);
     const rows = [
       [{ v: 'Call center Report', s: 'title', b: true, big: true }, null, null, null, null, null],
       [{ v: label(), s: 'sub', b: true, big: true }, null, null, null, null, null],
-      [H('نسبه الطلبات'), H('عدد الاوردرات المفعله'), H('عدد المكالمات المستلمه'), H('نسبه المكالمات الفائته'), H('عدد المكالمات الفائته (اكثر من 10ثواني)'), H('اجمالي المكالمات الوارده')],
-      [F('IFERROR(B4/C4,0)', div(hot, ans), { t: 'pct', b: true }), { v: hot, b: true }, F('F4-E4', calls - missed, { b: true }), F('IFERROR(E4/F4,0)', div(missed, calls), { t: 'pct', b: true }), { v: missed, b: true }, { v: calls, b: true }],
+      [H('نسبه الطلبات'), H('عدد الاوردرات المفعله'), H('عدد المكالمات المستلمه'), H('نسبه المكالمات الفائته'), H('عدد المكالمات الفائتة (أكتر من 7 ثواني)'), H('إجمالي المكالمات الواردة أثناء التشغيل')],
+      [F('IFERROR(B4/C4,0)', div(hot, ans), { t: 'pct', b: true }), { v: hot, b: true }, { v: hasCalls ? ans : null, b: true }, F('IFERROR(E4/B8,0)', div(missed, calls), { t: 'pct', b: true }), { v: hasCalls ? missed : null, b: true }, { v: hasCalls ? incoming : null, b: true }],
       [H('"الطلبات المحتملة من المكالمات الفائتة"'), null, null, H('بعد اوقات العمل'), null, null],
-      [{ v: c('orderQueueMissed'), b: true }, null, null, { v: c('afterHours'), b: true }, null, null]];
-    X().grid('Call center Report ' + fileLabel(), [{ name: 'Call center Report', widths: [22, 18, 20, 18, 24, 22], heights: [40, 34, 44, 34, 40, 30], rows, merges: ['A1:F1', 'A2:F2', 'A5:C5', 'D5:F5', 'A6:C6', 'D6:F6'] }]);
+      [{ v: c('orderQueueMissed'), b: true }, null, null, { v: hasCalls ? c('afterHours') : null, b: true }, null, null],
+      [H('المكالمات المحتسبة'), null, H('فائتة قصيرة ≤7 ثواني'), null, null, null],
+      [null, hasCalls ? calls : null, hasCalls ? c('shortAbandoned') : null, null, null, null],
+      [list.some(d => !d.calls) ? 'بيانات Arabix ناقصة لجزء من الفترة المختارة' : null]];
+    X().grid('Call center Report ' + fileLabel(), [{ name: 'Call center Report', widths: [22, 18, 20, 18, 24, 22], heights: [40, 34, 44, 34, 40, 30], rows, merges: ['A1:F1', 'A2:F2', 'A5:C5', 'D5:F5', 'A6:C6', 'D6:F6', 'A9:F9'] }]);
     return list.some(d => !d.calls) ? 'فيه أيام سجل المكالمات بتاعها لسه مااتسحبش من أرابيكس' : '';
   }
 
@@ -148,37 +152,36 @@ window.MarsadExports = function MarsadExports(ctx) {
   }
 
   // ---------- 4. الإلغاءات (نفس الست شيتات بالترتيب) ----------
-  // Platforms as in Karim's file; Wafarha counts with the Hotline (as the team counts it).
-  const PLATFORM = { Hotline: 'Hotline', 'وفرها': 'Hotline', 'طلبات': 'Talabat', 'الموقع': 'WEB' };
-  const PLATS = ['APP', 'Hotline', 'Page', 'Talabat', 'WEB', 'Whatsapp'], RATIO_ORDER = ['Talabat', 'WEB', 'APP', 'Hotline', 'Whatsapp', 'Page'];
+  const PLATS = ['Talabat', 'WEB', 'APP'];
   const REASONS = ['رفض من المطعم', 'تأخر في التوصيل', 'خطأ في الطلب', 'المنتج غير متوفر', 'إلغاء العميل', 'مشكلة في الدفع', 'مشكلة تقنية', 'جوده', 'أخرى'];
   const reasonOf = t => { const s = String(t || ''); return /رفض|reject/i.test(s) ? REASONS[0] : /تأخ|تاخ|late|delay/i.test(s) ? REASONS[1] : /خطأ|خطا|غلط|wrong/i.test(s) ? REASONS[2] : /متوفر|نواقص|نفذ|unavailable|out of stock/i.test(s) ? REASONS[3]
     : /العميل|customer/i.test(s) ? REASONS[4] : /دفع|payment|فيزا/i.test(s) ? REASONS[5] : /تقن|system|سيستم/i.test(s) ? REASONS[6] : /جود|quality|بارد/i.test(s) ? REASONS[7] : REASONS[8]; };
-  const ordersOf = (list, b, p) => sum(list, d => sum(d.branches.filter(x => branchOf(x.name) === b), x => p === 'Talabat' ? x.kinds?.['طلبات']
-    : p === 'Hotline' ? (x.kinds?.Hotline || 0) + (x.kinds?.['وفرها'] || 0) - (x.sources?.whatsapp || 0) - (x.sources?.page || 0)
-    : p === 'Whatsapp' ? x.sources?.whatsapp : p === 'Page' ? x.sources?.page
-    : p === 'APP' ? x.site?.app : p === 'WEB' ? (x.kinds?.['الموقع'] || 0) - (x.site?.app || 0) : 0));
   async function cancels() {
-    const [list, own, cs] = await Promise.all([days(), api('/api/cancels/owners?from=' + state.day + '&to=' + state.to).catch(() => ({ list: [] })), api('/api/cs?from=' + state.day + '&to=' + state.to).catch(() => ({ entries: [], ratings: [] }))]);
-    const owner = new Map((own.list || []).map(c => [String(c.apexNo || c.ref), c]));
+    const range = '?from=' + state.day + '&to=' + state.to;
+    const [platforms, cs] = await Promise.all([api('/api/reports/platform-cancels' + range, { timeout: 120000 }), api('/api/cs' + range)]);
+    const list = platforms.days;
     const H = v => ({ v, s: 'head', b: true }), DT = q('تفاصيل الإلغاءات'), RT = q('نسبه الالغاءات'), CL = q('وقت غلق طلبات والتقييم'), CM = q('الكومنتات والشكاوي'), C = X().col;
-    const det = list.flatMap(d => (d.cancels || []).map(c => { const o = owner.get(String(c.no)), f = o?.final || o?.owner;
-      return { day: d.day, month: d.day.slice(0, 7), branch: branchOf(c.branch)?.short || c.branch, platform: c.src === 'whatsapp' ? 'Whatsapp' : c.src === 'page' ? 'Page' : PLATFORM[c.kind] || c.kind, area: c.area || '', reason: reasonOf(c.reason), raw: c.reason,
-        mine: f ? (['employee', 'branch', 'pilot'].includes(f) ? 'نعم' : 'لا') : '', amount: c.amount }; }));
+    const shortBranch = name => branchOf(name)?.short || 'فرع غير معروف';
+    const localTime = new Intl.DateTimeFormat('en-GB', { timeZone: 'Africa/Cairo', dateStyle: 'short', timeStyle: 'short' });
+    const det = platforms.list.map(c => ({ ...c, month: c.day.slice(0, 7), branch: shortBranch(c.branch), raw: c.reason,
+      reason: c.reason ? reasonOf(c.reason) : c.status === 'REJECTED' ? REASONS[0] : REASONS[8],
+      mine: /^vendor$/i.test(c.owner || '') ? 'نعم' : /^(customer|platform|transport|rider)$/i.test(c.owner || '') ? 'لا' : '' }));
+    const unknown = platforms.platformTotals.some(x => !branchOf(x.branch));
+    const ratioBranches = unknown ? [...BRANCHES, { short: 'فرع غير معروف' }] : BRANCHES;
     const sheets = [];
     // «تحليل الأسباب»: counted from the details (as in Karim's sheet).
     const cnt = (r, mine) => det.filter(x => x.reason === r && (mine == null || x.mine === mine)).length;
     sheets.push({ name: 'تحليل الأسباب', widths: [20, 14, 16, 12], merges: ['A1:D1'], rows: [[{ v: '  أسباب الإلغاء', s: 'title', b: true, big: true }], [{ v: label(), b: true }], ['سبب الإلغاء', 'إجمالي التكرار', 'محمّل على المطعم', 'غير محمّل'].map(H),
       ...REASONS.map((r, i) => { const R = i + 4; return [r, F('COUNTIF(' + DT + '!$F:$F,A' + R + ')', cnt(r)), F('COUNTIFS(' + DT + '!$F:$F,A' + R + ',' + DT + '!$G:$G,"نعم")', cnt(r, 'نعم')), F('COUNTIFS(' + DT + '!$F:$F,A' + R + ',' + DT + '!$G:$G,"لا")', cnt(r, 'لا'))]; }),
       [{ v: 'الإجمالي', s: 'sub', b: true }, ...['B', 'C', 'D'].map((L, j) => F('SUM(' + L + '4:' + L + '12)', [det.length, det.filter(x => x.mine === 'نعم').length, det.filter(x => x.mine === 'لا').length][j], { s: 'sub', b: true }))]] });
-    sheets.push({ name: 'تفاصيل الإلغاءات', widths: [12, 10, 12, 12, 18, 16, 14, 28, 12], freeze: 2, merges: ['A1:I1'], heights: [36], rows: [[{ v: 'الالغاءات\n' + label(), s: 'title', b: true, big: true }],
-      ['التاريخ', 'الشهر', 'الفرع', 'منصة الطلب', 'منطقة الطلب', 'سبب الإلغاء', 'محمّل على المطعم؟', 'ملاحظات', 'اجمالي الاوردر'].map(H),
-      ...det.map((x, i) => [{ v: x.day, t: 'date' }, F('IF(A' + (i + 3) + '="","",TEXT(A' + (i + 3) + ',"YYYY-MM"))', x.month), x.branch, x.platform, x.area, x.reason, x.mine, x.raw, x.amount])] });
+    sheets.push({ name: 'تفاصيل الإلغاءات', widths: [12, 10, 12, 12, 18, 16, 14, 28, 12, 16, 13, 23, 17], freeze: 2, merges: ['A1:M1'], heights: [36], rows: [[{ v: 'الالغاءات\n' + label(), s: 'title', b: true, big: true }],
+      ['التاريخ', 'الشهر', 'الفرع', 'منصة الطلب', 'منطقة الطلب', 'سبب الإلغاء', 'محمّل على المطعم؟', 'السبب من المنصة', 'اجمالي الاوردر', 'رقم أوردر المنصة', 'الكود', 'وقت الإلغاء أو الرصد', 'صاحب الإلغاء'].map(H),
+      ...det.map((x, i) => [{ v: x.day, t: 'date' }, F('IF(A' + (i + 3) + '="","",TEXT(A' + (i + 3) + ',"YYYY-MM"))', x.month), x.branch, x.platform, null, x.reason, x.mine, x.raw, x.amount, x.orderNo, x.code, x.at ? localTime.format(new Date(x.at)) : x.observedAt ? 'رُصد ' + localTime.format(new Date(x.observedAt)) : null, x.owner])] });
     // «نسبه الالغاءات»: the cancellations counted from the details; the orders are the Marsad's; the ratio and the day's total formulas.
     const ratio = [[{ v: 'اجمالي الالغاءات\n' + label(), s: 'title', b: true, big: true }], ['الشهر', 'الفرع', 'منصة الطلب', 'إجمالي الإلغاءات', 'اجمالي الاوردرات', 'نسبة الالغاءات', 'اجمالي نسبه الغاءات اليوم'].map(H)];
     const rr = {}, month = state.to.slice(0, 7);
-    for (const p of RATIO_ORDER) for (const b of BRANCHES) {
-      const r = ratio.length + 1, nn = det.filter(x => x.branch === b.short && x.platform === p).length, o = ordersOf(list, b, p); rr[b.short + '|' + p] = { n: nn, o };
+    for (const p of PLATS) for (const b of ratioBranches) {
+      const r = ratio.length + 1, nn = det.filter(x => x.branch === b.short && x.platform === p).length, o = sum(platforms.platformTotals, x => shortBranch(x.branch) === b.short && x.platform === p ? x.orders : 0); rr[b.short + '|' + p] = { n: nn, o };
       ratio.push([month, b.short, p, F('COUNTIFS(' + DT + '!$C:$C,B' + r + ',' + DT + '!$D:$D,C' + r + ')', nn), o, F('IFERROR(D' + r + '/E' + r + ',0)', div(nn, o), { t: 'pct' }), null]);
     }
     const rl = ratio.length, allN = det.length, allO = sum(Object.values(rr), x => x.o);
@@ -210,7 +213,7 @@ window.MarsadExports = function MarsadExports(ctx) {
       const nn = sum(PLATS, p => rr[b.short + '|' + p].n), o = sum(PLATS, p => rr[b.short + '|' + p].o);
       put(r, 7, F('IFERROR(' + sumifs('D', '$A' + r) + '/' + sumifs('E', '$A' + r) + ',0)', div(nn, o), { t: 'pct', b: true })); });
     put(6, 0, { v: 'Grand Total', s: 'sub', b: true });
-    PLATS.forEach((p, j) => { const nn = sum(BRANCHES, b => rr[b.short + '|' + p].n), o = sum(BRANCHES, b => rr[b.short + '|' + p].o);
+    PLATS.forEach((p, j) => { const nn = sum(ratioBranches, b => rr[b.short + '|' + p].n), o = sum(ratioBranches, b => rr[b.short + '|' + p].o);
       put(6, 1 + j, F('IFERROR(SUMIFS(' + RT + '!$D:$D,' + RT + '!$C:$C,' + C(1 + j) + '$2)/SUMIFS(' + RT + '!$E:$E,' + RT + '!$C:$C,' + C(1 + j) + '$2),0)', div(nn, o), { t: 'pct', s: 'sub', b: true })); });
     put(6, 7, F(RT + '!G3', div(allN, allO), { t: 'pct', s: 'sub', b: true }));
     put(3, 8, H(null)); put(3, 9, H('التقييم ')); put(3, 10, H(' تقييم المنافس')); put(3, 12, H(null)); put(3, 13, H('وقت الغلق ')); put(3, 14, H('الفرع')); put(3, 15, H('Count of الشكوي'));
@@ -227,7 +230,8 @@ window.MarsadExports = function MarsadExports(ctx) {
       PLATS.forEach((p, j) => put(r, 8 + j, F(sumifs('E', '$H' + r, C(8 + j) + '$9'), rr[b.short + '|' + p].o)));
       put(r, 14, F('SUM(I' + r + ':N' + r + ')', sum(PLATS, p => rr[b.short + '|' + p].o), { b: true })); });
     put(13, 7, { v: 'Grand Total', s: 'sub', b: true });
-    for (let j = 8; j <= 14; j++) put(13, j, F('SUM(' + C(j) + '10:' + C(j) + '12)', j < 14 ? sum(BRANCHES, b => rr[b.short + '|' + PLATS[j - 8]].o) : allO, { s: 'sub', b: true }));
+    PLATS.forEach((p, j) => put(13, 8 + j, F('SUMIF(' + RT + '!$C:$C,' + C(8 + j) + '9,' + RT + '!$E:$E)', sum(ratioBranches, b => rr[b.short + '|' + p].o), { s: 'sub', b: true })));
+    put(13, 14, F('SUM(I13:N13)', allO, { s: 'sub', b: true }));
     sheets.push({ name: 'اجمالي', widths: [12, 9, 9, 9, 9, 9, 9, 11, 12, 10, 12, 9, 10, 10, 11, 14], rows: T, merges: ['A1:H1', 'H8:O8'] });
     X().grid('الالغاءات ' + fileLabel(), sheets);
     return '';
@@ -243,18 +247,21 @@ window.MarsadExports = function MarsadExports(ctx) {
     // the ones not listed, so a line added or changed still counts).
     const sheetOf = (name, every) => {
       const listed = every.filter(e => (e.comment || e.complaint) && (e.complaint || e.rating == null || e.rating < 5)), quiet = every.filter(e => !listed.includes(e));
-      const list = listed, end = 6 + list.length + 300, rows = [[H(null), H(5), H(4), H(3), H(2), H(1), H('الإجمالي'), H('نسبة اقل من 5'), H('سئ ')]];
-      BRANCHES.forEach((b, i) => { const r = 2 + i, l = every.filter(e => branchOf(e.branch) === b), n = s => l.filter(e => e.rating === s).length, all = l.filter(e => e.rating != null).length;
-        const qn = s => quiet.filter(e => branchOf(e.branch) === b && e.rating === s).length;
-        rows.push([{ v: b.short, b: true }, ...[5, 4, 3, 2, 1].map((s, j) => F('COUNTIFS($A$6:$A$' + end + ',$A' + r + ',$C$6:$C$' + end + ',' + X().col(1 + j) + '$1)' + (qn(s) ? '+' + qn(s) : ''), n(s))),
+      const unknown = { short: 'فرع غير معروف' }, branch = e => branchOf(e.branch) || unknown;
+      const branches = every.some(e => e.rating != null && branch(e) === unknown) ? [...BRANCHES, unknown] : BRANCHES;
+      const start = branches.length + 3, list = listed, end = start + list.length + 300, rows = [[H(null), H(5), H(4), H(3), H(2), H(1), H('الإجمالي'), H('نسبة اقل من 5'), H('سئ ')]];
+      branches.forEach((b, i) => { const r = 2 + i, l = every.filter(e => branch(e) === b), n = s => l.filter(e => e.rating === s).length, all = l.filter(e => e.rating != null).length;
+        const qn = s => quiet.filter(e => branch(e) === b && e.rating === s).length;
+        rows.push([{ v: b.short, b: true }, ...[5, 4, 3, 2, 1].map((s, j) => F('COUNTIFS($A$' + start + ':$A$' + end + ',$A' + r + ',$C$' + start + ':$C$' + end + ',' + X().col(1 + j) + '$1)' + (qn(s) ? '+' + qn(s) : ''), n(s))),
           F('SUM(B' + r + ':F' + r + ')', all), F('IFERROR(SUM(C' + r + ':F' + r + ')/G' + r + ',0)', div(all - n(5), all), { t: 'pct' }), F('IFERROR(F' + r + '/G' + r + ',0)', div(n(1), all), { t: 'pct' })]); });
       rows.push(['الفرع', 'الشكوى / تعليق العميل', 'التقييم', 'التاريخ', 'رقم الطلب', 'رقم العميل', 'هل تم الوصول للعميل؟', 'ما تم مع العميل / الإجراء'].map(H));
-      for (const e of list) rows.push([branchOf(e.branch)?.short || e.branch, [e.complaint, e.comment].filter(Boolean).join(' — '), e.rating, { v: e.day, t: 'date' }, e.orderNo, e.phone, e.reached, e.action]);
+      for (const e of list) rows.push([branch(e).short, [e.complaint, e.comment].filter(Boolean).join(' — '), e.rating, { v: e.day, t: 'date' }, e.orderNo, e.phone, e.reached, e.action]);
       return { name, widths: [12, 44, 9, 12, 12, 14, 16, 30, 8], rows };
     };
-    const typed = cs.entries.map(e => ({ ...e, manual: true })), orders = new Set(typed.map(e => e.orderNo).filter(Boolean));
-    const auto = p => p === 'الموقع' ? cs.site || [] : p === 'طلبات' ? cs.talabat || [] : [];
-    const by = p => [...typed.filter(e => e.platform === p), ...auto(p).filter(e => !orders.has(e.orderNo))];
+    const sourced = cs.platformFeedback || [];
+    const linked = new Set(sourced.map(e => e.followupId).filter(Boolean));
+    const by = p => [...sourced.filter(e => e.platform === p),
+      ...cs.entries.filter(e => e.platform === p && !linked.has(e.id) && (e.complaint || e.action || e.comment)).map(e => ({ ...e, rating: null }))];
     X().grid('خدمة العملاء ' + fileLabel(), [sheetOf('طلبات', by('طلبات')), sheetOf('الموقع', by('الموقع'))]);
     return by('طلبات').length + by('الموقع').length ? '' : 'مفيش تقييمات للفترة دي';
   }
