@@ -34,7 +34,31 @@ function setup(app) {
     }
     return scope ? c.rows.filter(r => r.kind === kind) : c.rows.slice();
   }
+  // Karim 11-21 (approved): old facts that never got a learning_evidence row were found by scanning the whole learned
+  // table on every cold read (95,000 rows). They are copied into learning_evidence once (same facts, same ref); after
+  // that the scan is skipped. Nothing is deleted from `learned`, and the copy is idempotent (DO NOTHING).
+  let migrated = null;
+  async function legacyMigrated() {
+    if (migrated != null) return migrated;
+    if ((await db.prepare("SELECT value FROM settings WHERE key = 'learn_legacy_migrated'").get())?.value === '1') return (migrated = true);
+    const old = await db.prepare("SELECT kind, a, b, ref, value, at FROM learned WHERE kind >= 'match-v2:' AND kind < 'match-v2;' AND " +
+      "NOT EXISTS (SELECT 1 FROM learning_evidence e WHERE e.ref = learned.ref AND learned.kind LIKE 'match-v2:%:' || e.source)").all();
+    const groups = new Map();
+    for (const r of old) {
+      const key = sourceOf(r.kind) + '\u0000' + r.ref, g = groups.get(key) || { source: sourceOf(r.kind), ref: r.ref, at: 0, facts: [] };
+      g.facts.push({ kind: r.kind, a: r.a, b: r.b, value: r.value }); g.at = Math.max(g.at, r.at); groups.set(key, g);
+    }
+    const stmts = [...groups.values()].map(g => db.prepare('INSERT INTO learning_evidence (source,ref,facts,at) VALUES (?,?,?,?) ON CONFLICT(source,ref) DO NOTHING').bind(g.source, g.ref, JSON.stringify(g.facts), g.at));
+    for (let i = 0; i < stmts.length; i += 50) await db.batch(stmts.slice(i, i + 50));
+    await db.prepare("INSERT INTO settings (key, value) VALUES ('learn_legacy_migrated', '1') ON CONFLICT(key) DO UPDATE SET value = '1'").run();
+    return (migrated = true);
+  }
   async function readRows(kind, scope) {
+    if (scope && await legacyMigrated()) {
+      const active = await db.prepare('SELECT source, ref, facts, at FROM learning_evidence WHERE source = ?').all(scope), out = [];
+      for (const row of active) for (const f of JSON.parse(row.facts)) if (sourceOf(f.kind) === scope) out.push({ ...f, ref: row.ref, at: row.at });
+      return out;
+    }
     const predicate = kind ? 'kind = ? AND ' : scope ? "kind >= 'match-v2:' AND kind < 'match-v2;' AND substr(kind, -length(?) - 1) = ':' || ? AND " : '';
     const legacy = await db.prepare("SELECT kind, a, b, ref, value, at FROM learned WHERE " + predicate +
       "NOT EXISTS (SELECT 1 FROM learning_evidence e WHERE e.ref = learned.ref AND learned.kind LIKE 'match-v2:%:' || e.source)")
@@ -64,6 +88,12 @@ function setup(app) {
     forget,
     async record(kind, a, b, ref, value = null, now = app.now()) {
       if (!a || !b || !ref) return;
+      if (matching(kind)) {   // match-v2 facts live in learning_evidence (see legacyMigrated); keep this path consistent with it
+        const src = sourceOf(kind), cur = await db.prepare('SELECT facts FROM learning_evidence WHERE source = ? AND ref = ?').get(src, String(ref));
+        const facts = (cur ? JSON.parse(cur.facts) : []).filter(f => !(f.kind === kind && f.a === String(a) && f.b === String(b)));
+        facts.push({ kind, a: String(a).slice(0, 160), b: String(b).slice(0, 160), value });
+        return learn.replace(src, ref, facts);
+      }
       const row = { kind, a: String(a).slice(0, 160), b: String(b).slice(0, 160), ref: String(ref).slice(0, 60), value, at: now };
       await db.prepare('INSERT INTO learned (kind, a, b, ref, value, at) VALUES (?,?,?,?,?,?) ON CONFLICT(kind, a, b, ref) DO UPDATE SET value = excluded.value, at = excluded.at')
         .run(row.kind, row.a, row.b, row.ref, value, now);
