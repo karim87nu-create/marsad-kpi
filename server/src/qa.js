@@ -49,7 +49,21 @@ function setup(app) {
   async function sample(week, now) {
     const days = Array.from({ length: 7 }, (_, i) => addDays(week, i)).filter(d => d <= businessDay(now));
     const all = [];
-    for (const d of days) { try { const p = await app.perfDay(d, now); all.push(...p.calls); } catch {} }
+    // Karim 11-20 (measured: this screen took 25.8 s, it read a day's whole call log 7 times): a day more than two days old no
+    // longer changes (the repeat and order windows are over), so its calls are kept in the database once they are worked out.
+    // A day that came out with no calls is never kept (its history may simply not have been imported yet).
+    const settled = d => addDays(d, 2) < businessDay(now);
+    for (const d of days) {
+      const key = 'qa_calls:v1:' + d;
+      if (settled(d)) {
+        let kept = null; try { kept = JSON.parse((await db.prepare('SELECT value FROM settings WHERE key = ?').get(key))?.value || 'null'); } catch {}
+        if (Array.isArray(kept) && kept.length) { all.push(...kept); continue; }
+      }
+      try {
+        const p = await app.perfDay(d, now); all.push(...p.calls);
+        if (settled(d) && p.calls.length) await db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, JSON.stringify(p.calls)).catch(() => {});
+      } catch {}
+    }
     const done = new Map((await db.prepare('SELECT call_key, COUNT(*) n FROM qa_scores WHERE day BETWEEN ? AND ? AND call_key IS NOT NULL GROUP BY call_key').all(week, addDays(week, 6))).map(r => [r.call_key, r.n]));
     const skip = await managers();
     // Karim 11-16 «الجودة مع الشكاوى»: a call from a customer who complained to customer service that week, and the call

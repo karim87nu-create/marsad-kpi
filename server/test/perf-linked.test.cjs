@@ -100,3 +100,19 @@ test('quality review (Karim 11-16): the sheet\'s 11 items out of 120, any call o
     assert.equal((await admin('GET', '/api/qa?week=' + day)).body.calls[0].evaluated, 1);
   } finally { await t.close(); }
 });
+
+test('quality review 11-20: a day more than two days old is worked out once and then read from the database', async () => {
+  const day = '2026-11-11', T = (h, m = 0) => cairoToUtc(2026, 11, 11, h, m);
+  const t = await start({ at: cairoToUtc(2026, 11, 20, 12, 0) });
+  try {
+    const admin = await t.admin();
+    const sara = await t.employee(admin, { name: 'سارة', code: 'E1', pin: '1111' });
+    const calls = [{ key: day + '|' + sara.id + '|' + T(20), employeeId: sara.id, at: T(20), durationSeconds: 60, queue: '601', phoneEnd: '2201', flags: [] }];
+    const asked = []; t.app.perfDay = async d => { asked.push(d); return { calls: d === day ? calls : [] }; };
+    const get = () => admin('GET', '/api/qa?week=' + day + '&from=' + day + '&to=' + day);
+    const a = (await get()).body; assert.equal(a.calls.length, 1); assert.ok(asked.includes(day));
+    asked.length = 0;
+    const b = (await get()).body; assert.equal(b.calls.length, 1, 'same calls from the saved copy'); assert.ok(!asked.includes(day), 'not worked out again');
+    // (a day that came out with no calls is never kept — its history may not be imported yet — so those are asked again)
+  } finally { await t.close(); }
+});
