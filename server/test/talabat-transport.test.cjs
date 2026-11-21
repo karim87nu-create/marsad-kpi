@@ -2,19 +2,22 @@ const test = require('node:test'), assert = require('node:assert/strict'), fs = 
 const { JSDOM } = require('jsdom');
 const ext = path.join(__dirname, '../../extension-3');
 function background(linked = true, tabs = [{ id: 7, url: 'https://partner-app.talabat.com/orders' }]) {
-  const data = linked ? { talabatMonitor: { token: 'tal_' + 'a'.repeat(48) } } : {};
-  const listeners = [], installed = [], injected = [], requests = [];
+  const data = linked ? { talabatMonitor: { token: 'tal_' + 'a'.repeat(48), extra: linked === 'extra' } } : {};
+  const listeners = [], installed = [], startup = [], injected = [], requests = [], created = [];
   const ctx = { URL, URLSearchParams, Date, Intl, performance, AbortController, setTimeout, clearTimeout, setInterval: () => 0,
     console, crypto: globalThis.crypto, structuredClone,
     fetch: async (url, options) => { requests.push({ url, body: options.body }); return new Response(JSON.stringify({ ok: true, want: ['12345678'] }), { headers: { date: new Date().toUTCString() } }); },
     browser: { storage: { local: { get: async k => ({ [k]: data[k] }), set: async x => Object.assign(data, x) } },
-      runtime: { onMessage: { addListener: f => listeners.push(f) }, onInstalled: { addListener: f => installed.push(f) }, getURL: p => 'moz-extension://test/' + p },
+      runtime: { onMessage: { addListener: f => listeners.push(f) }, onInstalled: { addListener: f => installed.push(f) }, onStartup: { addListener: f => startup.push(f) }, getURL: p => 'moz-extension://test/' + p },
       tabs: { query: async () => tabs, onRemoved: { addListener() {} },
-        executeScript: async (id, x) => injected.push(x.file), get: async () => ({}), create: async () => ({ id: 8 }) },
+        executeScript: async (id, x) => injected.push(x.file), get: async () => ({}), create: async options => {
+          const tab = { id: 100 + created.length, ...options };
+          created.push(tab); tabs.push(tab); return tab;
+        } },
       browserAction: { onClicked: { addListener() {} } } } };
   vm.createContext(ctx); for (const f of ['config.js', 'background.js']) vm.runInContext(fs.readFileSync(path.join(ext, f), 'utf8'), ctx);
   const send = (type, url = 'https://partner-app.talabat.com/orders', extra = {}) => listeners[0]({ type, ...extra }, { tab: { id: 7 }, url });
-  return { send, requests, installed, injected };
+  return { send, requests, installed, startup, injected, created };
 }
 test('Talabat clock reaches the actual background listener and enables a timestamped push', async () => {
   const h = background();
@@ -39,6 +42,28 @@ test('a connector update resumes linked Talabat tabs without changing the source
   assert.deepEqual(live.injected, ['config.js', 'names.js', 'talabat-monitor.js']);
   const site = background(false, [{ id: 6, url: 'https://eldahan.com.eg/eldahan-operations-central/' }, { id: 4, url: 'https://eldahan.com.eg/menu/' }]); await site.installed[0]({ reason: 'update' });
   assert.deepEqual(site.injected, ['config.js', 'site-panel.js']);
+});
+test('the monitor opens missing website boards in the background without duplicating restored tabs', async () => {
+  const central = 'https://eldahan.com.eg/eldahan-operations-central/';
+  const branch = 'https://eldahan.com.eg/eldahan-branch-board/?branch=';
+  const h = background(false, [
+    { id: 6, url: central + '#orders', windowId: 3 },
+    { id: 7, pendingUrl: branch + 'nasr-city', windowId: 3 },
+    { id: 8, url: branch + 'tagamoa-cloud', incognito: true, windowId: 4 },
+  ]);
+  await Promise.all([h.installed[0]({ reason: 'update' }), h.startup[0](), h.startup[0]()]);
+  assert.deepEqual(h.created.map(t => t.url), [branch + 'tagamoa-cloud', branch + 'madinaty-craft-zone']);
+  assert.ok(h.created.every(t => t.active === false && t.windowId === 3));
+
+  const monitor = background(true);
+  await monitor.startup[0]();
+  assert.deepEqual(monitor.created.map(t => t.url), [central, branch + 'tagamoa-cloud', branch + 'nasr-city', branch + 'madinaty-craft-zone']);
+
+  for (const linked of [false, 'extra']) {
+    const other = background(linked, [{ id: 9, url: branch + 'tagamoa-cloud' }]);
+    await other.startup[0]();
+    assert.equal(other.created.length, 0);
+  }
 });
 test('a connector update resumes the linked WhatsApp sender on an already open tab', async () => {
   const h = background(true, [{ id: 9, url: 'https://web.whatsapp.com/' }]);

@@ -207,6 +207,10 @@ async function siteMessage(m, sender) {
   const r = await api('/api/site/panel', { method: 'POST', headers: { 'content-type': 'application/json', ...(t?.token ? { 'x-talabat-token': t.token } : { 'x-device-token': globalThis.MARSAD.DEVICE_TOKEN }) },
     body: JSON.stringify({ board: m.board === 'central' ? 'central' : 'branch', dispatchFromApex, orders: Array.isArray(m.orders) ? m.orders.slice(0, 300) : [], serverTime: m.serverTime || null }), timeout: 30000 });
   if (!r.ok) return { ok: false, status: r.status };
+  if (m.board === 'central' && !sender.tab.incognito && siteBoardKey(sender.url) === 'central') {
+    // A signed-in central board also designates an unlinked Firefox profile as a website monitor.
+    ensureSiteBoards().catch(() => {});
+  }
   const d = r.json() || {};
   // Only the central panel may be told to send an order to a branch, and only to the panel's own branch keys.
   const assign = m.board === 'central' && Array.isArray(d.assign) ? d.assign.filter(a => Number.isInteger(a?.orderId) && /^[a-z0-9-]{2,40}$/.test(a?.branchId || '')).slice(0, 20) : [];
@@ -218,6 +222,7 @@ async function talabatMessage(m, sender) {
   if (m.type === 'TALABAT_LINK' && adminSender(sender)) {
     if (typeof m.token !== 'string' || !/^tal_[a-f0-9]{48}$/.test(m.token)) throw Error('invalid_link');
     await store.set(TALABAT, { token: m.token, linkedAt: new Date().toISOString(), extra: m.extra === true });
+    if (m.extra !== true) ensureSiteBoards().catch(() => {});
     return { ok: true };
   }
   if (m.type === 'TALABAT_STATUS' && adminSender(sender)) { const l = await store.get(TALABAT, null); return { linked: !!l, extra: !!l?.extra, version: VERSION }; }
@@ -469,6 +474,7 @@ async function collectorMessage(m, sender) {
 // would stop reporting until it is reloaded. The new version puts its scripts back into those tabs itself
 // (the page and the agent's session are untouched; the panel picks up the same session).
 browser.runtime.onInstalled.addListener(async ({ reason }) => {
+  if (reason === 'install') return ensureSiteBoards().catch(() => {});
   if (reason !== 'update') return;
   for (const t of await browser.tabs.query({}).catch(() => [])) {
     let u; try { u = new URL(t.url); } catch { continue; }
@@ -500,10 +506,55 @@ browser.runtime.onInstalled.addListener(async ({ reason }) => {
       else { await browser.tabs.insertCSS(t.id, { file: 'panel.css' }).catch(() => {}); await browser.tabs.executeScript(t.id, { file: 'config.js' }); await browser.tabs.executeScript(t.id, { file: 'agent.js' }); }
     } catch {}
   }
+  await ensureSiteBoards().catch(() => {});
 });
 // The website's central panel and branch boards must keep running (Karim 11-19): Firefox may unload a tab left in the
 // background; such a tab is loaded again at once.
 const SITE_LIVE = /^https:\/\/eldahan\.com\.eg\/(eldahan-operations-central|eldahan-branch-board)\//;
+const SITE_BOARDS = 'siteBoardsMonitor';
+const SITE_ORIGIN = 'https://eldahan.com.eg';
+const SITE_CENTRAL = '/eldahan-operations-central/';
+const SITE_BRANCH = '/eldahan-branch-board/';
+const SITE_BRANCHES = ['tagamoa-cloud', 'nasr-city', 'madinaty-craft-zone'];
+function siteBoardKey(url) {
+  try {
+    const u = new URL(url);
+    if (u.origin !== SITE_ORIGIN) return null;
+    const page = u.pathname.replace(/\/?$/, '/');
+    if (page === SITE_CENTRAL) return 'central';
+    const branch = u.searchParams.get('branch');
+    if (page === SITE_BRANCH && SITE_BRANCHES.includes(branch)) return branch;
+  } catch {}
+  return null;
+}
+let openingSiteBoards, siteBoardsOpened = false;
+function ensureSiteBoards() {
+  if (siteBoardsOpened) return Promise.resolve();
+  if (openingSiteBoards) return openingSiteBoards;
+  openingSiteBoards = (async () => {
+    const monitor = await store.get(TALABAT, null);
+    if (monitor?.extra) return;
+    const tabs = (await browser.tabs.query({})).filter(tab => !tab.incognito);
+    const existing = new Set(tabs.flatMap(tab => [siteBoardKey(tab.url), siteBoardKey(tab.pendingUrl)]));
+    const central = tabs.find(tab => [tab.url, tab.pendingUrl].some(url => siteBoardKey(url) === 'central'));
+    if (!central && !monitor?.token && !(await store.get(SITE_BOARDS, false))) return;
+    if (central) await store.set(SITE_BOARDS, true);
+    // Wait for an ordinary window on profiles that have only private windows open.
+    if (!tabs.length) return;
+    const windowId = central?.windowId ?? tabs[0].windowId;
+    const destinations = [['central', SITE_CENTRAL], ...SITE_BRANCHES.map(branch => [branch, SITE_BRANCH + '?branch=' + branch])];
+    for (const [key, path] of destinations) {
+      if (existing.has(key)) continue;
+      await browser.tabs.create({ url: SITE_ORIGIN + path, active: false, windowId });
+    }
+    siteBoardsOpened = true;
+  })().finally(() => { openingSiteBoards = null; });
+  return openingSiteBoards;
+}
+const openSiteBoards = () => ensureSiteBoards().catch(() => {});
+browser.runtime.onStartup?.addListener(openSiteBoards);
+browser.windows?.onCreated.addListener(window => { if (!window.incognito) openSiteBoards(); });
+
 const wakeSite = t => { if (t?.discarded && SITE_LIVE.test(t.url || '')) browser.tabs.reload(t.id).catch(() => {}); };
 try { browser.tabs.onUpdated.addListener((id, change, t) => { if (change.discarded) wakeSite(t); }, { properties: ['discarded'] }); } catch {}
 setInterval(() => { browser.tabs.query({ url: 'https://eldahan.com.eg/*' }).then(ts => ts.forEach(wakeSite)).catch(() => {}); }, 60000);
