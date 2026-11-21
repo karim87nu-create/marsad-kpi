@@ -465,7 +465,7 @@ function card(o) {
       (ad.issue || ad.warning ? '<div class="warn">' + esc(ad.issue || ad.warning) + '</div>' : '') +
       (ad.sign ? field('العلامة المميزة', esc(ad.sign), ad.issue ? '' : ad.sign) : '') +
       (!pickup && (ad.floor || ad.flat) ? field('الدور', esc(ad.floor), ad.floor) + field('الشقة', esc(ad.flat), ad.flat) : '') +
-      (o.note ? field('ملاحظة الأوردر من المصدر', esc(o.note), o.note, '') : '') +
+      (o.note ? field('ملاحظة الأوردر من المصدر', o.noteOriginal ? '<span title="' + esc(o.noteOriginal) + '">' + esc(o.note) + '</span>' : esc(o.note), o.note, '') : '') +
       (() => {
         const n = o.apexCustomerNote;
         if (!n || n.status === 'pending') return '<div class="warn">ملاحظات بطاقة العميل على APEX: جاري طلبها من جهاز الكاشير…</div>';
@@ -695,7 +695,7 @@ $('list').addEventListener('click', async e => {
         note: p.arabic?.note || deliveryComment(o),
         // Paid (Karim 01-11): the whole discount comes off on Apex, so the Ledge equals what the customer paid.
         // Cash: the restaurant's comes off. Either way the special mark shows Talabat's discount only.
-        label: fullLabel(o, pay), customer: { ...(o.customer || {}), ...(p.arabic?.name ? { name: p.arabic.name } : {}), ...(p.arabic?.address !== undefined ? { address: p.arabic.address, addressEdited: true } : {}), ...(p.arabic?.area ? { area: p.arabic.area, areaEdited: true } : {}) },
+        label: fullLabel(o, pay), customer: { ...(o.customer || {}), ...(p.arabic?.name ? { name: p.arabic.name, nameEdited: true } : {}), ...(p.arabic?.address !== undefined ? { address: p.arabic.address, addressEdited: true } : {}), ...(p.arabic?.area ? { area: p.arabic.area, areaEdited: true } : {}) },
         sign: platSum > 0 ? 'خصم طلبات ' + money(platSum) : '',   // Karim 01-11: the special mark shows Talabat's discount only
         discountSplit: (o.discounts || []).map((d, i) => (d.who && !d.unclear) || p.split?.[i] == null ? null : { text: d.text, amount: d.amount, restaurant: p.split[i] }),
         restaurantDiscount: pay === 'paid' ? rest + platSum : rest, expectedTotal: (o.subtotal ?? o.total ?? 0) - rest - (pay === 'paid' ? platSum : 0), targetTotal: cc.want });   // paid: what the customer paid (Talabat's discount off too)

@@ -426,22 +426,20 @@ function setup(app) {
       const guess = named && named.no === learned?.no ? { ...learned, how: named.how } : (named || learned);
       if (guess) list[i] = { ...o, areaGuess: guess };
     }
-    // English typed by the customer (address, name, comments) shown and sent in Arabic (Karim 01-11); the original is kept.
+    // Keep the domains separate even when the same text occurs as a name and in a kitchen note.
     if (app.toArabic) {
-      const texts = [];
-      for (const o of open) texts.push(o.customer?.name, o.note, ...(o.items || []).flatMap(i => [i.note, ...(i.freeOptions || [])]));
-      const ar = await app.toArabic(texts.filter(Boolean), { waitUntil: ctx.waitUntil }).catch(() => new Map());
-      for (const [original,address] of addresses) ar.set(original,address);
-      for (const [original, note] of app.toArabicNote?.(open.flatMap(o => [o.note, ...(o.items || []).flatMap(i => [i.note, ...(i.freeOptions || [])])])) || []) ar.set(original, note);
-      const tr = v => (v && ar.get(v)) || v, changed = v => v && ar.get(v) && ar.get(v) !== v;
+      const names = await app.toArabic(open.map(o => o.customer?.name).filter(Boolean), { waitUntil: ctx.waitUntil, kind: 'name' }).catch(() => new Map());
+      const notes = app.toArabicNote?.(open.flatMap(o => [o.note, ...(o.items || []).flatMap(i => [i.note, ...(i.freeOptions || [])])])) || new Map();
+      const arNote = value => notes.get(value) || value;
       for (let i = 0; i < list.length; i++) {
         const o = list[i]; if (o.done) continue;
-        const c = o.customer;
+        const c = o.customer, name = names.get(c?.name) || c?.name, address = addressOf(c?.address);
         list[i] = { ...o,
-          ...(c ? { customer: { ...c, name: tr(c.name), address: tr(c.address), area: tr(c.area), ...(c.talabatArea ? { talabatArea: tr(c.talabatArea) } : {}), ...(c.siteArea ? { siteArea: tr(c.siteArea) } : {}), ...(changed(c.address) || changed(c.name) ? { original: [c.name, c.address].filter(Boolean).join(' — ') } : {}),
-            ...(changed(c.name) ? { nameEn: c.name } : {}), ...(changed(c.address) ? { addressEn: c.address } : {}) } } : {}),
-          ...(changed(o.note) ? { note: tr(o.note), noteOriginal: o.note } : {}),
-          ...(o.items ? { items: o.items.map(x => ({ ...x, note: tr(x.note), freeOptions: (x.freeOptions || []).map(tr) })) } : {}) };
+          ...(c ? { customer: { ...c, name, address, area: addressOf(c.area), ...(c.talabatArea ? { talabatArea: addressOf(c.talabatArea) } : {}),
+            ...(c.siteArea ? { siteArea: addressOf(c.siteArea) } : {}), ...(address !== c.address || name !== c.name ? { original: [c.name, c.address].filter(Boolean).join(' — ') } : {}),
+            ...(name !== c.name ? { nameEn: c.name } : {}), ...(address !== c.address ? { addressEn: c.address } : {}) } } : {}),
+          ...(arNote(o.note) !== o.note ? { note: arNote(o.note), noteOriginal: o.note } : {}),
+          ...(o.items ? { items: o.items.map(x => ({ ...x, note: arNote(x.note), freeOptions: (x.freeOptions || []).map(arNote) })) } : {}) };
       }
     }
     // Until an admin chooses, the automatic transfer only previews (shadow): it never writes to Apex.
@@ -1056,11 +1054,12 @@ function setup(app) {
       const serverTarget = Number(sourceOrder?.target) > 0
         ? Math.round((payment === 'paid' ? sourceOrder.target - knownPlat : sourceOrder.target + splitPlat) * 100) / 100 : null;
       const expectedTotal = Number(b.expectedTotal) || null, targetTotal = serverTarget ?? (Number(b.targetTotal) > 0 ? Math.round(Number(b.targetTotal) * 100) / 100 : null);
-      const texts = [b.customer?.name, safeRemarks].filter(Boolean);
-      const arabic = await app.toArabic?.(texts, { wait: manual }).catch(() => new Map()) || new Map();
+      const names = b.customer?.name ? [b.customer.name] : [];
+      const arabic = await app.toArabic?.(names, { kind: 'name' }).catch(() => new Map()) || new Map();
       const translatedName = arabic.get(b.customer?.name) || b.customer?.name;
       // What the employee wrote over the automatic Arabic is learned for next time (Karim 11-11).
-      if (app.learnArabic) for (const [en, ar] of [[b.customer?.nameEn, b.customer?.name]]) if (en && ar) await app.learnArabic(en, ar).catch(() => {});
+      if (manual && b.customer?.nameEdited === true && b.customer.nameEn && b.customer.name && app.learnArabic)
+        await app.learnArabic(b.customer.nameEn, b.customer.name).catch(() => {});
       const rawAddress = b.customer?.addressEdited === true ? b.customer.address : sourceOrder?.customer?.address || b.customer?.addressEn || b.customer?.address;
       const customer = sourceOrder?.customer || b.customer || {};
       const originalArea = customer.talabatArea || customer.siteArea || customer.area;
@@ -1075,7 +1074,7 @@ function setup(app) {
       if (address.issue) fail(409, address.issue);
       const sign = address.sign;
       // Karim 11-15: delivery instructions to the order's special mark (up to 100 letters with the rest of the mark), the food to the comment.
-      const noteSplit = splitDeliveryComment(app.toArabicNote?.([safeRemarks]).get(safeRemarks) || arabic.get(safeRemarks) || safeRemarks);
+      const noteSplit = splitDeliveryComment(app.toArabicNote?.([safeRemarks]).get(safeRemarks) || safeRemarks);
       const room = 100 - Array.from(sign === '.' ? '' : sign).length - (sign && sign !== '.' ? 3 : 0);
       const signNote = room >= 8 ? apexText(compactDeliveryComment(noteSplit.delivery, room)) : '';
       // What did not fit in the mark stays in the comment, never lost.

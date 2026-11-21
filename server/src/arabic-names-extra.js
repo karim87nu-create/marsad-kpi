@@ -65,7 +65,7 @@ export const NAMES_EXTRA = {
   parallel: 'موازي', extension: 'امتداد', ext: 'امتداد', masjid: 'مسجد', gamaa: 'جامعة',
 };
 
-export const PHRASES = [
+export const PLACE_PHRASES = [
   // main roads and streets (New Cairo, Nasr City, Heliopolis, Madinaty)
   ['north 90 street', 'التسعين الشمالي'], ['south 90 street', 'التسعين الجنوبي'], ['north 90', 'التسعين الشمالي'], ['south 90', 'التسعين الجنوبي'], ['90 street', 'شارع التسعين'], ['90th street', 'شارع التسعين'], ['street 90', 'شارع التسعين'],
   ['north teseen', 'التسعين الشمالي'], ['south teseen', 'التسعين الجنوبي'], ['mohamed naguib axis', 'محور محمد نجيب'], ['mohamed nagib', 'محمد نجيب'],
@@ -136,6 +136,9 @@ export const PHRASES = [
   ['in front of', 'أمام'], ['across from', 'أمام'], ['next door', 'جنب'], ['on the corner', 'على الناصية'], ['at the end of', 'في آخر'], ['end of the street', 'آخر الشارع'],
   ['beginning of', 'أول'], ['first street on the right', 'أول شارع يمين'], ['first street on the left', 'أول شارع شمال'], ['second street', 'تاني شارع'],
   ['side street', 'شارع جانبي'], ['dead end', 'شارع مقفول'], ['same building', 'نفس العمارة'], ['above the pharmacy', 'فوق الصيدلية'], ['behind the mosque', 'خلف المسجد'],
+];
+
+export const NOTE_PHRASES = [
   ['call when you arrive', 'كلمني لما توصل'], ['call me when you arrive', 'كلمني لما توصل'], ['call before arriving', 'كلمني قبل ما توصل'], ['leave at the door', 'سيبه على الباب'],
   ['leave it with security', 'سيبه مع الأمن'], ['leave with the doorman', 'سيبه مع البواب'], ['no need to call', 'مش لازم تتصل'], ['knock the door', 'خبط على الباب'],
   ['baby sleeping', 'فيه بيبي نايم'], ['baby is sleeping', 'فيه بيبي نايم'], ['dont ring', 'متضربش الجرس'], ['do not call', 'متتصلش'], ['dont call', 'متتصلش'],
