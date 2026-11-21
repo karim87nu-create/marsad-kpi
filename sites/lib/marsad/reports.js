@@ -11,6 +11,22 @@ import { BRANCHES as TALABAT_BRANCHES } from './stock.js';
 const r2 = v => Math.round((Number(v) || 0) * 100) / 100;
 const ORDER_QUEUE = '7671';   // «طلب أوردر»: a missed call there is an order that may be lost
 
+// Talabat has localized and older owner labels. Explicit ownership wins; a generic reason cannot establish ownership.
+function cancellationOwner(value, reason, reviewed) {
+  const clean = s => String(s || '').trim().replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/[ً-ْ]/g, '').toLowerCase();
+  const raw = clean(value).replace(/^(?:owner|cancelled by|canceled by|الالغاء على|صاحب الالغاء)\s*[:：]\s*/, '').trim();
+  const labels = raw.split(/[()[\]/]+/).map(x => x.trim()).filter(Boolean);
+  if (labels.length && labels.every(label => /^(?:vendor|restaurant|merchant|store|المطعم|الفرع|المتجر)$/.test(label)))
+    return { owner: 'Vendor', ownerEvidence: 'تحديد المنصة' };
+  if (raw && !/^(?:unknown|n\/a|[-—]|غير معروف|غير محدد)$/.test(raw)) return { owner: raw, ownerEvidence: 'تحديد المنصة' };
+  if (reviewed === 'branch') return { owner: 'Vendor', ownerEvidence: 'مسؤولية الفرع مؤكدة في مراجعة الإلغاء' };
+  if (reviewed) return { owner: reviewed, ownerEvidence: 'مراجعة الإلغاء' };
+  if (/(?:^(?:(?:cancelled|canceled|rejected) by (?:the )?(?:vendor|restaurant|merchant|store)|(?:الالغاء|الرفض|تم الالغاء|تم الرفض) (?:من (?:قبل )?|على )(?:المطعم|الفرع))(?:\s|:|$))/.test(clean(reason)))
+    return { owner: 'Vendor', ownerEvidence: 'سبب الإلغاء في المنصة' };
+  return { owner: null, ownerEvidence: null };
+}
+
+
 export async function reportDay(app, day, now) {
   const { db } = app;
   const row = await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(day);
@@ -66,11 +82,14 @@ function setup(app) {
         LEFT JOIN site_channels c USING (id) WHERE day BETWEEN ? AND ?
         AND status NOT IN ('failed','wallet-failed','checkout-draft','trash') GROUP BY day, branch, c.via`).all(from, to),
     ]);
-    const [talabatCancels, siteCancels] = await Promise.all([
-      db.prepare(`SELECT day, id, code, vendor_id, store, status, cancelled_at, cancel_owner, cancel_reason, total, subtotal
-        FROM talabat_orders WHERE day BETWEEN ? AND ? AND status IN ('CANCELLED','REJECTED')`).all(from, to),
+    const [talabatCancels, siteCancels, ratingSnapshots] = await Promise.all([
+      db.prepare(`SELECT t.day, t.id, t.code, t.vendor_id, t.store, t.status, t.cancelled_at, t.cancel_owner, t.cancel_reason, t.total, t.subtotal, o.owner AS reviewed_owner
+        FROM talabat_orders t LEFT JOIN cancel_owners o ON o.key = 'talabat:' || t.id
+        WHERE t.day BETWEEN ? AND ? AND t.status IN ('CANCELLED','REJECTED')`).all(from, to),
       db.prepare(`SELECT day, id, branch, gone_at, status, total, c.via FROM site_orders
         LEFT JOIN site_channels c USING (id) WHERE day BETWEEN ? AND ? AND status = 'cancelled'`).all(from, to),
+      db.prepare(`SELECT day, branch, side, rate FROM talabat_ratings
+        WHERE day BETWEEN ? AND ? AND rate > 0 AND rate <= 5 ORDER BY day DESC, at DESC`).all(addDays(from, -30), to),
     ]);
     const talBranch = x => branchName(TALABAT_BRANCHES.find(b => b.outlet.split(';').at(-1) === String(x.vendor_id || '').split(';').at(-1))?.name || x.store);
     const sitePlatform = x => /rest-api|app/i.test(x.via || '') ? 'APP' : 'WEB';
@@ -80,14 +99,14 @@ function setup(app) {
     ];
     const list = [
       ...talabatCancels.map(x => ({ day: x.day, orderNo: x.id, code: x.code, branch: talBranch(x), platform: 'Talabat', status: x.status, at: iso(x.cancelled_at),
-        amount: x.total ?? x.subtotal, reason: x.cancel_reason, owner: String(x.cancel_owner || '').replace(/^Owner:\s*/i, '') || null })),
+        amount: x.total ?? x.subtotal, reason: x.cancel_reason, ...cancellationOwner(x.cancel_owner, x.cancel_reason, x.reviewed_owner) })),
       ...siteCancels.map(x => ({ day: x.day, orderNo: String(x.id), branch: branchName(x.branch), platform: sitePlatform(x), status: x.status, observedAt: iso(x.gone_at), amount: x.total, reason: null, owner: null })),
     ];
     const dates = new Map();
     for (let day = from; day <= to; day = addDays(day, 1)) dates.set(day, { day, closedAt: {} });
     const closures = await db.prepare('SELECT day, branch, name, outlet, started_at FROM talabat_closures WHERE day BETWEEN ? AND ? ORDER BY started_at').all(from, to);
     for (const row of closures) dates.get(row.day).closedAt[row.branch || row.name || row.outlet] = row.started_at;
-    return { days: [...dates.values()], list: list.sort((a, b) => b.day.localeCompare(a.day) || (b.at || '').localeCompare(a.at || '')), platformTotals };
+    return { days: [...dates.values()], ratingSnapshots, list: list.sort((a, b) => b.day.localeCompare(a.day) || (b.at || '').localeCompare(a.at || '')), platformTotals };
   });
   app.route('GET', '/api/reports/days', async ctx => {
     await app.requireAdmin(ctx);
