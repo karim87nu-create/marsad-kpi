@@ -359,6 +359,9 @@ function setup(app) {
     // («الرحاب 1», «دار مصر الاندلس»); the Apex area the staff chose for the same Talabat area before is picked.
     // Website orders too (Karim 11-11 «المناطق معروفه»): the area the customer chose on the website, by the same learning
     // (the same words mean the same Apex area whichever platform wrote them), else an Apex area of exactly that name.
+    const open = list.filter(o => !o.done);
+    const addresses = app.toArabicAddress?.(open.flatMap(o => [o.customer?.address, o.customer?.area, o.customer?.talabatArea, o.customer?.siteArea])) || new Map();
+    const addressOf = value => addresses.get(value) || value;
     const areaPairs = app.learn ? await areaLearned() : new Map();
     // Karim 11-14: one area written twice on Apex («مدينتي» / «مدنتى», «التجمع الخامس» / «… طلبات») counts as one: what
     // staff chose is counted per area, not per Apex number, and a name matches whichever spelling Apex has.
@@ -372,7 +375,7 @@ function setup(app) {
     for (let i = 0; i < list.length; i++) {
       if (list[i].fulfillment === 'pickup') continue;
       if (!list[i].done && !list[i].areaGuess && (list[i].source === 'site' || !list[i].customer?.talabatArea) && list[i].customer?.address) {
-        const no = areaInAddress(list[i].customer.address, base.locations, list[i].apexBranch, groups);
+        const no = areaInAddress(addressOf(list[i].customer.address), base.locations, list[i].apexBranch, groups);
         if (no) { list[i] = { ...list[i], areaGuess: { no, seen: 0, how: 'address' } }; continue; }
       }
       const o = list[i], words = !o.done && !o.areaGuess && (o.customer?.talabatArea || o.customer?.siteArea), k = words && normArabic(words).slice(0, 120);
@@ -380,12 +383,13 @@ function setup(app) {
       // The Apex area by name: the same name, else an Apex area named inside the platform's area (Karim 11-15 «منت عارف
       // مناطق ابيكس»: «مصر الجديدة - ميدان تريومف» → «ميدان تريومف»); for Talabat the «… طلبات» spelling when Apex has both.
       const byNameGuess = () => {
-        const named = byName.get(k)?.size ? byName.get(k) : byName.get(areaKey(words));
+        const translated = addressOf(words);
+        const named = byName.get(k) || byName.get(areaKey(words)) || byName.get(areaKey(translated));
         if (oneArea(named)) {
           const nos = [...named].sort((a, b) => a - b), nameOf = n => (base.locations.find(l => l.no === n)?.name || '');
           return { no: nos.find(n => /طلبات/.test(nameOf(n)) === (o.source === 'talabat')) ?? nos[0], seen: 0, how: 'name' };
         }
-        const no = areaInAddress(words, base.locations, o.apexBranch, groups, l => /طلبات/.test(String(l.name || '')) === (o.source === 'talabat'));
+        const no = areaInAddress(translated, base.locations, o.apexBranch, groups, l => /طلبات/.test(String(l.name || '')) === (o.source === 'talabat'));
         return no ? { no, seen: 0, how: 'areaName' } : null;
       };
       const seen = areaPairs.get(k);
@@ -410,9 +414,9 @@ function setup(app) {
       const strong = learned && learned.seen >= 2 && learned.share >= 0.8;
       // Karim 11-16 (transfer-rules.js): the areas he confirmed come before a name guess; a district alone («مدينة نصر»,
       // «مصر الجديدة») is taken from the address, or left to a person.
-      const rule = areaRule(words, o.source);   // «اكيد الي قلته هو الي يمشي»: before what staff chose (strong or not)
+      const rule = areaRule(words, o.source) || areaRule(addressOf(words), o.source);   // «اكيد الي قلته هو الي يمشي»: before what staff chose (strong or not)
       if (rule?.general) {
-        const no = o.customer?.address ? areaInAddress(o.customer.address, base.locations, o.apexBranch, groups) : null;
+        const no = o.customer?.address ? areaInAddress(addressOf(o.customer.address), base.locations, o.apexBranch, groups) : null;
         if (no) list[i] = { ...o, areaGuess: { no, seen: 0, how: 'address' } };
         continue;
       }
@@ -424,10 +428,10 @@ function setup(app) {
     }
     // English typed by the customer (address, name, comments) shown and sent in Arabic (Karim 01-11); the original is kept.
     if (app.toArabic) {
-      const open = list.filter(o => !o.done), texts = [];
+      const texts = [];
       for (const o of open) texts.push(o.customer?.name, o.note, ...(o.items || []).flatMap(i => [i.note, ...(i.freeOptions || [])]));
       const ar = await app.toArabic(texts.filter(Boolean), { waitUntil: ctx.waitUntil }).catch(() => new Map());
-      for (const [original,address] of app.toArabicAddress?.(open.flatMap(o => [o.customer?.address, o.customer?.area, o.customer?.talabatArea, o.customer?.siteArea])) || []) ar.set(original,address);
+      for (const [original,address] of addresses) ar.set(original,address);
       for (const [original, note] of app.toArabicNote?.(open.flatMap(o => [o.note, ...(o.items || []).flatMap(i => [i.note, ...(i.freeOptions || [])])])) || []) ar.set(original, note);
       const tr = v => (v && ar.get(v)) || v, changed = v => v && ar.get(v) && ar.get(v) !== v;
       for (let i = 0; i < list.length; i++) {
@@ -551,6 +555,7 @@ function setup(app) {
     if (!await sourceCanTransfer(db, source, ref)) fail(409, 'الأوردر اتلغى أثناء التحديث — مش هيتحوّل');
     const found = base?.list?.find(o => o.source === source && String(o.ref) === String(ref));
     if (found?.apex) fail(409, 'الأوردر موجود على Apex بالفعل — مش هيتسجل مرة تانية');
+    return found;
   }
   // Every push from the Talabat screens, the cashier PC or the website (and the page's own actions): the next read
   // is built in the background, so the page usually finds it ready.
@@ -1052,17 +1057,17 @@ function setup(app) {
         ? Math.round((payment === 'paid' ? sourceOrder.target - knownPlat : sourceOrder.target + splitPlat) * 100) / 100 : null;
       const expectedTotal = Number(b.expectedTotal) || null, targetTotal = serverTarget ?? (Number(b.targetTotal) > 0 ? Math.round(Number(b.targetTotal) * 100) / 100 : null);
       const texts = [b.customer?.name, safeRemarks].filter(Boolean);
-      const arabic = app.toArabic ? await app.toArabic(texts, { wait: true }) : new Map();
+      const arabic = await app.toArabic?.(texts, { wait: manual }).catch(() => new Map()) || new Map();
       const translatedName = arabic.get(b.customer?.name) || b.customer?.name;
       // What the employee wrote over the automatic Arabic is learned for next time (Karim 11-11).
       if (app.learnArabic) for (const [en, ar] of [[b.customer?.nameEn, b.customer?.name]]) if (en && ar) await app.learnArabic(en, ar).catch(() => {});
       const rawAddress = b.customer?.addressEdited === true ? b.customer.address : sourceOrder?.customer?.address || b.customer?.addressEn || b.customer?.address;
       const customer = sourceOrder?.customer || b.customer || {};
       const originalArea = customer.talabatArea || customer.siteArea || customer.area;
-      const explicitArea = areaRule(originalArea, source);
+      const addresses = app.toArabicAddress?.([rawAddress, originalArea, area?.name]) || new Map();
+      const explicitArea = areaRule(originalArea, source) || areaRule(addresses.get(originalArea), source);
       const sourceArea = b.customer?.areaEdited === true && String(b.customer.area || '').trim() ? String(b.customer.area).trim().slice(0, 80)
         : explicitArea?.no === locationNo && explicitArea.addAddress ? explicitArea.addAddress : originalArea;
-      const addresses = app.toArabicAddress?.([rawAddress, sourceArea, area?.name]) || new Map();
       const address = formatDeliveryAddress(addresses.get(rawAddress) || rawAddress, {
         apexArea: addresses.get(area?.name) || area?.name, sourceArea: addresses.get(sourceArea) || sourceArea,
         signBase, pickup
@@ -1099,9 +1104,11 @@ function setup(app) {
     const row = await orderRow(source, ref);
     if (!row) fail(404, 'الأوردر مش موجود');
     const dueDay = orderDay(row);
-    await assertNotAlreadyOnApex(source, ref, dueDay, now);
+    const latest = await assertNotAlreadyOnApex(source, ref, dueDay, now);
+    if (latest?.out || (latest?.sentToBranch && ['tentative', 'ambiguous'].includes(latest.matching?.state)))
+      fail(409, 'الأوردر خرج أو فيه أوردر محتمل يكون هو على Apex — راجع الربط');
     const cur = await db.prepare('SELECT * FROM transfer_jobs WHERE source = ? AND ref = ?').get(source, ref);
-    if (cur && !(cur.state === 'claimed' && now - cur.at > CLAIM_MS)) fail(409, 'الأوردر مع ' + (cur.employee_name || 'حد'));
+    if (cur && cur.state !== 'released' && !(cur.state === 'claimed' && now - cur.at > CLAIM_MS)) fail(409, 'الأوردر مع ' + (cur.employee_name || 'حد'));
     const payment = ['cash', 'paid'].includes(b.payment) ? b.payment : null, note = b.note ? String(b.note).slice(0, 300) : null;
     await autoJob({ me, b, source, ref, row, cur, othersClaim: false, payment, note, now });
     S(dueDay).dirty = true;
@@ -1415,12 +1422,19 @@ function setup(app) {
       gap: Number(b.gap) || 0, short: Number(b.short) || 0, before: Number(b.before) || null, service: Number.isFinite(Number(b.service)) ? Number(b.service) : null, target: Number(b.target) || null,
       cardDiscount: Number(b.cardDiscount) || 0, cardNoteCleared: b.cardNoteCleared === true };
     // A shadow preview writes nothing: the employee still enters the order by hand; the preview is kept for comparison.
-    const previous = await db.prepare("SELECT result FROM transfer_jobs WHERE source = ? AND ref = ? AND state = 'auto_sending'").get(source, ref);
-    const retryCount = Number(parseJson(previous?.result, {})?.retryCount) || 0;
+    const previous = await db.prepare("SELECT result, employee_name FROM transfer_jobs WHERE source = ? AND ref = ? AND state = 'auto_sending'").get(source, ref);
+    const previousResult = parseJson(previous?.result, {});
+    const retryCount = Number(previousResult?.retryCount) || 0;
     const canRetryConnection = isCashierDbConnectionFailure(result);
-    const shouldRetry = canRetryConnection && retryCount < 2;
-    const retryAt = shouldRetry ? ctx.now + (retryCount === 0 ? 15000 : 45000) : null;
-    if (canRetryConnection) { result.retryCount = Math.min(2, retryCount + 1); if (retryAt) result.retryAt = retryAt; }
+    // Older cashier writers ask for a person on ordinary substitutions in the note. They mark the
+    // order locally as reviewed after accepting this result, so a second delivery carries the same note.
+    const retryNote = !result.ok && result.db === 'live' && previous?.employee_name === 'المرصد آلي'
+      && !previousResult?.noteRetried && /^العميل طالب «[^»]+» ومش موجود في أصناف Apex — كلّم العميل وبعدين ابعته تاني$/.test(result.error || '');
+    const shouldRetry = retryNote || (canRetryConnection && retryCount < 2);
+    const retryAt = shouldRetry ? ctx.now + (canRetryConnection && retryCount > 0 ? 45000 : 15000) : null;
+    if (retryNote || previousResult?.noteRetried) result.noteRetried = true;
+    if (canRetryConnection || retryCount) result.retryCount = Math.min(2, retryCount + Number(canRetryConnection));
+    if (retryAt) result.retryAt = retryAt;
     const state = result.preview ? 'auto_preview' : result.ok ? 'auto_done' : shouldRetry ? 'auto_retry_pending' : 'auto_failed';
     // Karim 11-19 (#5873, Apex 705824): an order written on Apex is done even if a failure was reported for it before (the
     // writer's answer was lost to a server error and sent again) — otherwise the page says «سجله بإيدك» and it goes in twice.

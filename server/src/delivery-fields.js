@@ -295,7 +295,7 @@ export function splitAddressLandmark(street) {
 }
 
 
-// Keep real place names and branch codes intact during review. Long English words need a verified Arabic spelling.
+// Treat untranslated place names as useful address text. Codes such as B12 do not need a translation.
 export function addressNeedsArabic(value) {
   return (String(value || '').match(/[A-Za-z\d]+(?:['-][A-Za-z\d]+)*/g) || [])
     .some(word => /[A-Za-z]{2}/.test(word) && !/^[A-Z]{2,4}$|^[A-Za-z]{1,2}-?\d+[A-Za-z]?$|^\d+-?[A-Za-z]{1,2}$/.test(word));
@@ -322,8 +322,8 @@ export function formatDeliveryAddress(raw, { apexArea, sourceArea, signBase, pic
   }
   const issue = (!geoOnly && !parts.floor && !parts.flat && !parts.mark) || !line.main
     ? 'العنوان فيه المنطقة بس أو تفاصيله مش كاملة — راجع عنوان العميل'
-    : addressNeedsArabic([street, ...marks, parts.floor, parts.flat].join(' ')) ? 'فيه كلمات إنجليزي في العنوان — راجع التعريب قبل التسجيل'
     : sign == null || parts.floor.length > 20 || parts.flat.length > 20 ? 'العنوان أو العلامة المميزة أطول من خانات Apex — راجع العنوان قبل التسجيل'
     : null;
-  return { main: line.main, floor: parts.floor, flat: parts.flat, sign, issue };
+  const warning = addressNeedsArabic([street, ...marks, parts.floor, parts.flat].join(' ')) ? 'فيه أسماء في العنوان اتنقلت زي ما العميل كتبها' : null;
+  return { main: line.main, floor: parts.floor, flat: parts.flat, sign, issue, warning };
 }

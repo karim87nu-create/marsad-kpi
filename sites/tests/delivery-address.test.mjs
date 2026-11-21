@@ -26,6 +26,10 @@ test('safe address dictionary preserves unfamiliar places and numbers without AI
  assert.ok(ar.includes('Qzxplace'));assert.ok(ar.includes('ماونتن فيو'));assert.ok(ar.includes('6B'));
  assert.deepEqual(ar.match(/\d+/g),raw.match(/\d+/g));
  const p=deliveryAddress(ar);assert.equal(p.floor,'2');assert.equal(p.flat,'41');
+ const out=formatDeliveryAddress(ar);
+ assert.equal(out.issue,null);
+ assert.match(out.warning,/اتنقلت زي ما العميل كتبها/);
+ assert.match(out.main + out.sign,/Qzxplace/);
 });
 test('browser and server have exactly the same address formatting and capacity',()=>{
  assert.equal(readFileSync(new URL('../lib/marsad/delivery-fields.js',import.meta.url),'utf8'),readFileSync(new URL('../public/transfer/delivery-fields.js',import.meta.url),'utf8'));

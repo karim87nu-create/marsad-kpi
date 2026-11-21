@@ -131,7 +131,7 @@ test('automatic transfer: off by default, cash only, frozen order handed to the 
     assert.equal(q.autoTransfer, 'shadow', 'until an admin chooses, it only previews'); assert.equal(q.orders[0].apexBranch, 1);
     assert.equal((await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'off' })).status, 200);
     await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: [{ id: '3977600001', store, status: 'ACCEPTED', placedAt: at(0), total: 300, detail: { customer: { name: 'Xavier', phone: '01000000001', area: 'المستقبل' }, items: [], bill: [{ k: 'خصم طلبات', text: 'خصم طلبات | -22.00' }] } }] } });
-    const job = { source: 'talabat', ref: '3977600001', action: 'auto', payment: 'cash', branchNo: 1, locationNo: 370, items: [{ itemNo: '0108004', qty: 2 }], customer: { name: 'Xavier', address: 'Unlisted Compound 123' }, expectedTotal: 300, code: '2701', label: 'اطلب/كاش #2701' };
+    const job = { source: 'talabat', ref: '3977600001', action: 'auto', payment: 'cash', branchNo: 1, locationNo: 370, items: [{ itemNo: '0108004', qty: 2 }], customer: { name: 'Xavier', address: 'عمارة 123، شارع Unlisted Road، الدور 2، الشقة 9' }, expectedTotal: 300, code: '2701', label: 'اطلب/كاش #2701' };
     assert.equal((await as('POST', '/api/transfer/job', job)).status, 409, 'off until an admin turns it on');
     t.advance(9000); await as('GET', '/api/transfer/queue?day=2026-10-22'); assert.equal((await notesReady(t, admin)).updated, 1, 'the writer reports the card note');
     assert.equal((await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'live' })).status, 400, 'live needs explicit confirmation');
@@ -145,9 +145,7 @@ test('automatic transfer: off by default, cash only, frozen order handed to the 
     assert.equal(wrong.status, 400); assert.match(wrong.body.error, /المنطقة دي تبع مدينتى/);
     await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': okey0 }, body: { v: 1, day: '2026-10-22', online: [], locations: [{ no: 370, name: 'مدنتى', branch: 1, service: 39.47 }] } });
     const mixed = await as('POST', '/api/transfer/job', job);
-    assert.equal(mixed.status, 409); assert.match(mixed.body.error, /كلمات إنجليزي/);
-    job.customer = { ...job.customer, addressEdited: true, address: 'عمارة 123، شارع 7، الدور 2، الشقة 9' };
-    assert.equal((await as('POST', '/api/transfer/job', job)).status, 200);
+    assert.equal(mixed.status, 200, 'untranslated place names do not stop manual submission');
     assert.equal((await as('POST', '/api/transfer/job', job)).status, 409, 'not sent twice');
     const wtoken = (await admin('POST', '/api/apex-writer', { action: 'token' })).body.token;
     const w = (path, body) => t.call('POST', path, { body: body || {}, headers: { 'x-apex-writer': wtoken } });
@@ -157,7 +155,7 @@ test('automatic transfer: off by default, cash only, frozen order handed to the 
     let n = (await w('/api/apex-writer/next')).body;
     assert.equal(n.job.sign, 'خصم طلبات 22.00', 'known platform discount is written even when the browser sends no sign');
     assert.equal(n.job.platformDiscount, 22);
-    assert.match(n.job.customer.address, /المستقبل.*شارع 7.*عمارة 123/);
+    assert.match(n.job.customer.address, /المستقبل.*شارع Unlisted.*عمارة 123/);
     assert.deepEqual([n.job.customer.floor, n.job.customer.flat], ['2', '9']);
     assert.equal(n.job.restaurantDiscount, 0, 'cash does not deduct platform discount');
     assert.equal(n.mode, 'test'); assert.equal(n.job.ref, '3977600001'); assert.equal(n.job.db, 'test'); assert.deepEqual(n.job.items, [{ itemNo: '0108004', qty: 2, note: '' }]);
@@ -359,6 +357,27 @@ test('a failed or stuck live automatic transfer is told to the call center at on
     l = log(); assert.equal(l.length, 2); assert.match(l[1].text, /#54/); assert.match(l[1].text, /مارد/);
     t.advance(2 * 60000); await admin('GET', '/api/apex-writer'); await new Promise(r => setTimeout(r, 30));
     assert.equal(log().length, 2, 'once');
+  } finally { await t.close(); }
+});
+
+test('the cashier note hold retries once for automatic jobs and preserves the original instruction', async () => {
+  const t = await start({ at: Date.now() });
+  try {
+    const admin = await t.admin();
+    const { token } = (await admin('POST', '/api/apex-writer', { action: 'token' })).body;
+    const ref = '3977600051', source = 'talabat', note = 'فريك بدل الأرز';
+    const db = t.app.db.raw;
+    db.prepare("INSERT INTO transfer_jobs (source, ref, day, state, employee_name, at, payload) VALUES (?, ?, ?, 'auto_sending', ?, ?, ?)").run(source, ref, '2026-11-21', 'المرصد آلي', t.clock.now, JSON.stringify({ source, ref, note }));
+    const result = () => t.call('POST', '/api/apex-writer/result', { headers: { 'x-apex-writer': token },
+      body: { source, ref, ok: false, db: 'live', error: 'العميل طالب «فريك» ومش موجود في أصناف Apex — كلّم العميل وبعدين ابعته تاني' } });
+    const job = () => db.prepare('SELECT state, payload, result FROM transfer_jobs WHERE source = ? AND ref = ?').get(source, ref);
+    assert.equal((await result()).status, 200);
+    assert.equal(job().state, 'auto_retry_pending');
+    assert.equal(JSON.parse(job().payload).note, note);
+    assert.equal(JSON.parse(job().result).noteRetried, true);
+    db.prepare("UPDATE transfer_jobs SET state = 'auto_sending' WHERE source = ? AND ref = ?").run(source, ref);
+    assert.equal((await result()).status, 200);
+    assert.equal(job().state, 'auto_failed', 'no permanent automatic retry loop');
   } finally { await t.close(); }
 });
 

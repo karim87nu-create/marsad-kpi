@@ -141,7 +141,7 @@ main{max-width:1100px;margin:0 auto;padding:16px}
 </div>
 <div id="toast"></div>
 <script type="module">
-import { deliveryLabel, formatDeliveryAddress, addressNeedsArabic, deliveryComment, deliveryNotes } from "./delivery-fields.js?v=20261121-2";
+import { deliveryLabel, formatDeliveryAddress, addressNeedsArabic, deliveryComment, deliveryNotes } from "./delivery-fields.js?v=20261121-3";
 'use strict';
 const API = '';
 let token = null, data = null, filter = 'todo', source = '', choice = {}, picks = {}, branchPick = '';
@@ -211,7 +211,7 @@ function stateOf(o) {
   const r = o.job?.result;
   if (o.job?.state === 'auto_pending') return { cls: 'wait', text: 'بيتبعت لـ Apex…' };
   if (o.job?.state === 'auto_sending') return { cls: 'wait', text: 'بيتكتب على Apex…' };
-  if (o.job?.state === 'auto_retry_pending') return { cls: 'wait', text: 'اتصال الكاشير بالمطعم فشل — هنجرب تاني تلقائيًا' };
+  if (o.job?.state === 'auto_retry_pending') return { cls: 'wait', text: o.job.result?.noteRetried ? 'المرصد هيعيد الإرسال تلقائيًا بنفس ملاحظة العميل' : 'اتصال الكاشير بالمطعم فشل — هنجرب تاني تلقائيًا' };
   if (o.job?.state === 'auto_done') return { cls: 'in', text: 'اتسجل على Apex ✓' + (r?.db === 'test' ? ' (تجربة)' : '') + ' رقم ' + (r?.shiftSerial ?? r?.orderNo ?? '') + (r?.error ? ' — ' + plain(r.error) : '') };
   if (o.job?.state === 'auto_failed') return { cls: 'other', text: 'ماتسجلش: ' + plain(r?.error) + ' — صلّحها وابعته تاني، أو سجله بإيدك' };
   if (o.job?.state === 'auto_preview') return { cls: r?.ok ? 'wait' : 'other', text: 'تجربة بس، ماتسجلش (كان هيطلع ' + money(r?.total) + ')' + (r?.error ? ' — ' + plain(r.error) : '') + ' — سجله بإيدك' };
@@ -457,7 +457,7 @@ function card(o) {
       (auto || mineOrFree ? field('الفرع', branchSel, '') + field('المنطقة', areaSel, '', areaNote) : field('الفرع', esc(o.branch || ''), '')) +
       (!pickup ? field('العنوان', esc(ad.main), ad.issue ? '' : ad.main, '<input data-arabic="address" placeholder="راجع أو صحّح عنوان العميل" title="' + esc(cu.addressEn || cu.address || '') + '" value="' + esc(p.arabic?.address ?? cu.address ?? '') + '">') : '') +
       (!pickup && addressNeedsArabic(orderArea) ? field('منطقة العميل من المصدر', esc(orderArea), '', '<input data-arabic="area" placeholder="راجع كتابة المنطقة بالعربي" value="' + esc(p.arabic?.area ?? orderArea) + '">') : '') +
-      (ad.issue ? '<div class="warn">' + esc(ad.issue) + '</div>' : '') +
+      (ad.issue || ad.warning ? '<div class="warn">' + esc(ad.issue || ad.warning) + '</div>' : '') +
       (ad.sign ? field('العلامة المميزة', esc(ad.sign), ad.issue ? '' : ad.sign) : '') +
       (!pickup && (ad.floor || ad.flat) ? field('الدور', esc(ad.floor), ad.floor) + field('الشقة', esc(ad.flat), ad.flat) : '') +
       (o.note ? field('ملاحظة الأوردر من المصدر', esc(o.note), o.note, '') : '') +

@@ -37,7 +37,12 @@ test('auto transfer: decides only on certain orders and says why not', () => {
   // 11-11: 9 website orders staff had entered by hand were written again hours later.
   assert.match(why({ at: new Date(NOW - 25 * 60000).toISOString() }), /أوردر قديم/);
   assert.equal(decide(base({ at: new Date(NOW - 25 * 60000).toISOString() }), X).quiet, true);
-  assert.match(why({ source: 'site', sentToBranch: true }), /اتحوّل للفرع على الموقع/);
+  assert.equal(decide(base({ source: 'site', sentToBranch: true }), X).ok, true, 'assigned on the website still needs Apex');
+  assert.match(why({ source: 'site', sentToBranch: true, matching: { state: 'tentative' } }), /محتمل/);
+  assert.equal(decide(base({ job: { state: 'released' } }), X).ok, true);
+  const mixedAddress = decide(base({ customer: { ...base().customer, address: 'عمارة 6B، شارع Example Avenue' } }), X);
+  assert.equal(mixedAddress.ok, true);
+  assert.match(mixedAddress.warnings.join(), /اتنقلت زي ما العميل كتبها/);
   // 11-19: a booked order goes by itself an hour before its time; one with no time stays with staff.
   assert.match(why({ scheduled: true, scheduledAt: new Date(NOW + 2 * 3600000).toISOString(), at: new Date(NOW + 2 * 3600000).toISOString() }), /مجدول/);
   assert.doesNotMatch(why({ scheduled: true, scheduledAt: new Date(NOW + 50 * 60000).toISOString(), at: new Date(NOW + 50 * 60000).toISOString() }), /مجدول/);
@@ -97,7 +102,7 @@ test('auto transfer: trial only records, on sends as «المرصد آلي», a 
     // The hashtags as the Live Orders screen reads them (Karim 11-14: never written without one).
     await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { codes: ids.map((id, i) => ({ id, code: '5' + i, store })) } });
     await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: ids.map((id, i) => ({ id, code: '5' + i, store, status: 'ACCEPTED', placedAt: at(i), total: P,
-      detail: { subtotal: P, customer: { name: 'عميل', phone: '0100000005' + i, area: areas[i], address: 'شارع 90، ' + areas[i] },
+      detail: { subtotal: P, customer: { name: 'عميل', phone: '0100000005' + i, area: areas[i], address: i === 0 ? 'Building 6B, street Exampleville, Floor 2' : 'شارع 90، ' + areas[i] },
         items: [{ qty: 1, name: 'Kofta', price: P, modifierRead: true, modifierComplete: true, options: [] }], bill: [{ k: 'مجموع', text: 'مجموع | ' + P }, { k: 'payment', text: 'Cash' }] } })) } });
     const okey = (await admin('POST', '/api/orders/token')).body.token;
     await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': okey }, body: { v: 1, day: '2026-10-22', online: [], locations: [{ no: 218, name: 'التجمع الخامس', branch: 1, service: 20 }] } });
@@ -142,6 +147,9 @@ test('auto transfer: trial only records, on sends as «المرصد آلي», a 
     assert.equal(job.state, 'auto_pending'); assert.equal(job.employee_name, 'المرصد آلي');
     const p = JSON.parse(job.payload);
     assert.deepEqual(p.items.map(x => [x.itemNo, x.qty]), [[KOFTA, 1]]);
+    assert.match(p.customer.address, /شارع Exampleville/);
+    assert.match(p.customer.address, /6B/);
+    assert.equal(p.customer.floor, '2');
     assert.equal(p.locationNo, 218); assert.equal(p.branchNo, 1); assert.equal(p.payment, 'cash'); assert.equal(p.by, 'المرصد آلي');
     assert.equal(log()[ids[0]].decision, 'sent');
     const p3 = JSON.parse(t.app.db.raw.prepare('SELECT payload FROM transfer_jobs WHERE ref = ?').get(ids[3]).payload);

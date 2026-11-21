@@ -7,8 +7,7 @@
 //  - cash or paid is clear, and who pays every discount (a paid order needs nothing more);
 //  - the customer's card on Apex was read in the last 10 minutes; a cash order with one clear discount on it is discounted
 //    by itself — a paid order's discount (the customer's gift or keeping it) and free items on the card wait for a person;
-//  - every item has an Apex price; item price differences do not block transfer and remain visible in the admin
-//    price-difference review; Talabat's delivery still has to match the area's delivery on Apex;
+//  - every item has an Apex price; item and delivery price differences remain visible without blocking transfer;
 //  - nobody has the order and it is not on Apex already.
 // Otherwise the order stays for the employee with the reason shown on the transfer page; when the mode is «on» and it is
 // still waiting after 2 minutes, the call center group is told on Telegram (once per order).
@@ -25,9 +24,11 @@ export const MODES = ['off', 'trial', 'on'];
 const QUIET = new Set(['لسه واصل', 'أوردر مجدول', 'تفاصيل الأوردر لسه ماوصلتش', 'لسه ما اتقبلش على طلبات', 'أوردر قديم — غالباً اتسجل بإيد', 'اتحوّل للفرع على الموقع — غالباً اتسجل بإيد']);
 // A branch's own place in the customer's words (the website's area and address).
 const SITE_PLACES = [{ no: 3, re: /مدين?ت[يى]|مدنت[يى]|madinaty/i }, { no: 2, re: /مدين[هة] ?نصر|nasr ?city/i }, { no: 1, re: /التجمع|تجمع خامس|tagamo|new cairo|القاهر[هة] الجديد[هة]/i }];
-const TICK_MS = 60000, SETTLE_MS = 60000, MAX_AGE_MS = 20 * 60000, ALERT_MS = 2 * 60000, LATE_MAX_MS = 60 * 60000;
+const TICK_MS = 60000, SETTLE_MS = 60000, ALERT_MS = 2 * 60000, LATE_MAX_MS = 60 * 60000;
 // Waits on the system, not on a person: staff are not asked to enter the order for these in its first 10 minutes.
 const SYSTEM_WAIT = new Set(['لسه واصل', 'مستني قراءة بطاقة العميل من Apex', 'تفاصيل الأوردر لسه ماوصلتش', 'هاشتاج طلبات لسه ماظهرش', 'لسه ما اتقبلش على طلبات']);
+const LEGACY_LANGUAGE_HOLD = 'فيه كلمات إنجليزي في العنوان — راجع التعريب قبل التسجيل';
+const POSSIBLE_APEX_MATCH = new Set(['tentative', 'ambiguous']);
 const CARD_QUIET_MS = 10 * 60000;
 const r2 = v => Math.round(v * 100) / 100, T = v => r2(v * 1.14);
 const TALABAT_FEE_NO = '0114006', BRANCH_NAME = { 1: 'التجمع', 2: 'مدينة نصر', 3: 'مدينتي' };
@@ -79,18 +80,15 @@ export function autoReport(rows) {
 
 export function decide(o, x) {
   if (!o || o.done || o.apex || o.out) return null;
-  if (o.job) return null;
+  if (o.job && o.job.state !== 'released') return null;
   const why = [], warnings = [];
   const age = x.now - Date.parse(o.at || 0);
   if (!(age >= SETTLE_MS)) why.push('لسه واصل');
-  // 11-11: an old order is one staff already handled (entered on Apex by hand, matching did not find it) — 9 website
-  // orders of the day were written twice. Only orders of the last 20 minutes; a website order staff already sent to a
-  // branch on the panel is handled.
-  // Karim 11-16 «اللي مكتوب عليه غالبا قديم مش بيتحول حتى لو مش متسجل»: an order the Marsad saw as soon as it came and
-  // that only waited on the system (the card on Apex, the server or the network) — nobody was asked to enter it — still
-  // goes, up to an hour.
+  // Older orders can already have been handled outside Marsad. A recent order sent to a website
+  // branch can still need Apex; do not write when reconciliation finds a possible existing order.
   if (age > TUNE.autoMaxAgeMin * 60000 && !(age <= LATE_MAX_MS && x.waitedOnSystem?.(o))) why.push('أوردر قديم — غالباً اتسجل بإيد');
-  if (o.source === 'site' && o.sentToBranch) why.push('اتحوّل للفرع على الموقع — غالباً اتسجل بإيد');
+  if ((o.sentToBranch || age > TUNE.autoMaxAgeMin * 60000) && POSSIBLE_APEX_MATCH.has(o.matching?.state))
+    why.push('فيه أوردر محتمل يكون هو على Apex — راجع الربط');
   // Karim 11-19 «ميبقاش محتاج تحويل من الموظف غير العميل الي ليه ملاحظه»: a booked order goes by itself an hour before
   // its time (the booking time is written next to the name, as staff do); one with no time stays with staff.
   if (o.scheduled && !(Date.parse(o.scheduledAt || '') - x.now <= TUNE.scheduledLeadMin * 60000)) why.push('أوردر مجدول');
@@ -161,6 +159,7 @@ export function decide(o, x) {
     // is not written — the customer is asked for the address (the street, building or a landmark).
     const adr = formatDeliveryAddress(o.customer?.address, { apexArea: area?.name, sourceArea: o.customer?.talabatArea || o.customer?.siteArea });
     if (adr.issue) why.push(adr.issue);
+    else if (adr.warning) warnings.push(adr.warning);
   } else service = 0;
   // Discounts: who pays each one (a paid order: all of it comes off on Apex anyway).
   if (pay !== 'paid' && (o.discounts || []).some(d => !d.who || d.unclear)) {
@@ -188,9 +187,9 @@ export function decide(o, x) {
       const tItems = o.subtotal ?? billAmount(o, /^(?:المجموع الفرعي|subtotal)$/i);
       if (tItems == null) why.push('مجموع الأصناف على طلبات مش ظاهر');
       // Karim 11-19 (#4251: Apex got 1 ممبار and 1 ورق عنب for 3 of each): Apex's lines far under what the customer paid
-      // for the items means something is missing or a count is wrong — a person checks it. The limit is in «إعدادات التشغيل».
+      // is flagged for review; the writer still registers all known lines. The limit is in «إعدادات التشغيل».
       else if (TUNE.itemsGapPct > 0 && tItems > 0 && T(apexItems) < tItems * (1 - TUNE.itemsGapPct / 100) && tItems - T(apexItems) > 50)
-        why.push('مجموع الأصناف على Apex (' + Math.round(T(apexItems)) + ') أقل من طلبات (' + Math.round(tItems) + ') — اتأكد من العدد');
+        warnings.push('مجموع الأصناف على Apex (' + Math.round(T(apexItems)) + ') أقل من طلبات (' + Math.round(tItems) + ')');
       // Free delivery from Talabat (Pro, offers: the delivery line 0 or missing) is not a price difference (Karim 11-11).
       const delFee = billAmount(o, /توصيل|delivery/i), tDel = (delFee || 0) + (billAmount(o, /رسوم الخدمة|service/i) || 0);
       if (service != null && delFee > 0 && !freeDelivery(o) && Math.abs(T(service) + T(Number(APEX_PRICES[TALABAT_FEE_NO]) || 7.02) - tDel) > 10) warnings.push('فرق سعر التوصيل بين Apex وطلبات');
@@ -246,14 +245,23 @@ function setup(app) {
       const { deliveryPhone } = await import('./delivery-fields.js');
       const seen = new Map((await db.prepare('SELECT source, ref, decision, reasons, alerted, first_at FROM auto_transfer_log WHERE day = ?').all(day)).map(r => [r.source + ':' + r.ref, r]));
       // Seen within 5 minutes of coming, never put to staff (no «سجّله بإيد» message), only system waits so far.
-      const waitedOnSystem = o => { const r = seen.get(o.source + ':' + o.ref); if (!r || r.alerted) return false;
-        if (!(Number(r.first_at) - Date.parse(o.at || 0) <= 5 * 60000)) return false;
-        return String(r.reasons || '').split(' · ').filter(Boolean).every(w => SYSTEM_WAIT.has(w) || w === 'أوردر قديم — غالباً اتسجل بإيد' || /^(?:كاتب Apex مش بيسجل|D1_|.*server|.*timeout|.*fetch)/i.test(w)); };
+      const waitedOnSystem = o => {
+        const r = seen.get(o.source + ':' + o.ref);
+        if (!r) return false;
+        const reasons = String(r.reasons || '').split(' · ').filter(Boolean);
+        // Recover orders from the previous language gate even if it already alerted staff.
+        // The age window, latest Apex match, and durable job checks still apply.
+        const removedHold = w => w === LEGACY_LANGUAGE_HOLD || w === 'اتحوّل للفرع على الموقع — غالباً اتسجل بإيد'
+          || /^(?:كاتب Apex مش بيسجل|مجموع الأصناف على Apex .*اتأكد من العدد)/.test(w);
+        if (reasons.some(removedHold) && reasons.every(w => removedHold(w) || SYSTEM_WAIT.has(w) || BEFORE.has(w))) return true;
+        if (r.alerted || !(Number(r.first_at) - Date.parse(o.at || 0) <= 5 * 60000)) return false;
+        return reasons.every(w => SYSTEM_WAIT.has(w) || w === 'أوردر قديم — غالباً اتسجل بإيد' || /^(?:كاتب Apex مش بيسجل|D1_|.*server|.*timeout|.*fetch)/i.test(w));
+      };
       const x = { now, waitedOnSystem, locations: q.locations || [], groups: areaGroups(q.locations || [], (await app.apexAreaRules?.()) || {}), customerArea: o => areas.get(deliveryPhone(o.customer?.phone) + '|' + normAddress(o.customer?.address)) || null };
       const jobRows = await db.prepare("SELECT source, ref, state, employee_name, result, at FROM transfer_jobs WHERE day = ?").all(day);
       const jobs = new Map(jobRows.map(j => [j.source + ':' + j.ref, j]));
       // Karim 11-14 (11-12 ليلاً the writer could not log in to Apex for two hours): while orders already handed to the
-      // writer wait 4+ minutes, no new one is handed to it — they stay for the staff.
+      // writer wait too long, keep accepting jobs so the cashier can finish them when it reconnects.
       const writerStuck = jobRows.some(j => ['auto_pending', 'auto_sending'].includes(j.state) && now - j.at >= TUNE.writerStuckMin * 60000);
       const out = [];
       for (const o of q.orders || []) {
@@ -261,8 +269,8 @@ function setup(app) {
         // A queue snapshot can be older than another Worker isolate's job insert. Reconcile the durable job first;
         // never leave a stale «won't transfer» decision beside a job that is already queued or written.
         const currentJob = jobs.get(k);
-        if (currentJob?.employee_name === 'المرصد آلي' && ['auto_pending', 'auto_sending', 'auto_done'].includes(currentJob.state)) {
-          const decision = 'sent', reasons = '';
+        if (currentJob?.employee_name === 'المرصد آلي' && ['auto_pending', 'auto_sending', 'auto_retry_pending', 'auto_done'].includes(currentJob.state)) {
+          const decision = 'sent', reasons = prev?.decision === 'sent' ? prev.reasons || '' : '';
           if (!prev || prev.decision !== decision || prev.reasons !== reasons)
             await db.prepare(`INSERT INTO auto_transfer_log (source, ref, day, code, decision, reasons, at, first_at, alerted) VALUES (?,?,?,?,?,?,?,?,0)
               ON CONFLICT(source, ref) DO UPDATE SET decision = excluded.decision, reasons = excluded.reasons, at = excluded.at, code = excluded.code`)
@@ -272,12 +280,12 @@ function setup(app) {
         }
         const d = decide(o, x); if (!d) continue;
         let decision = d.ok ? (m === 'on' ? 'sent' : 'would') : 'wait', reasons = (d.ok ? d.warnings : d.why).join(' · ');
-        if (d.ok && m === 'on' && writerStuck) { decision = 'wait'; reasons = 'كاتب Apex مش بيسجل دلوقتي (أوردرات مستنياه من 4 دقايق) — سجّله بإيد'; }
-        else if (d.ok && m === 'on') {
+        if (d.ok && m === 'on') {
+          if (writerStuck) reasons = [...d.warnings, 'الأوردر في طابور جهاز الكاشير'].join(' · ');
           try { await app.transferAutoJob(d.body, now); }
           catch (e) {
             const committed = await db.prepare('SELECT state, employee_name FROM transfer_jobs WHERE source = ? AND ref = ?').get(o.source, String(o.ref)).catch(() => null);
-            if (committed?.employee_name === 'المرصد آلي' && ['auto_pending', 'auto_sending', 'auto_done'].includes(committed.state)) {
+            if (committed?.employee_name === 'المرصد آلي' && ['auto_pending', 'auto_sending', 'auto_retry_pending', 'auto_done'].includes(committed.state)) {
               decision = 'sent'; reasons = '';
             } else { decision = 'wait'; reasons = String(e?.message || e).slice(0, 200); }
           }
