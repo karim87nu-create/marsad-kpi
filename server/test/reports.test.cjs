@@ -76,8 +76,9 @@ test('admin «التقارير Excel»: the seven files of a period, right to le
     const db = t.app.db.raw;
     db.prepare('INSERT INTO talabat_reviews (order_id,vendor,branch,day,at,rating,text,seen_at) VALUES (?,?,?,?,?,?,?,?)')
       .run('10001', 'HF_EG;608556', 'مدينة نصر', '2026-11-14', t.clock.now, 1, 'تقييم من طلبات', t.clock.now);
-    db.prepare('INSERT INTO talabat_orders (id,day,vendor_id,status,cancel_owner,cancel_reason,total,first_seen,updated_at) VALUES (?,?,?,?,?,?,?,?,?)')
-      .run('10001', '2026-11-14', 'HF_EG;608556', 'CANCELLED', 'Vendor', 'صنف غير متاح', 100, t.clock.now, t.clock.now);
+    const seedCancel = db.prepare('INSERT INTO talabat_orders (id,day,vendor_id,status,cancel_owner,cancel_reason,total,first_seen,updated_at) VALUES (?,?,?,?,?,?,?,?,?)');
+    seedCancel.run('10001', '2026-11-14', 'HF_EG;608556', 'CANCELLED', 'Vendor', 'تأخير بسبب انسكاب الشوربة', 100, t.clock.now, t.clock.now);
+    seedCancel.run('10002', '2026-11-14', 'HF_EG;608556', 'CANCELLED', 'Customer', 'انسكاب', 100, t.clock.now, t.clock.now);
     db.prepare('INSERT INTO site_orders (id,day,status,branch,total,created_at) VALUES (?,?,?,?,?,?)')
       .run(10001, '2026-11-14', 'cancelled', 'مدينتي', 120, t.clock.now);
     db.prepare('INSERT INTO site_channels (id,via) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET via=excluded.via').run(10001, 'rest-api');
@@ -112,7 +113,11 @@ test('admin «التقارير Excel»: the seven files of a period, right to le
     assert.equal(cc[3][2].v, aggregate.reduce((n, d) => n + d.answered, 0), 'received uses Arabix success count');
     assert.equal(cc[3][5].v, aggregate.reduce((n, d) => n + (d.recordedCalls ?? d.calls), 0), 'incoming includes short abandons');
     const cancels = files.find(f => /^الالغاءات/.test(f.name)).sheets[1].rows.slice(2);
-    assert.deepEqual(Array.from(cancels, r => [r[3], r[9]]).sort(), [['APP', '10001'], ['Talabat', '10001']], 'platform cancellations are independent of Apex and of matching IDs');
+    assert.deepEqual(Array.from(cancels, r => [r[3], r[5], r[9]]), [['Talabat', 'جوده', '10001']], 'only restaurant cancellations are exported, with spillage under quality');
+    const platform = (await admin('GET', '/api/reports/platform-cancels?from=2026-11-14&to=2026-11-15')).body;
+    assert.deepEqual(platform.list.filter(r => r.orderNo === '10001').map(r => r.platform).sort(), ['APP', 'Talabat'], 'the underlying sources remain distinct');
+    const rates = files.find(f => /^الالغاءات/.test(f.name)).sheets[2].rows;
+    assert.equal(rates.find(r => r[1] === 'مدينه نصر' && r[2] === 'Talabat')[4], 2, 'the ratio still uses all orders from that platform');
     const q = files.find(f => /^QA1/.test(f.name)).sheets;
     assert.equal(JSON.stringify(q[0].rows.slice(3).map(r => [r[1], r[17].v])), JSON.stringify([['اماني احمد', 1], ['اماني احمد', 0.917]]));
     const cs = files.find(f => /خدمة العملاء/.test(f.name)).sheets[0].rows;
