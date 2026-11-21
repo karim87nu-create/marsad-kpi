@@ -32,6 +32,7 @@ const ADDRESS = [
   ['madinaty', 'مدينتي'], ['rehab', 'الرحاب'], ['tagamoa', 'التجمع'], ['katameya', 'القطامية'], ['kattameya', 'القطامية'], ['maadi', 'المعادي'], ['zamalek', 'الزمالك'],
   ['mokattam', 'المقطم'], ['shorouk', 'الشروق'], ['obour', 'العبور'], ['katameya dunes', 'قطامية ديونز'], ['katameya heights', 'قطامية هايتس'], ['dunes', 'ديونز'], ['cluster', 'كلاستر'], ['hyde park', 'هايد بارك'], ['mivida', 'ميفيدا'], ['mountain view', 'ماونتن فيو'],
   ['makram ebeid', 'مكرم عبيد'], ['abbas el akkad', 'عباس العقاد'], ['abbas al akkad', 'عباس العقاد'], ['el nasr', 'النصر'], ['al nasr', 'النصر'], ['nasr', 'نصر'],
+  ['main street', 'الشارع الرئيسي'], ['primary street', 'الشارع الرئيسي'], ['main road', 'الطريق الرئيسي'],
   ['the waterway', 'ذا ووتر واي'], ['waterway', 'ووتر واي'], ['north 90th street', 'شارع التسعين الشمالي'], ['south 90th street', 'شارع التسعين الجنوبي'],
   ['number', 'رقم'], ['landmark', 'علامة مميزة'], ['building no.', 'عمارة'],
   ['door code', 'كود الباب'], ['group', 'مجموعة'], ['phase', 'مرحلة'],

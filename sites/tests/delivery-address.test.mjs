@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { deliveryAddress,splitDeliveryAddress,deliveryMark,formatDeliveryAddress } from '../lib/marsad/delivery-fields.js';
+import { deliveryAddress,splitDeliveryAddress,deliveryMark,formatDeliveryAddress,withDeliveryPlaces } from '../lib/marsad/delivery-fields.js';
 import { setup } from '../lib/marsad/translate.js';
 test('observed address retains the building instead of moving it into a truncated landmark',()=>{
  const p=deliveryAddress('سكن مصر مسلسل 8، بجانب نادى المهندسين، القاهرة، مبنى: عماره 20 — الدور: 3 — الشقة: 13');
@@ -38,7 +38,7 @@ test('browser and server have exactly the same address formatting and capacity',
 test('distinct source region and actual building survive the Apex address layout', () => {
   const raw = 'شارع 40، مبنى: 40، الدور 3، الشقة 12، جنب شقة 6';
   const out = formatDeliveryAddress(raw, {sourceArea:'المستقبل',apexArea:'الشروق',signBase:'خصم طلبات 20.00'});
-  assert.equal(out.main,'المستقبل، شارع 40، عمارة 40');
+  assert.equal(out.main,'شارع 40، عمارة 40، المستقبل');
   assert.equal(out.sign,'خصم طلبات 20.00/جنب شقة 6');
   assert.deepEqual([out.floor,out.flat,out.issue],['3','12',null]);
   assert.equal(formatDeliveryAddress('12، شارع 90', {sourceArea:'التجمع الخامس',apexArea:'التجمع الخامس طلبات'}).main, 'شارع 90، 12');
@@ -69,9 +69,21 @@ test('Apex keeps compound codes, the actual region and reference-only addresses'
   });
   assert.deepEqual([out.main, out.floor, out.flat, out.issue], ['شارع 90، عمارة B12', '-1', '12/3', null]);
   const shifted = formatDeliveryAddress('شارع 40، المستقبل، عمارة 12', { sourceArea: 'المستقبل', apexArea: 'الشروق' });
-  assert.equal(shifted.main, 'المستقبل، شارع 40، عمارة 12');
+  assert.equal(shifted.main, 'شارع 40، عمارة 12، المستقبل');
   const landmark = formatDeliveryAddress('علامة مميزة:، بوابة 1/2', { signBase: 'خصم طلبات 20.00' });
   assert.deepEqual([landmark.main, landmark.sign, landmark.issue], ['', 'خصم طلبات 20.00/بوابة 1/2', null]);
   assert.match(formatDeliveryAddress('شارع 7، شقة 3، شقة 4').issue, /أكتر من رقم/);
   assert.equal(formatDeliveryAddress('شارع 7، شقة 3 — الشقة: 4').flat, '4');
+});
+
+
+test('compound and main street precede the building and the different region', () => {
+  const raw = withDeliveryPlaces('عمارة 12، ميفيدا، الدور 2', { compound: 'ميفيدا', mainStreet: 'التسعين الجنوبي' });
+  const out = formatDeliveryAddress(raw, { apexArea: 'الشروق', sourceArea: 'المستقبل' });
+  assert.equal(out.main, 'كمبوند ميفيدا، التسعين الجنوبي، عمارة 12، المستقبل');
+  assert.equal(out.floor, '2');
+  const road = formatDeliveryAddress('عمارة 12، شارع 7، طريق السويس، كمبوند تاج سيتي', { apexArea: 'الشروق' });
+  assert.equal(road.main, 'كمبوند تاج سيتي، طريق السويس، شارع 7، عمارة 12');
+  const same = formatDeliveryAddress('الشارع الرئيسي: طريق السويس، عمارة 12', { apexArea: 'طريق السويس', sourceArea: 'طريق السويس' });
+  assert.equal(same.main, 'طريق السويس، عمارة 12');
 });

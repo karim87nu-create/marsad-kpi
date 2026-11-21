@@ -1,4 +1,5 @@
 import { TUNE } from './tune.js';
+import { withDeliveryPlaces } from './delivery-fields.js';
 import { talabatReference } from './order-identifiers.js';
 // طلبات: one monitor screen (Firefox on a PC that stays on, signed in with the call center's Talabat account that sees
 // every branch) reads Order History and each order's details, and pushes them here. Per order we keep the times
@@ -166,7 +167,21 @@ function setup(app) {
       const guardTime = observed || meta?.observed_at || 0;
       // The exact time comes with the details; until then the time shown on the list row (to the minute).
       const placed = ms(o.placedAt) || ms(o.receivedAt) || ms(o.listAt), d = o.detail || null;
-      const customer = customerOf({ ...(o.customer || {}), ...(d?.customer || {}), phone: d?.customer?.phone || o.customer?.phone || o.phone || '' });
+      const fromSource = { ...(o.customer || {}), ...(d?.customer || {}) };
+      const addresses = [fromSource.addressDetails, d?.address, fromSource.address, o.address, fromSource];
+      const addressPart = (...keys) => {
+        for (const a of addresses) for (const k of keys) {
+          const v = a?.[k], text = typeof v === 'string' ? v : v?.name || v?.title || v?.label;
+          if (typeof text === 'string' && text.trim()) return text.trim();
+        }
+        return '';
+      };
+      const rawAddress = typeof fromSource.address === 'string' && fromSource.address.trim() ? fromSource.address : addressPart('formattedAddress', 'address');
+      const address = withDeliveryPlaces(rawAddress, {
+        compound: addressPart('compound', 'compoundName'), mainStreet: addressPart('mainStreet', 'mainStreetName', 'mainRoad'),
+        street: addressPart('street', 'streetName'),
+      });
+      const customer = customerOf({ ...fromSource, address, phone: d?.customer?.phone || o.customer?.phone || o.phone || '' });
       const bill = Array.isArray(d?.bill) ? d.bill.slice(0, 20).map(x => ({ k: String(x?.k || '').slice(0, 60), text: String(x?.text || '').slice(0, 200) })).filter(x => x.text) : null;
       if (Object.values(customer).some(Boolean) || bill?.length) {
         const old = parseJson(prior?.profile, {});

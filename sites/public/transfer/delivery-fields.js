@@ -66,13 +66,16 @@ export function apexText(value) {
 }
 
 // The address the branch reads on Apex (Karim 11-14: «اول العنوان هو اكتر حاجه مفيده لأنه اللي بيظهر للفرع»):
-//  - the building first (عمارة / فيلا / مجموعة / «مبنى:» of Talabat), then the street, then the rest, landmarks last;
+//  - compound, then the main street and building, with landmarks handled separately;
 //  - floor and flat in their own fields, never their empty labels («الدور:، الشقة:») in the address;
 //  - no city / governorate / the Apex area's own name, no repeated parts, no lone numbers left from a split area name.
 const BUILDING = /(?:عمار[ةه]|فيلا|ڤيلا|مجموع[ةه]|بلوك|برج|مبنى|مبني|building|bldg|villa|block|tower)/i;
 const LANDMARK = /^(?:بجوار|بجانب|جانب|جنب|امام|أمام|قدام|خلف|ورا|وراء|بعد|قبل|بالقرب|قريب|عند|في\s+وش|near|next\s+to|behind|in\s+front|opposite|beside)/i;
 const PLACE = /(?:^|\s)(?:كمباوند|كومباوند|كمبوند|كومبوند|compound|مول|mall|ابراج|أبراج|دار\s+مصر|سكن\s+مصر|سكان\s+مصر|مساكن|مدين[ةه]|حي|الحي|مجاور[ةه]|المجاور[ةه]|المحلي[ةه]|محلي[ةه]|منطق[ةه]|المنطق[ةه]|مرحل[ةه]|المرحل[ةه]|عمارات|تاون|town|ريزيدنس|residence|بارك|park|هايتس|heights|فيلدج|village|قري[ةه]|كومباوند|جاردن|gardens?|سيتي|city|بلازا|plaza)(?:\s|$)/i;
-const MAIN_ROAD = /(?:^|\s)(?:التسعين|الدائري|المحور|محور|الطريق|الكورنيش|كورنيش|ميدان)(?:\s|$)/;
+const COMPOUND = /^(?:ال)?(?:كمباوند|كومباوند|كمبوند|كومبوند|compound)(?=\s|[:：]|$)/i;
+const KNOWN_COMPOUND = /^(?:ماونتن فيو|هايد بارك|ميفيدا|ذا ووتر واي|ووتر واي|سوديك إيست تاون|سوديك ايست تاون|بالم هيلز|قطامية ديونز|تاج سيتي)(?=\s|$)/i;
+const MAIN_ROAD = /^(?:طريق|محور)\s+|(?:^|\s)(?:التسعين|الدائري|المحور|محور|الطريق|الكورنيش|كورنيش|ميدان|الأوتوستراد|الاوتوستراد)(?:\s|$)/;
+const MAIN_STREET_LABEL = /^(?:الشارع الرئيسي|الطريق الرئيسي|شارع رئيسي|main street|main road|primary street)\s*[:：]\s*/i;
 const STREET = /(?:^|\s)(?:شارع|ش\.?|طريق|محور|street|st\.?|road|rd\.?)(?:\s|$)/i;
 const FLOOR_WORDS = '(?:الأرضي|الارضي|الارضى|أرضي|ارضي|ارضى|البيزمنت|بيزمنت|بدروم|البدروم|الروف|روف|الاول|الأول|الثاني|التاني|الثالث|التالت|الرابع|الخامس|السادس|السابع|الثامن|التامن|التاسع|العاشر)';
 const addressKey = s => String(s || '').trim().replace(/^(?:محافظة|governorate|منطقة|المنطقة|district|area)\s*[:：]?\s*/i, '')
@@ -80,6 +83,18 @@ const addressKey = s => String(s || '').trim().replace(/^(?:محافظة|governo
     .replace(/[٠-٩۰-۹]/g, c => String(c.charCodeAt(0) - (c >= '۰' ? 0x6f0 : 0x660)))
     .replace(/[^\p{L}\p{N}]+/gu, ' ').replace(/\s+/g, ' ').trim();
 const areaBase = s => String(s || '').trim().replace(/\s+(?:طلبات|الموقع|موقع|اونلاين|أونلاين|talabat|online)$/i, '');
+// Keep areas and concrete destinations separate when a source supplies both address text and named fields.
+export function withDeliveryPlaces(address, { compound, mainStreet, street } = {}) {
+  const text = typeof address === 'string' ? address.trim() : '';
+  const label = (name, value, pattern) => value && value !== '0' ? (pattern.test(value) ? value : name + value) : '';
+  const place = label('كمبوند ', compound, COMPOUND);
+  const road = label('الشارع الرئيسي: ', mainStreet, MAIN_STREET_LABEL);
+  const local = label('شارع ', street, /^(?:شارع|ش\.?|طريق|محور|street|road)(?=\s|[:：])/i);
+  const segments = text.split(/[،,;؛—|\n]/).map(addressKey);
+  const missing = value => value && !segments.includes(addressKey(value));
+  const entries = [place, road, local].filter(missing);
+  return [...new Set(entries), text].filter(Boolean).join(' — ');
+}
 export function deliveryAddress(value, zone = '') {
   const key = addressKey;
   // The Apex area's name also without its «طلبات»/«الموقع» ending («التجمع الخامس طلبات» → «التجمع الخامس»).
@@ -87,8 +102,8 @@ export function deliveryAddress(value, zone = '') {
   const redundant = new Set(['مصر', 'egypt', 'القاهرة', 'القاهره الجديده', 'cairo', 'new cairo', 'الجيزة', 'giza', 'جمهورية مصر العربية'].map(key));
   const geoStart = /^(?:شارع|ش\.?|طريق|محور|عمارة|عماره|مبنى|برج|فيلا|كمبوند|كومباوند|مجموعة|بلوك|بوابة|street|road|building|villa|compound|gate)(?=\s|[:：])/i;
   const withoutArea = value => {
+    if (COMPOUND.test(value) || MAIN_STREET_LABEL.test(value) || LANDMARK.test(value)) return value;
     if (areas.some(area => key(value) === key(area))) return '';
-    if (LANDMARK.test(value)) return value;
     const words = value.split(/\s+/);
     for (let i = 1; i < words.length; i++) {
       const rest = words.slice(i).join(' ');
@@ -163,11 +178,17 @@ export function deliveryAddress(value, zone = '') {
     if (lab) { seg = /^(?:[\d٠-٩۰-۹]|[A-Za-z][-–]?\d)/.test(lab[1]) ? 'عمارة ' + lab[1] : lab[1]; building = true; }
     seg = withoutArea(seg);
     if (!seg || redundant.has(key(seg))) continue;
-    parts.push({ seg, building });
+    const mainStreet = MAIN_STREET_LABEL.test(seg);
+    if (mainStreet) {
+      const road = seg.replace(MAIN_STREET_LABEL, '');
+      seg = !road || STREET.test(road) || MAIN_ROAD.test(road) ? road : 'شارع ' + road;
+    }
+    if (!seg) continue;
+    parts.push({ seg, building, mainStreet, compound: COMPOUND.test(seg) || KNOWN_COMPOUND.test(seg) });
   }
   // No part twice (the same words, or a part already inside a longer one).
   const kept = [];
-  for (const p of [...parts].sort((a, b) => key(b.seg).length - key(a.seg).length)) {
+  for (const p of [...parts].sort((a, b) => Number(b.compound || b.mainStreet) - Number(a.compound || a.mainStreet) || key(b.seg).length - key(a.seg).length)) {
     const k = key(p.seg);
     // A building part also counts without its «عمارة» word («عمارة 244 الاندلس 1» when the street starts «244 الاندلس 1 - …»).
     const k2 = p.building ? key(p.seg.replace(/^عمار[ةه]\s+/, '')) : k;
@@ -175,13 +196,21 @@ export function deliveryAddress(value, zone = '') {
       const buildingNumber = new RegExp('(?:^|\\s)' + BUILDING.source + '\\s+(?:رقم\\s+)?' + k2 + '(?=\\s|$)', 'i');
       if (parts.some(q => q !== p && (key(q.seg).startsWith(k2 + ' ') || buildingNumber.test(key(q.seg))))) continue;
     }
-    if (!k || kept.some(q => LANDMARK.test(q.seg) === LANDMARK.test(p.seg) && (key(q.seg) === k || (k.length >= 3 && (' ' + key(q.seg) + ' ').includes(' ' + k + ' ')) || (k2 !== k && k2.length >= 3 && (' ' + key(q.seg) + ' ').includes(' ' + k2 + ' '))))) continue;
+    if (!k || kept.some(q => {
+      if (LANDMARK.test(q.seg) !== LANDMARK.test(p.seg)) return false;
+      const qKey = key(q.seg);
+      if (qKey === k) return true;
+      if (p.compound && q.compound && key(p.seg.replace(COMPOUND, '')) === key(q.seg.replace(COMPOUND, ''))) return true;
+      if (p.compound || p.mainStreet || STREET.test(p.seg) || MAIN_ROAD.test(p.seg)) return false;
+      return (k.length >= 3 && (' ' + qKey + ' ').includes(' ' + k + ' ')) ||
+        (k2 !== k && k2.length >= 3 && (' ' + qKey + ' ').includes(' ' + k2 + ' '));
+    })) continue;
     kept.push(p);
   }
   const order = new Map(parts.map((p, i) => [p, i]));
   // Karim 11-14: first the place inside the Apex area (a compound, a district, a mall…) or the main street, then the building,
   // then the rest; landmarks («بجوار…») last.
-  const rank = p => LANDMARK.test(p.seg) ? 0 : PLACE.test(p.seg) ? 4 : STREET.test(p.seg) || MAIN_ROAD.test(p.seg) ? 3
+  const rank = p => LANDMARK.test(p.seg) ? 0 : p.compound ? 6 : p.mainStreet || MAIN_ROAD.test(p.seg) ? 5 : PLACE.test(p.seg) && !STREET.test(p.seg) ? 4 : STREET.test(p.seg) ? 3
     // A name with no number and no building word is usually the street or the place («عبد الرحمن صدقي، مبنى: 31»).
     : (BUILDING.test(p.seg) || p.building) && /[\d٠-٩]/.test(p.seg) ? 2 : !/[\d٠-٩]/.test(p.seg) && !BUILDING.test(p.seg) ? 2.5 : p.building ? 1.5 : /^[\d٠-٩]/.test(p.seg) ? 1.5 : 1;
   kept.sort((a, b) => rank(b) - rank(a) || order.get(a) - order.get(b));
@@ -354,7 +383,8 @@ export function formatDeliveryAddress(raw, { apexArea, sourceArea, signBase, pic
   const parts = deliveryAddress(raw, [apexArea, distinct ? realArea : null]);
   const split = splitAddressLandmark(parts.street);
   const areaInStreet = (' ' + addressKey(split.street) + ' ').includes(' ' + realKey + ' ');
-  const street = [distinct && !areaInStreet ? realArea : null, split.street].filter(Boolean).join('، ');
+  // A different region belongs in the address, after the concrete delivery location.
+  const street = [split.street, distinct && !areaInStreet ? realArea : null].filter(Boolean).join('، ');
   const marks = [...new Set([split.landmark, parts.mark].map(mark => String(mark || '').trim()).filter(Boolean))];
   let line = splitDeliveryAddress(street);
   let sign = deliveryMark(base, [line.extra, ...marks].filter(Boolean).join('/'), 100);

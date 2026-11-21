@@ -130,7 +130,7 @@ test('automatic transfer: off by default, cash only, frozen order handed to the 
     const q = (await as('GET', '/api/transfer/queue?day=2026-10-22')).body;
     assert.equal(q.autoTransfer, 'shadow', 'until an admin chooses, it only previews'); assert.equal(q.orders[0].apexBranch, 1);
     assert.equal((await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'off' })).status, 200);
-    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: [{ id: '3977600001', store, status: 'ACCEPTED', placedAt: at(0), total: 300, detail: { customer: { name: 'Xavier', phone: '01000000001', area: 'المستقبل' }, items: [], bill: [{ k: 'خصم طلبات', text: 'خصم طلبات | -22.00' }] } }] } });
+    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: [{ id: '3977600001', store, status: 'ACCEPTED', placedAt: at(0), total: 300, detail: { customer: { name: 'Xavier', phone: '01000000001', area: 'المستقبل', addressDetails: { compoundName: 'تاج سيتي', mainRoad: 'طريق السويس', formattedAddress: 'عمارة 123، شارع Unlisted Road، علامة مميزة: أمام شقة 6، الدور 2، الشقة A-12' } }, items: [], bill: [{ k: 'خصم طلبات', text: 'خصم طلبات | -22.00' }] } }] } });
     const job = { source: 'talabat', ref: '3977600001', action: 'auto', payment: 'cash', branchNo: 1, locationNo: 370, items: [{ itemNo: '0108004', qty: 2 }], customer: { name: 'Xavier', address: 'عمارة 123، شارع Unlisted Road، علامة مميزة: أمام شقة 6، الدور 2، الشقة A-12' }, expectedTotal: 300, code: '2701', label: 'اطلب/كاش #2701' };
     assert.equal((await as('POST', '/api/transfer/job', job)).status, 409, 'off until an admin turns it on');
     t.advance(9000); await as('GET', '/api/transfer/queue?day=2026-10-22'); assert.equal((await notesReady(t, admin)).updated, 1, 'the writer reports the card note');
@@ -155,7 +155,7 @@ test('automatic transfer: off by default, cash only, frozen order handed to the 
     let n = (await w('/api/apex-writer/next')).body;
     assert.equal(n.job.sign, 'خصم طلبات 22.00/أمام شقة 6', 'the server adds the current discount before the landmark');
     assert.equal(n.job.platformDiscount, 22);
-    assert.match(n.job.customer.address, /المستقبل.*شارع Unlisted.*عمارة 123/);
+    assert.match(n.job.customer.address, /^كمبوند تاج سيتي، طريق السويس، شارع Unlisted.*عمارة 123.*المستقبل/);
     assert.deepEqual([n.job.customer.floor, n.job.customer.flat], ['2', 'A-12']);
     assert.equal(n.job.restaurantDiscount, 0, 'cash does not deduct platform discount');
     assert.equal(n.mode, 'test'); assert.equal(n.job.ref, '3977600001'); assert.equal(n.job.db, 'test'); assert.deepEqual(n.job.items, [{ itemNo: '0108004', qty: 2, note: '' }]);

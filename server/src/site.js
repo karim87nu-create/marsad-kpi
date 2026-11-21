@@ -1,4 +1,5 @@
 import { TUNE } from './tune.js';
+import { withDeliveryPlaces } from './delivery-fields.js';
 import { siteReference } from './order-identifiers.js';
 // الموقع (eldahan.com.eg): the server reads the WooCommerce orders and their notes with a read-only REST key, every
 // minute, and keeps per order only the times the reports need (received, sent to the branch, out with the driver,
@@ -94,12 +95,16 @@ export function panelArea(o) {
   }
   const parts = String(c.address || '').split(/[،,;؛—|\n]/).map(x => x.trim()).filter(Boolean);
   const last = parts.length > 1 ? parts[parts.length - 1] : '';
-  return last && last.length <= 60 && !/^[a-z]{0,4}[-/]?[0-9٠-٩۰-۹]+[a-z]?$/i.test(last) && !/^(?:الدور|الطابق|دور|الشقة|الشقه|شقة|شقه|floor|flat|apt|apartment|عمارة|عماره|مبنى|building|فيلا|villa|شارع|طريق|street|road|بوابة|gate|علام[ةه] مميز[ةه]|landmark|directions|بجوار|بجانب|جنب|أمام|امام|خلف|ورا|عند|بالقرب|next to|near|behind|in front)(?=\s|[:：.]|$)/i.test(last) ? last : '';
+  return last && last.length <= 60 && !/^[a-z]{0,4}[-/]?[0-9٠-٩۰-۹]+[a-z]?$/i.test(last) && !/^(?:الدور|الطابق|دور|الشقة|الشقه|شقة|شقه|floor|flat|apt|apartment|عمارة|عماره|مبنى|building|فيلا|villa|شارع|الشارع|الطريق|طريق|street|road|كمباوند|كمبوند|compound|بوابة|gate|علام[ةه] مميز[ةه]|landmark|directions|بجوار|بجانب|جنب|أمام|امام|خلف|ورا|عند|بالقرب|next to|near|behind|in front)(?=\s|[:：.]|$)/i.test(last) ? last : '';
 }
 function panelAddress(order) {
   const customer = order?.customer || {}, detail = customer.addressDetails || order?.address || {};
   const part = (...values) => values.map(v => typeof v === 'number' ? String(v) : textOf(v).trim()).find(Boolean) || '';
-  const main = part(customer.address, detail.formattedAddress, detail.address, detail.street, customer.street);
+  const main = withDeliveryPlaces(part(customer.address, detail.formattedAddress, detail.address), {
+    compound: part(detail.compound, detail.compoundName, customer.compound, customer.compoundName),
+    mainStreet: part(detail.mainStreet, detail.mainStreetName, detail.mainRoad, customer.mainStreet, customer.mainStreetName, customer.mainRoad),
+    street: part(detail.street, detail.streetName, customer.street, customer.streetName),
+  });
   const moreStreet = part(detail.address2, detail.address_2, customer.address2);
   const fields = [
     ['مبنى', part(detail.building, detail.buildingNumber, customer.building, customer.buildingNumber)],
