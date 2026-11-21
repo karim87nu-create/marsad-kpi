@@ -17,7 +17,7 @@ test('card note discount: cash takes it on Apex; paid needs a gift item worth ab
     const store = 'الدهان، التجمع الخامس - البنفسج';
     const orders = ['3977900001', '3977900002', '3977900003', '3977900004'];
     await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: orders.map((id, i) => ({ id, store, status: 'ACCEPTED', placedAt: at(i), total: 300,
-      detail: { customer: { name: 'عميل', phone: '0100000000' + (i + 1) }, items: [], bill: [] } })) } });
+      detail: { customer: { name: 'عميل', phone: '0100000000' + (i + 1), address: 'شارع 9، عمارة 12' }, items: [], bill: [] } })) } });
     const okey = (await admin('POST', '/api/orders/token')).body.token;
     await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': okey }, body: { v: 1, day: '2026-10-22', online: [], locations: [{ no: 218, name: 'التجمع الخامس', branch: 1, service: 20 }] } });
     assert.equal((await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'test' })).status, 200);
@@ -83,7 +83,7 @@ test('card note split over orders: this order gets its share, the card then says
     const { token } = (await admin('POST', '/api/talabat/token')).body;
     const ref = '3977900011', store = 'الدهان، التجمع الخامس - البنفسج';
     await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: [{ id: ref, store, status: 'ACCEPTED', placedAt: at(0), total: 300,
-      detail: { customer: { name: 'عميل', phone: '01000000011' }, items: [], bill: [] } }] } });
+      detail: { customer: { name: 'عميل', phone: '01000000011', address: 'شارع 9، عمارة 12' }, items: [], bill: [] } }] } });
     const okey = (await admin('POST', '/api/orders/token')).body.token;
     await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': okey }, body: { v: 1, day: '2026-10-22', online: [], locations: [{ no: 218, name: 'التجمع الخامس', branch: 1, service: 20 }] } });
     assert.equal((await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'live', confirm: 'LIVE' })).status, 200);

@@ -130,7 +130,7 @@ test('automatic transfer: off by default, cash only, frozen order handed to the 
     const q = (await as('GET', '/api/transfer/queue?day=2026-10-22')).body;
     assert.equal(q.autoTransfer, 'shadow', 'until an admin chooses, it only previews'); assert.equal(q.orders[0].apexBranch, 1);
     assert.equal((await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'off' })).status, 200);
-    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: [{ id: '3977600001', store, status: 'ACCEPTED', placedAt: at(0), total: 300, detail: { customer: { name: 'Xavier', phone: '01000000001' }, items: [], bill: [{ k: 'خصم طلبات', text: 'خصم طلبات | -22.00' }] } }] } });
+    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: [{ id: '3977600001', store, status: 'ACCEPTED', placedAt: at(0), total: 300, detail: { customer: { name: 'Xavier', phone: '01000000001', area: 'المستقبل' }, items: [], bill: [{ k: 'خصم طلبات', text: 'خصم طلبات | -22.00' }] } }] } });
     const job = { source: 'talabat', ref: '3977600001', action: 'auto', payment: 'cash', branchNo: 1, locationNo: 370, items: [{ itemNo: '0108004', qty: 2 }], customer: { name: 'Xavier', address: 'Unlisted Compound 123' }, expectedTotal: 300, code: '2701', label: 'اطلب/كاش #2701' };
     assert.equal((await as('POST', '/api/transfer/job', job)).status, 409, 'off until an admin turns it on');
     t.advance(9000); await as('GET', '/api/transfer/queue?day=2026-10-22'); assert.equal((await notesReady(t, admin)).updated, 1, 'the writer reports the card note');
@@ -144,6 +144,9 @@ test('automatic transfer: off by default, cash only, frozen order handed to the 
     const wrong = await as('POST', '/api/transfer/job', job);
     assert.equal(wrong.status, 400); assert.match(wrong.body.error, /المنطقة دي تبع مدينتى/);
     await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': okey0 }, body: { v: 1, day: '2026-10-22', online: [], locations: [{ no: 370, name: 'مدنتى', branch: 1, service: 39.47 }] } });
+    const mixed = await as('POST', '/api/transfer/job', job);
+    assert.equal(mixed.status, 409); assert.match(mixed.body.error, /كلمات إنجليزي/);
+    job.customer = { ...job.customer, addressEdited: true, address: 'عمارة 123، شارع 7، الدور 2، الشقة 9' };
     assert.equal((await as('POST', '/api/transfer/job', job)).status, 200);
     assert.equal((await as('POST', '/api/transfer/job', job)).status, 409, 'not sent twice');
     const wtoken = (await admin('POST', '/api/apex-writer', { action: 'token' })).body.token;
@@ -154,6 +157,8 @@ test('automatic transfer: off by default, cash only, frozen order handed to the 
     let n = (await w('/api/apex-writer/next')).body;
     assert.equal(n.job.sign, 'خصم طلبات 22.00', 'known platform discount is written even when the browser sends no sign');
     assert.equal(n.job.platformDiscount, 22);
+    assert.match(n.job.customer.address, /المستقبل.*شارع 7.*عمارة 123/);
+    assert.deepEqual([n.job.customer.floor, n.job.customer.flat], ['2', '9']);
     assert.equal(n.job.restaurantDiscount, 0, 'cash does not deduct platform discount');
     assert.equal(n.mode, 'test'); assert.equal(n.job.ref, '3977600001'); assert.equal(n.job.db, 'test'); assert.deepEqual(n.job.items, [{ itemNo: '0108004', qty: 2, note: '' }]);
     n = (await w('/api/apex-writer/next')).body;
@@ -335,7 +340,7 @@ test('a failed or stuck live automatic transfer is told to the call center at on
     const sara = (await t.call('POST', '/api/transfer/login', { body: { pin: '1111' } })).body.token;
     const as = (method, path, body) => t.call(method, path, { body, headers: { 'x-transfer-session': sara } });
     const { token } = (await admin('POST', '/api/talabat/token')).body;
-    const push = id => t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { codes: [{ id, code: id.slice(-2), store: 'الدهان، التجمع الخامس' }], orders: [{ id, store: 'الدهان، التجمع الخامس - البنفسج', status: 'ACCEPTED', placedAt: new Date(t.clock.now).toISOString(), total: 300, detail: { customer: { name: 'X', phone: '0100000' + id.slice(-4) } } }] } });
+    const push = id => t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { codes: [{ id, code: id.slice(-2), store: 'الدهان، التجمع الخامس' }], orders: [{ id, store: 'الدهان، التجمع الخامس - البنفسج', status: 'ACCEPTED', placedAt: new Date(t.clock.now).toISOString(), total: 300, detail: { customer: { name: 'X', phone: '0100000' + id.slice(-4), address: 'شارع 9 عمارة 12' } } }] } });
     await push('3977600053'); await push('3977600054');
     assert.equal((await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'live', confirm: 'LIVE' })).status, 200);
     t.advance(9000); await as('GET', '/api/transfer/queue'); await notesReady(t, admin);
@@ -366,7 +371,7 @@ test('whose order: a failed automatic transfer is free for anyone; one on Apex o
     const sara = await tok('1111'), mona = await tok('2222');
     const as = s => (method, path, body) => t.call(method, path, { body, headers: { 'x-transfer-session': s } });
     const { token } = (await admin('POST', '/api/talabat/token')).body;
-    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: [{ id: '3977800001', store: 'الدهان، التجمع الخامس', status: 'ACCEPTED', placedAt: new Date(t.clock.now).toISOString(), total: 300, detail: { customer: { name: 'X', phone: '01000008001' } } }] } });
+    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: [{ id: '3977800001', store: 'الدهان، التجمع الخامس', status: 'ACCEPTED', placedAt: new Date(t.clock.now).toISOString(), total: 300, detail: { customer: { name: 'X', phone: '01000008001', address: 'شارع 9 عمارة 12' } } }] } });
     await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'live', confirm: 'LIVE' });
     t.advance(9000); await as(sara)('GET', '/api/transfer/queue'); await notesReady(t, admin);
     const job = { source: 'talabat', ref: '3977800001', action: 'auto', payment: 'cash', branchNo: 1, locationNo: 218, items: [{ itemNo: '0108004', qty: 2 }], expectedTotal: 300, code: '01', label: 'x' };

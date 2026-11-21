@@ -141,7 +141,7 @@ main{max-width:1100px;margin:0 auto;padding:16px}
 </div>
 <div id="toast"></div>
 <script type="module">
-import { deliveryLabel, deliveryAddress, splitDeliveryAddress, deliveryMark, deliveryComment, deliveryNotes } from "./delivery-fields.js?v=20261120-1";
+import { deliveryLabel, formatDeliveryAddress, addressNeedsArabic, deliveryComment, deliveryNotes } from "./delivery-fields.js?v=20261121-2";
 'use strict';
 const API = '';
 let token = null, data = null, filter = 'todo', source = '', choice = {}, picks = {}, branchPick = '';
@@ -292,15 +292,13 @@ function pickArea(p, no) {
 const r2 = v => Math.round(v * 100) / 100, T = v => r2(v * 1.14);   // Apex: online price + 14% tax
 const payOf = o => choice[key(o)] || o.job?.payment || (o.payment === 'cash' || o.payment === 'paid' ? o.payment : null);
 const discountSum = (o, who) => (o.discounts || []).filter(d => d.who === who).reduce((a, d) => a + (Number(d.amount) || 0), 0);
-// Floor and flat as Talabat writes them in the address («— الدور: 4 — الشقة: 403»); the address without them.
-const addressParts = deliveryAddress;
-function specialMarkFor(o, p, platformAmount) {
-  const cu = o.customer || {}, addressRaw = p?.arabic?.address || cu.address;
-  const ad = o.fulfillment === 'pickup' ? { street: '' } : addressParts(addressRaw, [
-    (data.locations || []).find(l => String(l.no) === String(p?.loc))?.name, cu.talabatArea, cu.siteArea, cu.area
-  ]);
-  const addressLine = splitDeliveryAddress(ad.street);
-  return deliveryMark(platformAmount > 0 ? 'خصم طلبات ' + money(platformAmount) : '', addressLine.extra);
+function addressFor(o, p, platformAmount) {
+  const cu = o.customer || {}, apexArea = (data.locations || []).find(l => String(l.no) === String(p?.loc))?.name;
+  const ruleArea = String(p?.loc) === String(o.areaGuess?.no) ? o.areaGuess?.addAddress : null;
+  return formatDeliveryAddress(p?.arabic?.address ?? cu.address, {
+    apexArea, sourceArea: p?.arabic?.area || ruleArea || cu.talabatArea || cu.siteArea || cu.area,
+    signBase: platformAmount > 0 ? 'خصم طلبات ' + money(platformAmount) : '', pickup: o.fulfillment === 'pickup',
+  });
 }
 const copyBtn = text => text ? '<button class="cp" data-copytext="' + esc(text) + '" aria-label="نسخ">نسخ</button>' : '';
 const field = (label, value, copy, extra) => '<div class="f"><span class="fl">' + label + '</span><span class="fv">' + (value || '<span class="warn">مش ظاهر</span>') + (extra || '') + '</span>' + (copy ? copyBtn(copy) : '<span></span>') + '</div>';
@@ -435,9 +433,7 @@ function card(o) {
     p.locGuess = known && (o.areaGuess.how || 'learned');
   }
   const c = ticketCalc(o, fl, p);
-  const cu = o.customer || {}, addressRaw = p.arabic?.address || cu.address, ad = addressParts(addressRaw, [
-    (data.locations || []).find(l => String(l.no) === String(p.loc))?.name, cu.talabatArea, cu.siteArea, cu.area
-  ]), addressLine = splitDeliveryAddress(ad.street), specialMark = specialMarkFor(o, p, c.plat);
+  const cu = o.customer || {}, ad = addressFor(o, p, c.plat), orderArea = cu.talabatArea || cu.siteArea || cu.area;
   let branchSel = '', areaSel = '', areaNote = '';
   if (auto || mineOrFree) {
     const all = areaList();
@@ -459,9 +455,11 @@ function card(o) {
       field('الاسم', '<b>' + esc(label) + '</b>' + (/[A-Za-z]{2,}/.test(cu.name || '') || cu.nameEn ? '<input data-arabic="name" placeholder="تعريب الاسم" title="' + esc(cu.nameEn ? 'العميل كتبه: ' + cu.nameEn + ' — صحّحه لو التعريب غلط، والمرصد هيتعلمه' : '') + '" value="' + esc(p.arabic?.name ?? (cu.nameEn ? cu.name : '')) + '">' : ''), label) +
       field('التليفون', cu.phone ? esc(cu.phone) : '', cu.phone) +
       (auto || mineOrFree ? field('الفرع', branchSel, '') + field('المنطقة', areaSel, '', areaNote) : field('الفرع', esc(o.branch || ''), '')) +
-      field('العنوان', esc(addressLine.main), addressLine.main, /[A-Za-z]{2,}/.test(cu.address || '') || cu.addressEn ? '<input data-arabic="address" placeholder="تعريب العنوان" title="' + esc(cu.addressEn ? 'العميل كتبه: ' + cu.addressEn + ' — صحّحه لو التعريب الغلط، والمرصد هيتعلمه' : '') + '" value="' + esc(p.arabic?.address ?? (cu.addressEn ? cu.address : '')) + '">' : '') +
-      (specialMark ? field('العلامة المميزة', esc(specialMark), specialMark) : addressLine.extra ? '<div class="warn">تكملة العنوان أطول من مساحة العلامة المميزة — اختصر العنوان قبل التسجيل</div>' : '') +
-      (ad.floor || ad.flat ? field('الدور', esc(ad.floor), ad.floor) + field('الشقة', esc(ad.flat), ad.flat) : '') +
+      (!pickup ? field('العنوان', esc(ad.main), ad.issue ? '' : ad.main, '<input data-arabic="address" placeholder="راجع أو صحّح عنوان العميل" title="' + esc(cu.addressEn || cu.address || '') + '" value="' + esc(p.arabic?.address ?? cu.address ?? '') + '">') : '') +
+      (!pickup && addressNeedsArabic(orderArea) ? field('منطقة العميل من المصدر', esc(orderArea), '', '<input data-arabic="area" placeholder="راجع كتابة المنطقة بالعربي" value="' + esc(p.arabic?.area ?? orderArea) + '">') : '') +
+      (ad.issue ? '<div class="warn">' + esc(ad.issue) + '</div>' : '') +
+      (ad.sign ? field('العلامة المميزة', esc(ad.sign), ad.issue ? '' : ad.sign) : '') +
+      (!pickup && (ad.floor || ad.flat) ? field('الدور', esc(ad.floor), ad.floor) + field('الشقة', esc(ad.flat), ad.flat) : '') +
       (o.note ? field('ملاحظة الأوردر من المصدر', esc(o.note), o.note, '') : '') +
       (() => {
         const n = o.apexCustomerNote;
@@ -622,7 +620,13 @@ $('list').addEventListener('click', async e => {
   if (b.dataset.cardSuggest !== undefined) { const p = picks[key(o)]; if (p) { p.noteItems ||= {}; p.noteItems[Number(b.dataset.cardSuggest)] = { no: b.dataset.no, qty: p.noteItems[Number(b.dataset.cardSuggest)]?.qty || 1 }; render(true); } return; }
   if (b.dataset.edit !== undefined) { const p = picks[key(o)]; if (p) { (p.edit || (p.edit = {}))[Number(b.dataset.edit)] = true; p.open = true; render(true); } return; }
   if (b.dataset.copy !== undefined || b.dataset.copytext) {
-    const text = b.dataset.copytext || '';
+    const addressKey = { 'العنوان': 'main', 'العلامة المميزة': 'sign', 'الدور': 'floor', 'الشقة': 'flat' }[b.closest('.f')?.querySelector('.fl')?.textContent];
+    let text = b.dataset.copytext || '';
+    if (addressKey) {
+      const p = picks[key(o)] || {}, address = addressFor(o, p, ticketCalc(o, flatLines(o), p).plat);
+      if (address.issue) { toast(address.issue); return; }
+      text = address[addressKey] || '';
+    }
     try { await navigator.clipboard.writeText(text); b.textContent = 'اتنسخ ✓'; setTimeout(() => b.textContent = 'نسخ', 1500); } catch { toast('انسخه بإيدك: ' + text); }
     return;
   }
@@ -631,7 +635,8 @@ $('list').addEventListener('click', async e => {
   if (b.dataset.act === 'auto') {
     const p = picks[key(o)] || {}, pay = choice[key(o)] || o.job?.payment || (o.payment === 'cash' || o.payment === 'paid' ? o.payment : null);
     const cc = ticketCalc(o, flatLines(o), p);
-    if (specialMarkFor(o, p, cc.plat) == null) { toast('تكملة العنوان أكبر من مساحة العلامة المميزة — اختصر العنوان قبل التسجيل'); return; }
+    const addressIssue = addressFor(o, p, cc.plat).issue;
+    if (addressIssue) { toast(addressIssue); return; }
     if (!pay) { toast('حدد الأول: كاش ولا مدفوع'); return; }
     if (!p.branch) { toast('اختار الفرع'); return; }
     if (!p.loc) { toast('اختار منطقة العميل'); return; }
@@ -685,7 +690,7 @@ $('list').addEventListener('click', async e => {
         note: p.arabic?.note || deliveryComment(o),
         // Paid (Karim 01-11): the whole discount comes off on Apex, so the Ledge equals what the customer paid.
         // Cash: the restaurant's comes off. Either way the special mark shows Talabat's discount only.
-        label: fullLabel(o, pay), customer: { ...(o.customer || {}), ...(p.arabic?.name ? { name: p.arabic.name } : {}), ...(p.arabic?.address ? { address: p.arabic.address, addressEdited: true } : {}) },
+        label: fullLabel(o, pay), customer: { ...(o.customer || {}), ...(p.arabic?.name ? { name: p.arabic.name } : {}), ...(p.arabic?.address !== undefined ? { address: p.arabic.address, addressEdited: true } : {}), ...(p.arabic?.area ? { area: p.arabic.area, areaEdited: true } : {}) },
         sign: platSum > 0 ? 'خصم طلبات ' + money(platSum) : '',   // Karim 01-11: the special mark shows Talabat's discount only
         discountSplit: (o.discounts || []).map((d, i) => (d.who && !d.unclear) || p.split?.[i] == null ? null : { text: d.text, amount: d.amount, restaurant: p.split[i] }),
         restaurantDiscount: pay === 'paid' ? rest + platSum : rest, expectedTotal: (o.subtotal ?? o.total ?? 0) - rest - (pay === 'paid' ? platSum : 0), targetTotal: cc.want });   // paid: what the customer paid (Talabat's discount off too)
@@ -697,7 +702,6 @@ $('list').addEventListener('click', async e => {
     const pay = choice[key(o)] || o.job?.payment || (o.payment === 'cash' || o.payment === 'paid' ? o.payment : null);
     if (b.dataset.act === 'entered' && !pay) { toast('حدد الأول: كاش ولا مدفوع'); return; }
     const p = picks[key(o)] || {};
-    if (b.dataset.act === 'entered' && specialMarkFor(o, p, ticketCalc(o, flatLines(o), p).plat) == null) { toast('تكملة العنوان أكبر من مساحة العلامة المميزة — اختصر العنوان قبل التسجيل'); return; }
     if (b.dataset.act === 'entered' && !p.branch) { toast('حدد فرع Apex عشان التأكيد يتعلم الاختيار'); return; }
     if (b.dataset.act === 'entered' && !p.loc) { toast('حدد منطقة Apex عشان التأكيد يتعلم الاختيار'); return; }
     if (b.dataset.act === 'entered' && o.discounts?.some(d => !d.who) && !confirm('فيه خصم مش واضح مين ممول له. متأكد إنك سجلته صح؟')) return;
@@ -770,6 +774,7 @@ $('list').addEventListener('change', async e => {
   }
 });
 $('list').addEventListener('input', e => { const field = e.target.dataset.arabic; if (!field) return; const p = picks[e.target.closest('.card').dataset.k]; if (p) (p.arabic ||= {})[field] = e.target.value; });
+$('list').addEventListener('change', e => { if (['address', 'area'].includes(e.target.dataset.arabic)) setTimeout(() => render(), 0); });
 $('list').addEventListener('focusout', () => setTimeout(() => { if (render.pending && !$('list').contains(document.activeElement)) render(); }, 0));
 $('list').addEventListener('toggle', e => { const d = e.target.closest?.('[data-pick-box]'); if (d) { const p = picks[d.closest('.card').dataset.k]; if (p && p.open !== d.open) { p.open = d.open; if (d.open) render(true); } } }, true);
 let loadingQueue = null, queueRetryAfter = 0, queueBackoff = 0;

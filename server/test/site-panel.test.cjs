@@ -21,9 +21,12 @@ test('website central panel: orders, items, money, branch and times reach the tr
       financial: { currency: 'EGP', due: 1615.5, onlinePaid: 0, total: 1615.5, rows: [{ amount: 1775.5, label: 'الأصناف والإضافات قبل الخصم' }, { amount: 40, label: 'رسوم التوصيل' }, { amount: -200, label: 'تسويات مسجلة في الطلب' }] },
       items: [{ name: 'طاجن لحمة بالبصل', quantity: 1, total: '321.00 EGP', parent: '', addon: false, details: [{ label: 'اختيارات السلطة المجانية', value: 'خيار مخلل (ضمن الوجبة)' }] },
         { name: 'طحينة', quantity: 1, total: '25.00 EGP', parent: 'صدور مشوية', addon: true, details: [] }], ...extra });
-    assert.equal((await push([order(1)])).status, 200);
+    const full = order(1);
+    assert.equal((await push([order(1, { customer: { ...full.customer, addressDetails: { building: '26', floor: '3', flat: '12', landmark: 'البوابة الزرقاء' } } })])).status, 200);
+    assert.equal((await push([full])).status, 200, 'a partial refresh must preserve the fuller address');
     const q = (await t.call('GET', '/api/transfer/queue?day=2026-11-10', { headers: { 'x-transfer-session': sara } })).body.orders.find(o => o.source === 'site');
     assert.ok(q, 'on the transfer page');
+    assert.match(q.customer.address, /الدور: 3.*الشقة: 12.*البوابة الزرقاء/);
     assert.equal(q.ref, '30824'); assert.equal(q.payment, 'cash'); assert.equal(q.target, 1615.5); assert.equal(q.branch, 'مدينة نصر'); assert.equal(q.note, 'من غير بصل');
     assert.equal(q.items.length, 2); assert.equal(q.items[0].name, 'طاجن لحمة بالبصل');
     assert.deepEqual(q.discounts.map(d => [d.amount, d.who]), [[200, 'restaurant']], 'the panel\'s adjustment is the restaurant\'s discount');

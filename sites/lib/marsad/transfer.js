@@ -13,7 +13,7 @@ import { businessDay, dayWindow, iso, validDate, addDays } from './time.js';
 import { takeTransferBuildLease, waitForTransferBuild } from './transfer-build-lease.js';
 import { CANCELLED_SQL, isCancelled, sourceCanTransfer, handoffPending } from './transfer-cancellation.js';
 import { parseJson } from './order-match.js';
-import { deliveryPhone, deliveryLabel, deliveryAddress, splitDeliveryAddress, deliveryMark, compactDeliveryComment, deliveryNotes, apexText, splitDeliveryComment, splitAddressLandmark, applyChoiceWords } from './delivery-fields.js';
+import { deliveryPhone, deliveryLabel, formatDeliveryAddress, compactDeliveryComment, deliveryNotes, apexText, splitDeliveryComment, applyChoiceWords } from './delivery-fields.js';
 import { parseApexCustomerNote, normArabic, guessApexItem, usefulCardNotes } from './apex-customer-notes.js';
 import { areaGroups, areaKey, areaInAddress, areaForBranch, PICKUP_AREAS } from './apex-areas.js';
 import { knownNos, itemKey } from './items.js';
@@ -425,16 +425,16 @@ function setup(app) {
     // English typed by the customer (address, name, comments) shown and sent in Arabic (Karim 01-11); the original is kept.
     if (app.toArabic) {
       const open = list.filter(o => !o.done), texts = [];
-      for (const o of open) texts.push(o.customer?.name, o.customer?.area, o.note, ...(o.items || []).flatMap(i => [i.note, ...(i.freeOptions || [])]));
+      for (const o of open) texts.push(o.customer?.name, o.note, ...(o.items || []).flatMap(i => [i.note, ...(i.freeOptions || [])]));
       const ar = await app.toArabic(texts.filter(Boolean), { waitUntil: ctx.waitUntil }).catch(() => new Map());
-      for (const [original,address] of app.toArabicAddress?.(open.map(o => o.customer?.address)) || []) ar.set(original,address);
+      for (const [original,address] of app.toArabicAddress?.(open.flatMap(o => [o.customer?.address, o.customer?.area, o.customer?.talabatArea, o.customer?.siteArea])) || []) ar.set(original,address);
       for (const [original, note] of app.toArabicNote?.(open.flatMap(o => [o.note, ...(o.items || []).flatMap(i => [i.note, ...(i.freeOptions || [])])])) || []) ar.set(original, note);
       const tr = v => (v && ar.get(v)) || v, changed = v => v && ar.get(v) && ar.get(v) !== v;
       for (let i = 0; i < list.length; i++) {
         const o = list[i]; if (o.done) continue;
         const c = o.customer;
         list[i] = { ...o,
-          ...(c ? { customer: { ...c, name: tr(c.name), address: tr(c.address), area: tr(c.area), ...(changed(c.address) || changed(c.name) ? { original: [c.name, c.address].filter(Boolean).join(' — ') } : {}),
+          ...(c ? { customer: { ...c, name: tr(c.name), address: tr(c.address), area: tr(c.area), ...(c.talabatArea ? { talabatArea: tr(c.talabatArea) } : {}), ...(c.siteArea ? { siteArea: tr(c.siteArea) } : {}), ...(changed(c.address) || changed(c.name) ? { original: [c.name, c.address].filter(Boolean).join(' — ') } : {}),
             ...(changed(c.name) ? { nameEn: c.name } : {}), ...(changed(c.address) ? { addressEn: c.address } : {}) } } : {}),
           ...(changed(o.note) ? { note: tr(o.note), noteOriginal: o.note } : {}),
           ...(o.items ? { items: o.items.map(x => ({ ...x, note: tr(x.note), freeOptions: (x.freeOptions || []).map(tr) })) } : {}) };
@@ -1057,32 +1057,33 @@ function setup(app) {
       // What the employee wrote over the automatic Arabic is learned for next time (Karim 11-11).
       if (app.learnArabic) for (const [en, ar] of [[b.customer?.nameEn, b.customer?.name]]) if (en && ar) await app.learnArabic(en, ar).catch(() => {});
       const rawAddress = b.customer?.addressEdited === true ? b.customer.address : sourceOrder?.customer?.address || b.customer?.addressEn || b.customer?.address;
-      const translatedAddress = app.toArabicAddress?.([rawAddress]).get(rawAddress) || rawAddress;
+      const customer = sourceOrder?.customer || b.customer || {};
+      const originalArea = customer.talabatArea || customer.siteArea || customer.area;
+      const explicitArea = areaRule(originalArea, source);
+      const sourceArea = b.customer?.areaEdited === true && String(b.customer.area || '').trim() ? String(b.customer.area).trim().slice(0, 80)
+        : explicitArea?.no === locationNo && explicitArea.addAddress ? explicitArea.addAddress : originalArea;
+      const addresses = app.toArabicAddress?.([rawAddress, sourceArea, area?.name]) || new Map();
+      const address = formatDeliveryAddress(addresses.get(rawAddress) || rawAddress, {
+        apexArea: addresses.get(area?.name) || area?.name, sourceArea: addresses.get(sourceArea) || sourceArea,
+        signBase, pickup
+      });
+      if (address.issue) fail(409, address.issue);
+      const sign = address.sign;
       // Karim 11-15: delivery instructions to the order's special mark (up to 100 letters with the rest of the mark), the food to the comment.
       const noteSplit = splitDeliveryComment(app.toArabicNote?.([safeRemarks]).get(safeRemarks) || arabic.get(safeRemarks) || safeRemarks);
-      // Karim 11-15 «استلام الفرع نكتب صفر في العنوان والدور والشقه عشان ميطبعش بيانات قديمه»: Apex prints the customer's
-      // card, so a pickup writes 0 there (the next delivery order writes its own address back).
-      const address = pickup ? { street: '0', floor: '0', flat: '0' } : deliveryAddress(translatedAddress, [area?.name, sourceOrder?.customer?.talabatArea, sourceOrder?.customer?.siteArea, b.customer?.area]);
-      // Karim 11-15: the street and building in the address, what shows the way in the special mark — the address in full
-      // when the mark has no room for it.
-      const addrSplit = splitAddressLandmark(address.street);
-      let addressLine = splitDeliveryAddress(addrSplit.street), sign = deliveryMark(apexText(signBase), [addrSplit.landmark, address.mark, addressLine.extra].filter(Boolean).join('/'), 100);
-      if (sign == null) { addressLine = splitDeliveryAddress(address.street); sign = deliveryMark(apexText(signBase), [address.mark, addressLine.extra].filter(Boolean).join('/'), 100); }
-      if (sign == null) sign = deliveryMark(apexText(signBase), addressLine.extra, 100);   // the landmark too long: the comment keeps the order's words
-      if (sign == null) fail(409, 'تكملة العنوان أكبر من مساحة العلامة المميزة — اختصر العنوان قبل التسجيل');
       const room = 100 - Array.from(sign === '.' ? '' : sign).length - (sign && sign !== '.' ? 3 : 0);
       const signNote = room >= 8 ? apexText(compactDeliveryComment(noteSplit.delivery, room)) : '';
       // What did not fit in the mark stays in the comment, never lost.
       const signLeft = noteSplit.delivery && signNote !== apexText(compactDeliveryComment(noteSplit.delivery, 1000)) ? noteSplit.delivery : '';
       const translatedNote = apexText(compactDeliveryComment(applyChoiceWords([noteSplit.order, signLeft].filter(Boolean).join(' | '), TUNE_PAIRS.choiceWords), 200));   // no «?» on Apex (11-14)
       // Karim 11-15: nothing of an earlier order on the receipt — what this order does not say is written 0 (Apex prints the card).
-      const deliveryFields = { address: addressLine.main || '0', floor: address.floor || '0', flat: address.flat || '0' };
+      const deliveryFields = { address: address.main || '0', floor: address.floor || '0', flat: address.flat || '0' };
       // Karim 11-14 «الهاشتاج سعات مش بيتكتب في طلبات»: the hashtag is the server's own (the order's code from the Talabat
       // screens), not only what the page sent; a Talabat order is never written without it (the branch looks for it).
       const code = (String(b.code || '').replace(/[^\d]/g, '') || (source === 'talabat' ? String(sourceOrder?.code || (await db.prepare('SELECT code FROM talabat_orders WHERE id = ?').get(ref))?.code || '').replace(/[^\d]/g, '') : '') || (source === 'site' ? String(ref) : '')).slice(0, 10) || null;
       if (source === 'talabat' && !code) fail(409, 'هاشتاج طلبات لسه ماظهرش للأوردر ده — افتح الأوردر على شاشة لايف طلبات وثواني ويظهر، بعدين سجّله');
       const payload = { v: 1, source, ref, code, db: mode, branchNo, locationNo, payment, ...(paymentOverride ? { paymentOverride } : {}),
-        label: deliveryLabel(translatedName, source, payment, code, booking.appointment), customer: { name: String(translatedName || '').slice(0, 80), phone: deliveryPhone(b.customer?.phone), address: pickup ? '0' : String(b.customer?.address || '').slice(0, 360), ...deliveryFields }, ...(pickup ? { pickup: true } : {}),
+        label: deliveryLabel(translatedName, source, payment, code, booking.appointment), customer: { name: String(translatedName || '').slice(0, 80), phone: deliveryPhone(b.customer?.phone), ...deliveryFields }, ...(pickup ? { pickup: true } : {}),
         sign, signNote, platformDiscount, note: translatedNote, items: [...clean, ...noteItems], apexCustomerBenefit: noteBenefit,
         restaurantDiscount, expectedTotal, targetTotal, areaService, by: me.name, at: now };
       const queued = await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at, payload, result) VALUES (?,?,?,'auto_pending',?,?,?,?,?,?,NULL)

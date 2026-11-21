@@ -4,7 +4,7 @@ import { siteReference } from './order-identifiers.js';
 // minute, and keeps per order only the times the reports need (received, sent to the branch, out with the driver,
 // delivered) plus the branch and driver names. Matching fields are stored separately for order reconciliation.
 // The two reports («تقرير أداء الموقع للفروع» and «تقرير أداء الكول سنتر») are drawn from these rows on the admin page.
-import { resolveOrders, customerOf, parseJson } from './order-match.js';
+import { resolveOrders, customerOf, parseJson, fullerAddress } from './order-match.js';
 import { businessDay, addDays, cairoToUtc, dayWindow, iso, validDate } from './time.js';
 import { sha256Bytes, randomBytes, b64, fromB64 } from './security.js';
 
@@ -96,6 +96,20 @@ export function panelArea(o) {
   const last = parts.length > 1 ? parts[parts.length - 1] : '';
   return last && last.length <= 60 && !/^\d+$/.test(last) && !/(?:الدور|دور|شقة|شقه|floor|flat|apt)/i.test(last) ? last : '';
 }
+function panelAddress(order) {
+  const customer = order?.customer || {}, detail = customer.addressDetails || order?.address || {};
+  const part = (...values) => values.map(v => typeof v === 'number' ? String(v) : textOf(v).trim()).find(Boolean) || '';
+  const main = part(customer.address, detail.formattedAddress, detail.address, detail.street, customer.street);
+  const moreStreet = part(detail.address2, detail.address_2, customer.address2);
+  const fields = [
+    ['مبنى', part(detail.building, detail.buildingNumber, customer.building, customer.buildingNumber)],
+    ['الدور', part(detail.floor, detail.floorNumber, customer.floor, customer.floorNumber)],
+    ['الشقة', part(detail.apartment, detail.flat, customer.apartment, customer.flat)],
+    ['علامة مميزة', part(detail.landmark, customer.landmark)],
+  ];
+  const text = [main, moreStreet && !main.includes(moreStreet) ? moreStreet : ''].filter(Boolean).join('، ');
+  return [text, ...fields.filter(([label, v]) => v && v !== '0' && !text.includes(label + ': ' + v)).map(([label, v]) => label + ': ' + v)].filter(Boolean).join(' — ');
+}
 const SITE_BRANCH_OF_APEX = { 1: 'tagamoa-cloud', 2: 'nasr-city', 3: 'madinaty-craft-zone' };
 
 function setup(app) {
@@ -160,8 +174,11 @@ function setup(app) {
           const label = String(d?.label || '').trim(), value = String(d?.value || '').replace(/<[^>]*>/g, '').trim();
           return { name: (/^(?:الوزن|الحجم|الكمية|weight|size)$/i.test(label) ? value : (label ? label + ': ' : '') + value).slice(0, 160), price: 0 };
         }).filter(v => v.name) }));
-      const c = o.customer || {}, customer = customerOf({ name: String(c.name || '').slice(0, 120), phone: String(c.phone || '').slice(0, 30), address: String(c.address || '').slice(0, 300), area: panelArea(o) });
-      const profile = { customer, items, payment: pay, panel: { number: String(o.number || id), stage, status, label, branchId: String(o.branchId || '').slice(0, 40) || null, fulfillment: String(o.fulfillment || '').slice(0, 20) || null } };
+      const c = o.customer || {}, customer = customerOf({ name: String(c.name || '').slice(0, 120), phone: String(c.phone || '').slice(0, 30), address: panelAddress(o), area: panelArea(o) });
+      const oldCustomer = parseJson(profs.get(String(id)), {})?.customer || {};
+      const delivery = { ...oldCustomer, ...Object.fromEntries(Object.entries(customer).filter(([, v]) => v)) };
+      delivery.address = fullerAddress(oldCustomer.address, customer.address);
+      const profile = { customer: delivery, items, payment: pay, panel: { number: String(o.number || id), stage, status, label, branchId: String(o.branchId || '').slice(0, 40) || null, fulfillment: String(o.fulfillment || '').slice(0, 20) || null } };
       const pj = JSON.stringify(profile);
       const profileChanged = profs.get(String(id)) !== pj;
       if (profileChanged) writes.push(db.prepare("INSERT INTO match_profiles (source, ref, data) VALUES ('site', ?, ?) ON CONFLICT(source, ref) DO UPDATE SET data = excluded.data").bind(String(id), pj));
@@ -346,8 +363,9 @@ function setup(app) {
         const scheduled = isScheduledOrder(o) || !!scheduledAt || !!saved?.scheduled ? 1 : 0;
         const b = o.billing || {}, sh = o.shipping || {};
         const name = [sh.first_name || b.first_name, sh.last_name || b.last_name].filter(Boolean).join(' ');
+        const address = sh.address_1 || sh.address_2 ? sh : b;
         const customer = customerOf({ name, phone: b.phone, mobile: sh.phone,
-          address: [sh.address_1 || b.address_1, sh.address_2 || b.address_2, sh.city || b.city].filter(Boolean).join(' ') });
+          address: [address.address_1, address.address_2, address.city].filter(Boolean).join('، ') });
         const items = Array.isArray(o.line_items) ? o.line_items.slice(0, 80).map(x => ({ name: String(x.name || '').slice(0, 160), qty: Number(x.quantity) || 0,
           price: (Number(x.total) || 0) + (Number(x.total_tax) || 0),
           // Add-ons/options the website stores on the line (hidden keys start with "_").
@@ -361,8 +379,8 @@ function setup(app) {
           coupons: Array.isArray(o.coupon_lines) ? o.coupon_lines.slice(0, 10).map(c => ({ code: String(c.code || '').slice(0, 60), amount: money(c.discount) })) : [],
           fees: Array.isArray(o.fee_lines) ? o.fee_lines.slice(0, 10).map(f => ({ name: String(f.name || '').slice(0, 80), amount: money(f.total) })) : [],
           note: String(o.customer_note || '').slice(0, 500) || null };
-        const profile = { customer: { ...(old.customer || {}) }, items: Array.isArray(o.line_items) ? items : old.items || [], payment: 'payment_method' in o || 'discount_total' in o ? pay : old.payment || null };
-        for (const [k, v] of Object.entries(customer)) if (v) profile.customer[k] = v;
+        const profile = { ...old, customer: { ...(old.customer || {}) }, items: Array.isArray(o.line_items) ? items : old.items || [], payment: 'payment_method' in o || 'discount_total' in o ? pay : old.payment || null };
+        for (const [k, v] of Object.entries(customer)) if (v) profile.customer[k] = k === 'address' ? fullerAddress(old.customer?.address, v) : v;
         upsert.push(db.prepare("INSERT INTO match_profiles (source, ref, data) SELECT 'site',?,? WHERE NOT EXISTS (SELECT 1 FROM site_orders WHERE id=? AND modified_at>?) ON CONFLICT(source, ref) DO UPDATE SET data = excluded.data").bind(String(o.id), JSON.stringify(profile),o.id,modified));
         // Karim 11-16 (orders by source: app / website): how WooCommerce says the order was made.
         if (o.created_via) upsert.push(db.prepare('INSERT INTO site_channels (id, via) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET via = excluded.via').bind(o.id, String(o.created_via).slice(0, 40)));

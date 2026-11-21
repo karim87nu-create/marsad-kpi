@@ -12,8 +12,10 @@ const r2 = v => Math.round((Number(v) || 0) * 100) / 100;
 const ORDER_QUEUE = '7671';   // «طلب أوردر»: a missed call there is an order that may be lost
 
 // Talabat has localized and older owner labels. Explicit ownership wins; a generic reason cannot establish ownership.
-function cancellationOwner(value, reason, reviewed) {
+function cancellationOwner(value, reason, reviewed, status) {
   const clean = s => String(s || '').trim().replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/[ً-ْ]/g, '').toLowerCase();
+  if (/^(?:REJECTED|(?:الطلب|طلب) مرفوض)$/i.test(status || '') || /(?:^|\s)(?:الطلب|طلب)\s+مرفوض(?:$|\s|[.:：،—-])/.test(clean(reason)))
+    return { owner: 'Vendor', ownerEvidence: 'طلب مرفوض على المنصة' };
   const raw = clean(value).replace(/^(?:owner|cancelled by|canceled by|الالغاء على|صاحب الالغاء)\s*[:：]\s*/, '').trim();
   const labels = raw.split(/[()[\]/]+/).map(x => x.trim()).filter(Boolean);
   if (labels.length && labels.every(label => /^(?:vendor|restaurant|merchant|store|المطعم|الفرع|المتجر)$/.test(label)))
@@ -85,7 +87,7 @@ function setup(app) {
     const [talabatCancels, siteCancels, ratingSnapshots] = await Promise.all([
       db.prepare(`SELECT t.day, t.id, t.code, t.vendor_id, t.store, t.status, t.cancelled_at, t.cancel_owner, t.cancel_reason, t.total, t.subtotal, o.owner AS reviewed_owner
         FROM talabat_orders t LEFT JOIN cancel_owners o ON o.key = 'talabat:' || t.id
-        WHERE t.day BETWEEN ? AND ? AND t.status IN ('CANCELLED','REJECTED')`).all(from, to),
+        WHERE t.day BETWEEN ? AND ? AND (t.status IN ('CANCELLED','REJECTED','طلب مرفوض','الطلب مرفوض') OR (t.cancelled_at IS NOT NULL AND t.cancel_reason LIKE '%طلب مرفوض%'))`).all(from, to),
       db.prepare(`SELECT day, id, branch, gone_at, status, total, c.via FROM site_orders
         LEFT JOIN site_channels c USING (id) WHERE day BETWEEN ? AND ? AND status = 'cancelled'`).all(from, to),
       db.prepare(`SELECT day, branch, side, rate FROM talabat_ratings
@@ -99,7 +101,7 @@ function setup(app) {
     ];
     const list = [
       ...talabatCancels.map(x => ({ day: x.day, orderNo: x.id, code: x.code, branch: talBranch(x), platform: 'Talabat', status: x.status, at: iso(x.cancelled_at),
-        amount: x.total ?? x.subtotal, reason: x.cancel_reason, ...cancellationOwner(x.cancel_owner, x.cancel_reason, x.reviewed_owner) })),
+        amount: x.total ?? x.subtotal, reason: x.cancel_reason, ...cancellationOwner(x.cancel_owner, x.cancel_reason, x.reviewed_owner, x.status) })),
       ...siteCancels.map(x => ({ day: x.day, orderNo: String(x.id), branch: branchName(x.branch), platform: sitePlatform(x), status: x.status, observedAt: iso(x.gone_at), amount: x.total, reason: null, owner: null })),
     ];
     const dates = new Map();

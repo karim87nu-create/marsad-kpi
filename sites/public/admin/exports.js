@@ -154,7 +154,7 @@ window.MarsadExports = function MarsadExports(ctx) {
   // ---------- 4. الإلغاءات (نفس الست شيتات بالترتيب) ----------
   const PLATS = ['Talabat', 'WEB', 'APP'];
   const REASONS = ['رفض من المطعم', 'تأخر في التوصيل', 'خطأ في الطلب', 'المنتج غير متوفر', 'إلغاء العميل', 'مشكلة في الدفع', 'مشكلة تقنية', 'جوده', 'أخرى'];
-  const reasonOf = t => { const s = String(t || ''); return /[اٱإأ]نسكاب/.test(s) ? REASONS[7] : /رفض|reject/i.test(s) ? REASONS[0] : /تأخ|تاخ|late|delay/i.test(s) ? REASONS[1] : /خطأ|خطا|غلط|wrong/i.test(s) ? REASONS[2] : /متوفر|نواقص|نفذ|unavailable|out of stock/i.test(s) ? REASONS[3]
+  const reasonOf = t => { const s = String(t || ''); return /[اٱإأ]نسكاب/.test(s) ? REASONS[7] : /رفض|مرفوض|reject/i.test(s) ? REASONS[0] : /تأخ|تاخ|late|delay/i.test(s) ? REASONS[1] : /خطأ|خطا|غلط|wrong/i.test(s) ? REASONS[2] : /متوفر|نواقص|نفذ|unavailable|out of stock/i.test(s) ? REASONS[3]
     : /العميل|customer/i.test(s) ? REASONS[4] : /دفع|payment|فيزا/i.test(s) ? REASONS[5] : /تقن|system|سيستم/i.test(s) ? REASONS[6] : /جود|quality|بارد/i.test(s) ? REASONS[7] : REASONS[8]; };
   async function cancels() {
     const range = '?from=' + state.day + '&to=' + state.to;
@@ -165,7 +165,7 @@ window.MarsadExports = function MarsadExports(ctx) {
     const localTime = new Intl.DateTimeFormat('en-GB', { timeZone: 'Africa/Cairo', dateStyle: 'short', timeStyle: 'short' });
     const det = platforms.list.filter(c => /^vendor$/i.test(String(c.owner || '').trim())).map(c => ({
       ...c, month: c.day.slice(0, 7), branch: shortBranch(c.branch), raw: c.reason,
-      reason: c.reason ? reasonOf(c.reason) : c.status === 'REJECTED' ? REASONS[0] : REASONS[8],
+      reason: c.reason ? reasonOf(c.reason) : /^(?:REJECTED|(?:الطلب|طلب) مرفوض)$/i.test(c.status || '') ? REASONS[0] : REASONS[8],
     }));
     const unknown = platforms.platformTotals.some(x => !branchOf(x.branch));
     const ratioBranches = unknown ? [...BRANCHES, { short: 'فرع غير معروف' }] : BRANCHES;

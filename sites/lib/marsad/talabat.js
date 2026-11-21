@@ -7,7 +7,7 @@ import { talabatReference } from './order-identifiers.js';
 import { businessDay, iso, validDate, isOperating } from './time.js';
 import { sha256, randomToken } from './security.js';
 import { compareItems, itemKey, SEED } from './items.js';
-import { resolveOrders, customerOf, parseJson } from './order-match.js';
+import { resolveOrders, customerOf, fullerAddress, parseJson } from './order-match.js';
 import { TALABAT_PRODUCTS } from './menu-seed.js';
 // Live orders carry Talabat's product number: the dish's menu name (English, as Order History and the item map use it).
 const PRODUCT_NAME = new Map(TALABAT_PRODUCTS.map(p => [p[0], p[1]]));
@@ -170,7 +170,7 @@ function setup(app) {
       const bill = Array.isArray(d?.bill) ? d.bill.slice(0, 20).map(x => ({ k: String(x?.k || '').slice(0, 60), text: String(x?.text || '').slice(0, 200) })).filter(x => x.text) : null;
       if (Object.values(customer).some(Boolean) || bill?.length) {
         const old = parseJson(prior?.profile, {});
-        for (const [k, v] of Object.entries(customer)) if (v) old[k] = v;
+        for (const [k, v] of Object.entries(customer)) if (v) old[k] = k === 'address' ? fullerAddress(old.address, v) : v;
         if (bill?.length) old.bill = bill;   // the bill lines as Talabat shows them, for the transfer page
         orderWrites.push(db.prepare("INSERT INTO match_profiles (source, ref, data) SELECT 'talabat',?,? WHERE " + guard + " ON CONFLICT(source, ref) DO UPDATE SET data = excluded.data").bind(id, JSON.stringify(old), id, guardTime));
       }

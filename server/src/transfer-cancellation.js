@@ -1,6 +1,6 @@
-export const CANCELLED_SQL = "LOWER(REPLACE(TRIM(COALESCE(status,'')),'wc-','')) IN ('cancelled','canceled','rejected','failed','wallet-failed','refunded')";
+export const CANCELLED_SQL = "LOWER(REPLACE(TRIM(COALESCE(status,'')),'wc-','')) IN ('cancelled','canceled','rejected','failed','wallet-failed','refunded','طلب مرفوض','الطلب مرفوض')";
 export function isCancelled(status) {
-  return ['cancelled','canceled','rejected','failed','wallet-failed','refunded'].includes(String(status || '').trim().toLowerCase().replace(/^wc-/,''));
+  return ['cancelled','canceled','rejected','failed','wallet-failed','refunded','طلب مرفوض','الطلب مرفوض'].includes(String(status || '').trim().toLowerCase().replace(/^wc-/,''));
 }
 export async function sourceCanTransfer(db, source, ref) {
   if (!['site','talabat'].includes(source)) return false;

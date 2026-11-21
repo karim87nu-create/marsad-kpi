@@ -81,6 +81,7 @@ test('admin «التقارير Excel»: the seven files of a period, right to le
       .run('2026-11-13','التجمع','ours','760858', 4.3, t.clock.now);
     seedCancel.run('10001', '2026-11-14', 'HF_EG;608556', 'CANCELLED', 'Owner: المطعم (Vendor)', 'تأخير بسبب انسكاب الشوربة', 100, t.clock.now, t.clock.now);
     seedCancel.run('10002', '2026-11-14', 'HF_EG;608556', 'CANCELLED', 'Customer', 'انسكاب', 100, t.clock.now, t.clock.now);
+    seedCancel.run('10004', '2026-11-15', 'HF_EG;760858', 'REJECTED', null, 'طلب مرفوض', 100, t.clock.now, t.clock.now);
     seedCancel.run('10003', '2026-11-15', 'HF_EG;760858', 'CANCELLED', null, 'تم الإلغاء من قبل المطعم: الصنف غير متاح', 100, t.clock.now, t.clock.now);
     db.prepare('INSERT INTO site_orders (id,day,status,branch,total,created_at) VALUES (?,?,?,?,?,?)')
       .run(10001, '2026-11-14', 'cancelled', 'مدينتي', 120, t.clock.now);
@@ -116,8 +117,9 @@ test('admin «التقارير Excel»: the seven files of a period, right to le
     assert.equal(cc[3][2].v, aggregate.reduce((n, d) => n + d.answered, 0), 'received uses Arabix success count');
     assert.equal(cc[3][5].v, aggregate.reduce((n, d) => n + (d.recordedCalls ?? d.calls), 0), 'incoming includes short abandons');
     const cancels = files.find(f => /^الالغاءات/.test(f.name)).sheets[1].rows.slice(2);
-    assert.deepEqual(Array.from(cancels, r => [r[3], r[9]]), [['Talabat', '10003'], ['Talabat', '10001']], 'only restaurant cancellations are exported, with spillage under quality');
+    assert.deepEqual(Array.from(cancels, r => [r[3], r[9]]).sort(), [['Talabat', '10001'], ['Talabat', '10003'], ['Talabat', '10004']], 'only restaurant cancellations are exported, with spillage under quality');
     assert.equal(cancels.find(r => r[9] === '10001')[5], 'جوده');
+    assert.equal(cancels.find(r => r[9] === '10004')[5], 'رفض من المطعم');
     const rating = files.find(f => /^الالغاءات/.test(f.name)).sheets[3].rows;
     const historical = rating.find(r => r[0]?.v === '2026-11-14' && r[1] === 'التجمع');
     assert.equal(historical[2], 'غير متاح', 'no fabricated same-day rating');

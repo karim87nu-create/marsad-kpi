@@ -18,6 +18,12 @@ export function customerOf(x = {}) {
     phoneDisplay: deliveryPhone(x.phoneDisplay || x.phone), mobileDisplay: deliveryPhone(x.mobileDisplay || x.mobile),
     address: clean(x.address, 360), area: clean(x.area, 80), accountNo: clean(String(x.accountNo || ''), 40) };
 }
+// Different observations of the same platform order can contain only a prefix of its address.
+export function fullerAddress(previous, incoming) {
+  const before = textKey(previous), next = textKey(incoming);
+  if (!next) return previous || '';
+  return next.length < before.length && (' ' + before + ' ').includes(' ' + next + ' ') ? previous : incoming;
+}
 export const parseJson = (x, fallback = null) => { try { return JSON.parse(x) ?? fallback; } catch { return fallback; } };
 const similar = (a, b) => {
   const x = textKey(a), y = textKey(b); if (!x || !y) return null;

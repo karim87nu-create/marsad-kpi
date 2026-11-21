@@ -25,6 +25,9 @@ const WORDS = [
   ['supermarket', 'سوبر ماركت'], ['gas station', 'بنزينة'], ['station', 'محطة'], ['bridge', 'كوبري'], ['office', 'مكتب'], ['company', 'شركة'], ['bakery', 'مخبز'],
   ['north', 'الشمالية'], ['south', 'الجنوبية'], ['east', 'الشرقية'], ['west', 'الغربية'], ['new', 'الجديدة'], ['old', 'القديمة'],
   ['first', 'الأول'], ['second', 'الثاني'], ['third', 'الثالث'], ['fourth', 'الرابع'], ['fifth', 'الخامس'], ['sixth', 'السادس'], ['settlement', 'التجمع'],
+  ['mostakbal city', 'مدينة المستقبل'], ['mostaqbal city', 'مدينة المستقبل'], ['mostakbal', 'المستقبل'], ['mostaqbal', 'المستقبل'],
+  ['el banafseg', 'البنفسج'], ['banafseg', 'البنفسج'], ['al yasmeen', 'الياسمين'], ['el yasmeen', 'الياسمين'],
+  ['fifth settlement', 'التجمع الخامس'], ['first settlement', 'التجمع الأول'], ['el shorouk', 'الشروق'],
   ['cairo', 'القاهرة'], ['giza', 'الجيزة'], ['egypt', 'مصر'], ['nasr city', 'مدينة نصر'], ['heliopolis', 'مصر الجديدة'], ['new cairo', 'القاهرة الجديدة'],
   ['madinaty', 'مدينتي'], ['rehab', 'الرحاب'], ['tagamoa', 'التجمع'], ['katameya', 'القطامية'], ['kattameya', 'القطامية'], ['maadi', 'المعادي'], ['zamalek', 'الزمالك'],
   ['mokattam', 'المقطم'], ['shorouk', 'الشروق'], ['obour', 'العبور'], ['katameya dunes', 'قطامية ديونز'], ['katameya heights', 'قطامية هايتس'], ['dunes', 'ديونز'], ['cluster', 'كلاستر'], ['hyde park', 'هايد بارك'], ['mivida', 'ميفيدا'], ['mountain view', 'ماونتن فيو'],
@@ -83,7 +86,7 @@ function arabizeRest(s, learned, preserveUnknown = false) {
 }
 
 function dictionary(text, learned, preserveUnknown = false, food = false) {
-  let s = String(text).replace(/\bno\.?\s*(?=\d)/gi, 'رقم ');
+  let s = String(text).replace(/\b(\d+)(?:st|nd|rd|th)\s+floor\b/gi, 'الدور $1').replace(/\bno\.?\s*(?=\d)/gi, 'رقم ');
   // Phrases and words first (longest first), so «El Banafseg» / «Ahmed El Zomor» are taken whole.
   for (const [rx, ar] of [...(food ? RX_FOOD : []), ...RX]) s = s.replace(rx, (m, pre, at, all) => pre + (all.slice(Math.max(0, at + pre.length - 2), at + pre.length) === 'ال' && ar.startsWith('ال') ? ar.slice(2) : ar));
   s = s.replace(/\b(?:El|Al)[-\s](?=[A-Za-z])/gi, 'ال');

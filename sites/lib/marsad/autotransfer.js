@@ -16,7 +16,7 @@
 import { TUNE } from './tune.js';
 import { businessDay, iso } from './time.js';
 import { parseJson } from './order-match.js';
-import { deliveryComment, deliveryAddress } from './delivery-fields.js';
+import { deliveryComment, formatDeliveryAddress } from './delivery-fields.js';
 import { normArabic } from './apex-customer-notes.js';
 import { areaGroups, areaForBranch, PICKUP_AREAS } from './apex-areas.js';
 import { APEX_PRICES } from './menu-seed.js';
@@ -159,8 +159,8 @@ export function decide(o, x) {
     if (rows.length && service == null) why.push('المنطقة ملهاش سعر توصيل على Apex');
     // Karim 11-20 (receipt #31675: address, floor and flat all 0 on a delivery): a delivery whose address says nothing but the area
     // is not written — the customer is asked for the address (the street, building or a landmark).
-    const adr = deliveryAddress(String(o.customer?.address || ''), [area?.name, o.customer?.talabatArea, o.customer?.siteArea]);
-    if (!adr.street && !adr.floor && !adr.flat && !o.customer?.landmark) why.push('العنوان فيه المنطقة بس — اسأل العميل عن العنوان');
+    const adr = formatDeliveryAddress(o.customer?.address, { apexArea: area?.name, sourceArea: o.customer?.talabatArea || o.customer?.siteArea });
+    if (adr.issue) why.push(adr.issue);
   } else service = 0;
   // Discounts: who pays each one (a paid order: all of it comes off on Apex anyway).
   if (pay !== 'paid' && (o.discounts || []).some(d => !d.who || d.unclear)) {
