@@ -24,6 +24,25 @@ const RULES = [
   [/طلبات|talabat|platform|system|سيستم|منصه/, 'platform', 'السبب على المنصة'],
 ];
 
+const CODE_OWNER = { 6: 'customer', 185: 'customer', 188: 'customer', 182: 'branch', 183: 'branch', 184: 'branch', 186: 'branch', 187: 'branch',
+    2: 'branch', 3: 'branch', 7: 'branch', 8: 'branch', 11: 'branch', 12: 'branch', 13: 'branch', 14: 'branch', 15: 'branch', 16: 'branch', 21: 'branch' };
+
+// Use Apex's documented void code, explicit reason, or supervisor decision for the report.
+function apexReportCancelOwner(cancel, confirmed) {
+  if (confirmed) return ['branch', 'employee'].includes(confirmed) ? 'Vendor' : confirmed;
+  const byText = value => {
+    const t = norm(value);
+    const outside = /طلب العميل|الغا من العميل|رفض العميل|العميل رفض|العميل (?:مش بيرد|لا يرد|مبيردش)|عدم الرد|مبيردش|خارج (?:نطاق|منطقه) التوصيل|عنوان العميل (?:خطا|غلط)|مكرر|customer (?:request|cancel|changed|refused)|no answer|out of (?:delivery )?(?:area|zone)/.test(t);
+    const restaurant = /انسكاب|طلب مرفوض|جوده|بارد|محروق|مش مستوي|تاخير|متاخر|اتاخر|مشغول|مش متوفر|غير متوفر|نفاد|(?:عدم|لعدم) (?:وجود|توافر)|(?:صنف|طلب|اوردر) (?:خاطئ|غلط|ناقص)|خطا (?:المطعم|الفرع|المطبخ)|out of stock|busy|delay|quality|spill|wrong (?:item|order)/.test(t);
+    return outside && restaurant ? 'conflict' : outside ? 'customer' : restaurant ? 'branch' : null;
+  };
+  const base = CODE_OWNER[Number(cancel.reasonNo)] || byText(cancel.reasonName);
+  const note = byText(cancel.reason);
+  if (base === 'conflict' || note === 'conflict' || (base && note && base !== note)) return null;
+  const owner = base || note;
+  return owner === 'branch' ? 'Vendor' : owner;
+}
+
 function setup(app) {
   const { db, fail } = app;
   const parse = x => { try { return JSON.parse(x); } catch { return null; } };
@@ -97,8 +116,7 @@ function setup(app) {
   // التقرير الختامي للفرع (Karim 08-11: «في أسباب على المطعم مش مكتوبة»). On Apex nearly every cancellation is coded
   // «بناء على طلب العميل», so the monitor's sections are rebuilt here from what is known about each one: a supervisor's
   // answer, Talabat's own owner and reason, how long it sat in the branch, then Apex's code.
-  const CODE_OWNER = { 6: 'customer', 185: 'customer', 188: 'customer', 182: 'branch', 183: 'branch', 184: 'branch', 186: 'branch', 187: 'branch',
-    2: 'branch', 3: 'branch', 7: 'branch', 8: 'branch', 11: 'branch', 12: 'branch', 13: 'branch', 14: 'branch', 15: 'branch', 16: 'branch', 21: 'branch' };
+
   // Each part goes to whom it concerns (Karim 08-11): the branch reads what is on the branch and its pilots; what is on
   // the call center, on Talabat, or still undecided goes to the call center's group in a message of its own.
   const BRANCH_GROUPS = [['branch', '❌ على الفرع'], ['pilot', '🛵 على الطيار'], ['customer', 'ℹ️ من العميل']];
@@ -176,4 +194,4 @@ function setup(app) {
   });
 }
 
-export { setup, OWNERS, reasonKey };
+export { setup, OWNERS, reasonKey, apexReportCancelOwner };

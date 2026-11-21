@@ -151,10 +151,10 @@ window.MarsadExports = function MarsadExports(ctx) {
     return 'الشهر ' + ym + ' لحد ' + dmy(to);
   }
 
-  // ---------- 4. الإلغاءات (نفس الست شيتات بالترتيب) ----------
-  const PLATS = ['Talabat', 'WEB', 'APP'];
+  // ---------- 4. الإلغاءات ----------
+  const PLATS = ['Talabat', 'APP', 'Hotline', 'Whatsapp'];
   const REASONS = ['رفض من المطعم', 'تأخر في التوصيل', 'خطأ في الطلب', 'المنتج غير متوفر', 'إلغاء العميل', 'مشكلة في الدفع', 'مشكلة تقنية', 'جوده', 'أخرى'];
-  const reasonOf = t => { const s = String(t || ''); return /[اٱإأ]نسكاب/.test(s) ? REASONS[7] : /رفض|مرفوض|reject/i.test(s) ? REASONS[0] : /تأخ|تاخ|late|delay/i.test(s) ? REASONS[1] : /خطأ|خطا|غلط|wrong/i.test(s) ? REASONS[2] : /متوفر|نواقص|نفذ|unavailable|out of stock/i.test(s) ? REASONS[3]
+  const reasonOf = t => { const s = String(t || ''); return /[اٱإأ]نسكاب/.test(s) ? REASONS[7] : /رفض|مرفوض|reject/i.test(s) ? REASONS[0] : /تأخ|تاخ|late|delay/i.test(s) ? REASONS[1] : /خطأ|خطا|غلط|wrong/i.test(s) ? REASONS[2] : /متوفر|غير متاح|نواقص|نفذ|unavailable|out of stock/i.test(s) ? REASONS[3]
     : /العميل|customer/i.test(s) ? REASONS[4] : /دفع|payment|فيزا/i.test(s) ? REASONS[5] : /تقن|system|سيستم/i.test(s) ? REASONS[6] : /جود|quality|بارد/i.test(s) ? REASONS[7] : REASONS[8]; };
   async function cancels() {
     const range = '?from=' + state.day + '&to=' + state.to;
@@ -162,23 +162,18 @@ window.MarsadExports = function MarsadExports(ctx) {
     const list = platforms.days;
     const H = v => ({ v, s: 'head', b: true }), DT = q('تفاصيل الإلغاءات'), RT = q('نسبه الالغاءات'), CL = q('وقت غلق طلبات والتقييم'), CM = q('الكومنتات والشكاوي'), C = X().col;
     const shortBranch = name => branchOf(name)?.short || 'فرع غير معروف';
-    const localTime = new Intl.DateTimeFormat('en-GB', { timeZone: 'Africa/Cairo', dateStyle: 'short', timeStyle: 'short' });
     const det = platforms.list.filter(c => /^vendor$/i.test(String(c.owner || '').trim())).map(c => ({
       ...c, month: c.day.slice(0, 7), branch: shortBranch(c.branch), raw: c.reason,
       reason: c.reason ? reasonOf(c.reason) : /^(?:REJECTED|(?:الطلب|طلب) مرفوض)$/i.test(c.status || '') ? REASONS[0] : REASONS[8],
     }));
-    const unknown = platforms.platformTotals.some(x => !branchOf(x.branch));
+    const unknown = platforms.platformTotals.some(x => !branchOf(x.branch)) || det.some(x => x.branch === 'فرع غير معروف');
     const ratioBranches = unknown ? [...BRANCHES, { short: 'فرع غير معروف' }] : BRANCHES;
     const withoutOwner = platforms.list.filter(x => !x.owner).length;
     const coverage = 'إلغاءات المنصات: ' + platforms.list.length + ' · على المطعم: ' + det.length + ' · مسؤوليتها غير محددة: ' + withoutOwner;
     const sheets = [];
-    // «تحليل الأسباب»: counted from the details (as in Karim's sheet).
-    sheets.push({ name: 'تحليل الأسباب', widths: [24, 22], merges: ['A1:B1', 'A14:B14'], rows: [[{ v: 'أسباب الإلغاء المحمّلة على المطعم', s: 'title', b: true, big: true }], [{ v: label(), b: true }], ['سبب الإلغاء', 'عدد الإلغاءات'].map(H),
-      ...REASONS.map((r, i) => [r, F('COUNTIF(' + DT + '!$F:$F,A' + (i + 4) + ')', det.filter(x => x.reason === r).length)]),
-      [{ v: 'الإجمالي', s: 'sub', b: true }, F('SUM(B4:B12)', det.length, { s: 'sub', b: true })], [{ v: coverage }]] });
-    sheets.push({ name: 'تفاصيل الإلغاءات', widths: [12, 10, 12, 12, 18, 16, 14, 28, 12, 16, 13, 23, 28], freeze: 2, merges: ['A1:M1'], heights: [36], rows: [[{ v: 'الإلغاءات المحمّلة على المطعم\n' + label(), s: 'title', b: true, big: true }],
-      ['التاريخ', 'الشهر', 'الفرع', 'منصة الطلب', 'منطقة الطلب', 'سبب الإلغاء', 'محمّل على المطعم؟', 'السبب من المنصة', 'اجمالي الاوردر', 'رقم أوردر المنصة', 'الكود', 'وقت الإلغاء أو الرصد', 'دليل المسؤولية'].map(H),
-      ...det.map((x, i) => [{ v: x.day, t: 'date' }, F('IF(A' + (i + 3) + '="","",TEXT(A' + (i + 3) + ',"YYYY-MM"))', x.month), x.branch, x.platform, null, x.reason, 'نعم', x.raw, x.amount, x.orderNo, x.code, x.at ? localTime.format(new Date(x.at)) : x.observedAt ? 'رُصد ' + localTime.format(new Date(x.observedAt)) : null, x.ownerEvidence]), ...(!det.length ? [[{ v: coverage }]] : [])] });
+    sheets.push({ name: 'تفاصيل الإلغاءات', widths: [12, 10, 12, 12, 18, 16, 14, 28, 12], freeze: 2, merges: ['A1:I1'], heights: [36], rows: [[{ v: 'الإلغاءات المحمّلة على المطعم\n' + label(), s: 'title', b: true, big: true }],
+      ['التاريخ', 'الشهر', 'الفرع', 'منصة الطلب', 'منطقة الطلب', 'سبب الإلغاء', 'محمّل على المطعم؟', 'ملاحظات', 'اجمالي الاوردر'].map(H),
+      ...det.map((x, i) => [{ v: x.day, t: 'date' }, F('IF(A' + (i + 3) + '="","",TEXT(A' + (i + 3) + ',"YYYY-MM"))', x.month), x.branch, x.platform, x.area || null, x.reason, 'نعم', x.raw, x.amount])] });
     // «نسبه الالغاءات»: the cancellations counted from the details; the orders are the Marsad's; the ratio and the day's total formulas.
     const ratio = [[{ v: 'الإلغاءات المحمّلة على المطعم\n' + label(), s: 'title', b: true, big: true }], ['الشهر', 'الفرع', 'منصة الطلب', 'إلغاءات على المطعم', 'إجمالي أوردرات المنصة', 'نسبة الإلغاء على المطعم', 'إجمالي النسبة للفترة'].map(H)];
     const rr = {}, month = state.to.slice(0, 7);
@@ -190,7 +185,7 @@ window.MarsadExports = function MarsadExports(ctx) {
     ratio[2][6] = F('IFERROR(SUM(D3:D' + rl + ')/SUM(E3:E' + rl + '),0)', div(allN, allO), { t: 'pct', b: true });
     sheets.push({ name: 'نسبه الالغاءات', widths: [10, 14, 12, 14, 14, 14, 16], freeze: 2, merges: ['A1:G1'], heights: [36], rows: ratio });
     // Talabat: each branch's rating and competitor's, and closing time (the last closure of the day).
-    const close = [['التاريخ', 'الفرع', 'تقييم اليوم', 'تقييم المنافس اليوم', 'وقت الغلق', 'آخر تقييم للفرع', 'تاريخ القراءة', 'آخر تقييم للمنافس', 'تاريخ القراءة'].map(H)], lastRow = {};
+    const close = [['التاريخ', 'الفرع', 'تقييم اليوم', 'تقييم المنافس اليوم', 'وقت الغلق'].map(H)], lastRow = {};
     const sameDayRatings = new Map((cs.ratings || []).map(r => [r.day + '|' + branchOf(r.branch)?.short, r]));
     const snapshots = new Map();
     for (const r of platforms.ratingSnapshots || []) {
@@ -201,18 +196,17 @@ window.MarsadExports = function MarsadExports(ctx) {
       snapshots.get(k).push(r);
     }
     const latestAt = (b, side, day) => snapshots.get(b.short + '|' + side)?.find(r => r.day <= day);
+    const ratingValue = (actual, snapshot, day) => actual ?? (snapshot?.day === day ? snapshot.rate : snapshot ? snapshot.rate + ' (آخر قراءة ' + dmy(snapshot.day) + ')' : 'غير متاح');
     for (const d of list) for (const b of BRANCHES) {
       const rt = sameDayRatings.get(d.day + '|' + b.short);
       const ours = rt?.rating == null ? latestAt(b, 'ours', d.day) : null;
       const rival = rt?.competitor == null ? latestAt(b, 'rival', d.day) : null;
       const at = Object.entries(d.closedAt || {}).filter(([nm]) => branchOf(nm) === b).map(([, v]) => v).sort().pop();
       const tm = at ? new Intl.DateTimeFormat('en-GB', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(at)) : null;
-      close.push([{ v: d.day, t: 'date' }, b.short, rt?.rating ?? (ours?.day === d.day ? ours.rate : 'غير متاح'), rt?.competitor ?? (rival?.day === d.day ? rival.rate : 'غير متاح'), tm ? { v: tm, t: 'time' } : null,
-        ours && ours.day < d.day ? ours.rate : null, ours && ours.day < d.day ? { v: ours.day, t: 'date' } : null,
-        rival && rival.day < d.day ? rival.rate : null, rival && rival.day < d.day ? { v: rival.day, t: 'date' } : null]);
+      close.push([{ v: d.day, t: 'date' }, b.short, ratingValue(rt?.rating, ours, d.day), ratingValue(rt?.competitor, rival, d.day), tm ? { v: tm, t: 'time' } : null]);
       lastRow[b.short] = { r: close.length, tm };
     }
-    sheets.push({ name: 'وقت غلق طلبات والتقييم', widths: [12, 14, 14, 18, 12, 17, 14, 19, 14], freeze: 1, rows: close });
+    sheets.push({ name: 'وقت غلق طلبات والتقييم', widths: [12, 14, 25, 25, 12], freeze: 1, rows: close });
     // «الكومنتات والشكاوي»: the date, then Karim's columns.
     const ent = cs.entries || [];
     sheets.push({ name: 'الكومنتات والشكاوي', widths: [40, 12, 14, 26, 24, 10], rows: [[{ v: state.to, t: 'date', b: true }], ['الملاحظات', 'الفرع', 'اسم العميل', 'حل الشكوي', 'الشكوي', 'المنصه'].map(H),
@@ -248,17 +242,11 @@ window.MarsadExports = function MarsadExports(ctx) {
     put(13, 7, { v: 'Grand Total', s: 'sub', b: true });
     PLATS.forEach((p, j) => put(13, 8 + j, F('SUMIF(' + RT + '!$C:$C,' + C(8 + j) + '9,' + RT + '!$E:$E)', sum(ratioBranches, b => rr[b.short + '|' + p].o), { s: 'sub', b: true })));
     put(13, 14, F('SUM(I13:N13)', allO, { s: 'sub', b: true }));
-    put(8, 0, { v: 'آخر تقييم محفوظ من طلبات قبل أو لحد نهاية الفترة', s: 'title', b: true });
-    ['الفرع', 'تقييم الفرع', 'تاريخ القراءة', 'تقييم المنافس', 'تاريخ القراءة'].forEach((v, i) => put(9, i, H(v)));
-    BRANCHES.forEach((b, i) => {
-      const r = 10 + i, ours = latestAt(b, 'ours', state.to), rival = latestAt(b, 'rival', state.to);
-      put(r, 0, b.short); put(r, 1, ours?.rate ?? 'غير متاح'); put(r, 2, ours ? { v: ours.day, t: 'date' } : null);
-      put(r, 3, rival?.rate ?? 'غير متاح'); put(r, 4, rival ? { v: rival.day, t: 'date' } : null);
-    });
-    sheets.push({ name: 'اجمالي', widths: [12, 9, 9, 9, 9, 9, 9, 11, 12, 10, 12, 9, 10, 10, 11, 14], rows: T, merges: ['A1:H1', 'A8:E8', 'H8:O8'] });
+    sheets.push({ name: 'اجمالي', widths: [12, 9, 9, 9, 9, 9, 9, 11, 12, 10, 12, 9, 10, 10, 11, 14], rows: T, merges: ['A1:H1', 'H8:O8'] });
     X().grid('الالغاءات ' + fileLabel(), sheets);
-    const hasRating = close.slice(1).some(row => [2, 3, 5, 7].some(i => typeof row[i] === 'number'));
-    return [coverage, hasRating ? '' : 'لا توجد قراءة تقييم متاحة للفترة'].filter(Boolean).join(' · ');
+    const hasRating = close.slice(1).some(row => row[2] !== 'غير متاح' || row[3] !== 'غير متاح');
+    const legacy = platforms.apexBeforeOutDays < list.length ? 'فيه أيام قراءة Apex فيها للإلغاءات بعد التحميل فقط' : '';
+    return [coverage, legacy, hasRating ? '' : 'لا توجد قراءة تقييم متاحة للفترة'].filter(Boolean).join(' · ');
   }
 
   // ---------- 5. خدمة العملاء (شيتين: طلبات والموقع) ----------

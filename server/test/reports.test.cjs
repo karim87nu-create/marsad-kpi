@@ -74,6 +74,19 @@ test('admin «التقارير Excel»: the seven files of a period, right to le
     await admin('POST', '/api/cs', { day: '2026-11-14', platform: 'الموقع', branch: 'مدينتي', rating: 5, comment: 'ممتاز' });
     await admin('POST', '/api/cs/rating', { day: '2026-11-14', branch: 'مدينة نصر', rating: 5, competitor: 4.7 });
     const db = t.app.db.raw;
+    const apex = structuredClone(DAYS['2026-11-14'].full);
+    const nasr = apex.branches.find(b => b.name === 'مدينة نصر');
+    nasr.sources = { whatsapp: 4, page: 2 };
+    apex.cancels.push(
+      { no: 11111, kind: 'Hotline', branch: nasr.name, amount: 80, reasonNo: 183, reasonName: 'جودة', reason: 'انسكاب، حالة هوت لاين' },
+      { no: 11112, kind: 'Hotline', branch: nasr.name, amount: 81, reasonNo: 6, reasonName: 'بناء على طلب العميل' },
+      { no: 11113, kind: 'Hotline', branch: nasr.name, amount: 82, reasonNo: 183, reasonName: 'جودة', customer: { name: 'وسم بيدج' } },
+    );
+    apex.hotlineCancelsBeforeOut = [
+      { no: 11114, kind: 'Hotline', branch: nasr.name, amount: 83, src: 'whatsapp', reasonNo: 186, reasonName: 'صنف غير متوفر', area: 'النزهة' },
+      { no: 11115, kind: 'Hotline', branch: nasr.name, amount: 84, src: 'hotline', reasonNo: 6, reasonName: 'طلب العميل', reason: 'انسكاب' },
+    ];
+    db.prepare('UPDATE orders_days SET data = ? WHERE day = ?').run(JSON.stringify(apex), '2026-11-14');
     db.prepare('INSERT INTO talabat_reviews (order_id,vendor,branch,day,at,rating,text,seen_at) VALUES (?,?,?,?,?,?,?,?)')
       .run('10001', 'HF_EG;608556', 'مدينة نصر', '2026-11-14', t.clock.now, 1, 'تقييم من طلبات', t.clock.now);
     const seedCancel = db.prepare('INSERT INTO talabat_orders (id,day,vendor_id,status,cancel_owner,cancel_reason,total,first_seen,updated_at) VALUES (?,?,?,?,?,?,?,?,?)');
@@ -86,6 +99,9 @@ test('admin «التقارير Excel»: the seven files of a period, right to le
     db.prepare('INSERT INTO site_orders (id,day,status,branch,total,created_at) VALUES (?,?,?,?,?,?)')
       .run(10001, '2026-11-14', 'cancelled', 'مدينتي', 120, t.clock.now);
     db.prepare('INSERT INTO site_channels (id,via) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET via=excluded.via').run(10001, 'rest-api');
+    db.prepare('INSERT INTO site_orders (id,day,status,branch,total,created_at) VALUES (?,?,?,?,?,?)')
+      .run(10002, '2026-11-14', 'cancelled', 'مدينتي', 125, t.clock.now);
+    db.prepare('INSERT INTO site_channels (id,via) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET via=excluded.via').run(10002, 'checkout');
     db.prepare('INSERT INTO site_ratings (order_id,rating,comment,at) VALUES (?,?,?,?)').run(10001, 2, 'تقييم من الموقع', t.clock.now);
     await admin('POST', '/api/cs', { day: '2026-11-14', platform: 'طلبات', branch: 'مدينة نصر', orderNo: '10001', rating: 5, action: 'تمت المتابعة' });
     const lookup = '/api/cs/order?day=2026-11-14&no=10001&platform=';
@@ -110,25 +126,32 @@ test('admin «التقارير Excel»: the seven files of a period, right to le
     for (const b of w.document.querySelectorAll('[data-exp]')) { const n = files.length; b.click(); await until(() => files.length > n, b.textContent); }
     assert.equal(files.length, 7);
     assert.equal(JSON.stringify(files.map(f => f.sheets.map(x => x.name))), JSON.stringify([['Call center Report'], ['إجمالي الفترة', '2026-11-14', '2026-11-15'], ['النسبه'], ['المتابعة اليومية'],
-      ['تحليل الأسباب', 'تفاصيل الإلغاءات', 'نسبه الالغاءات', 'وقت غلق طلبات والتقييم', 'الكومنتات والشكاوي', 'اجمالي'], ['طلبات', 'الموقع'], ['تقييم QA', 'المعايير', 'النسبه', 'Dashboard']]), 'each file with the team\'s own sheets');
+      ['تفاصيل الإلغاءات', 'نسبه الالغاءات', 'وقت غلق طلبات والتقييم', 'الكومنتات والشكاوي', 'اجمالي'], ['طلبات', 'الموقع'], ['تقييم QA', 'المعايير', 'النسبه', 'Dashboard']]), 'each file with the team\'s own sheets');
     const cc = files[0].sheets[0].rows;
     assert.equal(cc[3][1].v, DAYS['2026-11-14'].full.totals.kinds.Hotline + DAYS['2026-11-15'].full.totals.kinds.Hotline, 'the Hotline orders of the two days');
     const aggregate = Object.values(DAYS).map(d => d.report);
     assert.equal(cc[3][2].v, aggregate.reduce((n, d) => n + d.answered, 0), 'received uses Arabix success count');
     assert.equal(cc[3][5].v, aggregate.reduce((n, d) => n + (d.recordedCalls ?? d.calls), 0), 'incoming includes short abandons');
-    const cancels = files.find(f => /^الالغاءات/.test(f.name)).sheets[1].rows.slice(2);
-    assert.deepEqual(Array.from(cancels, r => [r[3], r[9]]).sort(), [['Talabat', '10001'], ['Talabat', '10003'], ['Talabat', '10004']], 'only restaurant cancellations are exported, with spillage under quality');
-    assert.equal(cancels.find(r => r[9] === '10001')[5], 'جوده');
-    assert.equal(cancels.find(r => r[9] === '10004')[5], 'رفض من المطعم');
-    const rating = files.find(f => /^الالغاءات/.test(f.name)).sheets[3].rows;
+    const cancellationBook = files.find(f => /^الالغاءات/.test(f.name)).sheets;
+    const details = cancellationBook[0].rows;
+    assert.equal(details[1].length, 9);
+    assert.deepEqual(Array.from(details.slice(2), r => [r[3], r[5]]).sort(), [
+      ['Hotline', 'جوده'], ['Talabat', 'جوده'], ['Talabat', 'رفض من المطعم'], ['Talabat', 'المنتج غير متوفر'], ['Whatsapp', 'المنتج غير متوفر'],
+    ].sort());
+    assert.equal(details.find(r => r[3] === 'Whatsapp')[4], 'النزهة');
+    const rating = cancellationBook[2].rows;
+    assert.equal(rating[0].length, 5);
     const historical = rating.find(r => r[0]?.v === '2026-11-14' && r[1] === 'التجمع');
-    assert.equal(historical[2], 'غير متاح', 'no fabricated same-day rating');
-    assert.equal(historical[5], 4.3, 'last recorded rating is visible');
-    assert.equal(historical[6].v, '2026-11-13');
+    assert.equal(historical[2], '4.3 (آخر قراءة 13-11-2026)', 'dated fallback within the original rating column');
     const platform = (await admin('GET', '/api/reports/platform-cancels?from=2026-11-14&to=2026-11-15')).body;
-    assert.deepEqual(platform.list.filter(r => r.orderNo === '10001').map(r => r.platform).sort(), ['APP', 'Talabat'], 'the underlying sources remain distinct');
-    const rates = files.find(f => /^الالغاءات/.test(f.name)).sheets[2].rows;
-    assert.equal(rates.find(r => r[1] === 'مدينه نصر' && r[2] === 'Talabat')[4], 2, 'the ratio still uses all orders from that platform');
+    assert.equal(platform.apexBeforeOutDays, 1);
+    assert.ok(platform.list.some(r => r.orderNo === '10001' && r.platform === 'APP'));
+    assert.ok(!platform.list.some(r => r.platform === 'WEB'));
+    assert.equal(platform.list.find(r => r.orderNo === '11115').owner, null, 'contradictory Apex evidence remains unsettled');
+    const rates = cancellationBook[1].rows;
+    assert.equal(rates.find(r => r[1] === 'مدينه نصر' && r[2] === 'Talabat')[4], 2);
+    assert.equal(rates.find(r => r[1] === 'مدينه نصر' && r[2] === 'Whatsapp')[4], 4);
+    assert.equal(platform.platformTotals.find(r => r.day === '2026-11-14' && r.branch === 'مدينة نصر' && r.platform === 'Hotline').orders, nasr.kinds.Hotline - 6);
     const q = files.find(f => /^QA1/.test(f.name)).sheets;
     assert.equal(JSON.stringify(q[0].rows.slice(3).map(r => [r[1], r[17].v])), JSON.stringify([['اماني احمد', 1], ['اماني احمد', 0.917]]));
     const cs = files.find(f => /خدمة العملاء/.test(f.name)).sheets[0].rows;
