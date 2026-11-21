@@ -141,7 +141,7 @@ main{max-width:1100px;margin:0 auto;padding:16px}
 </div>
 <div id="toast"></div>
 <script type="module">
-import { deliveryLabel, formatDeliveryAddress, addressNeedsArabic, deliveryComment, deliveryNotes } from "./delivery-fields.js?v=20261121-5";
+import { deliveryLabel, formatDeliveryAddress, withDeliveryPlaces, addressNeedsArabic, deliveryComment, deliveryNotes } from "./delivery-fields.js?v=20261121-6";
 'use strict';
 const API = '';
 let token = null, data = null, filter = 'todo', source = '', choice = {}, picks = {}, branchPick = '';
@@ -300,7 +300,9 @@ const discountSum = (o, who) => (o.discounts || []).filter(d => d.who === who).r
 function addressFor(o, p, platformAmount) {
   const cu = o.customer || {}, apexArea = (data.locations || []).find(l => String(l.no) === String(p?.loc))?.name;
   const ruleArea = String(p?.loc) === String(o.areaGuess?.no) ? o.areaGuess?.addAddress : null;
-  return formatDeliveryAddress(p?.arabic?.address ?? cu.address, {
+  const address = p?.arabic?.address ?? cu.address;
+  const compound = /^(?:جاردينيا سيتي|تاج سلطان)$/.test(ruleArea || '') ? ruleArea : null;
+  return formatDeliveryAddress(compound ? withDeliveryPlaces(address, { compound }) : address, {
     apexArea, sourceArea: p?.arabic?.area || ruleArea || cu.talabatArea || cu.siteArea || cu.area,
     signBase: platformAmount > 0 ? 'خصم طلبات ' + money(platformAmount) : '', pickup: o.fulfillment === 'pickup',
   });

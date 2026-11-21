@@ -103,3 +103,21 @@ test('auto transfer uses the assigned branch pickup even before the daily areas 
   }
   assert.deepEqual(decide({ ...base, source: 'site', apexBranch: null }, { now, locations: [] }).why, ['الفرع مش واضح']);
 });
+
+
+test('Gardenia City and Taj Sultan always override learned areas with the applicable First Settlement code', async () => {
+  const { decide } = await import('../src/autotransfer.js');
+  const { compoundArea } = await import('../src/transfer-rules.js');
+  assert.deepEqual(compoundArea('Building 5, Gardenia City', 'مصر الجديدة', 'talabat'), { no: 355, addAddress: 'جاردينيا سيتي' });
+  assert.deepEqual(compoundArea('عمارة 5', 'تاج سلطان', 'site'), { no: 332, addAddress: 'تاج سلطان' });
+  assert.equal(compoundArea('كمبوند تاج سيتي', '', 'site'), null);
+  const now = Date.parse('2026-11-21T20:00:00+02:00');
+  const verdict = decide({ source: 'site', ref: '9', code: '9', at: new Date(now - 1000).toISOString(),
+    apexBranch: 1, payment: 'cash', items: [{ name: 'بطاطس', qty: 1, price: 50, apex: [{ no: '0103005' }] }],
+    customer: { name: 'أحمد', phone: '01000000000', address: 'عمارة 5، شارع 7', siteArea: 'تاج سلطان' },
+    areaGuess: { no: 218, seen: 7, share: 1 }, apexCustomerNote: { status: 'none', checkedAt: new Date(now - 1000).toISOString() }
+  }, { now, locations: [{ no: 332, name: 'التجمع الأول', branch: 1, service: 40 }, { no: 218, name: 'التجمع الخامس', branch: 1, service: 40 }] });
+  assert.deepEqual(verdict.why, []);
+  assert.equal(verdict.body.locationNo, 332);
+  assert.match(verdict.body.customer.address, /^كمبوند تاج سلطان/);
+});

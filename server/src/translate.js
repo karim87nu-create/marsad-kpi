@@ -32,6 +32,7 @@ const ADDRESS = [
   ['madinaty', 'مدينتي'], ['rehab', 'الرحاب'], ['tagamoa', 'التجمع'], ['katameya', 'القطامية'], ['kattameya', 'القطامية'], ['maadi', 'المعادي'], ['zamalek', 'الزمالك'],
   ['mokattam', 'المقطم'], ['shorouk', 'الشروق'], ['obour', 'العبور'], ['katameya dunes', 'قطامية ديونز'], ['katameya heights', 'قطامية هايتس'], ['dunes', 'ديونز'], ['cluster', 'كلاستر'], ['hyde park', 'هايد بارك'], ['mivida', 'ميفيدا'], ['mountain view', 'ماونتن فيو'],
   ['makram ebeid', 'مكرم عبيد'], ['abbas el akkad', 'عباس العقاد'], ['abbas al akkad', 'عباس العقاد'], ['el nasr', 'النصر'], ['al nasr', 'النصر'], ['nasr', 'نصر'],
+  ['gardenia city', 'جاردينيا سيتي'], ['gardenia', 'جاردينيا سيتي'], ['taj sultan', 'تاج سلطان'], ['tag sultan', 'تاج سلطان'],
   ['main street', 'الشارع الرئيسي'], ['primary street', 'الشارع الرئيسي'], ['main road', 'الطريق الرئيسي'],
   ['the waterway', 'ذا ووتر واي'], ['waterway', 'ووتر واي'], ['north 90th street', 'شارع التسعين الشمالي'], ['south 90th street', 'شارع التسعين الجنوبي'],
   ['number', 'رقم'], ['landmark', 'علامة مميزة'], ['building no.', 'عمارة'],
@@ -53,6 +54,9 @@ const INSTRUCTIONS = [
   ['do not add', 'ماتحطش'], ["don't add", 'ماتحطش'], ['dont add', 'ماتحطش'], ['do not include', 'ماتحطش'], ["don't include", 'ماتحطش'],
   ['just', 'بس'], ['ring once', 'رن مرة واحدة'], ['call twice', 'اتصل مرتين'], ['without ringing', 'ماتضربش الجرس'],
   ['leave it at the gate', 'سيبه عند البوابة'], ['make it well done', 'خليه مستوي كويس'],
+  ['do not call me', 'ماتتصلش بيا'], ["don't call me", 'ماتتصلش بيا'], ['call my other number', 'اتصل بالرقم التاني'],
+  ['no utensils', 'من غير أدوات أكل'], ['no disposable cutlery', 'من غير أدوات أكل'], ['do not put', 'ماتحطش'], ["don't put", 'ماتحطش'],
+  ['with no', 'من غير'], ['onions on the side', 'البصل على جنب'], ['sauces on the side', 'الصوصات على جنب'],
   ['separate the sauces', 'حط الصوصات لوحدها'], ['pack separately', 'غلّف كل حاجة لوحدها'], ['allergic to', 'عندي حساسية من'],
   ['peanut allergy', 'حساسية فول سوداني'], ['peanuts', 'فول سوداني'], ['nuts', 'مكسرات'], ['sesame', 'سمسم'], ['dairy', 'منتجات ألبان'],
   ['not too spicy', 'حار خفيف'], ['do not make it spicy', 'خليه من غير شطة'], ["don't make it spicy", 'خليه من غير شطة'],
@@ -67,6 +71,8 @@ const INSTRUCTIONS = [
   ['bread', 'عيش'], ['onions', 'بصل'], ['onion', 'بصل'], ['pickles', 'مخلل'], ['sauce', 'صوص'], ['salt', 'ملح'],
 ];
 const PERSON_PHRASES = [
+  ['abd el fattah', 'عبدالفتاح'], ['abd al fattah', 'عبدالفتاح'], ['abd el hamid', 'عبدالحميد'], ['abdel hameed', 'عبدالحميد'],
+  ['abd el ghany', 'عبدالغني'], ['abd el monem', 'عبدالمنعم'], ['mohamed ali', 'محمد علي'],
   ['abd el rahman', 'عبدالرحمن'], ['abdel rahman', 'عبدالرحمن'], ['abd el rahim', 'عبدالرحيم'], ['abd el aziz', 'عبدالعزيز'],
   ['mohamed', 'محمد'], ['mohammed', 'محمد'], ['mohammad', 'محمد'], ['ahmed', 'أحمد'], ['mahmoud', 'محمود'],
   ['karim', 'كريم'], ['kareem', 'كريم'], ['ismail', 'إسماعيل'], ['baraka', 'بركة'], ['mona', 'منى'], ['hend', 'هند'],

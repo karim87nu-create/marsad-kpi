@@ -87,3 +87,22 @@ test('compound and main street precede the building and the different region', (
   const same = formatDeliveryAddress('الشارع الرئيسي: طريق السويس، عمارة 12', { apexArea: 'طريق السويس', sourceArea: 'طريق السويس' });
   assert.equal(same.main, 'طريق السويس، عمارة 12');
 });
+
+
+test('a long compound address keeps the important location first and the rest next to the discount', () => {
+  const raw = 'التجمع الأول، كمبوند جاردينيا سيتي، طريق السويس، عمارة 55، ' + 'البوابة التانية مدخل الخدمات الممر اليمين بعد الإدارة ' + 'ناحية النافورة والممر المؤدي إلى البلوك الثالث';
+  const out = formatDeliveryAddress(raw, { apexArea: 'التجمع الأول', signBase: 'خصم طلبات 20.00' });
+  assert.match(out.main, /^كمبوند جاردينيا سيتي، طريق السويس، عمارة 55/);
+  assert.match(out.sign, /^خصم طلبات 20.00\//);
+  assert.match(out.main + ' ' + out.sign, /البلوك الثالث/);
+  assert.equal(out.issue, null);
+});
+
+test('customer placeholders and negative delivery instructions stay in the right fields', async () => {
+  const { deliveryCustomerName, deliveryLabel, splitDeliveryComment } = await import('../lib/marsad/delivery-fields.js');
+  assert.equal(deliveryCustomerName('Customer Name'), '');
+  assert.equal(deliveryLabel('12345', 'site', 'cash', '31000'), 'عميل/موقع/كاش/#31000');
+  assert.deepEqual(splitDeliveryComment('سيبه على الباب من غير تلامس | عندي حساسية من السمسم'), {
+    delivery: 'سيبه على الباب من غير تلامس', order: 'عندي حساسية من السمسم'
+  });
+});

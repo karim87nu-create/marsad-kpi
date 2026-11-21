@@ -12,7 +12,7 @@ test('the queue translates names, addresses and notes in their own context and k
     const s = (await t.call('POST', '/api/transfer/login', { body: { pin: '123' } })).body.token;
     const { token } = (await admin('POST', '/api/talabat/token')).body;
     await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: [{ id: '3977700001', store: 'الدهان، التجمع الخامس', status: 'ACCEPTED', placedAt: new Date().toISOString(), total: 200,
-      customer: { name: 'Ismail Baraka', phone: '01000000001', address: 'infront of katameya dunes، التجمع الخامس — الدور: 2' }, detail: { receivedAt: new Date().toISOString(), bill: [{ k: 'ملاحظة العميل', text: 'ملاحظة العميل | please call me when you arrive' }] } }] } });
+      customer: { name: 'ترجمة قديمة غلط', nameEn: 'Ismail Baraka', phone: '01000000001', address: 'infront of katameya dunes، التجمع الخامس — الدور: 2' }, detail: { receivedAt: new Date().toISOString(), bill: [{ k: 'ملاحظة العميل', text: 'ملاحظة العميل | please call me when you arrive' }] } }] } });
     const q = async () => (await t.call('GET', '/api/transfer/queue', { headers: { 'x-transfer-session': s } })).body.orders.find(o => o.ref === '3977700001');
     let o = await q();
     assert.match(o.customer.address, /^أمام قطامية ديونز/); assert.match(o.customer.original, /infront of katameya dunes/);
@@ -28,6 +28,7 @@ test('the queue translates names, addresses and notes in their own context and k
     o = await q();
     assert.equal(asked, 0);
     assert.equal(o.customer.name, 'إسماعيل بركة');
+    assert.equal(o.customer.nameEn, 'Ismail Baraka');
     assert.equal(o.note, 'من فضلك كلمني لما توصل');
     assert.equal(o.noteOriginal, 'please call me when you arrive');
     const n = asked; await q(); await new Promise(r => setTimeout(r, 30)); assert.equal(asked, n, 'translated once');

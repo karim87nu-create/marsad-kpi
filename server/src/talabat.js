@@ -186,6 +186,8 @@ function setup(app) {
       if (Object.values(customer).some(Boolean) || bill?.length) {
         const old = parseJson(prior?.profile, {});
         for (const [k, v] of Object.entries(customer)) if (v) old[k] = k === 'address' ? fullerAddress(old.address, v) : v;
+        if (typeof fromSource.nameEn === 'string' && fromSource.nameEn.trim()) old.nameEn = fromSource.nameEn.trim().slice(0, 160);
+        else if (customer.name && customer.name !== parseJson(prior?.profile, {})?.name) delete old.nameEn;
         if (bill?.length) old.bill = bill;   // the bill lines as Talabat shows them, for the transfer page
         orderWrites.push(db.prepare("INSERT INTO match_profiles (source, ref, data) SELECT 'talabat',?,? WHERE " + guard + " ON CONFLICT(source, ref) DO UPDATE SET data = excluded.data").bind(id, JSON.stringify(old), id, guardTime));
       }

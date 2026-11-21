@@ -8,12 +8,12 @@
 // turns «في Apex» only when the monitor actually sees it on Apex. Automatic transfer to Apex stays off until
 // the bridge is proven (numbering under live work and the branch delivery); this page never writes to Apex.
 import { TUNE, TUNE_PAIRS } from './tune.js';
-import { areaRule, itemRule } from './transfer-rules.js';
+import { areaRule, compoundArea, itemRule } from './transfer-rules.js';
 import { businessDay, dayWindow, iso, validDate, addDays } from './time.js';
 import { takeTransferBuildLease, waitForTransferBuild } from './transfer-build-lease.js';
 import { CANCELLED_SQL, isCancelled, sourceCanTransfer, handoffPending } from './transfer-cancellation.js';
 import { parseJson } from './order-match.js';
-import { deliveryPhone, deliveryLabel, formatDeliveryAddress, compactDeliveryComment, deliveryNotes, apexText, splitDeliveryComment, applyChoiceWords } from './delivery-fields.js';
+import { deliveryPhone, deliveryLabel, deliveryCustomerName, withDeliveryPlaces, formatDeliveryAddress, compactDeliveryComment, deliveryNotes, apexText, splitDeliveryComment, applyChoiceWords } from './delivery-fields.js';
 import { parseApexCustomerNote, normArabic, guessApexItem, usefulCardNotes } from './apex-customer-notes.js';
 import { areaGroups, areaKey, areaInAddress, areaForBranch, PICKUP_AREAS } from './apex-areas.js';
 import { knownNos, itemKey } from './items.js';
@@ -374,6 +374,12 @@ function setup(app) {
     const oneArea = set => set?.size && new Set([...set].map(n => groups.get(n) ?? n)).size === 1;
     for (let i = 0; i < list.length; i++) {
       if (list[i].fulfillment === 'pickup') continue;
+      const order = list[i], c = order.customer;
+      const forced = !order.done && compoundArea(c?.address, c?.talabatArea || c?.siteArea, order.source);
+      if (forced) {
+        list[i] = { ...order, areaGuess: { ...forced, seen: 0, how: 'rule' } };
+        continue;
+      }
       if (!list[i].done && !list[i].areaGuess && (list[i].source === 'site' || !list[i].customer?.talabatArea) && list[i].customer?.address) {
         const no = areaInAddress(addressOf(list[i].customer.address), base.locations, list[i].apexBranch, groups);
         if (no) { list[i] = { ...list[i], areaGuess: { no, seen: 0, how: 'address' } }; continue; }
@@ -428,16 +434,17 @@ function setup(app) {
     }
     // Keep the domains separate even when the same text occurs as a name and in a kitchen note.
     if (app.toArabic) {
-      const names = await app.toArabic(open.map(o => o.customer?.name).filter(Boolean), { waitUntil: ctx.waitUntil, kind: 'name' }).catch(() => new Map());
+      const names = await app.toArabic(open.map(o => deliveryCustomerName(o.customer?.nameEn || o.customer?.name)).filter(Boolean), { waitUntil: ctx.waitUntil, kind: 'name' }).catch(() => new Map());
       const notes = app.toArabicNote?.(open.flatMap(o => [o.note, ...(o.items || []).flatMap(i => [i.note, ...(i.freeOptions || [])])])) || new Map();
       const arNote = value => notes.get(value) || value;
       for (let i = 0; i < list.length; i++) {
         const o = list[i]; if (o.done) continue;
-        const c = o.customer, name = names.get(c?.name) || c?.name, address = addressOf(c?.address);
+        const c = o.customer, originalName = deliveryCustomerName(c?.nameEn || c?.name);
+        const name = names.get(originalName) || originalName, address = addressOf(c?.address);
         list[i] = { ...o,
           ...(c ? { customer: { ...c, name, address, area: addressOf(c.area), ...(c.talabatArea ? { talabatArea: addressOf(c.talabatArea) } : {}),
             ...(c.siteArea ? { siteArea: addressOf(c.siteArea) } : {}), ...(address !== c.address || name !== c.name ? { original: [c.name, c.address].filter(Boolean).join(' — ') } : {}),
-            ...(name !== c.name ? { nameEn: c.name } : {}), ...(address !== c.address ? { addressEn: c.address } : {}) } } : {}),
+            ...(originalName && name !== originalName ? { nameEn: originalName } : {}), ...(address !== c.address ? { addressEn: c.address } : {}) } } : {}),
           ...(arNote(o.note) !== o.note ? { note: arNote(o.note), noteOriginal: o.note } : {}),
           ...(o.items ? { items: o.items.map(x => ({ ...x, note: arNote(x.note), freeOptions: (x.freeOptions || []).map(arNote) })) } : {}) };
       }
@@ -719,7 +726,7 @@ function setup(app) {
         list.push({ source: 'talabat', ref: o.id, code: o.code || null, at: iso(o.accepted_at || o.received_at || o.placed_at), status: o.status, out: TALABAT_OUT.has(String(o.status || '').toUpperCase()) || !!o.picked_up_at || !!o.delivered_at, branch: o.store, apexBranch: apexBranchOf(o.store), deliveryType: o.delivery_type || null,
           // Karim 11-15 «ما هو الاوردر استلام فعلا»: a Talabat pickup goes to the branch's «استلام» area like a website one.
           ...(TALABAT_PICKUP.test(o.delivery_type || '') ? { fulfillment: 'pickup', ...(PICKUP_AREAS[apexBranchOf(o.store)] ? { areaGuess: { ...PICKUP_AREAS[apexBranchOf(o.store)], how: 'pickup' } } : {}) } : {}),
-          customer: { name: /^(?:information|details|customer|العميل|unknown|n\/?a|none|guest|-+|\.+)$/i.test(p.name || '') ? null : p.name || null, phone: phoneOut(p.phoneDisplay || p.phone || p.mobileDisplay || p.mobile), address: p.address || null, ...(p.area ? { talabatArea: p.area } : {}) },
+          customer: { name: deliveryCustomerName(p.name) || null, ...(p.nameEn ? { nameEn: p.nameEn } : {}), phone: phoneOut(p.phoneDisplay || p.phone || p.mobileDisplay || p.mobile), address: p.address || null, ...(p.area ? { talabatArea: p.area } : {}) },
           // What Apex must total (Karim 31-10): the bill's «مجموع» (what the customer pays) plus Talabat's share of the discounts
           // (not deducted on Apex). The writer discounts any amount Apex comes out above it.
           target: (() => { const t = bill.find(x => /^(?:مجموع|المجموع|الإجمالي|total|order total)$/i.test(String(x.k || '').trim())), v = t ? amountOf(String(t.text).split(' | ').slice(1).join(' ')) : o.total ?? null;
@@ -1054,9 +1061,10 @@ function setup(app) {
       const serverTarget = Number(sourceOrder?.target) > 0
         ? Math.round((payment === 'paid' ? sourceOrder.target - knownPlat : sourceOrder.target + splitPlat) * 100) / 100 : null;
       const expectedTotal = Number(b.expectedTotal) || null, targetTotal = serverTarget ?? (Number(b.targetTotal) > 0 ? Math.round(Number(b.targetTotal) * 100) / 100 : null);
-      const names = b.customer?.name ? [b.customer.name] : [];
+      const customerName = deliveryCustomerName(b.customer?.name);
+      const names = customerName ? [customerName] : [];
       const arabic = await app.toArabic?.(names, { kind: 'name' }).catch(() => new Map()) || new Map();
-      const translatedName = arabic.get(b.customer?.name) || b.customer?.name;
+      const translatedName = arabic.get(customerName) || customerName;
       // What the employee wrote over the automatic Arabic is learned for next time (Karim 11-11).
       if (manual && b.customer?.nameEdited === true && b.customer.nameEn && b.customer.name && app.learnArabic)
         await app.learnArabic(b.customer.nameEn, b.customer.name).catch(() => {});
@@ -1064,10 +1072,14 @@ function setup(app) {
       const customer = sourceOrder?.customer || b.customer || {};
       const originalArea = customer.talabatArea || customer.siteArea || customer.area;
       const addresses = app.toArabicAddress?.([rawAddress, originalArea, area?.name]) || new Map();
-      const explicitArea = areaRule(originalArea, source) || areaRule(addresses.get(originalArea), source);
+      const forcedCompound = !pickup && compoundArea(customer.address || rawAddress, originalArea, source);
+      if (forcedCompound && forcedCompound.no !== locationNo)
+        fail(409, 'منطقة ' + forcedCompound.addAddress + ' على أبيكس لازم تتسجل التجمع الأول');
+      const explicitArea = forcedCompound || areaRule(originalArea, source) || areaRule(addresses.get(originalArea), source);
       const sourceArea = b.customer?.areaEdited === true && String(b.customer.area || '').trim() ? String(b.customer.area).trim().slice(0, 80)
         : explicitArea?.no === locationNo && explicitArea.addAddress ? explicitArea.addAddress : originalArea;
-      const address = formatDeliveryAddress(addresses.get(rawAddress) || rawAddress, {
+      const textAddress = addresses.get(rawAddress) || rawAddress;
+      const address = formatDeliveryAddress(forcedCompound ? withDeliveryPlaces(textAddress, { compound: forcedCompound.addAddress }) : textAddress, {
         apexArea: addresses.get(area?.name) || area?.name, sourceArea: addresses.get(sourceArea) || sourceArea,
         signBase, pickup
       });

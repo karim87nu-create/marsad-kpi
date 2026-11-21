@@ -15,9 +15,10 @@
 import { TUNE } from './tune.js';
 import { businessDay, iso } from './time.js';
 import { parseJson } from './order-match.js';
-import { deliveryComment, formatDeliveryAddress } from './delivery-fields.js';
+import { deliveryComment, formatDeliveryAddress, withDeliveryPlaces } from './delivery-fields.js';
 import { normArabic } from './apex-customer-notes.js';
 import { areaGroups, areaForBranch, PICKUP_AREAS } from './apex-areas.js';
+import { compoundArea } from './transfer-rules.js';
 import { APEX_PRICES } from './menu-seed.js';
 
 export const MODES = ['off', 'trial', 'on'];
@@ -116,8 +117,11 @@ export function decide(o, x) {
   // Branch and area.
   let branch = Number(o.apexBranch) || null;
   const pickup = o.fulfillment === 'pickup';   // website or Talabat (11-15)
+  const sourceArea = o.customer?.talabatArea || o.customer?.siteArea;
+  const forcedCompound = !pickup && compoundArea(o.customer?.address, sourceArea, o.source);
   let loc = null, locHow = null;
   if (pickup) { loc = PICKUP_AREAS[branch]?.no ?? null; locHow = 'pickup'; }
+  else if (forcedCompound) { loc = forcedCompound.no; locHow = 'rule'; }
   // Learned: chosen 2+ times and at least 80% of the times (one area name staff put on two Apex areas is not certain).
   else if (o.areaGuess && Number(o.areaGuess.seen) >= 2 && !(o.areaGuess.share < 0.8)) { loc = Number(o.areaGuess.no); locHow = 'learned'; }
   else if (o.areaGuess?.how === 'name') { loc = Number(o.areaGuess.no); locHow = 'name'; }
@@ -151,7 +155,7 @@ export function decide(o, x) {
     : (o.customer?.talabatArea || o.customer?.siteArea) ? 'منطقة «' + (o.customer.talabatArea || o.customer.siteArea) + '» لسه ما اتعلمتش على Apex' : 'منطقة العميل مش ظاهرة في الأوردر');
   else if (!pickup) {
     // Karim 11-14: an area Apex has twice — the one this branch serves («مدينتي» 361 is listed for another branch, «مدنتى» 370 for Madinaty).
-    if (x.groups && branch) loc = areaForBranch(loc, branch, x.locations, x.groups);
+    if (x.groups && branch && !forcedCompound) loc = areaForBranch(loc, branch, x.locations, x.groups);
     const rows = (x.locations || []).filter(l => Number(l.no) === loc);
     const owners = [...new Set(rows.map(l => l.branch).filter(v => v != null).map(Number))];
     if (!rows.length) why.push('المنطقة مش في قائمة Apex');
@@ -161,7 +165,7 @@ export function decide(o, x) {
     if (rows.length && service == null) why.push('المنطقة ملهاش سعر توصيل على Apex');
     // Karim 11-20 (receipt #31675: address, floor and flat all 0 on a delivery): a delivery whose address says nothing but the area
     // is not written — the customer is asked for the address (the street, building or a landmark).
-    const adr = formatDeliveryAddress(o.customer?.address, { apexArea: area?.name, sourceArea: o.customer?.talabatArea || o.customer?.siteArea });
+    const adr = formatDeliveryAddress(o.customer?.address, { apexArea: area?.name, sourceArea: forcedCompound?.addAddress || sourceArea });
     if (adr.issue) why.push(adr.issue);
     else if (adr.warning) warnings.push(adr.warning);
   } else service = 0;
@@ -207,7 +211,8 @@ export function decide(o, x) {
   const { nameEn, addressEn, original, talabatArea, siteArea, ...customer } = o.customer || {};
   // «المستقبل اربطها بالشروق بس لازم يكون مكتوب المستقبل في العنوان الي هيتسجل».
   const addArea = o.areaGuess?.how === 'rule' && locHow === 'rule' ? o.areaGuess.addAddress : null;
-  if (addArea && !String(customer.address || '').includes(addArea)) customer.address = (customer.address ? customer.address + ' - ' : '') + addArea;
+  if (forcedCompound) customer.address = withDeliveryPlaces(customer.address, { compound: forcedCompound.addAddress });
+  else if (addArea && !String(customer.address || '').includes(addArea)) customer.address = (customer.address ? customer.address + ' - ' : '') + addArea;
   const body = { source: o.source, ref: String(o.ref), action: 'auto', payment: pay, branchNo: branch, locationNo: loc, code: o.code,
     items: lines.map(l => ({ itemNo: String(l.no), qty: l.qty, note: '' })),
     apexNote: card.status === 'found' ? { approved: true, note: card.text, custNo: card.custNo, items: [], resolution: null, gifts: null } : null,

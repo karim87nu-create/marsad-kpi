@@ -43,6 +43,13 @@ export function setExtraRules(x) {
 }
 const has = (t, w) => t === w || (' ' + t + ' ').includes(' ' + w + ' ');
 
+export function compoundArea(address, area, source) {
+  const pattern = /(?:جاردينيا|جردينيا|جاردنيا|gardenia)(?:\s+(?:سيتي|city))?|(?:تاج|taj|tag)\s*[- ]?\s*(?:سلطان|sultan)/i;
+  const found = [address, area].map(text => String(text || '').match(pattern)).find(Boolean);
+  if (!found) return null;
+  return { no: source === 'talabat' ? 355 : 332, addAddress: /سلطان|sultan/i.test(found[0]) ? 'تاج سلطان' : 'جاردينيا سيتي' };
+}
+
 export function areaRule(words, source) {
   const t = norm(words); if (!t) return null;
   for (const r of extra.areas) if ((!r.source || r.source === source) && has(t, r.words)) return { no: r.no, ...(r.addAddress ? { addAddress: r.addAddress } : {}) };

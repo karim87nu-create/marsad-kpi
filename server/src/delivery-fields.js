@@ -6,11 +6,15 @@ export function deliveryPhone(value) {
   if (/^\+?201[0125]\d{8}$/.test(s)) s = '0' + s.replace(/^\+?20/, '');
   return /^\+?\d{7,15}$/.test(s) ? s : '';
 }
+export function deliveryCustomerName(value) {
+  const name = apexText(value).replace(/#\s*[0-9٠-٩۰-۹]+/g, '').replace(/^[\s.\-_/|،,]+|[\s.\-_/|،,]+$/g, '').trim();
+  return /\p{L}/u.test(name) && !/^(?:information|details|customer|customer name|unknown|unnamed|n[ /]?a|none|null|undefined|guest|test|العميل|اسم العميل|غير معروف|بدون اسم|زائر)$/i.test(name) ? name : '';
+}
 export function deliveryLabel(name, source, payment, code, appointment = '') {
   const tag = String(code || '').replace(/\D/g, '').slice(0, 10);
   const suffix = '/' + (source === 'talabat' ? 'طلبات' : 'موقع') + '/' + (payment === 'paid' ? 'مدفوع' : payment === 'cash' ? 'كاش' : '؟') + (tag ? '/#' + tag : '');
   // «/» and «\» are the label's own separators (Apex showed «// ///طلبات/مدفوع/#5223», 11-14): never inside the name.
-  const clean = apexText(String(name || '')).replace(/#\s*\d+/g, '').replace(/[\\/]+/g, ' ').replace(/^[\s.\-_|،,]+|[\s.\-_|،,]+$/g, '').replace(/\s+/g, ' ').trim() || 'عميل';
+  const clean = deliveryCustomerName(name).replace(/[\\/]+/g, ' ').replace(/^[\s.\-_|،,]+|[\s.\-_|،,]+$/g, '').replace(/\s+/g, ' ').trim() || 'عميل';
   const booking = appointment ? '/' + appointment : '';
   return clean.slice(0, Math.max(0, 50 - suffix.length - booking.length)).trim() + booking + suffix;
 }
@@ -73,7 +77,7 @@ const BUILDING = /(?:عمار[ةه]|فيلا|ڤيلا|مجموع[ةه]|بلوك|
 const LANDMARK = /^(?:بجوار|بجانب|جانب|جنب|امام|أمام|قدام|خلف|ورا|وراء|بعد|قبل|بالقرب|قريب|عند|في\s+وش|near|next\s+to|behind|in\s+front|opposite|beside)/i;
 const PLACE = /(?:^|\s)(?:كمباوند|كومباوند|كمبوند|كومبوند|compound|مول|mall|ابراج|أبراج|دار\s+مصر|سكن\s+مصر|سكان\s+مصر|مساكن|مدين[ةه]|حي|الحي|مجاور[ةه]|المجاور[ةه]|المحلي[ةه]|محلي[ةه]|منطق[ةه]|المنطق[ةه]|مرحل[ةه]|المرحل[ةه]|عمارات|تاون|town|ريزيدنس|residence|بارك|park|هايتس|heights|فيلدج|village|قري[ةه]|كومباوند|جاردن|gardens?|سيتي|city|بلازا|plaza)(?:\s|$)/i;
 const COMPOUND = /^(?:ال)?(?:كمباوند|كومباوند|كمبوند|كومبوند|compound)(?=\s|[:：]|$)/i;
-const KNOWN_COMPOUND = /^(?:ماونتن فيو|هايد بارك|ميفيدا|ذا ووتر واي|ووتر واي|سوديك إيست تاون|سوديك ايست تاون|بالم هيلز|قطامية ديونز|تاج سيتي)(?=\s|$)/i;
+const KNOWN_COMPOUND = /^(?:ماونتن فيو|هايد بارك|ميفيدا|ذا ووتر واي|ووتر واي|سوديك إيست تاون|سوديك ايست تاون|بالم هيلز|قطامية ديونز|تاج سيتي|تاج سلطان|جاردينيا سيتي)(?=\s|$)/i;
 const MAIN_ROAD = /^(?:طريق|محور)\s+|(?:^|\s)(?:التسعين|الدائري|المحور|محور|الطريق|الكورنيش|كورنيش|ميدان|الأوتوستراد|الاوتوستراد)(?:\s|$)/;
 const MAIN_STREET_LABEL = /^(?:الشارع الرئيسي|الطريق الرئيسي|شارع رئيسي|main street|main road|primary street)\s*[:：]\s*/i;
 const STREET = /(?:^|\s)(?:شارع|ش\.?|طريق|محور|street|st\.?|road|rd\.?)(?:\s|$)/i;
@@ -341,7 +345,10 @@ const DELIVERY_NOTE = /(?:اتصل|اتصال|كلم|كلمني|رن|رنه|رن
 export function splitDeliveryComment(text) {
   const parts = String(text || '').split(/\s*[|\n]\s*/).map(x => x.trim()).filter(Boolean);
   const delivery = [], order = [];
-  for (const x of parts) (DELIVERY_NOTE.test(x) && !/(?:الاكل|الأكل|سخن|مستوي|بدون|من\s*غير|زياد|طحين|عيش|صوص|ملح|حار|شطه|شطة|سلط)/u.test(x) ? delivery : order).push(x);
+  for (const x of parts) {
+    const food = /(?:الاكل|الأكل|سخن|مستوي|حساسي|فول سوداني|مكسرات|بصل|ثوم|طحين|عيش|صوص|ملح|حار|شطه|شطة|سلط)/u.test(x);
+    (DELIVERY_NOTE.test(x) && !food ? delivery : order).push(x);
+  }
   return { order: order.join(' | '), delivery: delivery.join(' | ') };
 }
 
