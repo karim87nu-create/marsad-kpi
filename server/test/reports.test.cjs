@@ -81,10 +81,11 @@ test('admin «التقارير Excel»: the seven files of a period, right to le
       { no: 11111, kind: 'Hotline', branch: nasr.name, amount: 80, reasonNo: 183, reasonName: 'جودة', reason: 'انسكاب، حالة هوت لاين' },
       { no: 11112, kind: 'Hotline', branch: nasr.name, amount: 81, reasonNo: 6, reasonName: 'بناء على طلب العميل' },
       { no: 11113, kind: 'Hotline', branch: nasr.name, amount: 82, reasonNo: 183, reasonName: 'جودة', customer: { name: 'وسم بيدج' } },
-    );
-    apex.hotlineCancelsBeforeOut = [
       { no: 11114, kind: 'Hotline', branch: nasr.name, amount: 83, src: 'whatsapp', reasonNo: 186, reasonName: 'صنف غير متوفر', area: 'النزهة' },
       { no: 11115, kind: 'Hotline', branch: nasr.name, amount: 84, src: 'hotline', reasonNo: 6, reasonName: 'طلب العميل', reason: 'انسكاب' },
+    );
+    apex.hotlineCancelsBeforeOut = [
+      { no: 11116, kind: 'Hotline', branch: nasr.name, amount: 999, reasonNo: 183, reasonName: 'جودة' },
     ];
     db.prepare('UPDATE orders_days SET data = ? WHERE day = ?').run(JSON.stringify(apex), '2026-11-14');
     db.prepare('INSERT INTO talabat_reviews (order_id,vendor,branch,day,at,rating,text,seen_at) VALUES (?,?,?,?,?,?,?,?)')
@@ -92,6 +93,8 @@ test('admin «التقارير Excel»: the seven files of a period, right to le
     const seedCancel = db.prepare('INSERT INTO talabat_orders (id,day,vendor_id,status,cancel_owner,cancel_reason,total,first_seen,updated_at) VALUES (?,?,?,?,?,?,?,?,?)');
     db.prepare('INSERT INTO talabat_ratings (day,branch,side,vendor_id,rate,at) VALUES (?,?,?,?,?,?)')
       .run('2026-11-13','التجمع','ours','760858', 4.3, t.clock.now);
+    db.prepare('INSERT INTO talabat_closures (day,outlet,state,started_at) VALUES (?,?,?,?)')
+      .run('2026-11-14', 'HF_EG;608556', 'CLOSED', cairoToUtc(2026, 11, 14, 22, 30));
     seedCancel.run('10001', '2026-11-14', 'HF_EG;608556', 'CANCELLED', 'Owner: المطعم (Vendor)', 'تأخير بسبب انسكاب الشوربة', 100, t.clock.now, t.clock.now);
     seedCancel.run('10002', '2026-11-14', 'HF_EG;608556', 'CANCELLED', 'Customer', 'انسكاب', 100, t.clock.now, t.clock.now);
     seedCancel.run('10004', '2026-11-15', 'HF_EG;760858', 'REJECTED', null, 'طلب مرفوض', 100, t.clock.now, t.clock.now);
@@ -144,12 +147,20 @@ test('admin «التقارير Excel»: the seven files of a period, right to le
     const historical = rating.find(r => r[0]?.v === '2026-11-14' && r[1] === 'التجمع');
     assert.equal(historical[2], '4.3 (آخر قراءة 13-11-2026)', 'dated fallback within the original rating column');
     const platform = (await admin('GET', '/api/reports/platform-cancels?from=2026-11-14&to=2026-11-15')).body;
-    assert.equal(platform.apexBeforeOutDays, 1);
+    assert.ok(!platform.list.some(r => r.orderNo === '11116'), 'Apex cancellations before driver loading are ignored');
+    assert.equal(rating.find(r => r[0]?.v === '2026-11-14' && r[1] === 'مدينه نصر')[4].v, '22:30');
+    const summary = cancellationBook[4].rows;
+    assert.equal(summary[3][13].v, (22 * 60 + 30) / 1440, 'latest closure stays visible when the final day has none');
+    assert.equal(summary[4][9].v, '4.3 (آخر قراءة 13-11-2026)');
+    const comments = cancellationBook[3].rows;
+    assert.ok(comments.some(r => r[0] === 'تقييم من طلبات' && r[3] === 'تمت المتابعة' && r[5] === 'طلبات'));
+    assert.ok(comments.some(r => r[0] === 'تقييم من الموقع' && r[5] === 'الموقع'), 'separate platforms retain the same order ID');
     assert.ok(platform.list.some(r => r.orderNo === '10001' && r.platform === 'APP'));
     assert.ok(!platform.list.some(r => r.platform === 'WEB'));
     assert.equal(platform.list.find(r => r.orderNo === '11115').owner, null, 'contradictory Apex evidence remains unsettled');
     const rates = cancellationBook[1].rows;
     assert.equal(rates.find(r => r[1] === 'مدينه نصر' && r[2] === 'Talabat')[4], 2);
+    assert.equal(rates.find(r => r[1] === 'التجمع' && r[2] === 'APP')[5].v, 'غير متاح');
     assert.equal(rates.find(r => r[1] === 'مدينه نصر' && r[2] === 'Whatsapp')[4], 4);
     assert.equal(platform.platformTotals.find(r => r.day === '2026-11-14' && r.branch === 'مدينة نصر' && r.platform === 'Hotline').orders, nasr.kinds.Hotline - 6);
     const q = files.find(f => /^QA1/.test(f.name)).sheets;

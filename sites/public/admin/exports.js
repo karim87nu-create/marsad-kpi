@@ -171,19 +171,24 @@ window.MarsadExports = function MarsadExports(ctx) {
     const withoutOwner = platforms.list.filter(x => !x.owner).length;
     const coverage = 'إلغاءات المنصات: ' + platforms.list.length + ' · على المطعم: ' + det.length + ' · مسؤوليتها غير محددة: ' + withoutOwner;
     const sheets = [];
+    const unavailable = 'غير متاح';
+    const percent = (n, o) => o > 0 ? n / o : unavailable;
+    const rateFormula = (numerator, denominator) => 'IFERROR(' + numerator + '/' + denominator + ',"' + unavailable + '")';
     sheets.push({ name: 'تفاصيل الإلغاءات', widths: [12, 10, 12, 12, 18, 16, 14, 28, 12], freeze: 2, merges: ['A1:I1'], heights: [36], rows: [[{ v: 'الإلغاءات المحمّلة على المطعم\n' + label(), s: 'title', b: true, big: true }],
       ['التاريخ', 'الشهر', 'الفرع', 'منصة الطلب', 'منطقة الطلب', 'سبب الإلغاء', 'محمّل على المطعم؟', 'ملاحظات', 'اجمالي الاوردر'].map(H),
       ...det.map((x, i) => [{ v: x.day, t: 'date' }, F('IF(A' + (i + 3) + '="","",TEXT(A' + (i + 3) + ',"YYYY-MM"))', x.month), x.branch, x.platform, x.area || null, x.reason, 'نعم', x.raw, x.amount])] });
     // «نسبه الالغاءات»: the cancellations counted from the details; the orders are the Marsad's; the ratio and the day's total formulas.
     const ratio = [[{ v: 'الإلغاءات المحمّلة على المطعم\n' + label(), s: 'title', b: true, big: true }], ['الشهر', 'الفرع', 'منصة الطلب', 'إلغاءات على المطعم', 'إجمالي أوردرات المنصة', 'نسبة الإلغاء على المطعم', 'إجمالي النسبة للفترة'].map(H)];
-    const rr = {}, month = state.to.slice(0, 7);
+    const rr = {}, firstMonth = state.day.slice(0, 7), lastMonth = state.to.slice(0, 7);
+    const month = firstMonth === lastMonth ? firstMonth : firstMonth + ' / ' + lastMonth;
     for (const p of PLATS) for (const b of ratioBranches) {
-      const r = ratio.length + 1, nn = det.filter(x => x.branch === b.short && x.platform === p).length, o = sum(platforms.platformTotals, x => shortBranch(x.branch) === b.short && x.platform === p ? x.orders : 0); rr[b.short + '|' + p] = { n: nn, o };
-      ratio.push([month, b.short, p, F('COUNTIFS(' + DT + '!$C:$C,B' + r + ',' + DT + '!$D:$D,C' + r + ')', nn), o, F('IFERROR(D' + r + '/E' + r + ',0)', div(nn, o), { t: 'pct' }), null]);
+      const r = ratio.length + 1, nn = det.filter(x => x.branch === b.short && x.platform === p).length, totals = platforms.platformTotals.filter(x => shortBranch(x.branch) === b.short && x.platform === p);
+      const o = totals.length ? sum(totals, x => x.orders) : null; rr[b.short + '|' + p] = { n: nn, o };
+      ratio.push([month, b.short, p, F('COUNTIFS(' + DT + '!$C:$C,B' + r + ',' + DT + '!$D:$D,C' + r + ')', nn), o, F(rateFormula('D' + r, 'E' + r), percent(nn, o), { t: 'pct' }), null]);
     }
     const rl = ratio.length, allN = det.length, allO = sum(Object.values(rr), x => x.o);
-    ratio[2][6] = F('IFERROR(SUM(D3:D' + rl + ')/SUM(E3:E' + rl + '),0)', div(allN, allO), { t: 'pct', b: true });
-    sheets.push({ name: 'نسبه الالغاءات', widths: [10, 14, 12, 14, 14, 14, 16], freeze: 2, merges: ['A1:G1'], heights: [36], rows: ratio });
+    ratio[2][6] = F(rateFormula('SUM(D3:D' + rl + ')', 'SUM(E3:E' + rl + ')'), percent(allN, allO), { t: 'pct', b: true });
+    sheets.push({ name: 'نسبه الالغاءات', widths: [22, 16, 12, 14, 14, 16, 16], freeze: 2, merges: ['A1:G1'], heights: [36], rows: ratio });
     // Talabat: each branch's rating and competitor's, and closing time (the last closure of the day).
     const close = [['التاريخ', 'الفرع', 'تقييم اليوم', 'تقييم المنافس اليوم', 'وقت الغلق'].map(H)], lastRow = {};
     const sameDayRatings = new Map((cs.ratings || []).map(r => [r.day + '|' + branchOf(r.branch)?.short, r]));
@@ -197,56 +202,67 @@ window.MarsadExports = function MarsadExports(ctx) {
     }
     const latestAt = (b, side, day) => snapshots.get(b.short + '|' + side)?.find(r => r.day <= day);
     const ratingValue = (actual, snapshot, day) => actual ?? (snapshot?.day === day ? snapshot.rate : snapshot ? snapshot.rate + ' (آخر قراءة ' + dmy(snapshot.day) + ')' : 'غير متاح');
+    const closeTime = new Intl.DateTimeFormat('en-GB', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
     for (const d of list) for (const b of BRANCHES) {
       const rt = sameDayRatings.get(d.day + '|' + b.short);
       const ours = rt?.rating == null ? latestAt(b, 'ours', d.day) : null;
       const rival = rt?.competitor == null ? latestAt(b, 'rival', d.day) : null;
-      const at = Object.entries(d.closedAt || {}).filter(([nm]) => branchOf(nm) === b).map(([, v]) => v).sort().pop();
-      const tm = at ? new Intl.DateTimeFormat('en-GB', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(at)) : null;
+      const at = Object.entries(d.closedAt || {}).filter(([nm]) => branchOf(nm) === b).map(([, v]) => v).sort((x, y) => x - y).pop();
+      const tm = at ? closeTime.format(new Date(at)) : null;
       close.push([{ v: d.day, t: 'date' }, b.short, ratingValue(rt?.rating, ours, d.day), ratingValue(rt?.competitor, rival, d.day), tm ? { v: tm, t: 'time' } : null]);
-      lastRow[b.short] = { r: close.length, tm };
+      if (tm) lastRow[b.short] = { r: close.length, tm };
     }
     sheets.push({ name: 'وقت غلق طلبات والتقييم', widths: [12, 14, 25, 25, 12], freeze: 1, rows: close });
     // «الكومنتات والشكاوي»: the date, then Karim's columns.
-    const ent = cs.entries || [];
+    const manual = cs.entries || [], byId = new Map(manual.map(e => [e.id, e]));
+    const online = (cs.platformFeedback || []).filter(e => String(e.comment || '').trim());
+    const linked = new Set(online.map(e => e.followupId).filter(id => id != null));
+    const ent = [...manual.filter(e => !linked.has(e.id)), ...online.map(e => {
+      const followup = byId.get(e.followupId);
+      const notes = [e.comment, followup?.comment].filter(Boolean);
+      return { ...e, branch: e.branch || followup?.branch, comment: [...new Set(notes)].join('\n') };
+    })];
     sheets.push({ name: 'الكومنتات والشكاوي', widths: [40, 12, 14, 26, 24, 10], rows: [[{ v: state.to, t: 'date', b: true }], ['الملاحظات', 'الفرع', 'اسم العميل', 'حل الشكوي', 'الشكوي', 'المنصه'].map(H),
-      ...ent.map(e => [e.comment, branchOf(e.branch)?.short || e.branch, e.customer, e.action, e.complaint, e.platform]),
-      // Karim 11-16: the positive comments come by themselves (5 stars with words on Talabat and the website), unless typed already.
-      ...(cs.positive || []).filter(p => !ent.some(e => (p.orderNo && e.orderNo === p.orderNo) || (e.comment && e.comment === p.comment)))
-        .map(p => [p.comment, branchOf(p.branch)?.short || p.branch || '', p.customer || '', null, null, p.platform])] });
+      ...ent.map(e => [e.comment, shortBranch(e.branch), e.customer, e.action, e.complaint, e.platform])] });
     // «اجمالي»: the ratio by branch and platform, the rating, the closing time, the complaints, the orders.
     const T = Array.from({ length: 14 }, () => Array(16).fill(null)), put = (r, c, v) => { T[r - 1][c] = v; };
     const sumifs = (col, b, p) => 'SUMIFS(' + RT + '!$' + col + ':$' + col + ',' + RT + '!$B:$B,' + b + (p ? ',' + RT + '!$C:$C,' + p : '') + ')';
     put(1, 0, { v: 'نسبة الإلغاءات على المطعم', s: 'title', b: true }); put(2, 0, H(null)); PLATS.forEach((p, j) => put(2, 1 + j, H(p))); put(2, 7, H('Grand Total'));
-    BRANCHES.forEach((b, i) => { const r = 3 + i; put(r, 0, { v: b.short, b: true });
-      PLATS.forEach((p, j) => { const x = rr[b.short + '|' + p]; put(r, 1 + j, F('IFERROR(' + sumifs('D', '$A' + r, C(1 + j) + '$2') + '/' + sumifs('E', '$A' + r, C(1 + j) + '$2') + ',0)', div(x.n, x.o), { t: 'pct' })); });
+    ratioBranches.forEach((b, i) => { const r = i === BRANCHES.length ? 7 : 3 + i; put(r, 0, { v: b.short, b: true });
+      PLATS.forEach((p, j) => { const x = rr[b.short + '|' + p]; put(r, 1 + j, F(rateFormula(sumifs('D', '$A' + r, C(1 + j) + '$2'), sumifs('E', '$A' + r, C(1 + j) + '$2')), percent(x.n, x.o), { t: 'pct' })); });
       const nn = sum(PLATS, p => rr[b.short + '|' + p].n), o = sum(PLATS, p => rr[b.short + '|' + p].o);
-      put(r, 7, F('IFERROR(' + sumifs('D', '$A' + r) + '/' + sumifs('E', '$A' + r) + ',0)', div(nn, o), { t: 'pct', b: true })); });
+      put(r, 7, F(rateFormula(sumifs('D', '$A' + r), sumifs('E', '$A' + r)), percent(nn, o), { t: 'pct', b: true })); });
     put(6, 0, { v: 'Grand Total', s: 'sub', b: true });
     PLATS.forEach((p, j) => { const nn = sum(ratioBranches, b => rr[b.short + '|' + p].n), o = sum(ratioBranches, b => rr[b.short + '|' + p].o);
-      put(6, 1 + j, F('IFERROR(SUMIFS(' + RT + '!$D:$D,' + RT + '!$C:$C,' + C(1 + j) + '$2)/SUMIFS(' + RT + '!$E:$E,' + RT + '!$C:$C,' + C(1 + j) + '$2),0)', div(nn, o), { t: 'pct', s: 'sub', b: true })); });
-    put(6, 7, F(RT + '!G3', div(allN, allO), { t: 'pct', s: 'sub', b: true }));
-    put(3, 8, H(null)); put(3, 9, H('التقييم ')); put(3, 10, H(' تقييم المنافس')); put(3, 12, H(null)); put(3, 13, H('وقت الغلق ')); put(3, 14, H('الفرع')); put(3, 15, H('Count of الشكوي'));
-    const avgOf = (b, column) => { const values = close.slice(1).filter(row => row[1] === b.short && typeof row[column] === 'number').map(row => row[column]); return values.length ? sum(values, x => x) / values.length : 'غير متاح'; };
+      put(6, 1 + j, F(rateFormula('SUMIF(' + RT + '!$C:$C,' + C(1 + j) + '$2,' + RT + '!$D:$D)', 'SUMIF(' + RT + '!$C:$C,' + C(1 + j) + '$2,' + RT + '!$E:$E)'), percent(nn, o), { t: 'pct', s: 'sub', b: true })); });
+    put(6, 7, F(RT + '!G3', percent(allN, allO), { t: 'pct', s: 'sub', b: true }));
+    put(3, 8, H(null)); put(3, 9, H('التقييم')); put(3, 10, H('تقييم المنافس')); put(3, 12, H(null)); put(3, 13, H('آخر وقت غلق بالفترة')); put(3, 14, H('الفرع')); put(3, 15, H('عدد الشكاوى'));
+    const ratingCell = (b, row, column, side) => {
+      const values = close.slice(1).filter(r => r[1] === b.short && typeof r[column] === 'number').map(r => r[column]);
+      const fallback = ratingValue(null, latestAt(b, side, state.to), state.to);
+      const col = C(column);
+      return F('IFERROR(AVERAGEIFS(' + CL + '!$' + col + ':$' + col + ',' + CL + '!$B:$B,I' + row + '),"' + fallback + '")',
+        values.length ? sum(values, x => x) / values.length : fallback, { t: 'dec' });
+    };
     BRANCHES.forEach((b, i) => { const r = 4 + i, L = lastRow[b.short];
       put(r, 8, { v: b.short, b: true }); put(r, 12, { v: b.short, b: true }); put(r, 14, { v: b.short, b: true });
-      put(r, 9, F('IFERROR(AVERAGEIFS(' + CL + '!$C:$C,' + CL + '!$B:$B,I' + r + '),"غير متاح")', avgOf(b, 2), { t: 'dec' }));
-      put(r, 10, F('IFERROR(AVERAGEIFS(' + CL + '!$D:$D,' + CL + '!$B:$B,I' + r + '),"غير متاح")', avgOf(b, 3), { t: 'dec' }));
-      put(r, 13, L ? F('IF(' + CL + '!E' + L.r + '="","",' + CL + '!E' + L.r + ')', L.tm ? (+L.tm.slice(0, 2) * 60 + +L.tm.slice(3)) / 1440 : '', { t: 'time' }) : null);
+      put(r, 9, ratingCell(b, r, 2, 'ours'));
+      put(r, 10, ratingCell(b, r, 3, 'rival'));
+      put(r, 13, L ? F('IF(' + CL + '!E' + L.r + '="","",' + CL + '!E' + L.r + ')', (+L.tm.slice(0, 2) * 60 + +L.tm.slice(3)) / 1440, { t: 'time' }) : null);
       put(r, 15, F('COUNTIFS(' + CM + '!$B:$B,O' + r + ',' + CM + '!$E:$E,"<>")', ent.filter(e => branchOf(e.branch) === b && e.complaint).length)); });
-    put(7, 14, { v: 'Grand Total', s: 'sub', b: true }); put(7, 15, F('SUM(P4:P6)', ent.filter(e => branchOf(e.branch) && e.complaint).length, { s: 'sub', b: true }));
+    put(7, 14, { v: 'Grand Total', s: 'sub', b: true });
+    put(7, 15, F('COUNTA(' + CM + '!$E:$E)-1', ent.filter(e => e.complaint).length, { s: 'sub', b: true }));
     put(8, 7, { v: ' اجمالي الاوردرات', s: 'title', b: true }); put(9, 7, H(null)); PLATS.forEach((p, j) => put(9, 8 + j, H(p))); put(9, 14, H('Grand Total'));
-    BRANCHES.forEach((b, i) => { const r = 10 + i; put(r, 7, { v: b.short, b: true });
+    ratioBranches.forEach((b, i) => { const r = i === BRANCHES.length ? 14 : 10 + i; put(r, 7, { v: b.short, b: true });
       PLATS.forEach((p, j) => put(r, 8 + j, F(sumifs('E', '$H' + r, C(8 + j) + '$9'), rr[b.short + '|' + p].o)));
       put(r, 14, F('SUM(I' + r + ':N' + r + ')', sum(PLATS, p => rr[b.short + '|' + p].o), { b: true })); });
     put(13, 7, { v: 'Grand Total', s: 'sub', b: true });
     PLATS.forEach((p, j) => put(13, 8 + j, F('SUMIF(' + RT + '!$C:$C,' + C(8 + j) + '9,' + RT + '!$E:$E)', sum(ratioBranches, b => rr[b.short + '|' + p].o), { s: 'sub', b: true })));
     put(13, 14, F('SUM(I13:N13)', allO, { s: 'sub', b: true }));
-    sheets.push({ name: 'اجمالي', widths: [12, 9, 9, 9, 9, 9, 9, 11, 12, 10, 12, 9, 10, 10, 11, 14], rows: T, merges: ['A1:H1', 'H8:O8'] });
+    sheets.push({ name: 'اجمالي', widths: [16, 12, 12, 12, 12, 9, 9, 16, 12, 24, 24, 9, 12, 21, 11, 14], rows: T, merges: ['A1:H1', 'H8:O8'] });
     X().grid('الالغاءات ' + fileLabel(), sheets);
     const hasRating = close.slice(1).some(row => row[2] !== 'غير متاح' || row[3] !== 'غير متاح');
-    const legacy = platforms.apexBeforeOutDays < list.length ? 'فيه أيام قراءة Apex فيها للإلغاءات بعد التحميل فقط' : '';
-    return [coverage, legacy, hasRating ? '' : 'لا توجد قراءة تقييم متاحة للفترة'].filter(Boolean).join(' · ');
+    return [coverage, hasRating ? '' : 'لا توجد قراءة تقييم متاحة للفترة'].filter(Boolean).join(' · ');
   }
 
   // ---------- 5. خدمة العملاء (شيتين: طلبات والموقع) ----------

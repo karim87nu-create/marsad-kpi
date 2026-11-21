@@ -1286,17 +1286,7 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
   $cancelList = @($cancels | Sort-Object DelT -Descending | ForEach-Object {
     [ordered]@{ no = $_.No; sn = $_.Sn; branch = BName $_.Branch; kind = $_.Kind; amount = R2 $_.Amt; user = UName $_.User; by = UName $_.Del; pilot = UName $_.Pilot
       at = IsoT $_.DelT; afterOut = $(if ($_.Out -and $_.DelT) { Mins $_.Out $_.DelT } else { $null }); reason = $_.Why
-      reasonNo = $(if ($_.ReasonNo -gt 0) { $_.ReasonNo } else { $null }); reasonName = $(if ($_.ReasonNo -gt 0) { $script:Reasons[$_.ReasonNo] } else { $null }); area = $_.Loc; entry = IsoT $_.Entry; out = IsoT $_.Out; customer = $_.Customer; tag = $dtags[$_.No]; items = @($dlines[$_.No]) } })
-  # Report-only Hotline/WhatsApp voids before dispatch; leave the after-loading delay counts alone.
-  $hotlineCancelsBeforeOut = @(foreach($r in $dels.Rows){
-    if ((N $r.WaiterNo) -gt 0 -or (KindOf (S $r.OnlineType) (S $r.o_CustName)) -ne 'Hotline') { continue }
-    $customer = CustomerOf $r
-    $src = $(if ("$($customer.name)" -match '(?i)بيدج|بيج|فيس|page|facebook') { 'page' } elseif ("$($customer.name)" -match '(?i)وات?س|whats') { 'whatsapp' } else { 'hotline' })
-    $code = [int](N $r.ReasonNo)
-    [ordered]@{ no = [int64](N $r.OrderNo); kind = 'Hotline'; branch = BName ([int](N $r.BranchNo)); src = $src; at = IsoT (ParseT $r.DeleteTime $day)
-      amount = R2 (AmtOf $r); reasonNo = $code; reasonName = $(if ($code -gt 0) { $script:Reasons[$code] } else { $null }); reason = S $r.Remarks
-      area = $(if ($script:Locations) { $script:Locations[[int](N $r.o_LocationNo)] } else { $null }) }
-  })
+      reasonNo = $(if ($_.ReasonNo -gt 0) { $_.ReasonNo } else { $null }); reasonName = $(if ($_.ReasonNo -gt 0) { $script:Reasons[$_.ReasonNo] } else { $null }); entry = IsoT $_.Entry; out = IsoT $_.Out; customer = $_.Customer; tag = $dtags[$_.No]; items = @($dlines[$_.No]) } })
   # Branch-by-branch day-end Telegram reports. Existing 'ordersLate' kind is used deliberately:
   # current Sites server already routes it to the correct branch group, so only the cashier
   # monitor needs updating. Unique per-day/per-branch alert keys prevent duplicate messages.
@@ -1406,7 +1396,7 @@ FROM DOrders_M WITH (NOLOCK) WHERE OrderDate = @d
     # Kept small on purpose: the push must stay fast (11-11: a full list of every order made it time out).
     book = @($list | Where-Object { $_.Kind -eq 'Hotline' -and $_.Trans -eq 'Delivery' -and $_.Entry -and $_.Phone.Length -ge 7 } | ForEach-Object { ,@($_.No, [int64]([DateTimeOffset]$_.Entry).ToUnixTimeSeconds(), [int][math]::Round($_.Amt), (PhKey $_.Phone)) })
     branches = @($branchesOut); open = @($openList); staff = @($staff); hours = $hours
-    cancels = @($cancelList); hotlineCancelsBeforeOut = $hotlineCancelsBeforeOut; cancelNotes = @($script:cxNotes); issues = @($issues); lateOut = @($lateOut); online = @($onlineList); sales = @($salesList); officer = $officerOut; tagColumns = $script:tagCols; details = $details; fixes = @(Get-Fixes $day $now); branchStatus = $script:branchStatus; users = @($script:Users.Values | Where-Object { $_ } | Sort-Object -Unique); alerts = @(@($pending) + $(if ($script:ServerFollow) { @($script:follow) } else { @() }))
+    cancels = @($cancelList); cancelNotes = @($script:cxNotes); issues = @($issues); lateOut = @($lateOut); online = @($onlineList); sales = @($salesList); officer = $officerOut; tagColumns = $script:tagCols; details = $details; fixes = @(Get-Fixes $day $now); branchStatus = $script:branchStatus; users = @($script:Users.Values | Where-Object { $_ } | Sort-Object -Unique); alerts = @(@($pending) + $(if ($script:ServerFollow) { @($script:follow) } else { @() }))
   }
 }
 

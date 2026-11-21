@@ -93,8 +93,7 @@ function setup(app) {
         LEFT JOIN site_channels c USING (id) WHERE day BETWEEN ? AND ? AND status = 'cancelled'`).all(from, to),
       db.prepare(`SELECT day, branch, side, rate FROM talabat_ratings
         WHERE day BETWEEN ? AND ? AND rate > 0 AND rate <= 5 ORDER BY day DESC, at DESC`).all(addDays(from, -30), to),
-      db.prepare(`SELECT day, json_extract(data, '$.branches') AS branches, json_extract(data, '$.cancels') AS cancels,
-        json_extract(data, '$.hotlineCancelsBeforeOut') AS before_out FROM orders_days WHERE day BETWEEN ? AND ?`).all(from, to),
+      db.prepare(`SELECT day, json_extract(data, '$.branches') AS branches, json_extract(data, '$.cancels') AS cancels FROM orders_days WHERE day BETWEEN ? AND ?`).all(from, to),
       db.prepare("SELECT day, ref, owner FROM cancel_owners WHERE source = 'apex' AND day BETWEEN ? AND ?").all(from, to),
     ]);
     const talBranch = x => branchName(TALABAT_BRANCHES.find(b => b.outlet.split(';').at(-1) === String(x.vendor_id || '').split(';').at(-1))?.name || x.store);
@@ -109,16 +108,13 @@ function setup(app) {
       ...siteCancels.filter(x => sitePlatform(x) === 'APP').map(x => ({ day: x.day, orderNo: String(x.id), branch: branchName(x.branch), platform: 'APP', status: x.status, amount: x.total, reason: null, owner: null })),
     ];
     const reviewed = new Map(apexReviews.map(x => [x.day + '|' + x.ref, x.owner]));
-    let apexBeforeOutDays = 0;
-    for (const { day, branches, cancels, before_out } of apexDays) {
-      const beforeOut = parseJson(before_out, null);
-      if (Array.isArray(beforeOut)) apexBeforeOutDays++;
+    for (const { day, branches, cancels } of apexDays) {
       for (const b of parseJson(branches, [])) {
         const branch = branchName(b.name), whatsapp = Number(b.sources?.whatsapp) || 0;
         const hotline = Math.max(0, (Number(b.kinds?.Hotline) || 0) - whatsapp - (Number(b.sources?.page) || 0));
         platformTotals.push({ day, branch, platform: 'Hotline', orders: hotline }, { day, branch, platform: 'Whatsapp', orders: whatsapp });
       }
-      const orders = new Map([...(beforeOut || []), ...parseJson(cancels, [])].map(c => [String(c.no), c]));
+      const orders = new Map(parseJson(cancels, []).map(c => [String(c.no), c]));
       for (const [no, c] of orders) {
         if (c.kind !== 'Hotline') continue;
         const name = String(c.customer?.name || '');
@@ -133,8 +129,8 @@ function setup(app) {
     const dates = new Map();
     for (let day = from; day <= to; day = addDays(day, 1)) dates.set(day, { day, closedAt: {} });
     const closures = await db.prepare('SELECT day, branch, name, outlet, started_at FROM talabat_closures WHERE day BETWEEN ? AND ? ORDER BY started_at').all(from, to);
-    for (const row of closures) dates.get(row.day).closedAt[row.branch || row.name || row.outlet] = row.started_at;
-    return { days: [...dates.values()], ratingSnapshots, apexBeforeOutDays, list: list.sort((a, b) => b.day.localeCompare(a.day) || (b.at || '').localeCompare(a.at || '')), platformTotals };
+    for (const row of closures) dates.get(row.day).closedAt[talBranch({ vendor_id: row.outlet, store: row.branch || row.name || row.outlet })] = row.started_at;
+    return { days: [...dates.values()], ratingSnapshots, list: list.sort((a, b) => b.day.localeCompare(a.day) || (b.at || '').localeCompare(a.at || '')), platformTotals };
   });
   app.route('GET', '/api/reports/days', async ctx => {
     await app.requireAdmin(ctx);
