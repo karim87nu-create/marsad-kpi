@@ -17,7 +17,8 @@ function page(store = {}) {
     setInterval: f => { tick = f; }, Date: { now: () => clock.now }, Event: class {}, JSON, Math, Number, Map, Set };
   ctx.window.window = ctx.window; vm.createContext(ctx); vm.runInContext(src, ctx);
   return { advance(ms) { for (let i = 0; i < ms; i += 5000) { clock.now += 5000; tick(); } }, get reloads() { return reloads; }, get clicks() { return clicks; },
-    list() { onMsg({ source: win, data: { __marsadSite: 1, data: { orders: [] } } }); } };
+    list() { onMsg({ source: win, data: { __marsadSite: 1, data: { orders: [] } } }); },
+    expired() { onMsg({ source: win, data: { __marsadSite: 1, authExpired: true } }); } };
 }
 
 test('silent panel: reload gaps double (2, 4, 8 min) and survive the reload; a list resets them', () => {
@@ -75,4 +76,16 @@ test('branch panel selects only a unique Apex pilot and submits through the webs
   assert.deepEqual(await run(['زياد على - 01000000001', 'زياد محمد - 01000000002']), ['prepare', 'ready', 'dispatch', 'زياد على - 01000000001']);
   assert.deepEqual(await run(['زياد على - 01000000001', 'زياد علي - 01000000002']), ['prepare', 'ready', 'dispatch']);
   assert.deepEqual(await run(['زياد محمد - 01000000002']), ['prepare', 'ready', 'dispatch']);
+});
+
+test('a WordPress nonce rejection reloads immediately and does not loop across fresh pages', () => {
+  const store = {};
+  let p = page(store);
+  p.expired(); p.advance(5000);
+  assert.equal(p.reloads, 1);
+  p = page(store);
+  p.expired(); p.advance(30000);
+  assert.equal(p.reloads, 0);
+  p.list(); p.advance(5000);
+  assert.equal(p.reloads, 0);
 });

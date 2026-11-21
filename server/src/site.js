@@ -116,7 +116,11 @@ function panelAddress(order) {
   return [text, ...fields.filter(([label, v]) => v && v !== '0' && !text.includes(label + ': ' + v)).map(([label, v]) => label + ': ' + v)].filter(Boolean).join(' — ');
 }
 const SITE_BRANCH_OF_APEX = { 1: 'tagamoa-cloud', 2: 'nasr-city', 3: 'madinaty-craft-zone' };
-const APEX_BRANCH_LABELS = { 'tagamoa-cloud': /^(?:فرع )?التجمع(?: |$)/, 'nasr-city': /^(?:فرع )?مدينة نصر(?: |$)/, 'madinaty-craft-zone': /^(?:فرع )?مدينتي(?: |$)/ };
+const APEX_BRANCH_LABELS = {
+  'tagamoa-cloud': /^(?:فرع )?التجمع(?: |$)/,
+  'nasr-city': /^(?:فرع )?مدين[ةه] نصر(?: |$)/,
+  'madinaty-craft-zone': /^(?:فرع )?مدينتي(?: |$)/,
+};
 const siteCancelled = (status, label) => /cancel|failed|refund/i.test(status) || /ملغ|اتلغ/.test(label);
 const siteDelivered = (stage, status, label) => stage >= 4 || /(?:^|-)(?:complete|completed|delivered)$/i.test(status) || /تم التوصيل|تم التسليم/.test(label);
 
@@ -133,7 +137,8 @@ function setup(app) {
   const num = v => { const n = Number(String(v ?? '').replace(/[^\d.\-]/g, '')); return Number.isFinite(n) ? n : null; };
   async function dispatchFromApex(orders, now) {
     const open = orders.filter(o => Number.isSafeInteger(Number(o?.id)) && Number(o.id) > 0 && Number(o.createdAt) > 1e9 &&
-      Object.hasOwn(APEX_BRANCH_LABELS, o.branchId) && o.fulfillment === 'delivery' && !o.driver && (Number(o.stage) || 0) < 3 &&
+      Object.hasOwn(APEX_BRANCH_LABELS, o.branchId) && /^delivery$/i.test(String(o.fulfillment || '').trim()) &&
+      !textOf(o.driver).trim() && (Number(o.stage) || 0) < 3 &&
       !siteCancelled(o.status, o.statusLabel) && !siteDelivered(Number(o.stage), o.status, o.statusLabel));
     if (!open.length) return [];
     const day = businessDay(now);
@@ -142,6 +147,7 @@ function setup(app) {
     const cancelled = new Set(snapshots.flatMap(d => [...(d?.cancels || []), ...(d?.cancelNotes || [])]).map(a => String(a.no)));
     const apex = new Map(snapshots.flatMap(d => d?.online || []).filter(a => a.kind === 'الموقع').map(a => [String(a.no), a]));
     if (!apex.size) return [];
+    const lateOut = new Map(snapshots.flatMap(d => d?.lateOut || []).filter(a => a.kind === 'الموقع').map(a => [String(a.no), a]));
     const names = app.apexNameMap ? await app.apexNameMap() : {};
     const dispatch = [], apexUses = new Map();
     for (let i = 0; i < open.length; i += 90) {
@@ -164,8 +170,14 @@ function setup(app) {
           return ref.exact || westernDigits(a.tag).trim().replace(/^#/, '') === String(id);
         });
         if (matches.length !== 1) continue;
-        const [a] = matches, out = Date.parse(a.out), driver = String(names[a.pilot] || a.pilot || '').trim();
-        if (cancelled.has(String(a.no)) || !Number.isFinite(out) || out > now + 60000 || out < Number(o.createdAt) * 1000 - 5 * 60000 ||
+        const [a] = matches, fallback = lateOut.get(String(a.no));
+        const departure = fallback && APEX_BRANCH_LABELS[o.branchId].test(String(fallback.branch || '').trim()) ? fallback : null;
+        const out = Date.parse(a.out || departure?.out), entered = Date.parse(a.at);
+        const pilot = a.out && a.pilot ? a.pilot : departure?.pilot;
+        const driver = String(names[pilot] || pilot || '').trim();
+        // The platform and Apex may display different wall-clock times. Validate their own chronology and the exact link.
+        if (cancelled.has(String(a.no)) || !Number.isFinite(out) || out > now + 60000 ||
+          out < Number(o.createdAt) * 1000 - 3 * 3600000 || (Number.isFinite(entered) && out < entered) ||
           !/\p{L}/u.test(driver) || driver.length > 80) continue;
         const apexNo = String(a.no);
         apexUses.set(apexNo, (apexUses.get(apexNo) || 0) + 1);
@@ -199,7 +211,8 @@ function setup(app) {
       const assigned = Number(o.branchAssignedAt) > 1e9 ? Number(o.branchAssignedAt) * 1000 : null;
       const scheduledAt = scheduledOrderAt(o, created) || old?.scheduled_at || null;
       const scheduled = isScheduledOrder(o) || !!scheduledAt || !!old?.scheduled ? 1 : 0;
-      const outAt = old?.out_at || (stage >= 3 || o.driver ? now : null), deliveredAt = old?.delivered_at || (done ? now : null);
+      const driver = textOf(o.driver).trim().slice(0, 80) || null;
+      const outAt = old?.out_at || (stage >= 3 || driver ? now : null), deliveredAt = old?.delivered_at || (done ? now : null);
       const f = o.financial || {}, rows = Array.isArray(f.rows) ? f.rows : [];
       const onlinePaid = num(f.onlinePaid) || 0, due = num(f.due) ?? num(o.total) ?? 0;
       // The panel's own payment words decide (11-11, live: «الدفع أون لاين - Visa / Card» with nothing paid yet and
@@ -236,7 +249,7 @@ function setup(app) {
       if (profileChanged) writes.push(db.prepare("INSERT INTO match_profiles (source, ref, data) VALUES ('site', ?, ?) ON CONFLICT(source, ref) DO UPDATE SET data = excluded.data").bind(String(id), pj));
       const day = businessDay(created), nextStatus = cancelled ? 'cancelled' : done ? 'completed' : status || 'processing';
       const fulfillment = String(o.fulfillment || '') || null, total = num(o.total), modified = Number(o.lastActionAt) > 1e9 ? Number(o.lastActionAt) * 1000 : (old?.modified_at ?? now);
-      const branch = String(o.branchName || '').slice(0, 60) || null, driver = o.driver ? String(o.driver.name || o.driver).slice(0, 80) : null;
+      const branch = String(o.branchName || '').slice(0, 60) || null;
       const transfers = old?.branch && branch && old.branch !== branch ? (old.transfers || 1) + 1 : (assigned ? 1 : 0);
       const orderChanged = !old || old.day !== day || old.status !== nextStatus || old.fulfillment !== fulfillment || old.total !== total || old.modified_at !== modified ||
         old.received_at == null || (assigned != null && old.transfer_at == null) || (branch != null && old.branch !== branch) || old.out_at !== outAt || old.driver !== driver ||

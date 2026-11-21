@@ -242,26 +242,28 @@ test('branch board mirrors the driver from a fresh, confirmed Apex website deliv
     const first = order(31837), manual = order(31845);
     const list = [first, order(31838), order(31839, { fulfillment: 'pickup' }), order(31840), order(31841),
       order(31842), order(31843, { stage: 3, status: 'app-delivering', driver: { name: 'زياد علي' } }),
-      order(31844), manual, order(31846), order(31847)];
+      order(31844), manual, order(31846), order(31847), order(31848, { driver: {}, createdAt: (now + 50 * 60000) / 1000 })];
     const apex = (no, tag, extra = {}) => ({ no, tag, kind: 'الموقع', branch: 'التجمع', pilot: 'زياد علي',
       out: new Date(now - 60000).toISOString(), ...extra });
     const snapshot = { online: [apex(707140, ''), apex(707141, '31838', { out: null }), apex(707142, '31839'),
       apex(707143, '31840', { branch: 'مدينتي' }), apex(707144, '31841', { pilot: '#23' }), apex(707145, '31842'),
       apex(707146, '31843'), apex(707147, '31844'), apex(707148, '31844'),
-      apex(707149, '31846'), apex(707150, '31845'), apex(707151, '31847', { kind: 'طلبات' })],
-      cancels: [{ no: 707145 }] };
+      apex(707149, '31846'), apex(707150, '31845'), apex(707151, '31847', { kind: 'طلبات' }),
+      apex(707152, '31848', { out: null, pilot: null, at: new Date(now - 10 * 60000).toISOString() })],
+      lateOut: [apex(707152, '', { pilot: 'أحمد علي' })], cancels: [{ no: 707145 }] };
     db.prepare('INSERT INTO orders_days (day, data, received_at) VALUES (?, ?, ?)').run(day, JSON.stringify(snapshot), now);
     db.prepare('INSERT INTO site_links (site_id, day, apex_no, set_by, set_at) VALUES (?, ?, ?, ?, ?)').run(manual.id, day, '707149', 'admin', now);
     db.prepare('INSERT INTO transfer_jobs (source, ref, day, state, at, payload, result) VALUES (?,?,?,?,?,?,?)')
       .run('site', String(first.id), day, 'auto_done', now, JSON.stringify({ branchNo: 1, db: 'live' }), JSON.stringify({ orderNo: 707140, db: 'live' }));
     const push = (orders, board = 'branch', dispatchFromApex = true) =>
       t.call('POST', '/api/site/panel', { headers: { 'x-talabat-token': token }, body: { board, dispatchFromApex, orders } });
-    assert.deepEqual((await push(list)).body.dispatch, [{ orderId: 31837, driver: 'زياد علي' }], 'duplicate matches and unverified deliveries are skipped');
+    assert.deepEqual((await push(list)).body.dispatch, [{ orderId: 31837, driver: 'زياد علي' }, { orderId: 31848, driver: 'أحمد علي' }], 'duplicate matches and unverified deliveries are skipped');
     assert.deepEqual((await push([manual])).body.dispatch, [{ orderId: 31845, driver: 'زياد علي' }], 'explicit link wins over a typed tag');
     const out = db.prepare('SELECT out_at, delivered_at, status FROM site_orders WHERE id = 31843').get();
     assert.ok(out.out_at);
     assert.equal(out.delivered_at, null);
     assert.equal(out.status, 'app-delivering');
+    assert.deepEqual(db.prepare('SELECT out_at, driver FROM site_orders WHERE id = 31848').get(), { out_at: null, driver: null });
     assert.deepEqual((await push([first], 'central')).body.dispatch, []);
     assert.deepEqual((await push([first], 'branch', false)).body.dispatch, []);
     t.advance(6 * 60000);

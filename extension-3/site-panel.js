@@ -3,11 +3,21 @@
 (() => {
   // Put back after an update (background.js): never two copies in one page (two «إرسال للفرع» presses).
   if (window.__marsadSitePanel === globalThis.MARSAD?.VERSION) return; window.__marsadSitePanel = globalThis.MARSAD?.VERSION;
-  const s = document.createElement('script');
-  s.src = browser.runtime.getURL('site-hook.js'); s.onload = () => s.remove();
-  (document.head || document.documentElement).append(s);
+  const injectHook = () => {
+    const parent = document.head || document.documentElement;
+    if (!parent) return false;
+    const script = document.createElement('script');
+    script.src = browser.runtime.getURL('site-hook.js');
+    script.onload = () => script.remove();
+    parent.append(script);
+    return true;
+  };
+  if (!injectHook()) {
+    const documentReady = new MutationObserver(() => { if (injectHook()) documentReady.disconnect(); });
+    documentReady.observe(document, { childList: true });
+  }
   const board = /eldahan-operations-central/.test(location.pathname) ? 'central' : 'branch';
-  let last = '', lastAt = 0, seenAt = Date.now(), assignedAt = 0, reloadAt = Date.now();
+  let last = '', lastAt = 0, seenAt = Date.now(), assignedAt = 0;
   // Each order at most 3 tries, 90 s apart; never when the panel shows it already has a branch.
   const tries = new Map();
   const assign = (a, orders) => {
@@ -129,17 +139,27 @@
   const KEY = 'marsadSiteBackoff';
   const load = () => { try { const v = JSON.parse(sessionStorage.getItem(KEY) || '{}'); return { reloads: Math.min(Number(v.reloads) || 0, 4), lastReload: Number(v.lastReload) || 0 }; } catch { return { reloads: 0, lastReload: 0 }; } };
   const save = v => { try { sessionStorage.setItem(KEY, JSON.stringify(v)); } catch {} };
-  let pushes = 0, nextPushAt = 0;
+  let pushes = 0, nextPushAt = 0, authExpired = false;
+  const AUTH_RELOAD = 'marsadSiteAuthReloadAt';
+  const lastAuthReload = () => { try { return Number(sessionStorage.getItem(AUTH_RELOAD)) || 0; } catch { return 0; } };
   window.addEventListener('message', e => {
-    if (e.source !== window || !e.data || e.data.__marsadSite !== 1 || !Array.isArray(e.data.data?.orders)) return;
+    if (e.source !== window || e.data?.__marsadSite !== 1) return;
+    if (e.data.authExpired === true) { authExpired = true; return; }
+    if (!Array.isArray(e.data.data?.orders)) return;
+    authExpired = false;
     pushes = 0; nextPushAt = 0; save({ reloads: 0, lastReload: 0 });
   });
   setInterval(() => {
     const now = Date.now(), quiet = now - seenAt;
-    if (dispatching || quiet < 25000 || now - assignedAt < 10000) return;
-    const a = document.activeElement;
-    if (a && a !== document.body && a.matches?.('select,input,textarea,[contenteditable="true"]')) return;
-    if (document.querySelector('[role="dialog"]:not([hidden]),.eldahan-ops-modal.show,dialog[open]')) return;
+    if (dispatching || now - assignedAt < 10000 || isEditing()) return;
+    // A fresh page requests a new WordPress nonce while its login session is still valid.
+    if (authExpired && now - lastAuthReload() >= 5 * 60000) {
+      try { sessionStorage.setItem(AUTH_RELOAD, String(now)); } catch {}
+      save({ reloads: 1, lastReload: now });
+      location.reload();
+      return;
+    }
+    if (quiet < 25000) return;
     const st = load(), gap = Math.min(120000 * 2 ** st.reloads, 30 * 60000);
     if (quiet > gap && now - st.lastReload > gap) { save({ reloads: st.reloads + 1, lastReload: now }); location.reload(); return; }
     if (now < nextPushAt) return;
