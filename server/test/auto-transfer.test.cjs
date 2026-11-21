@@ -217,6 +217,64 @@ test('auto transfer: trial only records, on sends as «المرصد آلي», a 
 });
 
 // Karim 11-11 «المناطق معروفه»: the website's delivery area is read and taken like Talabat's.
+test('cashier card result resumes a waiting order immediately after an alert, while a paid card discount still needs a gift choice', async () => {
+  const day = '2026-10-22', now = cairoToUtc(2026, 10, 22, 20, 10), t = await start({ at: now });
+  try {
+    const admin = await t.admin();
+    const monitorToken = (await admin('POST', '/api/orders/token')).body.token;
+    const talabatToken = (await admin('POST', '/api/talabat/token')).body.token;
+    const writerToken = (await admin('POST', '/api/apex-writer', { action: 'token' })).body.token;
+    const writer = (path, body = {}) => t.call('POST', '/api/apex-writer/' + path, { headers: { 'x-apex-writer': writerToken }, body });
+    const refs = ['3977900081', '3977900082'], store = 'الدهان، التجمع الخامس';
+    await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': monitorToken },
+      body: { v: 1, day, online: [], locations: [{ no: 218, name: 'التجمع الخامس', branch: 1, service: 20 }] } });
+    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': talabatToken },
+      body: { codes: refs.map((id, i) => ({ id, code: '8' + (i + 1), store })) } });
+    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': talabatToken }, body: { orders: refs.map((id, i) => ({
+      id, store, status: 'ACCEPTED', placedAt: new Date(now - 25 * 60000).toISOString(), total: P,
+      detail: { subtotal: P, customer: { name: 'عميل', phone: '0100000008' + i, area: 'التجمع الخامس', address: 'شارع 90، عمارة 4' },
+        items: [{ qty: 1, name: 'Kofta', price: P, modifierRead: true, modifierComplete: true, options: [] }],
+        bill: [{ k: 'مجموع', text: 'مجموع | ' + P }, { k: 'payment', text: i ? 'ONLINE' : 'Cash' }] } })) } });
+    await t.employee(admin, { name: 'سارة', code: 'E1', pin: '4141' });
+    const { token } = (await t.call('POST', '/api/transfer/login', { body: { pin: '4141' } })).body;
+    const page = (method, path, body) => t.call(method, path, { body, headers: { 'x-transfer-session': token } });
+    t.advance(9000);
+    const orders = (await page('GET', '/api/transfer/queue?day=' + day)).body.orders;
+    for (const o of orders) assert.equal((await page('POST', '/api/transfer/selection', {
+      source: 'talabat', ref: o.ref, line: 0, choiceKey: o.items[0].choiceKey, itemNo: KOFTA })).status, 200);
+    await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'test' });
+    await admin('POST', '/api/auto-transfer', { mode: 'on', confirm: 'ON' });
+    t.advance(61000);
+    await page('GET', '/api/transfer/queue?day=' + day);
+    const db = t.app.db.raw;
+    for (const ref of refs) db.prepare("INSERT OR REPLACE INTO auto_transfer_log (source, ref, day, decision, reasons, at, first_at, alerted) VALUES ('talabat', ?, ?, 'wait', ?, ?, ?, 1)")
+      .run(ref, day, 'أوردر قديم — غالباً اتسجل بإيد · مستني قراءة بطاقة العميل من Apex', now, now - 20 * 60000);
+    const pending = (await writer('customer-notes/pending')).body.pending;
+    assert.equal(pending.length, 2);
+    const answer = await writer('customer-notes/result', { results: pending.map(x => ({ ...x, status: 'found',
+      custNo: x.ref.slice(-2), note: x.ref === refs[0] ? 'خصم 10%' : 'خصم 20%' })) });
+    assert.equal(answer.body.updated, 2);
+    const job = ref => db.prepare('SELECT state, payload FROM transfer_jobs WHERE ref = ?').get(ref);
+    const reason = () => db.prepare('SELECT reasons FROM auto_transfer_log WHERE ref = ?').get(refs[1]).reasons;
+    for (let n = 0; n < 50 && (!job(refs[0]) || !/هدية/.test(reason())); n++) await new Promise(r => setTimeout(r, 10));
+    assert.equal(job(refs[0])?.state, 'auto_pending', JSON.stringify(db.prepare('SELECT ref, reasons FROM auto_transfer_log').all()));
+    assert.equal(JSON.parse(job(refs[0]).payload).apexCustomerBenefit.percent, 10);
+    assert.equal(job(refs[1]), undefined);
+    assert.match(reason(), /يختار هدية/);
+
+    // If the card changed before Apex wrote the order, the next reading can safely rebuild the job.
+    assert.equal((await writer('next')).body.job.ref, refs[0]);
+    assert.equal((await writer('result', { source: 'talabat', ref: refs[0], ok: false, db: 'test', error: 'customer note changed before writing' })).status, 200);
+    assert.equal(job(refs[0]).state, 'auto_failed');
+    const reread = (await writer('customer-notes/pending')).body.pending.find(x => x.ref === refs[0]);
+    assert.ok(reread);
+    assert.equal((await writer('customer-notes/result', { results: [{ ...reread, status: 'none' }] })).body.updated, 1);
+    for (let n = 0; n < 50 && job(refs[0]).state !== 'auto_pending'; n++) await new Promise(r => setTimeout(r, 10));
+    assert.equal(job(refs[0]).state, 'auto_pending');
+    assert.equal(JSON.parse(job(refs[0]).payload).apexCustomerBenefit, null);
+  } finally { await t.close(); }
+});
+
 test('website area: from the panel\'s area field or the address\'s last part', () => {
   assert.equal(panelArea({ customer: { address: '26 شارع أبو السعود، النزهة الجديدة' } }), 'النزهة الجديدة');
   assert.equal(panelArea({ customer: { address: 'x', area: 'التجمع الخامس - البنفسج' } }), 'التجمع الخامس - البنفسج');

@@ -213,6 +213,7 @@ function stateOf(o) {
   if (o.job?.state === 'auto_sending') return { cls: 'wait', text: 'بيتكتب على Apex…' };
   if (o.job?.state === 'auto_retry_pending') return { cls: 'wait', text: o.job.result?.noteRetried ? 'المرصد هيعيد الإرسال تلقائيًا بنفس ملاحظة العميل' : 'اتصال الكاشير بالمطعم فشل — هنجرب تاني تلقائيًا' };
   if (o.job?.state === 'auto_done') return { cls: 'in', text: 'اتسجل على Apex ✓' + (r?.db === 'test' ? ' (تجربة)' : '') + ' رقم ' + (r?.shiftSerial ?? r?.orderNo ?? '') + (r?.error ? ' — ' + plain(r.error) : '') };
+  if (o.job?.state === 'auto_failed' && r?.cardRefresh) return { cls: 'wait', text: 'البطاقة اتغيّرت — مستني قراءة جديدة عشان يكمل آلي' };
   if (o.job?.state === 'auto_failed') return { cls: 'other', text: 'ماتسجلش: ' + plain(r?.error) + ' — صلّحها وابعته تاني، أو سجله بإيدك' };
   if (o.job?.state === 'auto_preview') return { cls: r?.ok ? 'wait' : 'other', text: 'تجربة بس، ماتسجلش (كان هيطلع ' + money(r?.total) + ')' + (r?.error ? ' — ' + plain(r.error) : '') + ' — سجله بإيدك' };
   if (o.job?.state === 'entered') return { cls: 'wait', text: (o.job.mine ? 'إنت سجلته' : o.job.by + ' سجله') + ' — مستني يظهر في Apex' };
@@ -220,6 +221,10 @@ function stateOf(o) {
   if (o.out) return { cls: 'in', text: 'خرج مع الطيار (اتسجل قبل كده)' };
   // The automatic transfer (11-11): what it decided about this order — sent by itself, would be (trial), or why it left it.
   if (o.auto?.decision === 'would') return { cls: 'wait', text: 'تجربة: المرصد كان هيحوّله لوحده' };
+  if (o.auto?.decision === 'wait' && o.auto.why === 'مستني قراءة بطاقة العميل من Apex') {
+    const checked = ['found', 'none'].includes(o.apexCustomerNote?.status) && Date.parse(o.apexCustomerNote?.checkedAt || '') >= Date.parse(data.serverNow) - 600000;
+    return { cls: 'wait', text: checked ? 'البطاقة اتقرت — المرصد بيعيد فحص التحويل' : o.auto.why };
+  }
   if (o.auto?.decision === 'wait' && o.auto.why && !/^(?:لسه واصل|أوردر مجدول|تفاصيل الأوردر لسه ماوصلتش|لسه ما اتقبلش على طلبات|أوردر قديم — غالباً اتسجل بإيد|اتحوّل للفرع على الموقع — غالباً اتسجل بإيد)$/.test(o.auto.why)) return { cls: '', text: 'جديد — مش هيتحوّل آلي: ' + o.auto.why };
   return { cls: '', text: 'جديد' };
 }

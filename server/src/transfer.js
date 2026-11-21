@@ -1266,6 +1266,7 @@ function setup(app) {
     await writer(ctx);
     const rows = Array.isArray(ctx.body.results) ? ctx.body.results.slice(0, 25) : [];
     let updated = 0;
+    const cardsReady = new Set();
     for (const x of rows) {
       const source = x.source === 'talabat' || x.source === 'site' ? x.source : null, ref = String(x.ref || '');
       if (!source || !/^\d{1,20}$/.test(ref)) continue;
@@ -1281,6 +1282,15 @@ function setup(app) {
         ON CONFLICT(source,ref) DO UPDATE SET day=excluded.day,phone_last4=excluded.phone_last4,phone_hash=excluded.phone_hash,cust_no=excluded.cust_no,note=excluded.note,checked_at=excluded.checked_at,status=excluded.status`)
         .run(source, ref, effectiveDay, String(x.phone).slice(-4), sha256(deliveryPhone(x.phone)), status === 'found' ? String(x.custNo).slice(0, 30) : null, note, ctx.now, status);
       updated++;
+      if (status !== 'error' && effectiveDay === businessDay(ctx.now)) cardsReady.add(source + ':' + ref);
+    }
+    if (cardsReady.size && !app.config.shadow && app.autoTransfer) {
+      const refs = [...cardsReady].map(key => key.split(':'));
+      await db.prepare(`UPDATE transfer_jobs SET state = 'released'
+        WHERE (source, ref) IN (VALUES ${refs.map(() => '(?, ?)').join(', ')})
+          AND state = 'auto_failed' AND employee_name = 'المرصد آلي'
+          AND json_extract(result, '$.cardRefresh') = 1`).run(...refs.flat());
+      ctx.waitUntil(app.autoTransfer.tick(ctx.now, { cardsReady }).catch(() => {}));
     }
     return { updated };
   });
@@ -1425,6 +1435,8 @@ function setup(app) {
     const previous = await db.prepare("SELECT result, employee_name FROM transfer_jobs WHERE source = ? AND ref = ? AND state = 'auto_sending'").get(source, ref);
     const previousResult = parseJson(previous?.result, {});
     const retryCount = Number(previousResult?.retryCount) || 0;
+    const cardChanged = !result.ok && /customer note changed|customer changed before/i.test(result.error || '');
+    if (cardChanged && previous?.employee_name === 'المرصد آلي') result.cardRefresh = true;
     const canRetryConnection = isCashierDbConnectionFailure(result);
     // Older cashier writers ask for a person on ordinary substitutions in the note. They mark the
     // order locally as reviewed after accepting this result, so a second delivery carries the same note.
@@ -1445,7 +1457,7 @@ function setup(app) {
     // Karim 11-14 (#4720402628): the customer's card on Apex changed after it was read (another order of the same
     // customer used the discount, or the branch edited it). The writer refuses (right: never a discount twice); the card is
     // read again at once so the page shows the card as it is now and the order can be sent again.
-    if (state === 'auto_failed' && /customer note changed|customer changed before/i.test(result.error || ''))
+    if (state === 'auto_failed' && cardChanged)
       await db.prepare('UPDATE apex_customer_notes SET checked_at = 0 WHERE source = ? AND ref = ?').run(source, ref).catch(() => {});
     if (state === 'auto_done') {
       // The durable result is already saved. Optional learning must never turn
@@ -1467,7 +1479,7 @@ function setup(app) {
     }
     await app.audit('apex_writer_result', null, { source, ref, ...result });
     // Karim 01-11 (#53 stayed «ماتسجلش» for 3 hours): a failed automatic transfer is told to the call center at once.
-    if (state === 'auto_failed' && (result.db === 'live' || canRetryConnection)) {
+    if (state === 'auto_failed' && !result.cardRefresh && (result.db === 'live' || canRetryConnection)) {
       const job = await db.prepare('SELECT payload FROM transfer_jobs WHERE source = ? AND ref = ?').get(source, ref);
       await transferAlert('transfer:failed:' + source + ':' + ref, parseJson(job?.payload, {}), source, ref, 'ماتسجلش على Apex — ' + plainError(result.error), ctx.now);
     }

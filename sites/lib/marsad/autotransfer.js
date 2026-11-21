@@ -26,7 +26,8 @@ const QUIET = new Set(['لسه واصل', 'أوردر مجدول', 'تفاصيل
 const SITE_PLACES = [{ no: 3, re: /مدين?ت[يى]|مدنت[يى]|madinaty/i }, { no: 2, re: /مدين[هة] ?نصر|nasr ?city/i }, { no: 1, re: /التجمع|تجمع خامس|tagamo|new cairo|القاهر[هة] الجديد[هة]/i }];
 const TICK_MS = 60000, SETTLE_MS = 60000, ALERT_MS = 2 * 60000, LATE_MAX_MS = 60 * 60000;
 // Waits on the system, not on a person: staff are not asked to enter the order for these in its first 10 minutes.
-const SYSTEM_WAIT = new Set(['لسه واصل', 'مستني قراءة بطاقة العميل من Apex', 'تفاصيل الأوردر لسه ماوصلتش', 'هاشتاج طلبات لسه ماظهرش', 'لسه ما اتقبلش على طلبات']);
+const CARD_WAIT = 'مستني قراءة بطاقة العميل من Apex';
+const SYSTEM_WAIT = new Set(['لسه واصل', CARD_WAIT, 'تفاصيل الأوردر لسه ماوصلتش', 'هاشتاج طلبات لسه ماظهرش', 'لسه ما اتقبلش على طلبات']);
 const LEGACY_LANGUAGE_HOLD = 'فيه كلمات إنجليزي في العنوان — راجع التعريب قبل التسجيل';
 const POSSIBLE_APEX_MATCH = new Set(['tentative', 'ambiguous']);
 const CARD_QUIET_MS = 10 * 60000;
@@ -170,7 +171,7 @@ export function decide(o, x) {
   // The customer's card on Apex.
   const card = o.apexCustomerNote;
   const fresh = card && card.checkedAt && x.now - Date.parse(card.checkedAt) <= 10 * 60000;
-  if (!card || !fresh || (card.status !== 'none' && card.status !== 'found')) why.push('مستني قراءة بطاقة العميل من Apex');
+  if (!card || !fresh || (card.status !== 'none' && card.status !== 'found')) why.push(CARD_WAIT);
   // Karim 11-11: a cash order with one clear discount on the card is discounted on Apex by itself. Only the customer's
   // choice needs a person: a paid order's gift instead of the discount (or keeping it for the next order), free items.
   else if (card.status === 'found') {
@@ -233,19 +234,23 @@ function setup(app) {
   }
 
   let last = 0, running = false;
-  async function tick(now, { force = false } = {}) {
-    if (running || (!force && now - last < TICK_MS)) return null;
-    last = now; running = true;
+  async function tick(now, { force = false, cardsReady = null } = {}) {
+    if (!cardsReady) {
+      if (running || (!force && now - last < TICK_MS)) return null;
+      last = now; running = true;
+    }
     try {
       const m = await mode(); if (m === 'off') return { mode: m };
       const day = businessDay(now);
-      const q = await app.transferQueue(day, { now, cachedOnly: true });
-      if (!q) return { mode: m, skipped: 'no recent build' };
+      const cached = await app.transferQueue(day, { now, cachedOnly: true });
+      const q = cached || (cardsReady && await app.transferQueue(day, { now }));
+      if (!q || q.stale) return { mode: m, skipped: 'no recent build' };
       const areas = await customerAreas(day);
       const { deliveryPhone } = await import('./delivery-fields.js');
       const seen = new Map((await db.prepare('SELECT source, ref, decision, reasons, alerted, first_at FROM auto_transfer_log WHERE day = ?').all(day)).map(r => [r.source + ':' + r.ref, r]));
       // Seen within 5 minutes of coming, never put to staff (no «سجّله بإيد» message), only system waits so far.
       const waitedOnSystem = o => {
+        if (cardsReady?.has(o.source + ':' + o.ref) && o.job?.state === 'released' && o.job.result?.cardRefresh) return true;
         const r = seen.get(o.source + ':' + o.ref);
         if (!r) return false;
         const reasons = String(r.reasons || '').split(' · ').filter(Boolean);
@@ -254,6 +259,8 @@ function setup(app) {
         const removedHold = w => w === LEGACY_LANGUAGE_HOLD || w === 'اتحوّل للفرع على الموقع — غالباً اتسجل بإيد'
           || /^(?:كاتب Apex مش بيسجل|مجموع الأصناف على Apex .*اتأكد من العدد)/.test(w);
         if (reasons.some(removedHold) && reasons.every(w => removedHold(w) || SYSTEM_WAIT.has(w) || BEFORE.has(w))) return true;
+        // A notification about a slow card read is not a claim, and the newly read card can unblock the order.
+        if (reasons.includes(CARD_WAIT) && reasons.every(w => SYSTEM_WAIT.has(w) || BEFORE.has(w))) return true;
         if (r.alerted || !(Number(r.first_at) - Date.parse(o.at || 0) <= 5 * 60000)) return false;
         return reasons.every(w => SYSTEM_WAIT.has(w) || w === 'أوردر قديم — غالباً اتسجل بإيد' || /^(?:كاتب Apex مش بيسجل|D1_|.*server|.*timeout|.*fetch)/i.test(w));
       };
@@ -266,6 +273,7 @@ function setup(app) {
       const out = [];
       for (const o of q.orders || []) {
         const k = o.source + ':' + o.ref, prev = seen.get(k);
+        if (cardsReady && !cardsReady.has(k)) continue;
         // A queue snapshot can be older than another Worker isolate's job insert. Reconcile the durable job first;
         // never leave a stale «won't transfer» decision beside a job that is already queued or written.
         const currentJob = jobs.get(k);
@@ -292,7 +300,11 @@ function setup(app) {
         }
         if (!prev || prev.decision !== decision || prev.reasons !== reasons)
           await db.prepare(`INSERT INTO auto_transfer_log (source, ref, day, code, decision, reasons, at, first_at, alerted) VALUES (?,?,?,?,?,?,?,?,0)
-            ON CONFLICT(source, ref) DO UPDATE SET decision = excluded.decision, reasons = excluded.reasons, at = excluded.at, code = excluded.code`)
+            ON CONFLICT(source, ref) DO UPDATE SET decision = excluded.decision, reasons = excluded.reasons, at = excluded.at, code = excluded.code
+            WHERE excluded.decision <> 'wait' OR NOT EXISTS (
+              SELECT 1 FROM transfer_jobs j WHERE j.source = excluded.source AND j.ref = excluded.ref
+                AND j.state IN ('auto_pending', 'auto_sending', 'auto_retry_pending', 'auto_done', 'entered')
+            )`)
             .run(o.source, String(o.ref), day, o.code || null, decision, reasons, now, prev?.first_at || now);
         // Still with nobody after 2 minutes (mode on): the call center group, once per order.
         // Waiting only on the system (the card on Apex): staff are told after 10 minutes, not 2.
@@ -300,8 +312,11 @@ function setup(app) {
         if (m === 'on' && decision === 'wait' && !d.quiet && !(prev?.alerted) && now - Date.parse(o.at || now) > (systemOnly ? CARD_QUIET_MS : ALERT_MS)) {
           const c = await db.prepare('SELECT rules FROM telegram_config WHERE id = 1').get().catch(() => null);
           if (parseJson(c?.rules, {}).autoWaiting !== false) {
-            const text = '🟠 مستني تحويل بإيد موظف | ' + (o.source === 'talabat' ? 'طلبات' : 'الموقع') + ' #' + (o.code || o.ref) + (BRANCH_NAME[o.apexBranch] ? ' — فرع ' + BRANCH_NAME[o.apexBranch] : '') +
-              '\nالمرصد ماحوّلوش لوحده: ' + reasons + '\nحد يفتح صفحة التحويل ويسجله';
+            const waitingForCard = systemOnly && d.why.includes(CARD_WAIT);
+            const title = waitingForCard ? '🟠 قراءة بطاقة العميل اتأخرت | ' : '🟠 مستني تحويل بإيد موظف | ';
+            const order = (o.source === 'talabat' ? 'طلبات' : 'الموقع') + ' #' + (o.code || o.ref) + (BRANCH_NAME[o.apexBranch] ? ' — فرع ' + BRANCH_NAME[o.apexBranch] : '');
+            const detail = waitingForCard ? '\nمرصد هيعيد فحص التحويل بعد القراءة. راجع اتصال جهاز الكاشير.' : '\nالمرصد ماحوّلوش لوحده: ' + reasons + '\nحد يفتح صفحة التحويل ويسجله';
+            const text = title + order + detail;
             await db.prepare("INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, sent_at, target) VALUES (?, 'autoWaiting', NULL, ?, ?, NULL, 'online')").run('autoWait:' + k, text, now);
           }
           await db.prepare('UPDATE auto_transfer_log SET alerted = 1 WHERE source = ? AND ref = ?').run(o.source, String(o.ref));
@@ -309,9 +324,12 @@ function setup(app) {
         out.push({ key: k, decision, reasons });
       }
       return { mode: m, checked: out.length, out };
-    } finally { running = false; }
+    } finally { if (!cardsReady) running = false; }
   }
-  app.afterRequest(now => tick(now).catch(() => {}));
+  app.afterRequest((now, method, path) => {
+    if (method === 'POST' && path === '/api/apex-writer/customer-notes/result') return;
+    return tick(now).catch(() => {});
+  });
   app.autoTransfer = { tick, decide, mode };
 
   // What the transfer page shows under an order: «هيتحوّل آلي» or why not.
