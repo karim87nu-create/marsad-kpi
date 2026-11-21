@@ -32,8 +32,11 @@ test('auto transfer: decides only on certain orders and says why not', () => {
   assert.doesNotMatch(pk.why.join(' '), /العنوان فيه المنطقة بس/); assert.equal(pk.ok, true, pk.why.join(' · ')); assert.equal(pk.body.locationNo, 353);
   assert.equal(decide(base({ apex: { no: 5 } }), X), null, 'already on Apex');
   assert.equal(decide(base({ job: { state: 'claimed' } }), X), null, 'with somebody');
-  assert.match(why({ at: new Date(NOW - 10000).toISOString() }), /لسه واصل/);
-  assert.equal(decide(base({ at: new Date(NOW - 10000).toISOString() }), X).quiet, true, 'a new order is no alert');
+  for (const at of [new Date(NOW - 10000).toISOString(), new Date(NOW + 5000).toISOString(), null]) {
+    assert.equal(decide(base({ at }), X).ok, true, 'a ready order does not wait for its timestamp');
+  }
+  assert.match(why({ at: new Date(NOW).toISOString(), status: 'NEW' }), /لسه ما اتقبلش/);
+  assert.match(why({ at: null, matching: { state: 'tentative' } }), /محتمل/);
   // 11-11: 9 website orders staff had entered by hand were written again hours later.
   assert.match(why({ at: new Date(NOW - 25 * 60000).toISOString() }), /أوردر قديم/);
   assert.equal(decide(base({ at: new Date(NOW - 25 * 60000).toISOString() }), X).quiet, true);
@@ -45,7 +48,8 @@ test('auto transfer: decides only on certain orders and says why not', () => {
   assert.match(mixedAddress.warnings.join(), /اتنقلت زي ما العميل كتبها/);
   // 11-19: a booked order goes by itself an hour before its time; one with no time stays with staff.
   assert.match(why({ scheduled: true, scheduledAt: new Date(NOW + 2 * 3600000).toISOString(), at: new Date(NOW + 2 * 3600000).toISOString() }), /مجدول/);
-  assert.doesNotMatch(why({ scheduled: true, scheduledAt: new Date(NOW + 50 * 60000).toISOString(), at: new Date(NOW + 50 * 60000).toISOString() }), /مجدول/);
+  const due = new Date(NOW + 50 * 60000).toISOString();
+  assert.equal(decide(base({ source: 'site', scheduled: true, scheduledAt: due, at: due }), X).ok, true, 'bookings go in their lead window');
   assert.match(why({ scheduled: true }), /مجدول/);
   assert.match(why({ items: [{ qty: 1, name: 'Kofta', price: P, modifiersComplete: true, apex: [{ no: KOFTA }, { no: '0108001' }], addons: [] }] }), /أكتر من اختيار/);
   assert.match(why({ items: [{ qty: 1, name: 'Kofta', price: P, modifiersComplete: false, apex: [{ no: KOFTA }], addons: [] }] }), /الإضافات مش ظاهرة/);
@@ -84,6 +88,17 @@ test('auto transfer: decides only on certain orders and says why not', () => {
   assert.match(decide(base({ areaGuess: { no: 218, seen: 7, share: 0.6 } }), X).why.join(), /أكتر من منطقة/);
   assert.equal(decide(base({ areaGuess: { no: 218, seen: 0, how: 'name' } }), X).ok, true);
   assert.equal(decide(base(sd), { ...X, customerArea: () => 218 }).ok, true);
+});
+
+test('legacy arrival-only waits are not counted as employee work', () => {
+  const { autoReport } = require('../src/autotransfer.js');
+  const r = autoReport([
+    { source: 'talabat', ref: '1', decision: 'wait', reasons: 'لسه واصل' },
+    { source: 'site', ref: '2', decision: 'wait', reasons: 'لسه واصل · الفرع مش واضح' },
+  ]);
+  assert.equal(r.totals.talabat.staff, 0);
+  assert.equal(r.staff, 1);
+  assert.deepEqual(r.reasons.map(x => x.reason), ['الفرع مش واضح']);
 });
 
 test('auto transfer: trial only records, on sends as «المرصد آلي», a waiting order is told to the call center once', async () => {
@@ -240,12 +255,11 @@ test('cashier card result resumes a waiting order immediately after an alert, wh
     const page = (method, path, body) => t.call(method, path, { body, headers: { 'x-transfer-session': token } });
     t.advance(9000);
     const orders = (await page('GET', '/api/transfer/queue?day=' + day)).body.orders;
+    assert.ok(t.clock.now - Date.parse(orders[0].at) < 60000, 'the order is still within the old first-minute hold');
     for (const o of orders) assert.equal((await page('POST', '/api/transfer/selection', {
       source: 'talabat', ref: o.ref, line: 0, choiceKey: o.items[0].choiceKey, itemNo: KOFTA })).status, 200);
     await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'test' });
     await admin('POST', '/api/auto-transfer', { mode: 'on', confirm: 'ON' });
-    t.advance(61000);
-    await page('GET', '/api/transfer/queue?day=' + day);
     const db = t.app.db.raw;
     for (const ref of refs) db.prepare("INSERT OR REPLACE INTO auto_transfer_log (source, ref, day, decision, reasons, at, first_at, alerted) VALUES ('talabat', ?, ?, 'wait', ?, ?, ?, 1)")
       .run(ref, day, 'أوردر قديم — غالباً اتسجل بإيد · مستني قراءة بطاقة العميل من Apex', now, now - 20 * 60000);

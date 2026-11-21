@@ -21,13 +21,14 @@ import { areaGroups, areaForBranch, PICKUP_AREAS } from './apex-areas.js';
 import { APEX_PRICES } from './menu-seed.js';
 
 export const MODES = ['off', 'trial', 'on'];
-const QUIET = new Set(['لسه واصل', 'أوردر مجدول', 'تفاصيل الأوردر لسه ماوصلتش', 'لسه ما اتقبلش على طلبات', 'أوردر قديم — غالباً اتسجل بإيد', 'اتحوّل للفرع على الموقع — غالباً اتسجل بإيد']);
+const QUIET = new Set(['أوردر مجدول', 'تفاصيل الأوردر لسه ماوصلتش', 'لسه ما اتقبلش على طلبات', 'أوردر قديم — غالباً اتسجل بإيد', 'اتحوّل للفرع على الموقع — غالباً اتسجل بإيد']);
 // A branch's own place in the customer's words (the website's area and address).
 const SITE_PLACES = [{ no: 3, re: /مدين?ت[يى]|مدنت[يى]|madinaty/i }, { no: 2, re: /مدين[هة] ?نصر|nasr ?city/i }, { no: 1, re: /التجمع|تجمع خامس|tagamo|new cairo|القاهر[هة] الجديد[هة]/i }];
-const TICK_MS = 60000, SETTLE_MS = 60000, ALERT_MS = 2 * 60000, LATE_MAX_MS = 60 * 60000;
+const TICK_MS = 60000, ALERT_MS = 2 * 60000, LATE_MAX_MS = 60 * 60000;
 // Waits on the system, not on a person: staff are not asked to enter the order for these in its first 10 minutes.
 const CARD_WAIT = 'مستني قراءة بطاقة العميل من Apex';
-const SYSTEM_WAIT = new Set(['لسه واصل', CARD_WAIT, 'تفاصيل الأوردر لسه ماوصلتش', 'هاشتاج طلبات لسه ماظهرش', 'لسه ما اتقبلش على طلبات']);
+const LEGACY_NEW_ORDER_HOLD = 'لسه واصل';
+const SYSTEM_WAIT = new Set([CARD_WAIT, 'تفاصيل الأوردر لسه ماوصلتش', 'هاشتاج طلبات لسه ماظهرش', 'لسه ما اتقبلش على طلبات']);
 const LEGACY_LANGUAGE_HOLD = 'فيه كلمات إنجليزي في العنوان — راجع التعريب قبل التسجيل';
 const POSSIBLE_APEX_MATCH = new Set(['tentative', 'ambiguous']);
 const CARD_QUIET_MS = 10 * 60000;
@@ -47,7 +48,9 @@ const pickOf = i => (i.apex || []).length === 1 ? i.apex[0].no : i.apexPick && (
 // The reasons of the orders left to staff, counted. A reason that names a dish or an area («صنف مش معروف على Apex: X»,
 // «منطقة «X» لسه ما اتعلمتش») is counted once under its kind, with the names it gave. Reasons that only say the order was
 // handled by a person first («لسه واصل», «أوردر قديم», «اتحوّل للفرع») count only when nothing else stopped it.
-const BEFORE = new Set(['لسه واصل', 'أوردر قديم — غالباً اتسجل بإيد', 'اتحوّل للفرع على الموقع — غالباً اتسجل بإيد']);
+const BEFORE = new Set([LEGACY_NEW_ORDER_HOLD, 'أوردر قديم — غالباً اتسجل بإيد', 'اتحوّل للفرع على الموقع — غالباً اتسجل بإيد']);
+const readReasons = text => String(text || '').split(' · ').map(reason => reason.trim()).filter(Boolean);
+const activeReasons = text => readReasons(text).filter(reason => reason !== LEGACY_NEW_ORDER_HOLD);
 export function reasonKind(r) {
   const s = String(r || '').trim();
   let m = /^(صنف (?:مش معروف على Apex|ليه أكتر من اختيار على Apex)):\s*(.+?)(?:\s*\(\+\d+\))?$/.exec(s); if (m) return [m[1], m[2]];
@@ -63,9 +66,10 @@ export function autoReport(rows) {
     t.all++;
     if (r.decision === 'sent') { t.auto++; continue; }
     if (r.decision === 'would') { t.would++; continue; }
+    const all = activeReasons(r.reasons);
+    if (!all.length && readReasons(r.reasons).includes(LEGACY_NEW_ORDER_HOLD)) continue;
     t.staff++;
-    const all = String(r.reasons || '').split(' · ').map(x => x.trim()).filter(Boolean);
-    const real = all.filter(x => !BEFORE.has(x)), use = real.length ? real : all.length ? [all.find(x => x !== 'لسه واصل') || all[0]] : ['غير معروف'];
+    const real = all.filter(x => !BEFORE.has(x)), use = real.length ? real : [all[0] || 'غير معروف'];
     for (const x of new Set(use)) {
       const [kind, detail] = reasonKind(x), e = reasons.get(kind) || { reason: kind, orders: 0, talabat: 0, site: 0, details: new Map(), codes: [] };
       e.orders++; e[r.source] = (e[r.source] || 0) + 1;
@@ -83,12 +87,11 @@ export function decide(o, x) {
   if (!o || o.done || o.apex || o.out) return null;
   if (o.job && o.job.state !== 'released') return null;
   const why = [], warnings = [];
-  const age = x.now - Date.parse(o.at || 0);
-  if (!(age >= SETTLE_MS)) why.push('لسه واصل');
+  const age = x.now - Date.parse(o.at || '');
   // Older orders can already have been handled outside Marsad. A recent order sent to a website
   // branch can still need Apex; do not write when reconciliation finds a possible existing order.
   if (age > TUNE.autoMaxAgeMin * 60000 && !(age <= LATE_MAX_MS && x.waitedOnSystem?.(o))) why.push('أوردر قديم — غالباً اتسجل بإيد');
-  if ((o.sentToBranch || age > TUNE.autoMaxAgeMin * 60000) && POSSIBLE_APEX_MATCH.has(o.matching?.state))
+  if ((o.sentToBranch || !Number.isFinite(age) || age > TUNE.autoMaxAgeMin * 60000) && POSSIBLE_APEX_MATCH.has(o.matching?.state))
     why.push('فيه أوردر محتمل يكون هو على Apex — راجع الربط');
   // Karim 11-19 «ميبقاش محتاج تحويل من الموظف غير العميل الي ليه ملاحظه»: a booked order goes by itself an hour before
   // its time (the booking time is written next to the name, as staff do); one with no time stays with staff.
@@ -253,10 +256,10 @@ function setup(app) {
         if (cardsReady?.has(o.source + ':' + o.ref) && o.job?.state === 'released' && o.job.result?.cardRefresh) return true;
         const r = seen.get(o.source + ':' + o.ref);
         if (!r) return false;
-        const reasons = String(r.reasons || '').split(' · ').filter(Boolean);
+        const reasons = readReasons(r.reasons);
         // Recover orders from the previous language gate even if it already alerted staff.
         // The age window, latest Apex match, and durable job checks still apply.
-        const removedHold = w => w === LEGACY_LANGUAGE_HOLD || w === 'اتحوّل للفرع على الموقع — غالباً اتسجل بإيد'
+        const removedHold = w => w === LEGACY_NEW_ORDER_HOLD || w === LEGACY_LANGUAGE_HOLD || w === 'اتحوّل للفرع على الموقع — غالباً اتسجل بإيد'
           || /^(?:كاتب Apex مش بيسجل|مجموع الأصناف على Apex .*اتأكد من العدد)/.test(w);
         if (reasons.some(removedHold) && reasons.every(w => removedHold(w) || SYSTEM_WAIT.has(w) || BEFORE.has(w))) return true;
         // A notification about a slow card read is not a claim, and the newly read card can unblock the order.
@@ -334,7 +337,7 @@ function setup(app) {
 
   // What the transfer page shows under an order: «هيتحوّل آلي» or why not.
   app.autoTransferNotes = async day => new Map((await db.prepare('SELECT source, ref, decision, reasons FROM auto_transfer_log WHERE day = ?').all(day).catch(() => []))
-    .map(r => [r.source + ':' + r.ref, { decision: r.decision, why: r.reasons }]));
+    .map(r => [r.source + ':' + r.ref, { decision: r.decision, why: activeReasons(r.reasons).join(' · ') }]));
 
   app.route('GET', '/api/auto-transfer', async ctx => {
     await app.requireAdmin(ctx);
@@ -342,7 +345,7 @@ function setup(app) {
     const rows = await db.prepare('SELECT source, ref, code, decision, reasons, at, first_at FROM auto_transfer_log WHERE day = ? ORDER BY first_at DESC').all(day);
     const jobs = new Map((await db.prepare("SELECT source, ref, state, result FROM transfer_jobs WHERE day = ? AND employee_name = 'المرصد آلي'").all(day)).map(j => [j.source + ':' + j.ref, j]));
     const list = rows.map(r => { const j = jobs.get(r.source + ':' + r.ref), res = parseJson(j?.result, null);
-      return { source: r.source, ref: r.ref, code: r.code, decision: r.decision, reasons: r.reasons, at: iso(r.at), firstAt: iso(r.first_at), job: j ? { state: j.state, orderNo: res?.orderNo || null, error: res?.error || null } : null }; });
+      return { source: r.source, ref: r.ref, code: r.code, decision: r.decision, reasons: activeReasons(r.reasons).join(' · '), at: iso(r.at), firstAt: iso(r.first_at), job: j ? { state: j.state, orderNo: res?.orderNo || null, error: res?.error || null } : null }; });
     const n = k => list.filter(r => r.decision === k).length;
     return { mode: await mode(), day, totals: { sent: n('sent'), would: n('would'), wait: n('wait') }, list };
   });
@@ -384,7 +387,7 @@ function setup(app) {
       else if (j?.state === 'auto_failed') Object.assign(x, { state: 'failed', by: j.employee_name, why: res.error || 'ماتسجلش' });
       else if (j && ['auto_pending', 'auto_sending'].includes(j.state)) Object.assign(x, { state: 'writing', by: j.employee_name === 'المرصد آلي' ? 'آلي' : j.employee_name, since: iso(j.at) });
       else if (j?.state === 'claimed' && now - j.at < 15 * 60000) Object.assign(x, { state: 'claimed', by: j.employee_name, since: iso(j.at), why: n?.decision === 'wait' ? n.reasons : null });
-      else Object.assign(x, { state: 'waiting', why: n ? (n.decision === 'wait' ? n.reasons : n.decision === 'would' ? 'كان هيتحوّل (تجربة)' : '') : 'لسه ما اتراجعش' });
+      else Object.assign(x, { state: 'waiting', why: n ? (n.decision === 'wait' ? activeReasons(n.reasons).join(' · ') : n.decision === 'would' ? 'كان هيتحوّل (تجربة)' : '') : 'لسه ما اتراجعش' });
       list.push(x);
     }
     const writerSeen = Number(await setting('apex_writer_seen')) || null;

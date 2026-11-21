@@ -225,7 +225,7 @@ function stateOf(o) {
     const checked = ['found', 'none'].includes(o.apexCustomerNote?.status) && Date.parse(o.apexCustomerNote?.checkedAt || '') >= Date.parse(data.serverNow) - 600000;
     return { cls: 'wait', text: checked ? 'البطاقة اتقرت — المرصد بيعيد فحص التحويل' : o.auto.why };
   }
-  if (o.auto?.decision === 'wait' && o.auto.why && !/^(?:لسه واصل|أوردر مجدول|تفاصيل الأوردر لسه ماوصلتش|لسه ما اتقبلش على طلبات|أوردر قديم — غالباً اتسجل بإيد|اتحوّل للفرع على الموقع — غالباً اتسجل بإيد)$/.test(o.auto.why)) return { cls: '', text: 'جديد — مش هيتحوّل آلي: ' + o.auto.why };
+  if (o.auto?.decision === 'wait' && o.auto.why && !/^(?:أوردر مجدول|تفاصيل الأوردر لسه ماوصلتش|لسه ما اتقبلش على طلبات|أوردر قديم — غالباً اتسجل بإيد|اتحوّل للفرع على الموقع — غالباً اتسجل بإيد)$/.test(o.auto.why)) return { cls: '', text: 'جديد — مش هيتحوّل آلي: ' + o.auto.why };
   return { cls: '', text: 'جديد' };
 }
 function payText(o) {
