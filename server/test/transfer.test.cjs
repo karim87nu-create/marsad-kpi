@@ -131,7 +131,7 @@ test('automatic transfer: off by default, cash only, frozen order handed to the 
     assert.equal(q.autoTransfer, 'shadow', 'until an admin chooses, it only previews'); assert.equal(q.orders[0].apexBranch, 1);
     assert.equal((await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'off' })).status, 200);
     await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: [{ id: '3977600001', store, status: 'ACCEPTED', placedAt: at(0), total: 300, detail: { customer: { name: 'Xavier', phone: '01000000001', area: 'المستقبل' }, items: [], bill: [{ k: 'خصم طلبات', text: 'خصم طلبات | -22.00' }] } }] } });
-    const job = { source: 'talabat', ref: '3977600001', action: 'auto', payment: 'cash', branchNo: 1, locationNo: 370, items: [{ itemNo: '0108004', qty: 2 }], customer: { name: 'Xavier', address: 'عمارة 123، شارع Unlisted Road، الدور 2، الشقة 9' }, expectedTotal: 300, code: '2701', label: 'اطلب/كاش #2701' };
+    const job = { source: 'talabat', ref: '3977600001', action: 'auto', payment: 'cash', branchNo: 1, locationNo: 370, items: [{ itemNo: '0108004', qty: 2 }], customer: { name: 'Xavier', address: 'عمارة 123، شارع Unlisted Road، علامة مميزة: أمام شقة 6، الدور 2، الشقة A-12' }, expectedTotal: 300, code: '2701', label: 'اطلب/كاش #2701' };
     assert.equal((await as('POST', '/api/transfer/job', job)).status, 409, 'off until an admin turns it on');
     t.advance(9000); await as('GET', '/api/transfer/queue?day=2026-10-22'); assert.equal((await notesReady(t, admin)).updated, 1, 'the writer reports the card note');
     assert.equal((await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'live' })).status, 400, 'live needs explicit confirmation');
@@ -153,10 +153,10 @@ test('automatic transfer: off by default, cash only, frozen order handed to the 
     const okey = (await admin('POST', '/api/orders/token')).body.token;
     if (okey) assert.equal((await t.call('POST', '/api/apex-writer/next', { body: {}, headers: { 'x-apex-writer': okey } })).status, 200, 'the monitor key opens the writer too');
     let n = (await w('/api/apex-writer/next')).body;
-    assert.equal(n.job.sign, 'خصم طلبات 22.00', 'known platform discount is written even when the browser sends no sign');
+    assert.equal(n.job.sign, 'خصم طلبات 22.00/أمام شقة 6', 'the server adds the current discount before the landmark');
     assert.equal(n.job.platformDiscount, 22);
     assert.match(n.job.customer.address, /المستقبل.*شارع Unlisted.*عمارة 123/);
-    assert.deepEqual([n.job.customer.floor, n.job.customer.flat], ['2', '9']);
+    assert.deepEqual([n.job.customer.floor, n.job.customer.flat], ['2', 'A-12']);
     assert.equal(n.job.restaurantDiscount, 0, 'cash does not deduct platform discount');
     assert.equal(n.mode, 'test'); assert.equal(n.job.ref, '3977600001'); assert.equal(n.job.db, 'test'); assert.deepEqual(n.job.items, [{ itemNo: '0108004', qty: 2, note: '' }]);
     n = (await w('/api/apex-writer/next')).body;
@@ -172,7 +172,7 @@ test('automatic transfer: off by default, cash only, frozen order handed to the 
     assert.equal(job2.state, 'auto_done'); assert.equal(job2.result.orderNo, 701);
     assert.equal((await admin('GET', '/api/apex-writer')).body.jobs[0].state, 'auto_done');
     // Shadow mode: the writer only previews; the order stays for manual entry and the preview is kept.
-    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: [{ id: '3977600002', store, status: 'ACCEPTED', placedAt: at(1), total: 120, detail: { customer: { name: 'Y', phone: '01000000002' }, bill: [{ k: 'خصم طلبات', text: 'خصم طلبات | -22.00' }, { k: 'خصم ممول من قبلك', text: 'خصم ممول من قبلك | -10.00' }] } }] } });
+    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: [{ id: '3977600002', store, status: 'ACCEPTED', placedAt: at(1), total: 120, detail: { customer: { name: 'Y', phone: '01000000002', address: 'شارع 9، عمارة 12' }, bill: [{ k: 'خصم طلبات', text: 'خصم طلبات | -22.00' }, { k: 'خصم ممول من قبلك', text: 'خصم ممول من قبلك | -10.00' }] } }] } });
     assert.equal((await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'shadow' })).status, 200);
     t.advance(9000); await as('GET', '/api/transfer/queue?day=2026-10-22'); await notesReady(t, admin, w);
     assert.equal((await as('POST', '/api/transfer/job', { ...job, ref: '3977600002', payment: 'paid', sign: '', restaurantDiscount: 0 })).status, 200);
@@ -186,7 +186,7 @@ test('automatic transfer: off by default, cash only, frozen order handed to the 
     assert.equal(pj.state, 'auto_preview'); assert.equal(pj.result.preview, true); assert.equal(pj.result.detail, 'sub=105.7');
 
     // Karim 10-11 (#655): a cash order's discount that does not say who pays — the employee's split, never a guess.
-    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: [{ id: '3977600003', store, status: 'ACCEPTED', placedAt: at(2), total: 250, detail: { customer: { name: 'Z', phone: '01000000003' }, bill: [{ k: 'خصم', text: 'خصم 30% على بعض المنتجات | -90.00' }, { k: 'مجموع', text: 'مجموع | 250.00' }] } }] } });
+    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { orders: [{ id: '3977600003', store, status: 'ACCEPTED', placedAt: at(2), total: 250, detail: { customer: { name: 'Z', phone: '01000000003', address: 'شارع 8، عمارة 4' }, bill: [{ k: 'خصم', text: 'خصم 30% على بعض المنتجات | -90.00' }, { k: 'مجموع', text: 'مجموع | 250.00' }] } }] } });
     t.advance(9000); await as('GET', '/api/transfer/queue?day=2026-10-22'); await notesReady(t, admin, w);
     const q3 = (await as('GET', '/api/transfer/queue?day=2026-10-22')).body.orders.find(o => o.ref === '3977600003');
     assert.equal(q3.discounts[0].who, null); assert.equal(q3.discounts[0].amount, 90, 'the money after «|», not the 30 of «30%»'); assert.equal(q3.target, 250, 'no Talabat share known yet');

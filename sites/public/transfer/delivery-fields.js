@@ -81,22 +81,67 @@ const addressKey = s => String(s || '').trim().replace(/^(?:محافظة|governo
     .replace(/[^\p{L}\p{N}]+/gu, ' ').replace(/\s+/g, ' ').trim();
 const areaBase = s => String(s || '').trim().replace(/\s+(?:طلبات|الموقع|موقع|اونلاين|أونلاين|talabat|online)$/i, '');
 export function deliveryAddress(value, zone = '') {
-  let floor = '', flat = '';
   const key = addressKey;
   // The Apex area's name also without its «طلبات»/«الموقع» ending («التجمع الخامس طلبات» → «التجمع الخامس»).
   const areas = [...new Set((Array.isArray(zone) ? zone : [zone]).map(s => String(s || '').trim()).filter(Boolean).flatMap(s => [s, areaBase(s)]))].filter(Boolean).sort((a, b) => b.length - a.length);
   const redundant = new Set(['مصر', 'egypt', 'القاهرة', 'القاهره الجديده', 'cairo', 'new cairo', 'الجيزة', 'giza', 'جمهورية مصر العربية'].map(key));
-  const withoutArea = value => areas.some(area => key(value) === key(area)) ? '' : value;
-  // Floor and flat said inside a part («مجموعة 45 عمارة 5 شقة 32», «الدور: الارضي»), then labelled parts.
-  const val = '([\\d٠-٩۰-۹]+[A-Za-z\\u0621-\\u064a]?|[A-Za-z]\\d*|' + FLOOR_WORDS + ')';
-  // Karim 11-19 (#4251: «علامة مميزة: امام شقة 6، ماونتن ديونز شارع جانبي…» lost): the customer's landmark is taken out
-  // whole first (before «شقة 6» inside it is read as the flat) and goes to the special mark, never into the address.
-  const marks = [];
-  value = String(value || '').replace(/(?:^|\s*[—|]\s*)(?:علام[ةه]\s+مميز[ةه]|landmark|nearest landmark|directions?)\s*[:：]\s*([^—|]+)/giu, (all, m) => { const t = m.replace(/\s+/g, ' ').trim().replace(/^[،,.\s]+|[،,.\s]+$/g, ''); if (t) marks.push(t); return ' — '; });
-  const text = apexText(value).split(/([،,;؛\n—|]+)/).map(part => LANDMARK.test(part.trim()) ? part : part
-    .replace(new RegExp('(?:الدور|الطابق|دور|floor)\\s*[:：]?\\s*' + val + '(?![\\p{L}\\p{N}])', 'giu'), (all, v) => { if (!floor) floor = v.trim(); return ' '; })
-    .replace(new RegExp('(?:الشقة|الشقه|شقة|شقه|apartment|apt\\.?|flat)\\s*[:：]?\\s*' + val + '(?![\\p{L}\\p{N}])', 'giu'), (all, v) => { if (!flat) flat = v.trim(); return ' '; })).join('');
-  const parts = [], segments = text.split(/[،,;؛\n—|]+|\s*\/\s*(?=[\u0621-\u064a])/)
+  const geoStart = /^(?:شارع|ش\.?|طريق|محور|عمارة|عماره|مبنى|برج|فيلا|كمبوند|كومباوند|مجموعة|بلوك|بوابة|street|road|building|villa|compound|gate)(?=\s|[:：])/i;
+  const withoutArea = value => {
+    if (areas.some(area => key(value) === key(area))) return '';
+    if (LANDMARK.test(value)) return value;
+    const words = value.split(/\s+/);
+    for (let i = 1; i < words.length; i++) {
+      const rest = words.slice(i).join(' ');
+      if (geoStart.test(rest) && areas.some(area => key(words.slice(0, i).join(' ')) === key(area))) return rest;
+    }
+    return value;
+  };
+  const label = /^(?:علام[ةه]\s+مميز[ةه]|landmark|nearest landmark|directions?)\s*[:：]?\s*(.*)$/iu;
+  const floorLabel = '(?:الدور|الطابق|دور|floor)';
+  const flatLabel = '(?:الشقة|الشقه|شقة|شقه|apartment|apt\\.?|flat)';
+  const digit = '[0-9٠-٩۰-۹]';
+  const number = '[+-]?' + digit + '+[A-Za-z\\u0621-\\u064a]?';
+  const code = '(?:[A-Za-z]?' + number + '(?:[-–/]?[A-Za-z0-9٠-٩۰-۹]+)*|[A-Za-z](?:[-–/][A-Za-z0-9٠-٩۰-۹]+)*)';
+  const field = name => new RegExp('(?:^|[\\s(])(' + name + ')(?=\\s|[:：]|[0-9٠-٩۰-۹])\\s*([:：]?)\\s*(' + FLOOR_WORDS + '|' + code + ')(?![\\p{L}\\p{N}/-])', 'giu');
+  const floorField = field(floorLabel), flatField = field(flatLabel);
+  const found = { floor: [], flat: [] }, marks = [], pieces = [];
+  let inMark = false;
+  const standalone = new RegExp('^(?:' + floorLabel + '|' + flatLabel + ')(?=\\s|[:：]|[0-9٠-٩۰-۹])', 'iu');
+  const scan = apexText(value).split(/([،,;؛\n—|]+|\s+[-–]\s+|\s*\/\s*(?=[\u0621-\u064a]))/);
+  for (let i = 0; i < scan.length; i++) {
+    if (i % 2) {
+      if (/[^،,\s]|\n/u.test(scan[i])) inMark = false;
+      continue;
+    }
+    const segment = scan[i].trim(), explicit = segment.match(label);
+    if (explicit) {
+      marks.push(explicit[1]);
+      inMark = true;
+      continue;
+    }
+    if (!segment) continue;
+    if (inMark && !standalone.test(segment)) { marks[marks.length - 1] = [marks.at(-1), segment].filter(Boolean).join('، '); continue; }
+    inMark = false;
+    // Keep inline directions intact for the landmark pass; their house or flat is a reference.
+    if (LANDMARK.test(segment)) { pieces.push(segment); continue; }
+    const embedded = splitAddressLandmark(segment);
+    const address = embedded.landmark ? embedded.street : segment;
+
+    const extract = (pattern, values, input) => input.replace(pattern, (all, _name, colon, value) => {
+      values.push({ value, rank: colon ? 2 : 1 });
+      return ' ';
+    });
+    pieces.push(extract(flatField, found.flat, extract(floorField, found.floor, address)));
+    if (embedded.landmark) pieces.push(embedded.landmark);
+  }
+  const fieldValue = values => {
+    const ranked = values.filter(x => x.value !== '0').sort((a, b) => b.rank - a.rank);
+    const best = ranked[0];
+    return { value: best?.value || '', conflict: !!best && ranked.some(x => x.rank === best.rank && key(x.value) !== key(best.value)) };
+  };
+  const floorFieldValue = fieldValue(found.floor), flatFieldValue = fieldValue(found.flat);
+  const floor = floorFieldValue.value, flat = flatFieldValue.value;
+  const parts = [], segments = pieces
     .map(seg => seg.replace(/^[\s.\-–:：\/]+|[\s.\-–:：\/]+$/g, '').replace(/\s+/g, ' ').trim()).filter(Boolean);
   const areaSeries = new Set();
   for (let i = 0; i < segments.length; i++) {
@@ -115,7 +160,7 @@ export function deliveryAddress(value, zone = '') {
     let building = false;
     const lab = seg.match(/^(?:مبنى|مبني|building|bldg)\s*[:：]?\s*(.+)$/i);
     if (lab && /^[\s0٠\-–.]*$/.test(lab[1])) continue;   // «مبنى: 0»: no building
-    if (lab) { seg = /^[\d٠-٩]/.test(lab[1]) ? 'عمارة ' + lab[1] : lab[1]; building = true; }
+    if (lab) { seg = /^(?:[\d٠-٩۰-۹]|[A-Za-z][-–]?\d)/.test(lab[1]) ? 'عمارة ' + lab[1] : lab[1]; building = true; }
     seg = withoutArea(seg);
     if (!seg || redundant.has(key(seg))) continue;
     parts.push({ seg, building });
@@ -130,7 +175,7 @@ export function deliveryAddress(value, zone = '') {
       const buildingNumber = new RegExp('(?:^|\\s)' + BUILDING.source + '\\s+(?:رقم\\s+)?' + k2 + '(?=\\s|$)', 'i');
       if (parts.some(q => q !== p && (key(q.seg).startsWith(k2 + ' ') || buildingNumber.test(key(q.seg))))) continue;
     }
-    if (!k || kept.some(q => key(q.seg) === k || (k.length >= 3 && (' ' + key(q.seg) + ' ').includes(' ' + k + ' ')) || (k2 !== k && k2.length >= 3 && (' ' + key(q.seg) + ' ').includes(' ' + k2 + ' ')))) continue;
+    if (!k || kept.some(q => LANDMARK.test(q.seg) === LANDMARK.test(p.seg) && (key(q.seg) === k || (k.length >= 3 && (' ' + key(q.seg) + ' ').includes(' ' + k + ' ')) || (k2 !== k && k2.length >= 3 && (' ' + key(q.seg) + ' ').includes(' ' + k2 + ' '))))) continue;
     kept.push(p);
   }
   const order = new Map(parts.map((p, i) => [p, i]));
@@ -140,7 +185,7 @@ export function deliveryAddress(value, zone = '') {
     // A name with no number and no building word is usually the street or the place («عبد الرحمن صدقي، مبنى: 31»).
     : (BUILDING.test(p.seg) || p.building) && /[\d٠-٩]/.test(p.seg) ? 2 : !/[\d٠-٩]/.test(p.seg) && !BUILDING.test(p.seg) ? 2.5 : p.building ? 1.5 : /^[\d٠-٩]/.test(p.seg) ? 1.5 : 1;
   kept.sort((a, b) => rank(b) - rank(a) || order.get(a) - order.get(b));
-  return { floor: apexText(floor), flat: apexText(flat), street: kept.map(p => p.seg).join('، '), ...(marks.length ? { mark: apexText(marks.join('/')) } : {}) };
+  return { floor: apexText(floor), flat: apexText(flat), street: kept.map(p => p.seg).join('، '), ...(marks.filter(Boolean).length ? { mark: apexText(marks.filter(Boolean).join('/')) } : {}), ...(floorFieldValue.conflict || flatFieldValue.conflict ? { conflict: true } : {}) };
 }
 export function splitDeliveryAddress(value, max = 100) {
   const words = String(value || '').trim().split(/\s+/).filter(Boolean);
@@ -290,7 +335,7 @@ export function splitAddressLandmark(street) {
   }
   // «عمارة 287 ب» when «287 ب» is already in the address: once.
   const out = keep.filter((x, i) => { const n = /^(?:عمار[ةه]|ع|مبن[يى]|برج)\s*[:：]?\s*([\d٠-٩]+\s*[\u0621-\u064aA-Za-z]?)$/.exec(x); return !(n && keep.some((y, j) => j !== i && y.startsWith(n[1].trim() + ' '))); });
-  if (!keep.length) return { street: String(street || '').trim(), landmark: '' };   // nothing but a landmark: the address as written
+  if (!keep.length && !LANDMARK.test(String(street || '').trim())) return { street: String(street || '').trim(), landmark: '' };
   return { street: (out.length ? out : keep).join('، '), landmark: marks.join('/') };
 }
 
@@ -304,14 +349,13 @@ export function addressNeedsArabic(value) {
 export function formatDeliveryAddress(raw, { apexArea, sourceArea, signBase, pickup } = {}) {
   const base = apexText(signBase);
   if (pickup) return { main: '0', floor: '0', flat: '0', sign: deliveryMark(base, '', 100), issue: null };
-  const parts = deliveryAddress(raw, apexArea || '');
   const realArea = areaBase(sourceArea), realKey = addressKey(realArea), apexKey = addressKey(areaBase(apexArea));
   const distinct = !!realKey && realKey !== apexKey;
+  const parts = deliveryAddress(raw, [apexArea, distinct ? realArea : null]);
   const split = splitAddressLandmark(parts.street);
-  const geoOnly = deliveryAddress(parts.street, [apexArea, realArea]).street;
   const areaInStreet = (' ' + addressKey(split.street) + ' ').includes(' ' + realKey + ' ');
-  const street = [distinct && !areaInStreet ? realArea : null, split.street || split.landmark || parts.mark].filter(Boolean).join('، ');
-  const marks = [split.street ? split.landmark : '', (split.street || split.landmark) ? parts.mark : ''].filter(Boolean);
+  const street = [distinct && !areaInStreet ? realArea : null, split.street].filter(Boolean).join('، ');
+  const marks = [...new Set([split.landmark, parts.mark].map(mark => String(mark || '').trim()).filter(Boolean))];
   let line = splitDeliveryAddress(street);
   let sign = deliveryMark(base, [line.extra, ...marks].filter(Boolean).join('/'), 100);
   // A long landmark can use spare street capacity, but no part may be discarded to make it fit.
@@ -320,7 +364,8 @@ export function formatDeliveryAddress(raw, { apexArea, sourceArea, signBase, pic
     const alternateSign = deliveryMark(base, alternate.extra, 100);
     if (alternateSign != null) { line = alternate; sign = alternateSign; }
   }
-  const issue = (!geoOnly && !parts.floor && !parts.flat && !parts.mark) || !line.main
+  const issue = parts.conflict ? 'فيه أكتر من رقم للدور أو الشقة — راجع عنوان العميل'
+    : (!split.street && !marks.length) || (!line.main && line.extra)
     ? 'العنوان فيه المنطقة بس أو تفاصيله مش كاملة — راجع عنوان العميل'
     : sign == null || parts.floor.length > 20 || parts.flat.length > 20 ? 'العنوان أو العلامة المميزة أطول من خانات Apex — راجع العنوان قبل التسجيل'
     : null;

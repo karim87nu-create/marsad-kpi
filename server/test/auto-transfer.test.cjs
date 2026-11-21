@@ -295,6 +295,9 @@ test('website area: from the panel\'s area field or the address\'s last part', (
   assert.equal(panelArea({ customer: { address: 'x' }, deliveryZone: { name: 'مدينتي' } }), 'مدينتي');
   assert.equal(panelArea({ customer: { address: '5 شارع مكرم عبيد، الدور 3، شقة 9' } }), '');
   assert.equal(panelArea({ customer: { address: 'شارع 9' } }), '');
+  assert.equal(panelArea({ customer: { address: 'شارع 9، عمارة 22' } }), '');
+  assert.equal(panelArea({ customer: { address: 'شارع 9، بجوار النادي' } }), '');
+  assert.equal(panelArea({ customer: { address: 'شارع 9 — علامة مميزة: صيدلية النور' } }), '');
 });
 
 // Karim 11-11: free delivery from Talabat is not a price difference.

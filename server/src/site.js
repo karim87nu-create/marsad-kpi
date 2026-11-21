@@ -92,9 +92,9 @@ export function panelArea(o) {
   for (const v of [c.area, c.zone, c.region, c.district, c.neighborhood, a.area, a.zone, a.region, a.district, o?.area, o?.zone, o?.deliveryArea, o?.deliveryZone, o?.shippingZone, o?.region]) {
     const t = textOf(v).trim(); if (t && t.length <= 80) return t;
   }
-  const parts = String(c.address || '').split(/[،,]/).map(x => x.trim()).filter(Boolean);
+  const parts = String(c.address || '').split(/[،,;؛—|\n]/).map(x => x.trim()).filter(Boolean);
   const last = parts.length > 1 ? parts[parts.length - 1] : '';
-  return last && last.length <= 60 && !/^\d+$/.test(last) && !/(?:الدور|دور|شقة|شقه|floor|flat|apt)/i.test(last) ? last : '';
+  return last && last.length <= 60 && !/^[a-z]{0,4}[-/]?[0-9٠-٩۰-۹]+[a-z]?$/i.test(last) && !/^(?:الدور|الطابق|دور|الشقة|الشقه|شقة|شقه|floor|flat|apt|apartment|عمارة|عماره|مبنى|building|فيلا|villa|شارع|طريق|street|road|بوابة|gate|علام[ةه] مميز[ةه]|landmark|directions|بجوار|بجانب|جنب|أمام|امام|خلف|ورا|عند|بالقرب|next to|near|behind|in front)(?=\s|[:：.]|$)/i.test(last) ? last : '';
 }
 function panelAddress(order) {
   const customer = order?.customer || {}, detail = customer.addressDetails || order?.address || {};
@@ -104,8 +104,8 @@ function panelAddress(order) {
   const fields = [
     ['مبنى', part(detail.building, detail.buildingNumber, customer.building, customer.buildingNumber)],
     ['الدور', part(detail.floor, detail.floorNumber, customer.floor, customer.floorNumber)],
-    ['الشقة', part(detail.apartment, detail.flat, customer.apartment, customer.flat)],
-    ['علامة مميزة', part(detail.landmark, customer.landmark)],
+    ['الشقة', part(detail.apartment, detail.apartmentNumber, detail.flat, detail.flatNumber, customer.apartment, customer.apartmentNumber, customer.flat, customer.flatNumber)],
+    ['علامة مميزة', part(detail.landmark, detail.nearestLandmark, customer.landmark, customer.nearestLandmark)],
   ];
   const text = [main, moreStreet && !main.includes(moreStreet) ? moreStreet : ''].filter(Boolean).join('، ');
   return [text, ...fields.filter(([label, v]) => v && v !== '0' && !text.includes(label + ': ' + v)).map(([label, v]) => label + ': ' + v)].filter(Boolean).join(' — ');

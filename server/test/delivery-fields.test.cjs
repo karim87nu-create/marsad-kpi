@@ -172,10 +172,14 @@ test('11-20 #31688: a panel order whose appointment is only in the note is a boo
     const admin = await t.admin();
     const { token } = (await admin('POST', '/api/talabat/token')).body;
     const order = { id: 31688, number: '31688', status: 'app-preparing', statusLabel: 'جاري التنفيذ', stage: 1, fulfillment: 'delivery', createdAt: s(0), branchAssignedAt: s(1), branchId: 'tagamoa', branchName: 'التجمع',
-      lastActionAt: s(2), paymentMethod: 'كاش عند الاستلام', total: 500, driver: null, customer: { name: 'أماني', phone: '01224426526', address: 'التجمع الخامس', note: 'الموعد المطلوب: 2026-11-20T15:00' },
+      lastActionAt: s(2), paymentMethod: 'كاش عند الاستلام', total: 500, driver: null, customer: { name: 'أماني', phone: '01224426526', address: 'التجمع الخامس شارع 90', addressDetails: { buildingNumber: 'B12', floorNumber: '2', apartmentNumber: 'A-12', nearestLandmark: 'أمام شقة ٦' }, note: 'الموعد المطلوب: 2026-11-20T15:00' },
       financial: { currency: 'EGP', due: 500, onlinePaid: 0, total: 500, rows: [] }, items: [{ name: 'طاجن ورق عنب', quantity: 1, total: '500.00 EGP', parent: '', addon: false, details: [] }] };
     assert.equal((await t.call('POST', '/api/site/panel', { headers: { 'x-talabat-token': token }, body: { board: 'central', orders: [order] } })).status, 200);
     const row = t.app.db.raw.prepare('SELECT scheduled, scheduled_at FROM site_orders WHERE id = 31688').get();
     assert.equal(row.scheduled, 1); assert.equal(row.scheduled_at, cairoToUtc(2026, 11, 20, 15, 0, 0));
+    const profile = JSON.parse(t.app.db.raw.prepare("SELECT data FROM match_profiles WHERE source = 'site' AND ref = '31688'").get().data);
+    const { formatDeliveryAddress } = await import('../src/delivery-fields.js');
+    const formatted = formatDeliveryAddress(profile.customer.address, { apexArea: 'التجمع الخامس' });
+    assert.deepEqual([formatted.main, formatted.floor, formatted.flat, formatted.sign], ['شارع 90، عمارة B12', '2', 'A-12', 'أمام شقة ٦']);
   } finally { await t.close(); }
 });

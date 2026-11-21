@@ -1076,9 +1076,10 @@ function setup(app) {
       // Karim 11-15: delivery instructions to the order's special mark (up to 100 letters with the rest of the mark), the food to the comment.
       const noteSplit = splitDeliveryComment(app.toArabicNote?.([safeRemarks]).get(safeRemarks) || safeRemarks);
       const room = 100 - Array.from(sign === '.' ? '' : sign).length - (sign && sign !== '.' ? 3 : 0);
-      const signNote = room >= 8 ? apexText(compactDeliveryComment(noteSplit.delivery, room)) : '';
-      // What did not fit in the mark stays in the comment, never lost.
-      const signLeft = noteSplit.delivery && signNote !== apexText(compactDeliveryComment(noteSplit.delivery, 1000)) ? noteSplit.delivery : '';
+      const deliveryInstructions = apexText(noteSplit.delivery);
+      const signNote = Array.from(deliveryInstructions).length <= room ? deliveryInstructions : '';
+      // Keep a delivery instruction in one field. A cropped instruction can change its meaning.
+      const signLeft = signNote ? '' : deliveryInstructions;
       const translatedNote = apexText(compactDeliveryComment(applyChoiceWords([noteSplit.order, signLeft].filter(Boolean).join(' | '), TUNE_PAIRS.choiceWords), 200));   // no «?» on Apex (11-14)
       // Karim 11-15: nothing of an earlier order on the receipt — what this order does not say is written 0 (Apex prints the card).
       const deliveryFields = { address: address.main || '0', floor: address.floor || '0', flat: address.flat || '0' };

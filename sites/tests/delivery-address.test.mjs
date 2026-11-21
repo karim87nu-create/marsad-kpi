@@ -50,3 +50,28 @@ test('an explicit landmark always survives or the address is rejected for correc
   assert.equal(out.sign,null);
   assert.match(out.issue,/أطول/);
 });
+
+
+test('landmarks cannot consume their referenced flat or the actual labelled floor and flat', () => {
+  for (const separator of ['، ', ' — ', '\n']) {
+    const out = formatDeliveryAddress('عمارة 12، شارع 7' + separator + 'علامة مميزة: أمام شقة 6، الدور 3، شقة A-12');
+    assert.deepEqual([out.main, out.sign, out.floor, out.flat, out.issue], ['شارع 7، عمارة 12', 'أمام شقة 6', '3', 'A-12', null]);
+  }
+  const inline = formatDeliveryAddress('شارع 7 عمارة 12 أمام شقة 6، شقة 9');
+  assert.deepEqual([inline.main, inline.sign, inline.flat], ['شارع 7 عمارة 12', 'أمام شقة 6', '9']);
+  const repeated = formatDeliveryAddress('شارع 7، أمام شارع 7');
+  assert.deepEqual([repeated.main, repeated.sign], ['شارع 7', 'أمام شارع 7']);
+});
+
+test('Apex keeps compound codes, the actual region and reference-only addresses', () => {
+  const out = formatDeliveryAddress('التجمع الخامس شارع 90، مبنى: B12، الدور -1، شقة 12/3', {
+    sourceArea: 'التجمع الخامس', apexArea: 'التجمع الخامس طلبات'
+  });
+  assert.deepEqual([out.main, out.floor, out.flat, out.issue], ['شارع 90، عمارة B12', '-1', '12/3', null]);
+  const shifted = formatDeliveryAddress('شارع 40، المستقبل، عمارة 12', { sourceArea: 'المستقبل', apexArea: 'الشروق' });
+  assert.equal(shifted.main, 'المستقبل، شارع 40، عمارة 12');
+  const landmark = formatDeliveryAddress('علامة مميزة:، بوابة 1/2', { signBase: 'خصم طلبات 20.00' });
+  assert.deepEqual([landmark.main, landmark.sign, landmark.issue], ['', 'خصم طلبات 20.00/بوابة 1/2', null]);
+  assert.match(formatDeliveryAddress('شارع 7، شقة 3، شقة 4').issue, /أكتر من رقم/);
+  assert.equal(formatDeliveryAddress('شارع 7، شقة 3 — الشقة: 4').flat, '4');
+});
