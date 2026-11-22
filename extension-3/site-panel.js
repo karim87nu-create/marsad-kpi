@@ -60,19 +60,30 @@
   const isEditing = except => (document.activeElement !== except && document.activeElement?.matches('select,input,textarea,[contenteditable="true"]')) ||
     document.querySelector('[role="dialog"]:not([hidden]),.eldahan-ops-modal.show,dialog[open]');
   const dispatchTries = new Map();
-  const openedDriverForms = new WeakSet();
-  let dispatching = false, operatorActions = 0;
+  const openedDriverForms = new WeakSet(), operatorDriverForms = new WeakSet();
+  let dispatching = false, operatorActions = 0, currentOrders = new Map();
   for (const event of ['pointerdown', 'keydown']) {
-    document.addEventListener(event, e => { if (e.isTrusted) operatorActions++; }, true);
+    document.addEventListener(event, e => {
+      if (!e.isTrusted) return;
+      operatorActions++;
+      if (e.target?.matches?.('input[data-driver-search]')) operatorDriverForms.add(e.target);
+    }, true);
   }
+  const stillOpen = id => {
+    const o = currentOrders.get(id);
+    return o && !(Number(o.stage) >= 3) && !o.driver?.name &&
+      !(typeof o.driver === 'string' && o.driver.trim()) && !/cancel|refund|failed|deliver(?:ed|ing)/i.test(o.status || '');
+  };
   const dispatchOrder = async ({ orderId, driver }) => {
-    if (dispatching || isEditing() || Date.now() - (dispatchTries.get(orderId) || 0) < 25000) return;
+    const focus = document.activeElement;
+    const ownFocus = openedDriverForms.has(focus) && !operatorDriverForms.has(focus) ? focus : null;
+    if (dispatching || isEditing(ownFocus) || !stillOpen(orderId) || Date.now() - (dispatchTries.get(orderId) || 0) < 25000) return;
     const button = action => {
       const b = document.querySelector('button[data-order="' + orderId + '"][data-action="' + action + '"]');
       return b && !b.disabled ? b : null;
     };
     const form = () => document.querySelector('input[data-driver-search="' + orderId + '"]');
-    const unownedForm = () => [...document.querySelectorAll('input[data-driver-search]')].some(input => !openedDriverForms.has(input));
+    const unownedForm = () => [...document.querySelectorAll('input[data-driver-search]')].some(input => !openedDriverForms.has(input) || operatorDriverForms.has(input));
     if (unownedForm() || !['prepare', 'ready-pickup', 'dispatch'].some(button) && !form()) return;
     const waitFor = async lookup => {
       for (let i = 0; i < 40; i++) {
@@ -85,7 +96,7 @@
     const click = b => { assignedAt = Date.now(); b.click(); };
     const started = operatorActions;
     let input = null;
-    const interrupted = () => started !== operatorActions || isEditing(input) || unownedForm();
+    const interrupted = () => !stillOpen(orderId) || started !== operatorActions || isEditing(input || ownFocus) || unownedForm();
     dispatching = true;
     dispatchTries.set(orderId, Date.now());
     try {
@@ -110,6 +121,8 @@
         if (input) openedDriverForms.add(input);
       }
       if (!input || !openedDriverForms.has(input) || interrupted()) return;
+      if (!input.list?.options.length) await waitFor(() => input.list?.options.length || interrupted());
+      if (interrupted()) return;
       const selected = selectDriver(input, driver);
       if (!selected) {
         if (document.activeElement === input) input.blur();
@@ -121,8 +134,14 @@
       input.dispatchEvent(new Event('change', { bubbles: true }));
       const submit = await waitFor(() => form()?.value === value && button('dispatch-submit'));
       if (submit && !interrupted()) {
-        click(submit);
-        await waitFor(() => !button('dispatch-submit'));
+        if (document.activeElement === input) input.blur();
+        if (form()?.value !== value || interrupted()) return;
+        const confirm = button('dispatch-submit');
+        if (!confirm) return;
+        dispatchTries.set(orderId, Date.now());
+        click(confirm);
+        // A disabled submit button can just mean the request is in flight. Check the refreshed order.
+        await waitFor(() => !stillOpen(orderId));
       }
     } finally {
       dispatching = false;
@@ -132,6 +151,7 @@
     if (e.source !== window || !e.data || e.data.__marsadSite !== 1 || !Array.isArray(e.data.data?.orders)) return;
     seenAt = Date.now();
     const orders = e.data.data.orders.slice(0, 300);
+    currentOrders = new Map(orders.map(o => [Number(o.id), o]));
     const key = JSON.stringify(orders.map(o => [o.id, o.stage, o.status, o.branchId, o.lastActionAt, o.driver?.name || null, o.total]));
     const now = Date.now();
     // Every change at once; the same picture again at most once a minute (so delivered = gone from the board stays fresh).

@@ -37,7 +37,7 @@ test('silent panel: refresh button presses back off instead of every 10 s', () =
 
 test('branch panel selects only a unique Apex pilot and submits through the website controls', async () => {
   const { JSDOM } = require('jsdom');
-  const run = async (names, driver = 'زياد علي') => {
+  const run = async (names, driver = 'زياد علي', retry = false) => {
     const dom = new JSDOM(`<button data-order="31837" data-action="prepare">Prepare</button>
       <button data-order="31837" data-action="ready-pickup" disabled>Ready</button>
       <button data-order="31837" data-action="dispatch" disabled>Dispatch</button>`,
@@ -46,6 +46,9 @@ test('branch panel selects only a unique Apex pilot and submits through the webs
     try {
       const actions = [], button = action => w.document.querySelector(`[data-action="${action}"]`);
       w.setInterval = () => {};
+      let now = Date.now(), submits = 0;
+      w.Date.now = () => now;
+      if (retry) w.setTimeout = fn => setTimeout(fn, 0);
       w.MARSAD = { VERSION: "test" };
       w.browser = { runtime: { getURL: x => '/' + x, sendMessage: async msg => {
         assert.equal(msg.dispatchFromApex, true);
@@ -64,12 +67,22 @@ test('branch panel selects only a unique Apex pilot and submits through the webs
           <button data-order="31837" data-action="dispatch-submit" disabled>Submit</button>`);
         const input = w.document.querySelector('input');
         input.addEventListener('input', () => { button('dispatch-submit').disabled = !names.includes(input.value); });
-        button('dispatch-submit').onclick = () => { actions.push(input.value); button('dispatch-submit').disabled = true; };
+        button('dispatch-submit').onclick = () => {
+          actions.push(input.value);
+          if (retry && ++submits === 1) { input.focus(); return; }
+          button('dispatch-submit').disabled = true;
+        };
         input.focus();
       };
       w.eval(src);
       w.dispatchEvent(new w.MessageEvent('message', { source: w, data: { __marsadSite: 1, data: { orders: [{ id: 31837 }] } } }));
       await new Promise(resolve => setImmediate(resolve));
+      if (retry) {
+        await new Promise(resolve => setTimeout(resolve, 150));
+        now += 61000;
+        w.dispatchEvent(new w.MessageEvent('message', { source: w, data: { __marsadSite: 1, data: { orders: [{ id: 31837 }] } } }));
+        await new Promise(resolve => setImmediate(resolve));
+      }
       return actions;
     } finally { w.close(); }
   };
@@ -81,6 +94,9 @@ test('branch panel selects only a unique Apex pilot and submits through the webs
   assert.deepEqual(await run(['عمر عبدالرحمن محمد - 01000000001'], 'عمر عبد الرحمن التجمع'), ['prepare', 'ready', 'dispatch', 'عمر عبدالرحمن محمد - 01000000001']);
   assert.deepEqual(await run(['أحمد علي زياد - 01000000001'], 'زياد'), ['prepare', 'ready', 'dispatch']);
   assert.deepEqual(await run(['زياد علي - 01000000001'], 'زياد علي مدينتي'), ['prepare', 'ready', 'dispatch']);
+  assert.deepEqual(await run(['زياد على - 01000000001'], 'زياد علي', true),
+    ['prepare', 'ready', 'dispatch', 'زياد على - 01000000001', 'زياد على - 01000000001']);
+
 
 });
 
