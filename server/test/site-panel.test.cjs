@@ -288,6 +288,22 @@ test('branch board mirrors the driver from a fresh, confirmed Apex website deliv
       facade.prepare = prepare;
       facade.kind = 'sqlite';
     }
+    const confirmed = [
+      order(31862, { branchId: 'nasr-city' }),
+      order(31864, { branchId: 'madinaty-craft-zone' }),
+      order(31865),
+    ];
+    snapshot.online.push(
+      apex(707340, '31862', { pilot: 'رامى', branch: 'مدينة نصر' }),
+      apex(707339, '31864', { pilot: 'عمرو وعلي مدنتي', branch: 'مدينتي' }),
+      apex(707341, '31865', { pilot: 'رامي' }),
+    );
+    db.prepare('UPDATE orders_days SET data = ? WHERE day = ?').run(JSON.stringify(snapshot), day);
+    assert.deepEqual((await push(confirmed)).body.dispatch, [
+      { orderId: 31862, driver: 'رامي رمضان إبراهيم عبدالجليل' },
+      { orderId: 31864, driver: 'عمرو علي محمود احمد' },
+      { orderId: 31865, driver: 'رامي' },
+    ], 'confirmed aliases are limited to their own branch');
     t.advance(6 * 60000);
     assert.deepEqual((await push([first])).body.dispatch, [], 'stale Apex snapshots cannot trigger a dispatch');
   } finally { await t.close(); }

@@ -121,6 +121,11 @@ const APEX_BRANCH_LABELS = {
   'nasr-city': /^(?:فرع )?مدين[ةه] نصر(?: |$)/,
   'madinaty-craft-zone': /^(?:فرع )?مدينتي(?: |$)/,
 };
+// Verified against the website's driver list. An Apex name can mean something different at another branch.
+const SITE_DRIVER_NAMES = new Map([
+  ['nasr-city', new Map([['رامي', 'رامي رمضان إبراهيم عبدالجليل']])],
+  ['madinaty-craft-zone', new Map([['عمرو وعلي مدنتي', 'عمرو علي محمود احمد']])],
+]);
 const siteCancelled = (status, label) => /cancel|failed|refund/i.test(status) || /ملغ|اتلغ/.test(label);
 const siteDelivered = (stage, status, label) => stage >= 4 || /(?:^|-)(?:complete|completed|delivered)$/i.test(status) || /تم التوصيل|تم التسليم/.test(label);
 
@@ -174,7 +179,8 @@ function setup(app) {
         const departure = fallback && APEX_BRANCH_LABELS[o.branchId].test(String(fallback.branch || '').trim()) ? fallback : null;
         const out = Date.parse(a.out || departure?.out), entered = Date.parse(a.at);
         const pilot = a.out && a.pilot ? a.pilot : departure?.pilot;
-        const driver = String(names[pilot] || pilot || '').trim();
+        const pilotName = String(names[pilot] || pilot || '').trim();
+        const driver = SITE_DRIVER_NAMES.get(o.branchId)?.get(pilotName.replace(/\s+/g, ' ').replace(/ى/g, 'ي')) || pilotName;
         // The platform and Apex may display different wall-clock times. Validate their own chronology and the exact link.
         if (cancelled.has(String(a.no)) || !Number.isFinite(out) || out > now + 60000 ||
           out < Number(o.createdAt) * 1000 - 3 * 3600000 || (Number.isFinite(entered) && out < entered) ||
