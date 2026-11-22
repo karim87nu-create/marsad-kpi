@@ -37,10 +37,31 @@
   };
   const driverName = name => String(name || '').normalize('NFKC').replace(/[\p{M}ـ\u200e\u200f]/gu, '')
     .replace(/[أإآٱ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه').replace(/\s+/g, ' ').trim().toLowerCase();
+  const branchNameFromUrl = {
+    'tagamoa-cloud': / (?:فرع )?التجمع(?: الخامس)?$/,
+    'nasr-city': / (?:فرع )?مدينه نصر$/,
+    'madinaty-craft-zone': / (?:فرع )?مد(?:ي)?نتي$/,
+  };
+  const branchSuffix = branchNameFromUrl[new URLSearchParams(location.search).get('branch')];
+  const rosterName = value => driverName(value.replace(/\s+-\s+\+?[\d٠-٩۰-۹][\d٠-٩۰-۹\s()-]*$/, ''))
+    .replace(/(^| )عبد +(?=\p{Script=Arabic})/gu, '$1عبد');
+  function selectDriver(input, driver) {
+    const wanted = rosterName(driver);
+    if (!wanted) return null;
+    const options = [...(input.list?.options || [])].map(option => ({ option, name: rosterName(option.value) }));
+    const exact = options.filter(e => e.name === wanted);
+    if (exact.length > 1) return null;
+    // A full exact name is stronger than a longer entry with the same initial words.
+    if (exact.length === 1 && wanted.split(' ').length >= 3) return exact[0].option;
+    const prefix = branchSuffix ? wanted.replace(branchSuffix, '') : wanted;
+    const matches = options.filter(e => e.name === wanted || e.name === prefix || e.name.startsWith(prefix + ' '));
+    return matches.length === 1 ? matches[0].option : null;
+  }
   const isEditing = except => (document.activeElement !== except && document.activeElement?.matches('select,input,textarea,[contenteditable="true"]')) ||
     document.querySelector('[role="dialog"]:not([hidden]),.eldahan-ops-modal.show,dialog[open]');
   const dispatchTries = new Map();
-  let dispatching = false, openedDriverForm = null, operatorActions = 0;
+  const openedDriverForms = new WeakSet();
+  let dispatching = false, operatorActions = 0;
   for (const event of ['pointerdown', 'keydown']) {
     document.addEventListener(event, e => { if (e.isTrusted) operatorActions++; }, true);
   }
@@ -51,7 +72,7 @@
       return b && !b.disabled ? b : null;
     };
     const form = () => document.querySelector('input[data-driver-search="' + orderId + '"]');
-    const unownedForm = () => [...document.querySelectorAll('input[data-driver-search]')].some(input => input !== openedDriverForm);
+    const unownedForm = () => [...document.querySelectorAll('input[data-driver-search]')].some(input => !openedDriverForms.has(input));
     if (unownedForm() || !['prepare', 'ready-pickup', 'dispatch'].some(button) && !form()) return;
     const waitFor = async lookup => {
       for (let i = 0; i < 40; i++) {
@@ -63,7 +84,8 @@
     };
     const click = b => { assignedAt = Date.now(); b.click(); };
     const started = operatorActions;
-    const interrupted = () => started !== operatorActions || isEditing(openedDriverForm) || unownedForm();
+    let input = null;
+    const interrupted = () => started !== operatorActions || isEditing(input) || unownedForm();
     dispatching = true;
     dispatchTries.set(orderId, Date.now());
     try {
@@ -80,19 +102,20 @@
         click(ready);
         dispatch = await waitFor(() => button('dispatch'));
       }
-      let input = form();
+      input = form();
       if (!input) {
         if (!dispatch || interrupted()) return;
         click(dispatch);
         input = await waitFor(form);
-        openedDriverForm = input;
+        if (input) openedDriverForms.add(input);
       }
-      if (!input || input !== openedDriverForm || interrupted()) return;
-      const wanted = driverName(driver);
-      const options = [...(input.list?.options || [])].filter(option =>
-        driverName(option.value.replace(/\s+-\s+\+?[\d٠-٩۰-۹][\d٠-٩۰-۹\s()-]*$/, '')) === wanted);
-      if (!wanted || options.length !== 1) return;
-      const value = options[0].value;
+      if (!input || !openedDriverForms.has(input) || interrupted()) return;
+      const selected = selectDriver(input, driver);
+      if (!selected) {
+        if (document.activeElement === input) input.blur();
+        return;
+      }
+      const value = selected.value;
       input.value = value;
       input.dispatchEvent(new Event('input', { bubbles: true }));
       input.dispatchEvent(new Event('change', { bubbles: true }));
