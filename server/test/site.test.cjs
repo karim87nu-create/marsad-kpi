@@ -121,3 +121,22 @@ test('site (Karim 11-16): the customer\'s rating of an order and the review form
     assert.deepEqual([rv.rating, rv.comment, rv.customer], [1, 'فتة لحمة: اللحمة ناشفة', 'منى']);
   } finally { await t.close(); }
 });
+
+test('site notes preserve dispatch recorded by the branch board while WooCommerce is missing the note', async () => {
+  const t0 = cairoToUtc(2026, 10, 22, 13, 0, 0), site = fakeSite(t0);
+  const t = await start({ at: t0 + 40 * 60000, config: { siteFetch: site.fetch } });
+  try {
+    const admin = await t.admin();
+    const keys = { key: 'ck_' + 'a'.repeat(40), secret: 'cs_' + 'b'.repeat(40) };
+    await admin('POST', '/api/site', { action: 'key', ...keys });
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    await t.call('POST', '/api/site/panel', { headers: { 'x-talabat-token': token }, body: { board: 'branch', orders: [
+      { id: 102, stage: 3, status: 'app-delivering', createdAt: site.m(10) / 1000, branchAssignedAt: site.m(20) / 1000,
+        branchName: 'التجمع الخامس', branchId: 'tagamoa-cloud', driver: { name: 'أحمد علي' }, fulfillment: 'delivery' },
+    ] } });
+    t.advance(61000);
+    assert.equal((await admin('POST', '/api/site', { action: 'sync' })).status, 200);
+    const get = t.app.db.raw.prepare('SELECT branch, driver, transfer_at, out_at FROM site_orders WHERE id = 102');
+    assert.deepEqual(get.get(), { branch: 'التجمع الخامس', driver: 'أحمد علي', transfer_at: site.m(20), out_at: site.m(40) });
+  } finally { await t.close(); }
+});

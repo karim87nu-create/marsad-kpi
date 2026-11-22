@@ -187,9 +187,12 @@ function setup(app) {
     return dispatch.filter(a => apexUses.get(a.apexNo) === 1).map(({ orderId, driver }) => ({ orderId, driver }));
   }
 
-  app.route('POST', '/api/site/panel', async ctx => {
-    await app.extensionAuth(ctx);
-    const list = (Array.isArray(ctx.body?.orders) ? ctx.body.orders : []).slice(0, 300), now = ctx.now, writes = [];
+  async function writeBatches(writes) {
+    for (let i = 0; i < writes.length; i += 40) await db.batch(writes.slice(i, i + 40));
+  }
+
+  async function savePanel(list, board, now) {
+    const writes = [];
     // The board can contain 300 orders and is resent every minute. Read saved order + profile state together, in bounded
     // groups; the D1 primary key on (source, ref) makes each profile lookup a point read.
     const ids = [...new Set(list.map(o => Number(o?.id)).filter(n => Number.isInteger(n) && n > 0))];
@@ -263,7 +266,7 @@ function setup(app) {
         .bind(id, day, nextStatus, fulfillment, total, created, modified, now, created, assigned, branch, outAt, driver, deliveredAt, scheduled, scheduledAt, transfers));
     }
     // The central board lists every open order: one that was out with a driver and is gone from it was delivered.
-    if (ctx.body?.board === 'central' && list.length) {
+    if (board === 'central' && list.length) {
       const seen = new Set(list.map(o => Number(o?.id)));
       // Karim 11-11 «بيتعامل ازاي مع اللاغي علي الموقع»: an order cancelled on the website mostly just leaves the central
       // board. Gone before it went out (no driver) for 3 minutes → cancelled: off the transfer page; if it is already on
@@ -298,14 +301,25 @@ function setup(app) {
         const r = olds.get(id); if (r) await siteCancelledOnApex(r, now, writes);
       }
     }
-    // Keep each atomic D1 batch under 80 statements. Replays are idempotent because all writes are keyed upserts/state updates.
-    for (let i = 0; i < writes.length; i += 80) await db.batch(writes.slice(i, i + 80));
+    await writeBatches(writes);
     await put('site_panel_at', String(now));
+  }
+
+  app.route('POST', '/api/site/panel', async ctx => {
+    await app.extensionAuth(ctx);
+    const list = (Array.isArray(ctx.body?.orders) ? ctx.body.orders : []).slice(0, 300), now = ctx.now, board = ctx.body?.board;
+    const canDispatch = board === 'branch' && ctx.body?.dispatchFromApex === true;
+    const dispatch = canDispatch ? await dispatchFromApex(list, now) : [];
+    // The branch already supplied the current order state. It can act on an exact Apex match
+    // even if the write for reports has to wait until the next panel refresh.
+    const save = savePanel(list, board, now);
+    if (canDispatch && db.kind === 'd1') ctx.waitUntil(save.catch(e => console.error('Website branch snapshot failed', e?.message)));
+    else await save;
     // Karim 11-11: «عايز الاوردر في الصفحه المركزيه برضو يتحول للفرع». An order the Marsad wrote on Apex and that is still
     // without a branch on the central panel: the extension picks that branch in the panel and presses «إرسال للفرع» itself
     // (the panel's own button, as an employee would). An order already sent to a branch is never changed.
     const assign = [];
-    if (ctx.body?.board === 'central') {
+    if (board === 'central') {
       const open = list.filter(o => Number.isInteger(Number(o?.id)) && !o.branchId && (Number(o.stage) || 0) < 3 && !/cancel|failed|refund/i.test(String(o.status || '')));
       if (open.length) {
         const ids = open.map(o => String(Number(o.id)));
@@ -318,8 +332,7 @@ function setup(app) {
         }
       }
     }
-    const dispatch = ctx.body?.board === 'branch' && ctx.body?.dispatchFromApex === true ? await dispatchFromApex(list, now) : [];
-    return { ok: true, saved: list.length, assign, dispatch };
+    return { ok: true, saved: canDispatch && db.kind === 'd1' ? null : list.length, assign, dispatch };
   }, { limit: 2 * 1024 * 1024 });   // 11-11: the day's board passed 256 KB at 19:42 and every push was refused
 
   // The key and secret are stored encrypted with the server secret (like the Telegram bot token).
@@ -406,15 +419,24 @@ function setup(app) {
       const until = pending?.until || new Date(now).toISOString().slice(0, 19);
       const startPage = pending?.page || 1;
       const changed = []; let nextPage = null;
-      for (let page = startPage; page < startPage + 6; page++) {
+      for (let page = startPage; page < startPage + 2; page++) {
         const list = await wc(c, 'orders', { per_page: 50, page, modified_after: after, modified_before: until, dates_are_gmt: 'true', orderby: 'modified', order: 'asc', _fields: 'id,status,total,date_created_gmt,date_modified_gmt,meta_data,billing,shipping,line_items,customer_id,created_via' });
         if (!Array.isArray(list)) throw Error('رد غير متوقع من الموقع');
         changed.push(...list);
         nextPage = list.length < 50 ? null : page + 1;
         if (nextPage === null) break;
       }
+      const prior = new Map(), ids = [...new Set(changed.map(o => Number(o.id)).filter(id => Number.isSafeInteger(id) && id > 0))];
+      for (let i = 0; i < ids.length; i += 90) {
+        const part = ids.slice(i, i + 90), qs = part.map(() => '?').join(',');
+        const rows = await db.prepare(`SELECT s.id, s.modified_at, s.scheduled, s.scheduled_at, p.data
+          FROM site_orders s LEFT JOIN match_profiles p ON p.source = 'site' AND p.ref = CAST(s.id AS TEXT)
+          WHERE s.id IN (${qs})`).all(...part);
+        for (const row of rows) prior.set(Number(row.id), row);
+      }
       const upsert = [];
       for (const o of changed) {
+        if (!Number.isSafeInteger(Number(o.id)) || Number(o.id) <= 0) continue;
         const ful = (o.meta_data || []).find(m => m.key === '_eldahan_app_fulfillment')?.value || null;
         // Karim 11-16: the customer's rating of the order (the app's rating page), kept with its comment.
         const rt = ratingOf(o.meta_data);
@@ -423,7 +445,7 @@ function setup(app) {
         const created = Date.parse(String(o.date_created_gmt) + 'Z');
         if (!Number.isFinite(created)) continue;
         const modified = Date.parse(String(o.date_modified_gmt).replace(/Z?$/, 'Z')) || created;
-        const saved = await db.prepare('SELECT modified_at, scheduled, scheduled_at FROM site_orders WHERE id = ?').get(o.id);
+        const saved = prior.get(Number(o.id));
         if (saved?.modified_at > modified) continue;
         const scheduledAt = scheduledOrderAt(o, created) || saved?.scheduled_at || null;
         const scheduled = isScheduledOrder(o) || !!scheduledAt || !!saved?.scheduled ? 1 : 0;
@@ -437,7 +459,7 @@ function setup(app) {
           // Add-ons/options the website stores on the line (hidden keys start with "_").
           modifiers: (Array.isArray(x.meta_data) ? x.meta_data : []).filter(m => m && !String(m.key || '').startsWith('_') && ['string', 'number'].includes(typeof (m.display_value ?? m.value)))
             .slice(0, 20).map(m => (String(m.display_key || m.key || '').slice(0, 60) + ': ' + String(m.display_value ?? m.value).replace(/<[^>]*>/g, '').slice(0, 120)).trim()) })) : [];
-        const old = parseJson((await db.prepare("SELECT data FROM match_profiles WHERE source = 'site' AND ref = ?").get(String(o.id)))?.data, {});
+        const old = parseJson(saved?.data, {});
         // Payment and discounts exactly as the website order records them (no guessing).
         const money = v => Number.isFinite(Number(v)) ? Number(v) : null;
         const pay = { method: String(o.payment_method || '').slice(0, 60) || null, title: String(o.payment_method_title || '').slice(0, 120) || null, paid: !!o.date_paid || !!o.date_paid_gmt,
@@ -453,17 +475,7 @@ function setup(app) {
         upsert.push(db.prepare('INSERT INTO site_orders (id, day, status, fulfillment, total, created_at, modified_at, notes_at, scheduled, scheduled_at) VALUES (?,?,?,?,?,?,?,NULL,?,?) ON CONFLICT(id) DO UPDATE SET status = CASE WHEN site_orders.gone_at IS NOT NULL AND site_orders.status = \'cancelled\' THEN site_orders.status ELSE excluded.status END, fulfillment = excluded.fulfillment, total = excluded.total, modified_at = excluded.modified_at, notes_at = CASE WHEN excluded.modified_at > IFNULL(site_orders.modified_at, 0) THEN NULL ELSE site_orders.notes_at END, scheduled = MAX(site_orders.scheduled, excluded.scheduled), scheduled_at = COALESCE(excluded.scheduled_at, site_orders.scheduled_at) WHERE COALESCE(site_orders.modified_at,0) <= excluded.modified_at')
           .bind(o.id, businessDay(created), String(o.status), ful ? String(ful) : null, Number(o.total) || null, created, modified, scheduled, scheduledAt));
       }
-      if (upsert.length) await db.batch(upsert);
-      // Notes: orders never read since they changed first, then open orders (their notes change without a status change).
-      const due = await db.prepare(`SELECT id FROM site_orders WHERE status NOT IN ('cancelled','failed','wallet-failed') AND
-        ((created_at >= ? AND (notes_at IS NULL OR (delivered_at IS NULL AND notes_at < ?))) OR (scheduled = 1 AND scheduled_at IS NULL AND (notes_at IS NULL OR notes_at < ?)))
-        ORDER BY notes_at IS NOT NULL, notes_at, created_at LIMIT ?`).all(now - OPEN_HOURS * 3600000, now - 50000, now - 50000, NOTES_PER_RUN);
-      for (const { id } of due) {
-        const notes = await wc(c, 'orders/' + id + '/notes', { per_page: 100, _fields: 'date_created_gmt,note' });
-        const x = readNotes(Array.isArray(notes) ? notes : []);
-        await db.prepare('UPDATE site_orders SET received_at = ?, transfer_at = ?, branch = ?, out_at = ?, driver = ?, delivered_at = ?, scheduled = MAX(scheduled, ?), scheduled_at = COALESCE(?, scheduled_at), transfers = ?, notes_at = ? WHERE id = ?')
-          .run(x.received, x.transfer, x.branch, x.out, x.driver, x.delivered, x.scheduled ? 1 : 0, x.scheduledAt, x.transfers, now, id);
-      }
+      await writeBatches(upsert);
       // A bounded run is not a completed window. Resume its remaining pages after restart.
       if (nextPage !== null) await put('site_sync_cursor', JSON.stringify({ after, until, page: nextPage }));
       else {
@@ -472,6 +484,22 @@ function setup(app) {
           db.prepare("INSERT INTO settings (key, value) VALUES ('site_sync_cursor', 'null') ON CONFLICT(key) DO UPDATE SET value = excluded.value").bind(),
         ]);
       }
+      // Notes: orders never read since they changed first, then open orders (their notes change without a status change).
+      const due = await db.prepare(`SELECT id FROM site_orders WHERE status NOT IN ('cancelled','failed','wallet-failed') AND
+        ((created_at >= ? AND (notes_at IS NULL OR (delivered_at IS NULL AND notes_at < ?))) OR (scheduled = 1 AND scheduled_at IS NULL AND (notes_at IS NULL OR notes_at < ?)))
+        ORDER BY notes_at IS NOT NULL, notes_at, created_at LIMIT ?`).all(now - OPEN_HOURS * 3600000, now - 50000, now - 50000, NOTES_PER_RUN);
+      const noteWrites = [];
+      for (const { id } of due) {
+        const notes = await wc(c, 'orders/' + id + '/notes', { per_page: 100, _fields: 'date_created_gmt,note' });
+        const x = readNotes(Array.isArray(notes) ? notes : []);
+        noteWrites.push(db.prepare(`UPDATE site_orders SET received_at = COALESCE(?, received_at),
+          transfer_at = COALESCE(?, transfer_at), branch = COALESCE(?, branch), out_at = COALESCE(?, out_at),
+          driver = COALESCE(?, driver), delivered_at = COALESCE(?, delivered_at), scheduled = MAX(scheduled, ?),
+          scheduled_at = COALESCE(?, scheduled_at), transfers = MAX(COALESCE(transfers, 0), ?), notes_at = ?
+          WHERE id = ? AND (notes_at IS NULL OR notes_at <= ?)`)
+          .bind(x.received, x.transfer, x.branch, x.out, x.driver, x.delivered, x.scheduled ? 1 : 0, x.scheduledAt, x.transfers, now, id, now));
+      }
+      await writeBatches(noteWrites);
       await put('site_error', null);
       await reviewsSync(c, now).catch(() => {});
       await alerts(now);

@@ -231,7 +231,7 @@ test('website central panel: a big board (over 256 KB) is accepted', async () =>
   } finally { await t.close(); }
 });
 
-test('branch board mirrors the driver from a fresh, confirmed Apex website delivery', async () => {
+test('branch board mirrors the driver from a fresh, confirmed Apex website delivery', { timeout: 5000 }, async () => {
   const now = cairoToUtc(2026, 11, 21, 21, 0, 0), day = '2026-11-21';
   const t = await start({ at: now });
   try {
@@ -266,6 +266,28 @@ test('branch board mirrors the driver from a fresh, confirmed Apex website deliv
     assert.deepEqual(db.prepare('SELECT out_at, driver FROM site_orders WHERE id = 31848').get(), { out_at: null, driver: null });
     assert.deepEqual((await push([first], 'central')).body.dispatch, []);
     assert.deepEqual((await push([first], 'branch', false)).body.dispatch, []);
+    const facade = t.app.db, prepare = facade.prepare;
+    let releaseRead, pendingWrite;
+    const slowRead = new Promise(resolve => { releaseRead = resolve; });
+    facade.prepare = sql => {
+      const query = prepare(sql);
+      if (!sql.includes('p.data AS profile_data')) return query;
+      return { ...query, all: async (...params) => { await slowRead; return query.all(...params); } };
+    };
+    facade.kind = 'd1';
+    try {
+      const response = await t.app.fetch(new Request('http://localhost/api/site/panel', {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-talabat-token': token },
+        body: JSON.stringify({ board: 'branch', dispatchFromApex: true, orders: [first] }),
+      }), { waitUntil: work => { pendingWrite ??= work; } });
+      assert.equal(response.status, 200);
+      assert.deepEqual((await response.json()).dispatch, [{ orderId: 31837, driver: 'زياد علي' }]);
+    } finally {
+      releaseRead();
+      await pendingWrite;
+      facade.prepare = prepare;
+      facade.kind = 'sqlite';
+    }
     t.advance(6 * 60000);
     assert.deepEqual((await push([first])).body.dispatch, [], 'stale Apex snapshots cannot trigger a dispatch');
   } finally { await t.close(); }
