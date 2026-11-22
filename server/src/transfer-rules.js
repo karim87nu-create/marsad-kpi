@@ -43,11 +43,24 @@ export function setExtraRules(x) {
 }
 const has = (t, w) => t === w || (' ' + t + ' ').includes(' ' + w + ' ');
 
-export function compoundArea(address, area, source) {
-  const pattern = /(?:جاردينيا|جردينيا|جاردنيا|gardenia)(?:\s+(?:سيتي|city))?|(?:تاج|taj|tag)\s*[- ]?\s*(?:سلطان|sultan)/i;
-  const found = [address, area].map(text => String(text || '').match(pattern)).find(Boolean);
+const COMPOUNDS = [
+  ['جاردينيا سيتي', /^(?:جاردينيا|جردينيا|جاردنيا|جاريدينا|gardenia)(?:\s+(?:سيتي|city))?$/],
+  ['تاج سلطان', /^(?:تاج|taj|tag)\s*(?:سلطان|sultan)$/],
+];
+const compoundWords = text => norm(text).replace(/[\p{P}\p{S}]/gu, ' ').replace(/\s+/g, ' ').trim();
+const compoundPatterns = COMPOUNDS.map(([name, exact]) => ({ name, exact, anywhere: new RegExp('(?:^| )' + exact.source.slice(1, -1) + '(?: |$)') }));
+
+export function compoundArea(address, area, source, branch, locations = []) {
+  const found = [area, address].map(text => compoundPatterns.find(p => p.anywhere.test(compoundWords(text)))).find(Boolean);
   if (!found) return null;
-  return { no: source === 'talabat' ? 355 : 332, addAddress: /سلطان|sultan/i.test(found[0]) ? 'تاج سلطان' : 'جاردينيا سيتي' };
+  const { name: addAddress, exact } = found;
+  const branchNo = Number(branch);
+  if (branchNo === 1) return { no: source === 'talabat' ? 355 : 332, addAddress };
+  const matches = locations.filter(l => branchNo && Number(l.branch) === branchNo && Number(l.no) > 0 && exact.test(compoundWords(l.name)
+    .replace(/^(?:كمبوند|كومبوند|كمباوند|كومباوند|compound) /, '').replace(/ (?:طلبات|talabat|الموقع)$/, '')));
+  const preferred = matches.filter(l => /(?:طلبات|talabat)\s*$/i.test(l.name) === (source === 'talabat'));
+  const candidates = [...new Set((preferred.length ? preferred : matches).map(l => Number(l.no)))];
+  return { no: candidates.length === 1 ? candidates[0] : null, addAddress };
 }
 
 export function areaRule(words, source) {

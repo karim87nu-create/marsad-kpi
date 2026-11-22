@@ -118,7 +118,7 @@ export function decide(o, x) {
   let branch = Number(o.apexBranch) || null;
   const pickup = o.fulfillment === 'pickup';   // website or Talabat (11-15)
   const sourceArea = o.customer?.talabatArea || o.customer?.siteArea;
-  const forcedCompound = !pickup && compoundArea(o.customer?.address, sourceArea, o.source);
+  const forcedCompound = !pickup && compoundArea(o.customer?.address, sourceArea, o.source, branch, x.locations);
   let loc = null, locHow = null;
   if (pickup) { loc = PICKUP_AREAS[branch]?.no ?? null; locHow = 'pickup'; }
   else if (forcedCompound) { loc = forcedCompound.no; locHow = 'rule'; }
@@ -151,7 +151,7 @@ export function decide(o, x) {
   if (!branch) why.push('الفرع مش واضح');
   let service = null;
   if (pickup && !loc && branch) why.push('استلام الفرع مش متعرّف على Apex');
-  if (!loc && !pickup) why.push(o.areaGuess && Number(o.areaGuess.seen) >= 2 ? 'المنطقة دي الموظفين اختاروا لها أكتر من منطقة على Apex'
+  if (!loc && !pickup) why.push(forcedCompound ? 'منطقة «' + forcedCompound.addAddress + '» محتاجة تحديد على Apex للفرع ده' : o.areaGuess && Number(o.areaGuess.seen) >= 2 ? 'المنطقة دي الموظفين اختاروا لها أكتر من منطقة على Apex'
     : (o.customer?.talabatArea || o.customer?.siteArea) ? 'منطقة «' + (o.customer.talabatArea || o.customer.siteArea) + '» لسه ما اتعلمتش على Apex' : 'منطقة العميل مش ظاهرة في الأوردر');
   else if (!pickup) {
     // Karim 11-14: an area Apex has twice — the one this branch serves («مدينتي» 361 is listed for another branch, «مدنتى» 370 for Madinaty).

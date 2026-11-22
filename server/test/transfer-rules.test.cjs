@@ -105,19 +105,63 @@ test('auto transfer uses the assigned branch pickup even before the daily areas 
 });
 
 
-test('Gardenia City and Taj Sultan always override learned areas with the applicable First Settlement code', async () => {
+test('Gardenia City and Taj Sultan use the receiving branch area and preserve the compound in the address', async () => {
   const { decide } = await import('../src/autotransfer.js');
   const { compoundArea } = await import('../src/transfer-rules.js');
-  assert.deepEqual(compoundArea('Building 5, Gardenia City', 'مصر الجديدة', 'talabat'), { no: 355, addAddress: 'جاردينيا سيتي' });
-  assert.deepEqual(compoundArea('عمارة 5', 'تاج سلطان', 'site'), { no: 332, addAddress: 'تاج سلطان' });
-  assert.equal(compoundArea('كمبوند تاج سيتي', '', 'site'), null);
+  const locations = [{ no: 332, name: 'التجمع الأول', branch: 1, service: 40 }, { no: 355, name: 'التجمع الأول طلبات', branch: 1, service: 40 },
+    { no: 218, name: 'التجمع الخامس', branch: 1, service: 40 }, { no: 364, name: 'جاردينيا سيتي', branch: 1, service: 46.5 },
+    { no: 410, name: 'كومبوند جاردينيا سيتي', branch: 2, service: 43 }, { no: 411, name: 'تاج سلطان', branch: 2, service: 44 },
+    { no: 412, name: 'تاج سلطان طلبات', branch: 2, service: 44 }];
+  assert.deepEqual(compoundArea('Building 5, Gardenia City', 'مصر الجديدة', 'talabat', 1, locations), { no: 355, addAddress: 'جاردينيا سيتي' });
+  assert.deepEqual(compoundArea('عمارة 5', 'تاج سلطان', 'site', 1, locations), { no: 332, addAddress: 'تاج سلطان' });
+  assert.deepEqual(compoundArea('Building 5, Gardenia City', '', 'site', 2, locations), { no: 410, addAddress: 'جاردينيا سيتي' });
+  assert.deepEqual(compoundArea('عمارة 5', 'Tag-Sultan', 'talabat', 2, locations), { no: 412, addAddress: 'تاج سلطان' });
+  assert.deepEqual(compoundArea('عمارة 5', 'تاج سلطان', 'site', 3, locations), { no: null, addAddress: 'تاج سلطان' });
+  assert.equal(compoundArea('كمبوند تاج سيتي', '', 'site', 1, locations), null);
   const now = Date.parse('2026-11-21T20:00:00+02:00');
-  const verdict = decide({ source: 'site', ref: '9', code: '9', at: new Date(now - 1000).toISOString(),
+  const order = { source: 'site', ref: '9', code: '9', at: new Date(now - 1000).toISOString(),
     apexBranch: 1, payment: 'cash', items: [{ name: 'بطاطس', qty: 1, price: 50, apex: [{ no: '0103005' }] }],
     customer: { name: 'أحمد', phone: '01000000000', address: 'عمارة 5، شارع 7', siteArea: 'تاج سلطان' },
     areaGuess: { no: 218, seen: 7, share: 1 }, apexCustomerNote: { status: 'none', checkedAt: new Date(now - 1000).toISOString() }
-  }, { now, locations: [{ no: 332, name: 'التجمع الأول', branch: 1, service: 40 }, { no: 218, name: 'التجمع الخامس', branch: 1, service: 40 }] });
+  };
+  const verdict = decide(order, { now, locations });
   assert.deepEqual(verdict.why, []);
   assert.equal(verdict.body.locationNo, 332);
   assert.match(verdict.body.customer.address, /^كمبوند تاج سلطان/);
+  const nasr = decide({ ...order, apexBranch: 2 }, { now, locations });
+  assert.deepEqual(nasr.why, []);
+  assert.deepEqual([nasr.body.branchNo, nasr.body.locationNo], [2, 411]);
+  assert.match(nasr.body.customer.address, /^كمبوند تاج سلطان/);
+  const { formatDeliveryAddress } = await import('../src/delivery-fields.js');
+  assert.match(formatDeliveryAddress(nasr.body.customer.address, { apexArea: 'تاج سلطان', sourceArea: 'تاج سلطان' }).main, /^كمبوند تاج سلطان/);
+  assert.match(decide({ ...order, apexBranch: 3 }, { now, locations }).why.join(' '), /تاج سلطان.*محتاجة تحديد/);
+  assert.ok(decide({ ...order, apexBranch: null }, { now, locations }).why.includes('الفرع مش واضح'));
+});
+
+test('website transfer queue and manual confirmation use the same receiving branch compound area', async () => {
+  const { start } = require('./helpers.cjs');
+  const now = Date.parse('2026-11-21T20:00:00+02:00'), day = '2026-11-21';
+  const t = await start({ at: now });
+  try {
+    const admin = await t.admin();
+    await t.employee(admin, { name: 'سارة', code: 'E1', pin: '1111' });
+    const session = (await t.call('POST', '/api/transfer/login', { body: { pin: '1111' } })).body.token;
+    const { token: siteKey } = (await admin('POST', '/api/talabat/token')).body;
+    const { token: apexKey } = (await admin('POST', '/api/orders/token')).body;
+    const locations = [{ no: 332, name: 'التجمع الأول', branch: 1, service: 40 }, { no: 411, name: 'تاج سلطان', branch: 2, service: 44 },
+      { no: 15, name: 'منطقة أخرى', branch: 2, service: 44 }];
+    assert.equal((await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': apexKey }, body: { day, online: [], locations } })).status, 200);
+    const order = { id: 40101, status: 'app-preparing', stage: 1, createdAt: now / 1000 - 120, branchAssignedAt: now / 1000 - 90, fulfillment: 'delivery', branchId: 'nasr-city', branchName: 'مدينة نصر',
+      paymentMethod: 'كاش', total: 344, customer: { name: 'عميل', phone: '01012345678', address: 'كمبوند تاج سلطان، عمارة 5' }, items: [{ name: 'ورق عنب', quantity: 1, total: 300 }] };
+    assert.equal((await t.call('POST', '/api/site/panel', { headers: { 'x-talabat-token': siteKey }, body: { board: 'central', orders: [order] } })).status, 200);
+    t.advance(9000);
+    const headers = { 'x-transfer-session': session };
+    const q = (await t.call('GET', '/api/transfer/queue?day=' + day, { headers })).body.orders.find(o => o.ref === '40101');
+    assert.ok(q, 'the order reaches the transfer queue');
+    assert.equal(q.areaGuess.no, 411);
+    assert.deepEqual(q.compound, { name: 'تاج سلطان', areas: { 1: 332, 2: 411, 3: null } });
+    const confirm = locationNo => t.call('POST', '/api/transfer/job', { headers, body: { source: 'site', ref: '40101', action: 'entered', payment: 'cash', branchNo: 2, locationNo } });
+    assert.match((await confirm(15)).body.error, /تاج سلطان/);
+    assert.equal((await confirm(411)).status, 200);
+  } finally { await t.close(); }
 });

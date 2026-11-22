@@ -400,9 +400,11 @@ function setup(app) {
     for (let i = 0; i < list.length; i++) {
       if (list[i].fulfillment === 'pickup') continue;
       const order = list[i], c = order.customer;
-      const forced = !order.done && compoundArea(c?.address, c?.talabatArea || c?.siteArea, order.source);
+      const sourceArea = c?.talabatArea || c?.siteArea;
+      const forced = !order.done && compoundArea(c?.address, sourceArea, order.source, order.apexBranch, base.locations);
       if (forced) {
-        list[i] = { ...order, areaGuess: { ...forced, seen: 0, how: 'rule' } };
+        const areas = Object.fromEntries(APEX_BRANCHES.map(b => [b.no, compoundArea(c?.address, sourceArea, order.source, b.no, base.locations)?.no]));
+        list[i] = { ...order, compound: { name: forced.addAddress, areas }, ...(forced.no ? { areaGuess: { ...forced, seen: 0, how: 'rule' } } : {}) };
         continue;
       }
       if (!list[i].done && !list[i].areaGuess && (list[i].source === 'site' || !list[i].customer?.talabatArea) && list[i].customer?.address) {
@@ -1051,7 +1053,8 @@ function setup(app) {
       const locationNo = pickup ? PICKUP_AREAS[Number(b.branchNo)].no : Number(b.locationNo);
       if (!Number.isInteger(locationNo) || locationNo < 1) fail(400, 'اختار منطقة العميل على Apex');
       // The area's own delivery charge on Apex (as the read-only monitor sent it), for an area nobody ordered to today.
-      const areas = pickup ? [] : (await locationsFor(dueDay)).filter(l => Number(l?.no) === locationNo);
+      const locations = pickup ? [] : await locationsFor(dueDay);
+      const areas = locations.filter(l => Number(l?.no) === locationNo);
       // The area decides the branch, as on Apex (Karim 01-11: a Nasr City area was sent to Tagamoa).
       const owners = [...new Set(areas.map(l => l.branch).filter(x => x != null).map(Number))];
       if (owners.length && !owners.includes(branchNo)) {
@@ -1097,12 +1100,12 @@ function setup(app) {
       const customer = sourceOrder?.customer || b.customer || {};
       const originalArea = customer.talabatArea || customer.siteArea || customer.area;
       const addresses = app.toArabicAddress?.([rawAddress, originalArea, area?.name]) || new Map();
-      const forcedCompound = !pickup && compoundArea(customer.address || rawAddress, originalArea, source);
-      if (forcedCompound && forcedCompound.no !== locationNo)
-        fail(409, 'منطقة ' + forcedCompound.addAddress + ' على أبيكس لازم تتسجل التجمع الأول');
+      const forcedCompound = !pickup && compoundArea(customer.address || rawAddress, originalArea, source, branchNo, locations);
+      if (forcedCompound?.no && forcedCompound.no !== locationNo)
+        fail(409, 'اختار «' + (locations.find(l => Number(l.no) === forcedCompound.no)?.name || 'التجمع الأول') + '» على Apex للفرع ده');
       const explicitArea = forcedCompound || areaRule(originalArea, source) || areaRule(addresses.get(originalArea), source);
       const sourceArea = b.customer?.areaEdited === true && String(b.customer.area || '').trim() ? String(b.customer.area).trim().slice(0, 80)
-        : explicitArea?.no === locationNo && explicitArea.addAddress ? explicitArea.addAddress : originalArea;
+        : forcedCompound?.addAddress || (explicitArea?.no === locationNo && explicitArea.addAddress ? explicitArea.addAddress : originalArea);
       const textAddress = addresses.get(rawAddress) || rawAddress;
       const address = formatDeliveryAddress(forcedCompound ? withDeliveryPlaces(textAddress, { compound: forcedCompound.addAddress }) : textAddress, {
         apexArea: addresses.get(area?.name) || area?.name, sourceArea: addresses.get(sourceArea) || sourceArea,
@@ -1192,13 +1195,17 @@ function setup(app) {
       const pickup = TALABAT_PICKUP.test(source === 'site' ? origin?.fulfillment || profile.panel?.fulfillment || '' : origin?.delivery_type || '');
       const locationNo = pickup ? PICKUP_AREAS[branchNo]?.no : selectedLocation;
       if (!Number.isInteger(locationNo) || locationNo < 1) fail(400, 'اختار منطقة Apex الخاصة بالفرع');
-      const areas = pickup ? [] : (await locationsFor(dueDay)).filter(l => Number(l?.no) === locationNo);
+      const locations = pickup ? [] : await locationsFor(dueDay);
+      const areas = locations.filter(l => Number(l?.no) === locationNo);
       const owners = [...new Set(areas.map(l => l.branch).filter(x => x != null).map(Number))];
       if (owners.length && !owners.includes(branchNo)) fail(400, 'المنطقة دي تبع فرع تاني على Apex — غيّر الفرع');
       const area = areas.find(l => Number(l.branch) === branchNo) || areas.find(l => l.branch == null) || areas[0];
       const areaService = pickup ? 0 : Number.isFinite(Number(area?.service)) && area?.service !== null ? Number(area.service) : null;
       if (!pickup && (!area || areaService == null)) fail(400, 'المنطقة مش موجودة أو سعر توصيلها مش ظاهر على Apex');
-      const { phone, address } = customerOf(source, profile);
+      const { phone, address, area: customerArea } = customerOf(source, profile);
+      const forcedCompound = !pickup && compoundArea(address, customerArea, source, branchNo, locations);
+      if (forcedCompound?.no && forcedCompound.no !== locationNo)
+        fail(409, 'اختار «' + (locations.find(l => Number(l.no) === forcedCompound.no)?.name || 'التجمع الأول') + '» على Apex للفرع ده');
       const payload = JSON.stringify({ v: 1, source, ref, branchNo, locationNo, payment, areaService, ...(pickup ? { pickup: true } : {}),
         customer: { phone: deliveryPhone(phone), address: String(address || '').slice(0, 360) } });
       await db.prepare(`INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, payment, note, at, payload, result) VALUES (?,?,?,'entered',?,?,?,?,?,?,NULL)

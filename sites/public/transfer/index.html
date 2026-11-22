@@ -301,9 +301,9 @@ function addressFor(o, p, platformAmount) {
   const cu = o.customer || {}, apexArea = (data.locations || []).find(l => String(l.no) === String(p?.loc))?.name;
   const ruleArea = String(p?.loc) === String(o.areaGuess?.no) ? o.areaGuess?.addAddress : null;
   const address = p?.arabic?.address ?? cu.address;
-  const compound = /^(?:جاردينيا سيتي|تاج سلطان)$/.test(ruleArea || '') ? ruleArea : null;
+  const compound = o.compound?.name;
   return formatDeliveryAddress(compound ? withDeliveryPlaces(address, { compound }) : address, {
-    apexArea, sourceArea: p?.arabic?.area || ruleArea || cu.talabatArea || cu.siteArea || cu.area,
+    apexArea, sourceArea: p?.arabic?.area || compound || ruleArea || cu.talabatArea || cu.siteArea || cu.area,
     signBase: platformAmount > 0 ? 'خصم طلبات ' + money(platformAmount) : '', pickup: o.fulfillment === 'pickup',
   });
 }
@@ -430,11 +430,15 @@ function card(o) {
   if (!p.branchManual && o.apexBranch) p.branch = o.apexBranch;
   const pickupArea = pickup && (data.pickupAreas?.[p.branch] ||
     (String(p.branch) === String(o.apexBranch) && o.areaGuess?.how === 'pickup' ? o.areaGuess : null));
+  const compoundNo = o.compound?.areas?.[p.branch];
   if (pickup) {
     p.loc = pickupArea?.no || '';
     p.locGuess = pickupArea ? 'pickup' : false;
+  } else if (compoundNo) {
+    p.loc = areaList().some(l => String(l.no) === String(compoundNo) && (!l.branches.length || l.branches.some(b => String(b) === String(p.branch)))) ? compoundNo : '';
+    p.locGuess = p.loc ? 'rule' : false;
   } else if (!p.locManual) {
-    const known = o.areaGuess && areaList().some(l => String(l.no) === String(o.areaGuess.no) &&
+    const known = !o.compound && o.areaGuess && areaList().some(l => String(l.no) === String(o.areaGuess.no) &&
       !/استلام/.test(l.name) && (!p.branch || !l.branches.length || l.branches.some(b => String(b) === String(p.branch))));
     pickArea(p, known ? String(o.areaGuess.no) : '');
     p.locGuess = known && (o.areaGuess.how || 'learned');
@@ -447,7 +451,8 @@ function card(o) {
     const zeroFee = l => l.service != null && Number.isFinite(Number(l.service)) && Number(l.service) === 0;
     const bname = no => (data.branches || []).find(b => String(b.no) === String(no))?.name || ('فرع ' + no);
     branchSel = '<select data-pick="branch" aria-label="الفرع على Apex"><option value="">اختار الفرع…</option>' + (data.branches || []).map(b => '<option value="' + b.no + '"' + (String(p.branch) === String(b.no) ? ' selected' : '') + '>' + esc(b.name) + '</option>').join('') + '</select>';
-    const areas = all.filter(l => !p.branch || !l.branches.length || l.branches.some(b => String(b) === String(p.branch)));
+    const areas = all.filter(l => (!o.compound || p.branch) && (!compoundNo || String(compoundNo) === String(l.no)) &&
+      (!p.branch || !l.branches.length || l.branches.some(b => String(b) === String(p.branch))));
     areaSel = pickup ? (pickupArea ? '<span class="ok">' + esc(pickupArea.name) + '</span>' : '') : '<select data-pick="loc" aria-label="المنطقة على Apex"><option value="">اختار المنطقة…</option>' + areas.map(l => '<option value="' + l.no + '"' + (String(p.loc) === String(l.no) ? ' selected' : '') + '>' + esc(l.name) + (zeroFee(l) && o.fulfillment !== 'pickup' ? ' — رسوم التوصيل 0 ج' : '') + '</option>').join('') + '</select>';
     const selectedArea = all.find(l => String(l.no) === String(p.loc));
     areaNote = o.fulfillment === 'pickup' ? '<div class="warn">استلام من الفرع — بيتسجل على «استلام فرع» بتاع الفرع اللي تختاره، من غير عنوان ولا دور ولا شقة</div>' : selectedArea && zeroFee(selectedArea) ? '<div class="muted">المنطقة المختارة هتتسجل كما هي، حتى لو رسوم التوصيل على Apex صفر.</div>' : p.moved ? '<div class="warn">الفرع اتغير لـ ' + esc(bname(p.branch)) + ' عشان المنطقة تبعه</div>' : p.locGuess === 'learned' ? '<div class="muted">اتختارت تلقائيًا من الأوردرات السابقة لنفس المنطقة' + (cu.talabatArea ? ' («' + esc(cu.talabatArea) + '»)' : '') + ' — تقدر تغيّرها لو لزم</div>' : p.locGuess ? '<div class="muted">اتختارت من العنوان — تقدر تغيّرها لو لزم</div>' : '';
@@ -762,7 +767,8 @@ $('list').addEventListener('change', async e => {
   if (el.dataset.pick === 'branch') {
     p.branch = el.value; p.branchManual = true; p.moved = false;
     const a = areaList().find(l => String(l.no) === String(p.loc));
-    if (a && a.branches.length && !a.branches.some(b => String(b) === String(p.branch))) { p.loc = ''; p.locGuess = false; p.locManual = false; }   // its area is another branch's
+    const order = data.orders.find(o => key(o) === c.dataset.k);
+    if (order?.compound || (a && a.branches.length && !a.branches.some(b => String(b) === String(p.branch)))) { p.loc = ''; p.locGuess = false; p.locManual = false; }
     render(true); return;
   }
   if (el.dataset.pick === 'loc') { p.locManual = !!el.value; pickArea(p, el.value); if (p.moved) p.branchManual = true; render(true); return; }
