@@ -511,7 +511,7 @@ function setup(app) {
     const sections = items.length ? APEX_SECTIONS.map(x => ({ name: x.name, items: x.items.filter(no => APEX_NAMES[no]) })).filter(x => x.items.length) : [];
     const staticKey = 's' + sections.length + ':' + items.length + ':' + locations.length + ':' + locations.reduce((a, l) => a + l.no * (l.branch || 1) + (Number(l.service) || 0), 0).toFixed(2);
     const fresh = String(ctx.have || '') !== staticKey;
-    return { day, me: { name: me.name, staff: me.staff }, serverNow: iso(ctx.now), stale: base.stale === true, liveScreen: ctx.now - (liveNow._screen || 0) < 3 * 60000, screensStalled: app.talabatScreensStalled ? await app.talabatScreensStalled(ctx.now).catch(() => []) : [], autoTransfer: mode, branches: APEX_BRANCHES, pickupAreas: PICKUP_AREAS, staticKey,
+    return { day, me: { name: me.name, staff: me.staff }, serverNow: iso(ctx.now), snapshotAt: iso(base.at), stale: base.stale === true, refreshing: base.refreshing === true, liveScreen: ctx.now - (liveNow._screen || 0) < 3 * 60000, screensStalled: app.talabatScreensStalled ? await app.talabatScreensStalled(ctx.now).catch(() => []) : [], autoTransfer: mode, branches: APEX_BRANCHES, pickupAreas: PICKUP_AREAS, staticKey,
       ...(fresh ? { locations, apexItems: items, sections } : {}), orders: list };
   }
   app.transferQueue = queueFor;
@@ -560,8 +560,12 @@ function setup(app) {
         } while (x.dirty && ++passes < 2);
         noteBuild(base, Date.now() - t0);
         const keep = { at: base.at, locations: base.locations, list: base.list.map(o => o.apex || o.out ? { source: o.source, ref: o.ref, code: o.code, at: o.at, status: o.status, out: o.out, branch: o.branch, apexBranch: o.apexBranch, total: o.total, apex: o.apex } : o) };
-        await db.prepare('INSERT INTO transfer_cache (day, at, data) VALUES (?,?,?) ON CONFLICT(day) DO UPDATE SET at = excluded.at, data = excluded.data WHERE excluded.at >= transfer_cache.at').run(day, base.at, JSON.stringify(keep)).catch(() => {});
+        await db.prepare('INSERT INTO transfer_cache (day, at, data) VALUES (?,?,?) ON CONFLICT(day) DO UPDATE SET at = excluded.at, data = excluded.data WHERE excluded.at >= transfer_cache.at').run(day, base.at, JSON.stringify(keep))
+          .catch(error => console.error('Transfer snapshot could not be saved', day, error?.message));
         return base;
+      } catch (error) {
+        console.error('Transfer snapshot rebuild failed', day, error?.message);
+        throw error;
       } finally { if (release) await release().catch(() => {}); }
     })().finally(() => { if (x.run === run) x.run = null; });
     // Worker I/O belongs to its initiating request: never await another request's
@@ -574,10 +578,12 @@ function setup(app) {
     // The automatic transfer (11-11) never builds the day itself: it reads the last completed build (a minute at most),
     // so it adds no load next to the employees' page and the pushes.
     if (cachedOnly) {
-      const b = queueCache.get(day); if (b && now - b.at < 60000) return b;
+      const b = queueCache.get(day);
+      if (b && (db.kind === 'd1' ? now - b.at < QUEUE_CACHE_MS : now - b.at < 60000)) return b;
       const r = await db.prepare('SELECT at, data FROM transfer_cache WHERE day = ?').get(day);
-      const d = r && now - r.at < 60000 ? parseJson(r.data, null) : null; if (d) return d;
-      return null;
+      const d = r && r.at > (b?.at ?? 0) && now - r.at < 60000 ? parseJson(r.data, null) : null;
+      if (d) { queueCache.set(day, d); return d; }
+      return b && now - b.at < 60000 ? b : null;
     }
     if (db.kind !== 'd1' && x.run) return x.run;                                    // a build is running here: its result is the freshest
     const b = queueCache.get(day);
@@ -595,13 +601,20 @@ function setup(app) {
       // Only the read-only queue may show a recent completed snapshot when matching or D1 is slow.
       // Actions still require a successful fresh build, so a stale order cannot be claimed or entered.
       if (allowStale) {
-        const persisted = r && parseJson(r.data, null);
+        const busy = error.status === 503;
+        // The holder can commit after our first cache read and before we lose the lease.
+        const newer = busy && db.kind === 'd1' ? await db.prepare('SELECT at, data FROM transfer_cache WHERE day = ?').get(day).catch(() => null) : null;
+        const row = newer && newer.at > (r?.at ?? 0) ? newer : r;
+        const persisted = row && parseJson(row.data, null);
         const saved = persisted?.at > (b?.at || 0) ? persisted : (b || persisted);
         // A busy builder is not a failed sync. Keep a very recent completed view
         // without tearing down the employee's editor; write actions still fail closed.
-        if (error.status === 503 && saved && Array.isArray(saved.list) && now - saved.at <= 9000) return saved;
+        if (busy && saved && Array.isArray(saved.list) && now - saved.at <= 9000) {
+          if (saved === persisted && saved.at > (b?.at ?? 0)) queueCache.set(day, saved);
+          return saved;
+        }
         if (saved && Array.isArray(saved.list) && Number.isFinite(saved.at) && now - saved.at <= 15 * 60000)
-          return { ...saved, stale: true };
+          return { ...saved, stale: true, refreshing: busy };
       }
       throw error;
     }

@@ -804,7 +804,10 @@ async function loadQueue() {
     const prev = data, d = await api('GET', '/api/transfer/queue' + (prev?.staticKey ? '?have=' + encodeURIComponent(prev.staticKey) : ''));
     if (!d.apexItems && prev) { d.apexItems = prev.apexItems; d.locations = prev.locations; d.sections = prev.sections; }
     queueBackoff = 0; queueRetryAfter = 0;
-    data = d; $('queueStatus').textContent = d.stale ? '⚠️ أحدث تحديث فشل — دي آخر بيانات محفوظة، والتحويل متوقف مؤقتًا لحد ما التحديث يرجع.' : ''; $('me').textContent = data.me.name; const a = $('auto'); a.textContent = { off: 'التحويل الآلي متوقف — سجّل على Apex بإيدك', shadow: 'التحويل الآلي: معاينة بس — سجّل بإيدك', test: 'التحويل الآلي: تجربة على قاعدة الاختبار — سجّل بإيدك', live: 'التحويل الآلي شغال' }[data.autoTransfer] || ''; a.className = 'pill' + (data.autoTransfer === 'live' ? '' : ' off'); renderQueueIfChanged(); }
+    data = d;
+    const last = time(d.snapshotAt);
+    $('queueStatus').textContent = d.stale ? (d.refreshing ? 'قائمة التحويل بتتحدّث دلوقتي.' : 'تعذّر تحديث قائمة التحويل.') + (last ? ' آخر بيانات معروضة من الساعة ' + last + '.' : '') + ' التسجيل من الصفحة هيبقى متاح لما القائمة تتحدّث.' : '';
+    $('me').textContent = data.me.name; const a = $('auto'); a.textContent = { off: 'التحويل الآلي متوقف — سجّل على Apex بإيدك', shadow: 'التحويل الآلي: معاينة بس — سجّل بإيدك', test: 'التحويل الآلي: تجربة على قاعدة الاختبار — سجّل بإيدك', live: 'التحويل الآلي شغال' }[data.autoTransfer] || ''; a.className = 'pill' + (data.autoTransfer === 'live' ? '' : ' off'); renderQueueIfChanged(); }
   catch (e) { queueBackoff = Math.min(60000, queueBackoff ? queueBackoff * 2 : 10000); queueRetryAfter = Date.now() + queueBackoff; if (token) { $('queueStatus').textContent = 'تعذّر تحديث الطلبات: ' + e.message + ' — هنهدّي إعادة المحاولة شوية'; if (!data) $('auto').textContent = 'حالة التحويل لم تصل بعد'; toast(e.message); } }
 }
 $('refreshQueue').onclick = async () => {

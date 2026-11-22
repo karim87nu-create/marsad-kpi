@@ -474,6 +474,33 @@ test('manual refresh reuses the completed queue when another Worker owns the bui
   } finally { await t.close(); }
 });
 
+test('D1 polling picks up the completed snapshot and identifies a busy build while showing older data', async () => {
+  const now = Date.parse('2026-11-23T00:34:00+02:00'), day = '2026-11-22';
+  const t = await start({ at: now });
+  try {
+    const admin = await t.admin(), db = t.app.db;
+    db.kind = 'd1';
+    const save = at => db.raw.prepare('INSERT OR REPLACE INTO transfer_cache (day,at,data) VALUES (?,?,?)').run(day, at, JSON.stringify({ at, list: [], locations: [] }));
+    save(now - 20000);
+    db.raw.prepare('INSERT INTO settings (key,value) VALUES (?,?)').run('transfer-build:' + day, String(now + 30000));
+    const before = await admin('GET', '/api/transfer/queue');
+    assert.deepEqual([before.status, before.body.stale, before.body.refreshing, before.body.snapshotAt], [200, true, true, new Date(now - 20000).toISOString()]);
+    const prepare = db.prepare;
+    let published = false;
+    db.prepare = sql => {
+      if (!published && sql.includes('CAST(settings.value AS INTEGER) <= ?')) { published = true; save(now); }
+      return prepare(sql);
+    };
+    const after = await admin('GET', '/api/transfer/queue');
+    assert.deepEqual([after.status, after.body.stale, after.body.snapshotAt], [200, false, new Date(now).toISOString()]);
+    const cached = await t.app.transferQueue(day, { now, cachedOnly: true });
+    assert.equal(cached.snapshotAt, new Date(now).toISOString());
+    save(now + 5000);
+    const latest = await t.app.transferQueue(day, { now: now + 6000, cachedOnly: true });
+    assert.equal(latest.snapshotAt, new Date(now + 5000).toISOString());
+  } finally { await t.close(); }
+});
+
 test('a weight under the dish is its size, never a paid add-on («1 كيلو» 1,509 under Veal Ribs)', async () => {
   const t0 = cairoToUtc(2026, 10, 22, 20, 0, 0), at = m => new Date(t0 + m * 60000).toISOString();
   const t = await start({ at: t0 + 10 * 60000 });
