@@ -2,6 +2,7 @@
 // Checked against the Apex items staff actually used for 2,864 website orders (28-09 → 09-11) and against the prices
 // (website price ≈ Apex online price + 14%). A dish sold by weight lists every weight: the chosen weight picks the item.
 // A dish with a choice (bread «بلدي / ملفوف», «بانيه / صدور», «لحمة / فراخ») is picked by the words the order shows.
+export const wheelPrizeLabel = value => /^(?:_eldahan_app_prize_claim_id|جائزه عجله الحظ)(?:\s*:|$)/.test(String(value || '').trim().replace(/[ة]/g, 'ه'));
 const K = (kilo, half, third, quarter) => [kilo, half, third, quarter];
 const SITE_ITEMS = {
   // Offers

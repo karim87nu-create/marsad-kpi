@@ -19,7 +19,7 @@ import { areaGroups, areaKey, areaInAddress, areaForBranch, PICKUP_AREAS } from 
 import { knownNos, itemKey } from './items.js';
 import { APEX_NAMES, APEX_PRICES } from './menu-seed.js';
 import { APEX_SECTIONS } from './apex-sections.js';
-import { siteApexItems } from './site-items.js';
+import { siteApexItems, wheelPrizeLabel } from './site-items.js';
 import { canonicalStore } from './store-names.js';
 import { sitePaymentChoice } from './site-payment-choice.js';
 // Karim 11-19 «الاوردرات الي فيها ساندوتشات رول أو ملفوف يتضرب ملفوف من غير كومنت، الا لو كومبو»: a sandwich asked
@@ -199,12 +199,14 @@ function apexBranchOf(name) {
 // a choice that costs money stays an add-on line of its own, named without the arrow.
 function siteLines(items) {
   const out = [], clean = t => String(t || '').replace(/^[\s↳└⤷→\-–—>•]+/u, '').trim();
-  for (const x of items) {
+  for (const item of items) {
+    const wheelPrize = item.price === 0 && (item.wheelPrize === true || (item.modifiers || []).some(wheelPrizeLabel));
+    const x = { ...item, wheelPrize, modifiers: (item.modifiers || []).filter(t => !wheelPrizeLabel(t)), options: (item.options || []).filter(o => !wheelPrizeLabel(o.name)) };
     const sub = !!x?.parent || /^\s*[↳└⤷]/u.test(String(x?.name || ''));
     if (!sub || !out.length) { out.push({ ...x, name: clean(x?.name) || x?.name, modifiers: [...(x?.modifiers || [])], options: [...(x?.options || [])] }); continue; }
     const name = clean(x.name), want = clean(x.parent);
     const dish = (want && [...out].reverse().find(d => !d.addon && (d.name === want || want.startsWith(d.name) || d.name.startsWith(want.split(/\s+[—–-]\s+/)[0])))) || [...out].reverse().find(d => !d.addon);
-    if (!(Number(x.price) > 0) && dish) { dish.modifiers.push(name); dish.options.push({ name, price: 0 }); continue; }
+    if (!wheelPrize && !(Number(x.price) > 0) && dish) { dish.modifiers.push(name); dish.options.push({ name, price: 0 }); continue; }
     out.push({ ...x, name, addon: true, parent: dish?.name || want || null });
   }
   return out;
@@ -735,7 +737,7 @@ function setup(app) {
           return { name: o.name, qty: addonCount(o, Number(x.qty) || 1, apex), price: Number(o.price), apex };
         });
         const free = opts.filter(o => o !== sizeOpt && !(Number(o.price) > 0)).map(o => (Number(o.qty) > 1 ? o.qty + '× ' : '') + o.name);
-        return rolled({ qty: x.qty, name: x.name, ...(x.nameShown ? { nameShown: x.nameShown } : {}), price: x.price ?? null, ...(x.note ? { note: x.note } : {}), modifiers: x.modifiers || [], modifiersComplete: x.modifierComplete === true || !withApex || isSite, size: size ? size[2] : null, apex, ...(apexPick ? { apexPick } : {}),
+        return rolled({ qty: x.qty, name: x.name, ...(isSite && x.wheelPrize ? { wheelPrize: true } : {}), ...(x.nameShown ? { nameShown: x.nameShown } : {}), price: x.price ?? null, ...(x.note ? { note: x.note } : {}), modifiers: x.modifiers || [], modifiersComplete: x.modifierComplete === true || !withApex || isSite, size: size ? size[2] : null, apex, ...(apexPick ? { apexPick } : {}),
           // The size picks the Apex item itself (ربع كيلو نيفة): it is neither an add-on nor a comment.
           addons, sizeOption: sizeOpt ? sizeOpt.name : null, freeOptions: opts.length ? free : (x.modifiers || []).filter(m => !WEIGHTS.some(w => w[0].test(wName(m))) && !DISC_WORDS.test(m)), itemDiscounts });
       };
@@ -893,6 +895,7 @@ function setup(app) {
           const facts = [];
           for (let i = 0; i < Math.min(raw.length, order.items.length); i++) {
             const line = order.items[i], candidates = new Set((line.apex || []).map(a => String(a.no)));
+            if (line.wheelPrize) continue;
             const hit = [...candidates].filter(no => chosen.has(no));
             if (hit.length === 1) facts.push([lineKey(raw[i]), hit[0]]);
           }
@@ -962,6 +965,19 @@ function setup(app) {
       if (!items.length || items.length > 40) fail(400, 'اختار أصناف Apex');
       const clean = items.map(x => ({ itemNo: String(x?.itemNo || '').trim(), qty: Number(x?.qty), note: x?.note ? String(x.note).slice(0, 60) : '' }));
       if (clean.some(x => !/^\d{1,10}$/.test(x.itemNo) || !(x.qty > 0 && x.qty <= 50))) fail(400, 'فيه صنف لسه مااتختارش أو عدده مش مظبوط');   // Apex offers have short numbers (111, 218, 315)
+      const sourceOrder = (await baseFor(dueDay, now)).list.find(o => o.source === source && String(o.ref) === ref) || null;
+      if (source === 'site' && sourceOrder?.items?.some(i => i.wheelPrize)) {
+        const lines = sourceOrder.items.flatMap(i => [i, ...(i.addons || [])]);
+        if (lines.length !== clean.length) fail(409, 'الأوردر فيه جايزة عجلة الحظ — راجع الأصناف وحدّث صفحة التحويل');
+        for (const [index, line] of lines.entries()) {
+          if (!line.wheelPrize) continue;
+          const chosen = clean[index], candidates = line.apex || [];
+          if (chosen.qty !== Number(line.qty) || (candidates.length && !candidates.some(a => String(a.no) === chosen.itemNo)))
+            fail(409, 'اختار صنف جايزة عجلة الحظ وعدده زي ما هو في أوردر الموقع');
+          chosen.free = true;
+          chosen.note = 'جائزة عجلة الحظ';
+        }
+      }
       // Unattended transfers follow the source. Staff may explicitly confirm a correction.
       let paymentOverride = null, pickup = false;
       if (source === 'site') {
@@ -997,7 +1013,7 @@ function setup(app) {
       const unclear = verifiedCardNote.unrecognized || money.length > 1;
       if (unclear && !(sameCard && resolution === 'contacted')) fail(409, 'ملاحظة بطاقة العميل مش واضحة — اقراها وعلّم على «قريتها»');
       if (verifiedCardNote.requiresReview && !isAcknowledged) fail(409, 'لازم تأكيد خصم وأصناف بطاقة العميل قبل تنفيذ الأوردر');
-      const itemsBase = clean.reduce((sum, x) => sum + (Number(APEX_PRICES[x.itemNo]) || 0) * x.qty, 0);
+      const itemsBase = clean.reduce((sum, x) => sum + (x.free ? 0 : (Number(APEX_PRICES[x.itemNo]) || 0) * x.qty), 0);
       const discountWorth = money.length === 1 ? Math.round((money[0].kind === 'percent' ? itemsBase * money[0].value / 100 : money[0].value) * 100) / 100 : 0;
       const paidDiscount = payment === 'paid' && money.length > 0;
       if (paidDiscount && !unclear && !resolution) fail(409, 'الأوردر مدفوع: علّم على الهدية اللي العميل اختارها، أو «مفيش هدية المرة دي»');
@@ -1065,7 +1081,6 @@ function setup(app) {
       const areaService = pickup ? 0 : Number.isFinite(Number(area?.service)) && area?.service !== null ? Number(area.service) : null;
       // The source's platform discount is a separate fact from any Apex price adjustment.
       // A stale browser or an empty sign must never erase a known Talabat discount.
-      const sourceOrder = (await baseFor(dueDay, now)).list.find(o => o.source === source && String(o.ref) === ref) || null;
       const sourceDiscounts = sourceOrder?.discounts || [];
       // Paid orders deduct an unallocated discount too. The landmark names only the confirmed Talabat share.
       const split = Array.isArray(b.discountSplit) ? b.discountSplit : [];

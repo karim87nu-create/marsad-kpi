@@ -139,13 +139,16 @@ test('website pickup (Karim 11-11): written on the branch\'s «استلام فر
     const order = { id: 30950, number: '30950', status: 'app-preparing', stage: 0, fulfillment: 'pickup', createdAt: s(0), branchId: 'nasr-city',
       paymentMethod: 'كاش عند الاستلام', total: 105, customer: { name: 'عميل', phone: '01011112222', address: '5 شارع مكرم عبيد، الدور 3، شقة 9' },
       financial: { due: 105, dueLabel: 'المطلوب تحصيله', onlinePaid: 0, rows: [{ amount: 105, label: 'الأصناف' }] }, items: [{ name: 'ورق عنب', quantity: 1, total: '105.00 EGP', details: [] }] };
-    await t.call('POST', '/api/site/panel', { headers: { 'x-talabat-token': token }, body: { board: 'central', orders: [order] } });
+    const ft = { name: 'فتة الدهان سادة', quantity: 1, total: '0.00 EGP', details: [{ label: '_eldahan_app_prize_claim_id', value: 'pw-test' }, { label: 'جائزة عجلة الحظ', value: 'وجبة مجانية' }] };
+    const prize = { ...order, id: 31858, number: '31858', total: 0, financial: { due: 0, onlinePaid: 0, rows: [] }, items: [ft] };
+    const mixed = { ...order, id: 31860, number: '31860', total: 98, financial: { due: 98, onlinePaid: 0, rows: [] }, items: [{ ...ft, total: '98.00 EGP', details: [] }, ft] };
+    await t.call('POST', '/api/site/panel', { headers: { 'x-talabat-token': token }, body: { board: 'central', orders: [order, prize, mixed] } });
     const okey = (await admin('POST', '/api/orders/token')).body.token;
     await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': okey }, body: { v: 1, day: '2026-11-11', online: [], locations: [{ no: 19, name: 'مكرم عبيد', branch: 2, service: 34.5 }] } });
     const wt = (await admin('POST', '/api/apex-writer', { action: 'token' })).body.token;
     const w = (path, body) => t.call('POST', path, { body: body || {}, headers: { 'x-apex-writer': wt } });
     const pend = (await w('/api/apex-writer/customer-notes/pending')).body.pending;
-    assert.equal(pend.length, 1);
+    assert.equal(pend.length, 3);
     await w('/api/apex-writer/customer-notes/result', { results: pend.map(x => ({ ...x, status: 'none' })) });
     t.advance(9000);
     const queue = (await as('GET', '/api/transfer/queue?day=2026-11-11')).body;
@@ -161,6 +164,23 @@ test('website pickup (Karim 11-11): written on the branch\'s «استلام فر
     assert.equal(p.pickup, true); assert.equal(p.areaService, 0);
     assert.deepEqual([p.customer.address, p.customer.floor, p.customer.flat], ['0', '0', '0'], '0 so the card prints no old address (11-15)');
     assert.match(p.label, /\/موقع\/كاش\/#30950$/);   // 11-12 label format: name/موقع/كاش/#number
+    assert.equal(queue.orders.find(o => o.ref === '31858').items[0].wheelPrize, true);
+    assert.doesNotMatch(JSON.stringify(queue.orders.find(o => o.ref === '31858')), /pw-test/);
+    const { decide } = require('../src/autotransfer.js');
+    const freeOrder = queue.orders.find(o => o.ref === '31858');
+    assert.deepEqual(decide(freeOrder, { now: t0 + 10 * 60000 + 9000, locations: queue.locations }).why, []);
+    const submitPrize = (ref, items) => as('POST', '/api/transfer/job', { source: 'site', ref, action: 'auto', payment: 'cash', branchNo: 2, items,
+      customer: { name: 'عميل', phone: '01011112222' } });
+    assert.equal((await submitPrize('31858', [{ itemNo: '0105006', qty: 2 }])).status, 409);
+    const item = { itemNo: '0105006', qty: 1 };
+    for (const [ref, items, target, free] of [['31858', [item], 0, [true]], ['31860', [{ ...item, free: true }, item], 98, [false, true]]]) {
+      const response = await submitPrize(ref, items);
+      assert.equal(response.status, 200, JSON.stringify(response.body));
+      const stored = JSON.parse(t.app.db.raw.prepare('SELECT payload FROM transfer_jobs WHERE ref = ?').get(ref).payload);
+      assert.deepEqual(stored.items.map(x => x.free === true), free);
+      assert.equal(stored.targetTotal, target);
+      assert.equal(stored.items.at(-1).note, 'جائزة عجلة الحظ');
+    }
   } finally { await t.close(); }
 });
 

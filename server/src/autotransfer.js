@@ -203,7 +203,7 @@ export function decide(o, x) {
       if (service != null && delFee > 0 && !freeDelivery(o) && Math.abs(T(service) + T(Number(APEX_PRICES[TALABAT_FEE_NO]) || 7.02) - tDel) > 10) warnings.push('فرق سعر التوصيل بين Apex وطلبات');
     } else {
       const sItems = o.items.reduce((s, i) => s + (Number(i.price) || 0), 0);
-      if (!(sItems > 0)) why.push('أسعار الموقع مش ظاهرة');
+      if (!(sItems > 0) && !o.items.every(i => i.wheelPrize && i.price === 0)) why.push('أسعار الموقع مش ظاهرة');
     }
   }
   if (why.length) return { ok: false, why, warnings, quiet: why.every(w => QUIET.has(w)) };

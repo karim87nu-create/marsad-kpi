@@ -1,5 +1,6 @@
 import { TUNE } from './tune.js';
 import { withDeliveryPlaces } from './delivery-fields.js';
+import { wheelPrizeLabel } from './site-items.js';
 import { referenceEvidence, siteReference } from './order-identifiers.js';
 // الموقع (eldahan.com.eg): the server reads the WooCommerce orders and their notes with a read-only REST key, every
 // minute, and keeps per order only the times the reports need (received, sent to the branch, out with the driver,
@@ -245,15 +246,19 @@ function setup(app) {
         discount: minus.length ? Math.abs(minus.reduce((a, r) => a + num(r.amount), 0)) : 0, discountLines: minus.map(r => ({ text: String(r.label || '').slice(0, 80), amount: Math.abs(num(r.amount)) })),
         shipping: shipping || null, total: num(o.total), coupons: [], fees: [], note: String(o.customer?.note || '').slice(0, 500) || null };
       const pay = Array.isArray(f.rows) || !previousProfile.payment ? panelPay : previousProfile.payment;
-      const items = (Array.isArray(o.items) ? o.items : []).slice(0, 80).map(x => ({ name: String(x?.name || '').slice(0, 160), qty: Number(x?.quantity) || 0, price: num(x?.total) ?? 0,
-        ...(x?.addon ? { parent: String(x.parent || '').slice(0, 160) } : {}),
-        modifiers: (Array.isArray(x?.details) ? x.details : []).slice(0, 20).map(d => (String(d?.label || '').slice(0, 60) + ': ' + String(d?.value || '').replace(/<[^>]*>/g, '').slice(0, 120)).trim()),
-        // The choices as options, like Talabat's: the weight («الوزن: نص كيلو») is the dish's size — it picks the Apex item and
-        // is part of what staff chose before (a quarter-kilo choice is never offered for a half kilo); the rest are free notes.
-        options: (Array.isArray(x?.details) ? x.details : []).slice(0, 20).map(d => {
-          const label = String(d?.label || '').trim(), value = String(d?.value || '').replace(/<[^>]*>/g, '').trim();
-          return { name: (/^(?:الوزن|الحجم|الكمية|weight|size)$/i.test(label) ? value : (label ? label + ': ' : '') + value).slice(0, 160), price: 0 };
-        }).filter(v => v.name) }));
+      const items = (Array.isArray(o.items) ? o.items : []).slice(0, 80).map(x => {
+        const details = Array.isArray(x?.details) ? x.details : [], price = num(x?.total);
+        const gift = price === 0 && details.some(d => wheelPrizeLabel(d?.label));
+        const choices = details.filter(d => !wheelPrizeLabel(d?.label)).slice(0, 20);
+        return { name: String(x?.name || '').slice(0, 160), qty: Number(x?.quantity) || 0, price: price ?? 0, ...(gift ? { wheelPrize: true } : {}),
+          ...(x?.addon ? { parent: String(x.parent || '').slice(0, 160) } : {}),
+          modifiers: choices.map(d => (String(d?.label || '').slice(0, 60) + ': ' + String(d?.value || '').replace(/<[^>]*>/g, '').slice(0, 120)).trim()),
+          // The weight picks the Apex item; the other choices become notes.
+          options: choices.map(d => {
+            const label = String(d?.label || '').trim(), value = String(d?.value || '').replace(/<[^>]*>/g, '').trim();
+            return { name: (/^(?:الوزن|الحجم|الكمية|weight|size)$/i.test(label) ? value : (label ? label + ': ' : '') + value).slice(0, 160), price: 0 };
+          }).filter(v => v.name) };
+      });
       const c = o.customer || {}, customer = customerOf({ name: String(c.name || '').slice(0, 120), phone: String(c.phone || '').slice(0, 30), address: panelAddress(o), area: panelArea(o) });
       const oldCustomer = previousProfile.customer || {};
       const delivery = { ...oldCustomer, ...Object.fromEntries(Object.entries(customer).filter(([, v]) => v)) };
@@ -468,8 +473,10 @@ function setup(app) {
           address: [address.address_1, address.address_2, address.city].filter(Boolean).join('، ') });
         const items = Array.isArray(o.line_items) ? o.line_items.slice(0, 80).map(x => ({ name: String(x.name || '').slice(0, 160), qty: Number(x.quantity) || 0,
           price: (Number(x.total) || 0) + (Number(x.total_tax) || 0),
+          ...(x.total != null && x.total !== '' && Number(x.total) === 0 && (Number(x.total_tax) || 0) === 0 &&
+            (x.meta_data || []).some(m => wheelPrizeLabel(m?.key) || wheelPrizeLabel(m?.display_key)) ? { wheelPrize: true } : {}),
           // Add-ons/options the website stores on the line (hidden keys start with "_").
-          modifiers: (Array.isArray(x.meta_data) ? x.meta_data : []).filter(m => m && !String(m.key || '').startsWith('_') && ['string', 'number'].includes(typeof (m.display_value ?? m.value)))
+          modifiers: (Array.isArray(x.meta_data) ? x.meta_data : []).filter(m => m && !String(m.key || '').startsWith('_') && !wheelPrizeLabel(m.key) && !wheelPrizeLabel(m.display_key) && ['string', 'number'].includes(typeof (m.display_value ?? m.value)))
             .slice(0, 20).map(m => (String(m.display_key || m.key || '').slice(0, 60) + ': ' + String(m.display_value ?? m.value).replace(/<[^>]*>/g, '').slice(0, 120)).trim()) })) : [];
         const old = parseJson(saved?.data, {});
         // Payment and discounts exactly as the website order records them (no guessing).

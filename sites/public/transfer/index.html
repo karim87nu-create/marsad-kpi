@@ -267,7 +267,7 @@ const qtyOf = (p, i, n) => { const v = p?.qty?.[n]; if (v != null && v !== '') r
 function flatLines(o) {
   const out = [];
   for (const i of o.items || []) {
-    out.push({ choiceKey: i.choiceKey, kind: 'item', apexPick: i.apexPick || null, qty: i.qty, name: i.name, label: i.name + (i.sizeOption ? ' — ' + i.sizeOption : '') + ((i.freeOptions || []).length ? ' (' + i.freeOptions.join('، ') + ')' : '') + (i.note ? ' ✎ ' + i.note : ''), apex: i.apex || [], note: (i.freeOptions || []).join('، ').slice(0, 60) });
+    out.push({ choiceKey: i.choiceKey, kind: 'item', wheelPrize: i.wheelPrize === true, apexPick: i.apexPick || null, qty: i.qty, name: i.name, label: i.name + (i.wheelPrize ? ' — جائزة عجلة الحظ' : '') + (i.sizeOption ? ' — ' + i.sizeOption : '') + ((i.freeOptions || []).length ? ' (' + i.freeOptions.join('، ') + ')' : '') + (i.note ? ' ✎ ' + i.note : ''), apex: i.apex || [], note: (i.freeOptions || []).join('، ').slice(0, 60) });
     for (const a of i.addons || []) out.push({ choiceKey: a.choiceKey, kind: 'addon', qty: a.qty ?? '?', name: a.name, label: '+ ' + a.name + ' — إضافة على ' + i.name + (Number(i.qty) > 1 ? ' (الصنف ' + i.qty + '×)' : '') + ' · طلبات حاسباها ' + money(a.price) + (a.qty == null ? ' — العدد مش واضح، اكتبه' : ''), apex: a.apex || [], note: '' });
   }
   return out;
@@ -334,7 +334,7 @@ function ticketCalc(o, fl, p) {
   // o.target = what the customer pays + Talabat's known share. Paid: what was paid; cash: plus all of Talabat's share.
   const want = o.target == null ? null : paid ? r2(o.target - discountSum(o, 'platform')) : r2(o.target + sp.plat);
   let items = 0, missing = 0;
-  fl.forEach((i, n) => { const pr = apexPrices.get(p.items?.[n]); if (pr == null) missing++; else items += pr * (qtyOf(p, i, n) || 1); });
+  fl.forEach((i, n) => { const pr = i.wheelPrize && p.items?.[n] ? 0 : apexPrices.get(p.items?.[n]); if (pr == null) missing++; else items += pr * (qtyOf(p, i, n) || 1); });
   const fee = o.source === 'talabat' ? (apexPrices.get('0114006') || 7.02) : 0;
   const loc = (data.locations || []).find(l => String(l.no) === String(p.loc) && (l.branch == null || String(l.branch) === String(p.branch))) || (data.locations || []).find(l => String(l.no) === String(p.loc));
   const service = o.fulfillment === 'pickup' && p.loc ? 0 : loc?.service ?? null, off = rest + (paid ? plat : 0);
@@ -357,7 +357,7 @@ function ticketHtml(o, p, fl, c, auto) {
   if (!o.items?.length) return '<div class="ticket"><div class="warn">' + (o.detailRead ? 'مفيش أصناف' : 'تفاصيل الأوردر لسه ماوصلتش — بص عليه في ' + (o.source === 'talabat' ? 'طلبات' : 'الموقع')) + '</div></div>';
   fl.forEach((i, n) => {
     const no = p.items?.[n], name = no ? (nameOf(no) || (i.apex || []).find(a => a.no === no)?.name || 'صنف ' + no) : '';
-    const q = qtyOf(p, i, n), price = no && apexPrices.get(no) != null ? money(T(apexPrices.get(no) * (q || 1))) : '';
+    const q = qtyOf(p, i, n), price = i.wheelPrize ? money(0) : no && apexPrices.get(no) != null ? money(T(apexPrices.get(no) * (q || 1))) : '';
     const src = (i.kind === 'addon' || i.qty === '?' || i.qty == null ? '' : esc(i.qty) + '× ') + esc(i.label);
     h += '<div class="ti' + (i.kind === 'addon' ? ' addon' : '') + '">' +
       '<div class="tr"><span>' + (auto ? '<input class="qty' + (q ? '' : ' need') + '" data-qty="' + n + '" type="number" min="0.25" max="50" step="any" value="' + (q ?? '') + '" placeholder="؟" aria-label="العدد">× ' : '<b>' + esc(q ?? '؟') + '×</b> ') + (name ? esc(name) : auto ? '<span class="warn">اختار الصنف على Apex</span>' : (i.apex || []).length ? (i.apex || []).map(a => esc(a.name || a.no)).join(' أو ') + (i.apex.length > 1 ? ' <span class="warn">— اختار الحجم</span>' : '') : '<span class="warn">مش معروف على Apex — دوّر عليه بالاسم</span>') + '</span><span class="num">' + price + '</span></div>' +
