@@ -272,16 +272,16 @@ SELECT @Sub = SUM(Qty * Price) FROM @Lines;
 SET @Tax = ROUND((@Sub + @Service) * ISNULL(@TaxRatio, 0) / 100.0, 2);   -- Apex taxes SubTotal + Service, before the discount (checked on real orders)
 DECLARE @BenefitBase money = ISNULL((SELECT SUM(Qty * Price) FROM @Lines WHERE ItemNo <> @ServiceItem), 0);
 DECLARE @CardDiscount money = ROUND(@BenefitBase * @NotePercent / 100.0, 2) + @NoteAmount;
-IF @NotePercent < 0 OR @NotePercent > 100 OR @NoteAmount < 0 OR @CardDiscount > @Sub + @Service + @Tax OR (@Target > 0 AND @CardDiscount >= @Target)
+IF @NotePercent < 0 OR @NotePercent > 100 OR @NoteAmount < 0 OR @CardDiscount > @Sub + @Service + @Tax OR (@Target >= 0 AND @CardDiscount > 0 AND @CardDiscount >= @Target)
   THROW 51031, 'APEX customer-card discount invalid; review manually', 1;
 SET @RestDiscount = @RestDiscount + @CardDiscount;
-IF @Target > 0 SET @Target = @Target - @CardDiscount;
+IF @Target >= 0 SET @Target = @Target - @CardDiscount;
 SET @Total = @Sub - @RestDiscount + @Tax + @Service;   -- Apex: CashPayment = SubTotal - Discount + Tax + Service
 -- Karim 31-10: the order's total on Apex must equal ours on Talabat/the site (@Target). When Apex comes out higher, the
 -- difference is added to the restaurant discount. Karim 01-11: a price difference never stops the order — it is saved and
 -- the difference is shown in admin («فروق الأسعار») to fix the price or the item: @Gap (taken off) or @Short (Apex lower).
 DECLARE @Gap money = 0, @Short money = 0, @Before money = @Total;
-IF @Target > 0 BEGIN
+IF @Target >= 0 BEGIN
   IF @Total > @Target + 0.009 BEGIN
     SET @Gap = @Total - @Target;
     SET @RestDiscount = @RestDiscount + @Gap; SET @Total = @Target;
@@ -478,7 +478,7 @@ function Write-Order($c, $job, [string]$mode){
   $p = @{ '@Exec' = $(if ($mode -eq 'shadow') { 0 } else { 1 }); '@IsTest' = $(if ($mode -eq 'test') { 1 } else { 0 }); '@PayWay' = $(if ($job.payment -eq 'paid') { 'Ledge' } else { 'Cash' }); '@Floor' = $ca.floor; '@Flat' = $ca.flat; '@Pos' = $WriterPos; '@LocationNo' = [int]$job.locationNo; '@ServiceItem' = [string]$TalabatServiceItem; '@RefPos' = $(if ($mode -eq 'test') { $RefPosTest } else { $RefPos }); '@Branch' = [int]$job.branchNo
           '@Marker' = ('M' + $(if ($job.source -eq 'site') { 'S' } else { 'T' }) + ':' + $job.ref); '@Kind' = [string]$job.source; '@Phone' = [string]$job.customer.phone
           '@Label' = [string]$job.label; '@Address' = $ca.addr; '@Sign' = [string]$job.sign; '@SignNote' = [string]$job.signNote; '@Remarks' = [string]$job.note
-          '@NoTpl' = $(if ($mode -eq 'test' -and $job.noTemplate) { 1 } else { 0 }); '@AreaService' = $(if ($job.areaService -ne $null -and "$($job.areaService)" -ne '') { [decimal]$job.areaService } else { [decimal]-1 }); '@RestDiscount' = [decimal]$job.restaurantDiscount; '@Target' = $(if ($job.targetTotal) { [decimal]$job.targetTotal } else { [decimal]0 }); '@AddPrinted' = $(if ($AddPrintedOrders) { 1 } else { 0 }); '@PrintedFlag' = $PrintedFlag; '@UserNo' = $WriterUserNo; '@Pickup' = $(if ($job.pickup) { 1 } else { 0 })
+          '@NoTpl' = $(if ($mode -eq 'test' -and $job.noTemplate) { 1 } else { 0 }); '@AreaService' = $(if ($job.areaService -ne $null -and "$($job.areaService)" -ne '') { [decimal]$job.areaService } else { [decimal]-1 }); '@RestDiscount' = [decimal]$job.restaurantDiscount; '@Target' = $(if ($null -ne $job.targetTotal -and "$($job.targetTotal)" -ne '') { [decimal]$job.targetTotal } else { [decimal]-1 }); '@AddPrinted' = $(if ($AddPrintedOrders) { 1 } else { 0 }); '@PrintedFlag' = $PrintedFlag; '@UserNo' = $WriterUserNo; '@Pickup' = $(if ($job.pickup) { 1 } else { 0 })
           '@NotePercent' = $(if ($job.apexCustomerBenefit) { [decimal]$job.apexCustomerBenefit.percent } else { [decimal]0 })
           '@NoteAmount' = $(if ($job.apexCustomerBenefit) { [decimal]$job.apexCustomerBenefit.amount } else { [decimal]0 })
           '@CheckCardNote' = $(if ($mode -eq 'live' -and [string]$job.apexCustomerBenefit.original) { 1 } else { 0 })

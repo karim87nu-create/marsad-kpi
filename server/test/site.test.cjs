@@ -32,6 +32,32 @@ function fakeSite(t0) {
   return { fetch, calls, orders, notes, m };
 }
 
+test('WooCommerce discounts: coupon tax, wallet fee and the unitemized remainder reach the transfer queue once', async () => {
+  const t0 = cairoToUtc(2026, 10, 22, 13, 0, 0), site = fakeSite(t0);
+  Object.assign(site.orders[1], { payment_method: 'cod', total: '240', discount_total: '60', discount_tax: '6',
+    coupon_lines: [{ code: 'welcome', discount: '40', discount_tax: '4' }],
+    fee_lines: [{ name: 'خصم نقاط المحفظة', total: '-30', total_tax: '0' }, { name: 'رسوم خدمة', total: '5', total_tax: '0' }] });
+  const t = await start({ at: site.m(30), config: { siteFetch: site.fetch } });
+  try {
+    const admin = await t.admin();
+    await t.employee(admin, { name: 'سارة', code: 'E1', pin: '1111' });
+    const session = (await t.call('POST', '/api/transfer/login', { body: { pin: '1111' } })).body.token;
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const sync = () => admin('POST', '/api/site', { action: 'sync' });
+    const queue = async () => (await t.call('GET', '/api/transfer/queue?day=2026-10-22', { headers: { 'x-transfer-session': session } })).body.orders.find(o => o.source === 'site' && o.ref === '102');
+    assert.equal((await admin('POST', '/api/site', { action: 'key', key: 'ck_' + 'a'.repeat(40), secret: 'cs_' + 'b'.repeat(40) })).status, 200);
+    assert.deepEqual((await queue()).discounts.map(d => [d.text, d.amount]), [['كوبون welcome', 44], ['خصم الموقع', 22], ['خصم نقاط المحفظة', 30]]);
+    const live = { id: 102, createdAt: site.m(10) / 1000, lastActionAt: site.m(12) / 1000, total: 240,
+      status: 'processing', fulfillment: 'delivery', paymentMethod: 'كاش', financial: { due: 240, rows: [{ label: 'خصم نقاط المحفظة', amount: -30 }, { label: 'خصم الموقع', amount: -66 }] } };
+    const push = order => t.call('POST', '/api/site/panel', { headers: { 'x-talabat-token': token }, body: { board: 'central', orders: [order] } });
+    assert.equal((await push(live)).status, 200);
+    assert.equal((await push({ ...live, financial: undefined })).status, 200);
+    t.advance(61000);
+    assert.equal((await sync()).status, 200);
+    assert.deepEqual((await queue()).discounts.map(d => [d.text, d.amount]), [['خصم نقاط المحفظة', 30], ['خصم الموقع', 66]]);
+  } finally { await t.close(); }
+});
+
 test('site: key, sync of orders and notes, the day rows, alerts', async () => {
   const t0 = cairoToUtc(2026, 10, 22, 13, 0, 0), site = fakeSite(t0);
   const t = await start({ at: t0 + 30 * 60000, config: { siteFetch: site.fetch } });

@@ -139,7 +139,11 @@ function setup(app) {
   // panel's own refresh — no request of ours ever reaches the website. Each push is what the panel showed: open orders
   // with customer, items, money, branch, driver and stage. Times the reports need are kept from the first push that saw
   // them (sent to a branch = the panel's own time; out / delivered = the first push at that stage).
-  const num = v => { const n = Number(String(v ?? '').replace(/[^\d.\-]/g, '')); return Number.isFinite(n) ? n : null; };
+  const num = v => {
+    const text = westernDigits(v).replace(/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069,٬]/g, '').replace(/٫/g, '.').replace(/−/g, '-');
+    const m = text.match(/-?\s*\d+(?:\.\d+)?/);
+    return m ? Number(m[0].replace(/\s/g, '')) : null;
+  };
   async function dispatchFromApex(orders, now) {
     const open = orders.filter(o => Number.isSafeInteger(Number(o?.id)) && Number(o.id) > 0 && Number(o.createdAt) > 1e9 &&
       Object.hasOwn(APEX_BRANCH_LABELS, o.branchId) && /^delivery$/i.test(String(o.fulfillment || '').trim()) &&
@@ -222,6 +226,7 @@ function setup(app) {
       const scheduled = isScheduledOrder(o) || !!scheduledAt || !!old?.scheduled ? 1 : 0;
       const driver = textOf(o.driver).trim().slice(0, 80) || null;
       const outAt = old?.out_at || (stage >= 3 || driver ? now : null), deliveredAt = old?.delivered_at || (done ? now : null);
+      const previousProfile = parseJson(profs.get(String(id)), {});
       const f = o.financial || {}, rows = Array.isArray(f.rows) ? f.rows : [];
       const onlinePaid = num(f.onlinePaid) || 0, due = num(f.due) ?? num(o.total) ?? 0;
       // The panel's own payment words decide (11-11, live: «الدفع أون لاين - Visa / Card» with nothing paid yet and
@@ -234,11 +239,12 @@ function setup(app) {
         : onlinePaid > 0.01 ? 'online'
         : saysOnline && !saysCash ? (due <= 0.01 && !/متبقي/.test(payText) ? 'online' : 'online-unpaid')
         : saysCash && !saysOnline ? 'cod' : 'unknown';
-      const shipping = rows.filter(r => /توصيل|delivery|shipping/i.test(r?.label || '')).reduce((a, r) => a + (num(r.amount) || 0), 0);
+      const shipping = rows.filter(r => /توصيل|delivery|shipping/i.test(r?.label || '') && num(r.amount) > 0).reduce((a, r) => a + num(r.amount), 0);
       const minus = rows.filter(r => (num(r?.amount) || 0) < 0);
-      const pay = { method, title: String(o.paymentMethod || '').slice(0, 120) || null, dueLabel: String(f.dueLabel || '').slice(0, 60) || null, paid: method === 'online', onlinePaid, due,
+      const panelPay = { method, title: String(o.paymentMethod || '').slice(0, 120) || null, dueLabel: String(f.dueLabel || '').slice(0, 60) || null, paid: method === 'online', onlinePaid, due,
         discount: minus.length ? Math.abs(minus.reduce((a, r) => a + num(r.amount), 0)) : 0, discountLines: minus.map(r => ({ text: String(r.label || '').slice(0, 80), amount: Math.abs(num(r.amount)) })),
         shipping: shipping || null, total: num(o.total), coupons: [], fees: [], note: String(o.customer?.note || '').slice(0, 500) || null };
+      const pay = Array.isArray(f.rows) || !previousProfile.payment ? panelPay : previousProfile.payment;
       const items = (Array.isArray(o.items) ? o.items : []).slice(0, 80).map(x => ({ name: String(x?.name || '').slice(0, 160), qty: Number(x?.quantity) || 0, price: num(x?.total) ?? 0,
         ...(x?.addon ? { parent: String(x.parent || '').slice(0, 160) } : {}),
         modifiers: (Array.isArray(x?.details) ? x.details : []).slice(0, 20).map(d => (String(d?.label || '').slice(0, 60) + ': ' + String(d?.value || '').replace(/<[^>]*>/g, '').slice(0, 120)).trim()),
@@ -249,7 +255,7 @@ function setup(app) {
           return { name: (/^(?:الوزن|الحجم|الكمية|weight|size)$/i.test(label) ? value : (label ? label + ': ' : '') + value).slice(0, 160), price: 0 };
         }).filter(v => v.name) }));
       const c = o.customer || {}, customer = customerOf({ name: String(c.name || '').slice(0, 120), phone: String(c.phone || '').slice(0, 30), address: panelAddress(o), area: panelArea(o) });
-      const oldCustomer = parseJson(profs.get(String(id)), {})?.customer || {};
+      const oldCustomer = previousProfile.customer || {};
       const delivery = { ...oldCustomer, ...Object.fromEntries(Object.entries(customer).filter(([, v]) => v)) };
       delivery.address = fullerAddress(oldCustomer.address, customer.address);
       const profile = { customer: delivery, items, payment: pay, panel: { number: String(o.number || id), stage, status, label, branchId: String(o.branchId || '').slice(0, 40) || null, fulfillment: String(o.fulfillment || '').slice(0, 20) || null } };
@@ -467,19 +473,22 @@ function setup(app) {
             .slice(0, 20).map(m => (String(m.display_key || m.key || '').slice(0, 60) + ': ' + String(m.display_value ?? m.value).replace(/<[^>]*>/g, '').slice(0, 120)).trim()) })) : [];
         const old = parseJson(saved?.data, {});
         // Payment and discounts exactly as the website order records them (no guessing).
-        const money = v => Number.isFinite(Number(v)) ? Number(v) : null;
+        const money = v => v != null && v !== '' && Number.isFinite(Number(v)) ? Number(v) : null;
+        const withTax = (amount, tax) => money(amount) == null ? null : money(amount) + (money(tax) || 0);
         const pay = { method: String(o.payment_method || '').slice(0, 60) || null, title: String(o.payment_method_title || '').slice(0, 120) || null, paid: !!o.date_paid || !!o.date_paid_gmt,
           discount: money(o.discount_total), discountTax: money(o.discount_tax), shipping: money(o.shipping_total), total: money(o.total),
-          coupons: Array.isArray(o.coupon_lines) ? o.coupon_lines.slice(0, 10).map(c => ({ code: String(c.code || '').slice(0, 60), amount: money(c.discount) })) : [],
-          fees: Array.isArray(o.fee_lines) ? o.fee_lines.slice(0, 10).map(f => ({ name: String(f.name || '').slice(0, 80), amount: money(f.total) })) : [],
+          coupons: Array.isArray(o.coupon_lines) ? o.coupon_lines.slice(0, 10).map(c => ({ code: String(c.code || '').slice(0, 60), amount: withTax(c.discount, c.discount_tax) })) : [],
+          fees: Array.isArray(o.fee_lines) ? o.fee_lines.slice(0, 10).map(f => ({ name: String(f.name || '').slice(0, 80), amount: withTax(f.total, f.total_tax) })) : [],
           note: String(o.customer_note || '').slice(0, 500) || null };
-        const profile = { ...old, customer: { ...(old.customer || {}) }, items: Array.isArray(o.line_items) ? items : old.items || [], payment: 'payment_method' in o || 'discount_total' in o ? pay : old.payment || null };
+        // The live board can give the payment split and the wallet rows for the same WooCommerce revision.
+        const samePanelRevision = saved?.modified_at === modified && Array.isArray(old.payment?.discountLines);
+        const profile = { ...old, customer: { ...(old.customer || {}) }, items: Array.isArray(o.line_items) ? items : old.items || [], payment: !samePanelRevision && ('payment_method' in o || 'discount_total' in o) ? pay : old.payment || null };
         for (const [k, v] of Object.entries(customer)) if (v) profile.customer[k] = k === 'address' ? fullerAddress(old.customer?.address, v) : v;
         upsert.push(db.prepare("INSERT INTO match_profiles (source, ref, data) SELECT 'site',?,? WHERE NOT EXISTS (SELECT 1 FROM site_orders WHERE id=? AND modified_at>?) ON CONFLICT(source, ref) DO UPDATE SET data = excluded.data").bind(String(o.id), JSON.stringify(profile),o.id,modified));
         // Karim 11-16 (orders by source: app / website): how WooCommerce says the order was made.
         if (o.created_via) upsert.push(db.prepare('INSERT INTO site_channels (id, via) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET via = excluded.via').bind(o.id, String(o.created_via).slice(0, 40)));
         upsert.push(db.prepare('INSERT INTO site_orders (id, day, status, fulfillment, total, created_at, modified_at, notes_at, scheduled, scheduled_at) VALUES (?,?,?,?,?,?,?,NULL,?,?) ON CONFLICT(id) DO UPDATE SET status = CASE WHEN site_orders.gone_at IS NOT NULL AND site_orders.status = \'cancelled\' THEN site_orders.status ELSE excluded.status END, fulfillment = excluded.fulfillment, total = excluded.total, modified_at = excluded.modified_at, notes_at = CASE WHEN excluded.modified_at > IFNULL(site_orders.modified_at, 0) THEN NULL ELSE site_orders.notes_at END, scheduled = MAX(site_orders.scheduled, excluded.scheduled), scheduled_at = COALESCE(excluded.scheduled_at, site_orders.scheduled_at) WHERE COALESCE(site_orders.modified_at,0) <= excluded.modified_at')
-          .bind(o.id, businessDay(created), String(o.status), ful ? String(ful) : null, Number(o.total) || null, created, modified, scheduled, scheduledAt));
+          .bind(o.id, businessDay(created), String(o.status), ful ? String(ful) : null, money(o.total), created, modified, scheduled, scheduledAt));
       }
       await writeBatches(upsert);
       // A bounded run is not a completed window. Resume its remaining pages after restart.

@@ -98,6 +98,7 @@ test('transfer page: payment and discounts only from the source words', () => {
     assert.equal(talabatPayment([{ k: 'x', text: 'Total | E£ 200' }]), null, 'no payment words → not guessed');
     assert.equal(talabatPayment([{ k: 'Payment method', text: 'Payment method | Online' }]), 'paid', 'real page wording (2026-10-28 order)');
     assert.equal(talabatPayment([{ k: 'Payment method', text: 'Payment method | Cash' }]), 'cash');
+    assert.equal(talabatPayment([{ k: 'payment', text: 'CASH' }, { k: 'Wallet discount', text: 'Wallet discount | -30' }]), 'cash');
     assert.equal(talabatPayment([{ k: 'Delivery type', text: 'Delivery type | Vendor delivery' }]), null, 'other lines never decide payment');
     assert.equal(talabatPayment([], 'Paid'), 'paid', 'live card badge');
     assert.equal(talabatPayment([], 'Cash Online'), null, 'conflicting → for review');
@@ -109,6 +110,7 @@ test('transfer page: payment and discounts only from the source words', () => {
     // The total next to its funded parts is the same money (rounded to the piaster).
     assert.deepEqual(talabatDiscounts([{ k: 'خصم', text: 'خصم | -90.27' }, { k: 'خصم ممول من قبلك', text: 'خصم ممول من قبلك | -45.14' }, { k: 'خصم ممول من قبل Talabat', text: 'خصم ممول من قبل Talabat | -45.14' }]).map(d => d.who + d.amount), ['restaurant45.14', 'platform45.14']);
     assert.equal(talabatDiscounts([{ k: 'discount', text: 'Vendor-funded discount | -E£ 15.50' }])[0].who, 'restaurant');
+    assert.deepEqual(talabatDiscounts([{ k: 'خصم ممول من قبلك', text: 'خصم ممول من قبلك | -45.14' }, { k: 'خصم على الأصناف', text: 'خصم على الأصناف | -45.13' }]).map(d => [d.who, d.amount]), [['restaurant', 45.14], [null, 45.13]]);
     assert.equal(sitePayment({ method: 'cod' }), 'cash');
     assert.equal(sitePayment({ method: 'paymob', paid: true }), 'paid');
     assert.equal(sitePayment({ method: 'paymob', paid: false }), 'unpaid');

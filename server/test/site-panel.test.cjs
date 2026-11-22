@@ -100,7 +100,7 @@ test('website central panel, real orders 11-11: payment from the panel\'s words,
     assert.equal(by(30831).payment, 'cash'); assert.equal(by(30831).code, '30831'); assert.equal(by(30831).apexBranch, 2); assert.equal(by(30831).target, 344);
     assert.equal(by(30830).payment, 'unpaid', 'online, payment not complete: never cash'); assert.equal(by(30830).apexBranch, 1);
     assert.equal(by(30829).payment, 'cash', 'wallet + rest cash'); assert.equal(by(30829).apexBranch, 3);
-    assert.deepEqual(by(30829).discounts.map(d => d.amount), [268]);
+    assert.deepEqual(by(30829).discounts.map(d => [d.text, d.amount]), [['خصم نقاط المحفظة', 40], ['تسويات مسجلة في الطلب', 228]]);
     assert.equal(by(30900).payment, 'paid');
     const k29 = by(30829).items[0], k28 = by(30828).items[0];
     assert.equal(k29.sizeOption, 'نص كيلو'); assert.equal(k28.sizeOption, 'ربع كيلو');

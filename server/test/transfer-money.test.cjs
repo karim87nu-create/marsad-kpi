@@ -64,6 +64,8 @@ test('money to Apex: every kind of Talabat discount, cash and paid', async () =>
     assert.deepEqual([r.rest, r.sign, r.target], [0, 'خصم طلبات 1234.50', 1484.5]);
     r = await run({ bill: B(['خصم', '-100'], total(240)), payment: 'paid' });
     assert.deepEqual([r.rest, r.sign, r.target], [100, 'خصم طلبات 100.00', 240]);
+    r = await run({ bill: B(['خصم ممول من قبلك', '-300'], total(0)), payment: 'cash' });
+    assert.deepEqual([r.rest, r.sign, r.target], [300, '', 0], 'a fully discounted order keeps a zero Apex target');
     r = await run({ bill: B(['خصم', '-90'], ['ممول من قبلك', '-30'], ['ممول من قبل Talabat', '-60'], total(250)), payment: 'cash' });
     assert.deepEqual([r.rest, r.sign, r.target], [30, 'خصم طلبات 60.00', 310], 'funding labels may omit the word discount');
     // A discount that does not say who: still asked on cash; the split decides.
@@ -71,6 +73,8 @@ test('money to Apex: every kind of Talabat discount, cash and paid', async () =>
     assert.equal(r.status, 400); assert.match(r.error, /حدد الخصم على مين/);
     r = await run({ bill: B(['خصم 30% على بعض المنتجات', '-100'], total(240)), payment: 'cash', split: 40 });
     assert.deepEqual([r.rest, r.sign, r.target], [40, 'خصم طلبات 60.00', 300], 'our 40 off, Talabat\'s 60 in the mark');
+    r = await run({ bill: B(['خصم 30% على بعض المنتجات', '-100'], total(240)), payment: 'paid' });
+    assert.deepEqual([r.rest, r.sign, r.target], [100, '', 240], 'paid still deducts an amount with unconfirmed funding');
     // 5. «خصم 30% على بعض المنتجات | -90»: the money is 90, not 30.
     r = await run({ bill: B(['خصم 30% على بعض المنتجات', '-90.00'], total(250)), payment: 'cash', split: 45 });
     assert.deepEqual([r.rest, r.sign, r.target], [45, 'خصم طلبات 45.00', 295]);
@@ -78,6 +82,9 @@ test('money to Apex: every kind of Talabat discount, cash and paid', async () =>
     r = await run({ bill: B(total(250)), payment: 'cash', items: [{ qty: 1, name: 'Kofta', price: 300, modifierRead: true, modifierComplete: true, options: [],
       discountLines: ['خصم | -90.00 ج.م.', 'خصم 30% على بعض المنتجات | -90.00 ج.م.', 'ممول من قبلك | -45.00 ج.م.', 'ممول من قبل Talabat | -45.00 ج.م.'] }] });
     assert.deepEqual([r.rest, r.sign, r.target], [45, 'خصم طلبات 45.00', 295], 'dish discount split');
+    r = await run({ bill: B(total(250)), payment: 'paid', items: [{ qty: 1, name: 'Kofta', price: 300, modifierRead: true, modifierComplete: true, options: [],
+      discountLines: ['خصم | -90.00', 'ممول من قبلك | -30.00', 'ممول من قبل Talabat | -40.00'] }] });
+    assert.deepEqual([r.rest, r.sign, r.target], [90, 'خصم طلبات 40.00', 250], 'confirmed funding and the unresolved remainder are retained');
     // 7. Under the dish without who: the restaurant's (Karim 31-10).
     r = await run({ bill: B(['خصم', '-30'], total(270)), payment: 'cash', items: [{ qty: 1, name: 'Kofta', price: 300, modifierRead: true, modifierComplete: true, options: [{ qty: 1, name: 'خصم', price: -30 }] }] });
     assert.deepEqual([r.rest, r.sign, r.target], [30, '', 270], 'the summary total repeats the dish discount');

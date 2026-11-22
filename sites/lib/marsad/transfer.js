@@ -93,13 +93,16 @@ function talabatPayment(bill, liveBadge) {
   const rows = bill || [];
   // Live order screen (Karim 31-10): the payment line at the bottom says it — «ONLINE» / «تم الدفع بواسطة CREDIT_CARD» = paid,
   // a cash line = cash. «التحصيل من العميل» is not used: it can read 0.00 on a cash order.
-  const text = rows.map(x => String(x.text || '')).join('\n');
+  const paymentLabel = /^(?:payment method|payment|طريقة الدفع)$/i;
+  const paymentBadge = /^(?:ONLINE|CASH|CREDIT_CARD|DEBIT_CARD|WALLET|كاش|نقدي|نقدا)$|^(?:تم الدفع بواسطة|paid by)(?:\s|$)/i;
+  const text = rows.filter(x => paymentLabel.test(String(x.k || '').trim()) || paymentBadge.test(String(x.text || '').trim()))
+    .map(x => String(x.text || '')).join('\n');
   const online = /\bONLINE\b|تم الدفع بواسطة|paid by|CREDIT_CARD|DEBIT_CARD|WALLET/i.test(text);
   const cash = /\bCASH|cash on delivery|الدفع عند الاستلام|نقد(?:ي|ا)?\b|كاش/i.test(text.replace(/cash to collect|التحصيل من العميل[^\n]*/gi, ''));
   if (online && !cash) return 'paid';
   if (cash && !online) return 'cash';
   if (cash && online) return 'mixed';
-  const line = rows.find(x => /^(?:payment method|payment|طريقة الدفع)$/i.test(String(x.k || '').trim()));
+  const line = rows.find(x => paymentLabel.test(String(x.k || '').trim()));
   const fromBill = line ? payWord(String(line.text).split(' | ').slice(1).join(' | ')) : null;
   return fromBill || payWord(liveBadge) || null;
 }
@@ -111,6 +114,27 @@ function sitePayment(p, total) {
   if (p.method === 'unknown') return null;
   if (p.method === 'mixed') return 'mixed';
   return p.paid ? 'paid' : 'unpaid';
+}
+
+function websiteDiscounts(pay, mixed) {
+  if (!pay) return [];
+  const add = (text, amount) => ({ text, amount: Math.round(amount * 100) / 100, who: 'restaurant' });
+  if (!Array.isArray(pay.discountLines)) {
+    const coupons = (pay.coupons || []).filter(c => Number(c.amount) > 0).map(c => add('كوبون ' + c.code, Number(c.amount)));
+    const remaining = (Number(pay.discount) || 0) + (Number(pay.discountTax) || 0) - coupons.reduce((sum, c) => sum + c.amount, 0);
+    const fees = (pay.fees || []).filter(f => Number(f.amount) < 0).map(f => add(f.name || 'تسوية الموقع', -Number(f.amount)));
+    return [...coupons, ...(remaining > 0.005 ? [add('خصم الموقع', remaining)] : []), ...fees];
+  }
+  const onlineLine = /^(?:مدفوع|تم الدفع|دفع|المبلغ المدفوع)\s*(?:بـ?\s*|(?:عن طريق|عبر)\s*)?(?:[أا]ون\s*لاين|online)|^(?:paid online|online payment)\b/i;
+  const discounts = [];
+  for (const line of pay.discountLines) {
+    const amount = Number(line.amount);
+    if (!(amount > 0) || onlineLine.test(String(line.text || '').trim())) continue;
+    discounts.push(add(line.text || 'خصم الموقع', amount));
+  }
+  // Online money is a payment, and is taken off Apex's cash balance only for a mixed order.
+  if (mixed) discounts.push(add('مدفوع أونلاين', Number(pay.onlinePaid)));
+  return discounts;
 }
 // Discounts: whose money it is, only when the source says it.
 const DISC_WORDS = /discount|voucher|promo|coupon|خصم|قسيمة|كوبون|ممول|funded/i;
@@ -134,7 +158,8 @@ function talabatDiscounts(bill) {
   }
   // The total line next to its funded parts («خصم 90.27» with «ممول من قبلك 45.14» + «ممول من قبل Talabat 45.13») is the same money.
   const funded = out.filter(d => d.who && d.amount), sum = funded.reduce((a, d) => a + d.amount, 0);
-  const kept = funded.length ? out.filter(d => d.who || d.amount == null || Math.abs(d.amount - sum) >= 0.05) : out;
+  const kept = funded.length ? out.filter(d => d.who || d.amount == null ||
+    /^خصم على الأصناف\s*\|/.test(String(d.text)) || Math.abs(d.amount - sum) >= 0.05) : out;
   return kept.map(({ generic, ...d }) => generic && !d.who ? { ...d, who: 'platform' } : d);
 }
 
@@ -685,11 +710,16 @@ function setup(app) {
           ...(x.discountLines || []).map(t => ({ label: discountLabel(String(t).split('|')[0]), amount: discountAmount(String(t).split('|').slice(1).join('|')) }))];
         const funded = found.filter(d => discountWho(d.label) && d.amount);
         const top = found.filter(d => d.amount).sort((a, b) => b.amount - a.amount)[0];
-        // The funded parts must add up to the dish's discount; if they don't, who pays what is not clear (entered by hand).
-        const fundedOk = funded.length && (!top || Math.abs(funded.reduce((a, d) => a + d.amount, 0) - top.amount) < 0.05 || funded.some(d => d.amount === top.amount));
-        if (funded.length && !fundedOk) funded.forEach(d => { d.unclear = true; });
-        const itemDiscounts = funded.length && !fundedOk ? [{ text: (top?.label || 'خصم') + ' — ' + x.name + ' (التقسيم مش واضح)', amount: top?.amount ?? null, who: null }] : funded.length ? [...new Map(funded.map(d => [discountWho(d.label) + d.amount, { text: d.label + ' — ' + x.name, amount: d.amount, who: discountWho(d.label) }])).values()]
-          : top ? [{ text: top.label + ' — ' + x.name, amount: top.amount, who: 'restaurant' }] : found.length ? [{ text: found[0].label + ' — ' + x.name, amount: null, who: 'restaurant' }] : [];
+        let itemDiscounts = [];
+        if (funded.length) {
+          const parts = [...new Map(funded.map(d => [discountWho(d.label) + d.amount, { text: d.label + ' — ' + x.name, amount: d.amount, who: discountWho(d.label) }])).values()];
+          const total = found.filter(d => !discountWho(d.label) && d.amount).reduce((max, d) => Math.max(max, d.amount), 0);
+          const unallocated = Math.round((total - parts.reduce((sum, d) => sum + d.amount, 0)) * 100) / 100;
+          itemDiscounts = total && unallocated < -0.04 ? [{ text: 'خصم بتقسيم متعارض — ' + x.name, amount: total, who: null }] : parts;
+          if (unallocated > 0.04) itemDiscounts.push({ text: 'الجزء المتبقي من الخصم — ' + x.name, amount: unallocated, who: null });
+        } else if (found.length) {
+          itemDiscounts = [{ text: (top || found[0]).label + ' — ' + x.name, amount: top?.amount ?? null, who: 'restaurant' }];
+        }
         const opts = (Array.isArray(x.options) ? x.options : []).filter(o => !isDisc(o));
         // The weight is the size, never an add-on, even when it carries the dish's price («1 كيلو» 1,509).
         const isWeight = o => WEIGHTS.some(w => w[0].test(wName(o.name)));
@@ -749,12 +779,9 @@ function setup(app) {
         const p = sProfiles.get(String(o.id)) || {}, pay = p.payment || null, a = sm.matches.get(o.id);
         const branchNo = siteBranchOf(o.branch, p.panel?.branchId), pickup = TALABAT_PICKUP.test(o.fulfillment || p.panel?.fulfillment || '');
         const pickupArea = pickup && PICKUP_AREAS[branchNo];
-        // Karim 11-20 «المختلط»: part paid online + the rest cash is written as a cash order for what the driver collects (the
-        // panel's «المطلوب تحصيله»), the online part a restaurant discount «مدفوع أونلاين» — unless a discount line already says so.
+        // Mixed orders are recorded as cash for the amount the driver collects.
         const mixed = pay?.method === 'mixed' && Number(pay.onlinePaid) > 0.01 && Number(pay.due) > 0.01;
-        const discounts = pay ? [...(pay.coupons || []).map(c => ({ text: 'كوبون ' + c.code, amount: c.amount, who: 'restaurant' })),
-          ...(!pay.coupons?.length && pay.discount ? [{ text: 'خصم الموقع', amount: pay.discount, who: 'restaurant' }] : []),
-          ...(mixed && !(pay.discountLines || []).some(l => /أون\s*لاين|اونلاين|online|محفظ|wallet|مدفوع/i.test(String(l.text || ''))) ? [{ text: 'مدفوع أونلاين', amount: Math.round(Number(pay.onlinePaid) * 100) / 100, who: 'restaurant' }] : [])] : [];
+        const discounts = websiteDiscounts(pay, mixed);
         list.push({ source: 'site', ref: String(o.id), code: String(p.panel?.number || o.id).replace(/\D/g, '') || String(o.id), at: iso(o.scheduled_at || o.created_at), status: o.status, out: !!o.out_at || !!o.delivered_at || o.status === 'completed', sentToBranch: !!o.transfer_at, branch: o.branch || null, apexBranch: branchNo, scheduled: !!o.scheduled && (!o.scheduled_at || Number(o.scheduled_at) > now),
           customer: { name: p.customer?.name || null, phone: phoneOut(p.customer?.phoneDisplay || p.customer?.phone || p.customer?.mobileDisplay || p.customer?.mobile), address: p.customer?.address || null, ...(p.customer?.area ? { siteArea: p.customer.area } : {}) },
           target: mixed ? Number(pay.due) : o.total ?? null, payment: mixed ? 'cash' : sitePayment(pay, o.total), paymentMethod: pay?.method || null, paymentTitle: pay?.title || null, note: pay?.note || null, scheduledAt: iso(o.scheduled_at), discounts, fees: pay?.fees || [], shipping: pay?.shipping ?? null, total: o.total ?? null,
@@ -1037,15 +1064,14 @@ function setup(app) {
       // A stale browser or an empty sign must never erase a known Talabat discount.
       const sourceOrder = (await baseFor(dueDay, now)).list.find(o => o.source === source && String(o.ref) === ref) || null;
       const sourceDiscounts = sourceOrder?.discounts || [];
-      // A discount Talabat does not say who pays for: the employee's split (read on Talabat), never a guess. Paid: all of it
-      // comes off on Apex either way, so it counts as Talabat's for the special mark.
+      // Paid orders deduct an unallocated discount too. The landmark names only the confirmed Talabat share.
       const split = Array.isArray(b.discountSplit) ? b.discountSplit : [];
       let splitRest = 0, splitPlat = 0;
       sourceDiscounts.forEach((d, i) => {
         if (d.who && !d.unclear) return;
         const a = Number(d.amount) || 0, x = split[i], r = x && String(x.text) === String(d.text) ? Number(x.restaurant) : NaN;
         if (Number.isFinite(r) && r >= 0 && r <= a + 0.001) { splitRest += r; splitPlat += a - r; }
-        else if (payment === 'paid' && a > 0) splitPlat += a;
+        else if (payment === 'paid' && a > 0) splitRest += a;
         else fail(400, 'حدد الخصم على مين: «' + String(d.text || 'خصم').split('|')[0].trim() + '» — بص على طلبات «ممول من قبلك»');
       });
       const platformDiscount = Math.round((sourceDiscounts.filter(d => d.who === 'platform' && !d.unclear).reduce((sum, d) => sum + (Number(d.amount) || 0), 0) + splitPlat) * 100) / 100;
@@ -1057,7 +1083,7 @@ function setup(app) {
       // What Apex must total, from Talabat's own bill on the server (never the browser's sum): cash = what the customer pays
       // + Talabat's whole share (known + the employee's split); paid = what the customer paid.
       const knownPlat = sourceDiscounts.filter(d => d.who === 'platform' && !d.unclear).reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
-      const serverTarget = Number(sourceOrder?.target) > 0
+      const serverTarget = sourceOrder?.target != null && Number.isFinite(Number(sourceOrder.target)) && Number(sourceOrder.target) >= 0
         ? Math.round((payment === 'paid' ? sourceOrder.target - knownPlat : sourceOrder.target + splitPlat) * 100) / 100 : null;
       const expectedTotal = Number(b.expectedTotal) || null, targetTotal = serverTarget ?? (Number(b.targetTotal) > 0 ? Math.round(Number(b.targetTotal) * 100) / 100 : null);
       const customerName = deliveryCustomerName(b.customer?.name);

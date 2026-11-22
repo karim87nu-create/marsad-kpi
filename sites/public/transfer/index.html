@@ -318,7 +318,7 @@ function splitOf(o, p, paid) {
   (o.discounts || []).forEach((d, i) => {
     if (d.who && !d.unclear) return;
     const a = Number(d.amount) || 0, r = p?.split?.[i];
-    if (r == null || !(r >= 0 && r <= a + 0.001)) { if (paid) plat += a; else missing++; return; }
+    if (r == null || !(r >= 0 && r <= a + 0.001)) { if (paid) rest += a; else missing++; return; }
     rest += r; plat += a - r;
   });
   return { rest: r2(rest), plat: r2(plat), missing };
@@ -391,7 +391,7 @@ function ticketHtml(o, p, fl, c, auto) {
         '<span class="num">' + (r == null ? '<span class="warn">حدد</span>' : 'علينا −' + money(r) + ' / طلبات ' + money(r2(a - r))) + '</span></div>';
       return;
     }
-    h += row(esc(d.text) + ' <span class="tag">' + (d.who === 'restaurant' ? 'على المطعم' : d.who === 'platform' || (!known && c.paid) ? 'على طلبات' + (c.paid ? '' : '، في العلامة المميزة') : 'مش واضح على حساب مين') + '</span>',
+    h += row(esc(d.text) + ' <span class="tag">' + (d.who === 'restaurant' ? 'على المطعم' : d.who === 'platform' ? 'على طلبات' + (c.paid ? '' : '، في العلامة المميزة') : 'التمويل غير محدد') + '</span>',
       onApex || (!known && c.paid) ? '−' + money(d.amount) : '<span class="muted">' + money(d.amount) + '</span>', known || c.paid ? '' : 'warnrow');
   });
   if (auto && c.gap > 0.009) h += row(c.freeDel && c.service && c.gap <= T(c.service) + 1 ? 'توصيل مجاني من طلبات (بيتخصم)' : 'فرق يتخصم', '−' + money(c.gap));
