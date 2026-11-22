@@ -112,11 +112,10 @@ function setup(app) {
       writes.push(db.prepare('INSERT INTO talabat_orders (id, day, code, store, first_seen, updated_at, received_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET code = excluded.code, store = COALESCE(talabat_orders.store, excluded.store), received_at = CASE WHEN talabat_orders.received_at IS NULL AND talabat_orders.placed_at IS NULL THEN excluded.received_at ELSE talabat_orders.received_at END')
         .bind(id, businessDay(now), code, storeSpelling(c.store), now, now, now));
       // A payment badge seen on the live card (its exact words), kept for the transfer page.
-      if (c.pay) {
-        const prof = parseJson((await db.prepare("SELECT data FROM match_profiles WHERE source = 'talabat' AND ref = ?").get(id))?.data, {});
-        if (prof.livePay !== String(c.pay).slice(0, 40)) writes.push(db.prepare("INSERT INTO match_profiles (source, ref, data) VALUES ('talabat',?,?) ON CONFLICT(source, ref) DO UPDATE SET data = json_set(match_profiles.data, '$.livePay', json_extract(excluded.data, '$.livePay'))")
-          .bind(id, JSON.stringify({ ...prof, livePay: String(c.pay).slice(0, 40) })));
-      }
+      if (c.pay) writes.push(db.prepare(`INSERT INTO match_profiles (source, ref, data) VALUES ('talabat',?,?)
+        ON CONFLICT(source, ref) DO UPDATE SET data = json_set(match_profiles.data, '$.livePay', json_extract(excluded.data, '$.livePay'))
+        WHERE json_extract(match_profiles.data, '$.livePay') IS NOT json_extract(excluded.data, '$.livePay')`)
+        .bind(id, JSON.stringify({ livePay: String(c.pay).slice(0, 40) })));
     }
     // Anything the screen showed that is not known yet is kept (listed under «اللي المرصد اتعلمه»), never dropped.
     const unknown = [];

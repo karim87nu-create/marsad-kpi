@@ -32,3 +32,23 @@ test('duplicate IDs within a push retain newer observation and customer profile 
   assert.equal(JSON.parse(t.app.db.raw.prepare("SELECT data FROM match_profiles WHERE source='talabat' AND ref=?").get(id).data).name,'current');
  }finally{await t.close();}
 });
+
+test('live payment badges avoid individual profile reads and preserve simultaneous order details', async () => {
+  const t = await start();
+  try {
+    const admin = await t.admin(), { token } = (await admin('POST', '/api/talabat/token')).body;
+    const original = t.app.db.prepare;
+    let profileReads = 0;
+    t.app.db.prepare = sql => {
+      if (/SELECT data FROM match_profiles WHERE source = 'talabat' AND ref = \?/.test(sql)) profileReads++;
+      return original(sql);
+    };
+    const codes = Array.from({ length: 50 }, (_, i) => ({ id: String(4677010000 + i), code: String(1000 + i), pay: 'Cash' }));
+    const res = await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: { codes,
+      orders: [{ id: codes[0].id, detail: { customer: { name: 'Existing customer' }, bill: [{ k: 'Total', text: 'Total | 150' }] } }] } });
+    assert.equal(res.status, 200);
+    assert.equal(profileReads, 0);
+    const first = JSON.parse(t.app.db.raw.prepare("SELECT data FROM match_profiles WHERE source='talabat' AND ref=?").get(codes[0].id).data);
+    assert.deepEqual([first.livePay, first.name, first.bill[0].text], ['Cash', 'Existing customer', 'Total | 150']);
+  } finally { await t.close(); }
+});
