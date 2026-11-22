@@ -199,13 +199,21 @@ const talabatSender = sender => { try { return !!sender.tab && ['partner-app.tal
 const waSender = sender => { try { return new URL(sender.url).hostname === 'web.whatsapp.com'; } catch { return false; } };
 // The website's central panel / branch boards (site-panel.js): what the panel itself loaded, to the Marsad. Signed with
 // this PC's Talabat link when it has one, else the extension's device key. Nothing goes to the website.
+let siteRejectedLink = null;
 async function siteMessage(m, sender) {
   let host = ''; try { host = new URL(sender.url).hostname; } catch {}
   if (!sender.tab || host !== 'eldahan.com.eg') throw Error('invalid_sender');
   const dispatchFromApex = m.board === 'branch' && m.dispatchFromApex === true && new URL(sender.url).pathname === '/eldahan-branch-board/';
   const t = await store.get(TALABAT, null);
-  const r = await api('/api/site/panel', { method: 'POST', headers: { 'content-type': 'application/json', ...(t?.token ? { 'x-talabat-token': t.token } : { 'x-device-token': globalThis.MARSAD.DEVICE_TOKEN }) },
-    body: JSON.stringify({ board: m.board === 'central' ? 'central' : 'branch', dispatchFromApex, orders: Array.isArray(m.orders) ? m.orders.slice(0, 300) : [], serverTime: m.serverTime || null }), timeout: 30000 });
+  const body = JSON.stringify({ board: m.board === 'central' ? 'central' : 'branch', dispatchFromApex, orders: Array.isArray(m.orders) ? m.orders.slice(0, 300) : [], serverTime: m.serverTime || null });
+  const push = auth => api('/api/site/panel', { method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body, timeout: 30000 });
+  const deviceAuth = { 'x-device-token': globalThis.MARSAD.DEVICE_TOKEN };
+  const linkedToken = t?.token && t.token !== siteRejectedLink ? t.token : null;
+  let r = await push(linkedToken ? { 'x-talabat-token': linkedToken } : deviceAuth);
+  if (r.status === 401 && linkedToken) {
+    r = await push(deviceAuth);
+    if (r.ok) siteRejectedLink = linkedToken;
+  }
   if (!r.ok) return { ok: false, status: r.status };
   if (m.board === 'central' && !sender.tab.incognito && siteBoardKey(sender.url) === 'central') {
     // A signed-in central board also designates an unlinked Firefox profile as a website monitor.

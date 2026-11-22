@@ -320,6 +320,7 @@ function setup(app) {
     }
     await writeBatches(writes);
     await put('site_panel_at', String(now));
+    return writes.length > 0;
   }
 
   app.route('POST', '/api/site/panel', async ctx => {
@@ -330,8 +331,9 @@ function setup(app) {
     // The branch already supplied the current order state. It can act on an exact Apex match
     // even if the write for reports has to wait until the next panel refresh.
     const save = savePanel(list, board, now);
-    if (canDispatch && db.kind === 'd1') ctx.waitUntil(save.catch(e => console.error('Website branch snapshot failed', e?.message)));
-    else await save;
+    const warm = changed => changed && !app.config.shadow ? app.warmTransferQueue?.(now) : null;
+    if (canDispatch && db.kind === 'd1') ctx.waitUntil(save.then(warm).catch(e => console.error('Website branch snapshot failed', e?.message)));
+    else if (await save) ctx.waitUntil(Promise.resolve(warm(true)));
     // Karim 11-11: «عايز الاوردر في الصفحه المركزيه برضو يتحول للفرع». An order the Marsad wrote on Apex and that is still
     // without a branch on the central panel: the extension picks that branch in the panel and presses «إرسال للفرع» itself
     // (the panel's own button, as an employee would). An order already sent to a branch is never changed.

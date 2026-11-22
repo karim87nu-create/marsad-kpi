@@ -464,6 +464,14 @@ function setup(app) {
   // and the rules only change meaningfully every few seconds, so share one in-flight pass and cap it.
   let alertsAt = 0, alertsFlight = null;
   async function maybeAlerts(now, force = false) {
+    if (db.kind === 'd1') {
+      // Each Worker invocation owns its database I/O. Reserve the regular pass across isolates without sharing a promise.
+      const claimed = await db.prepare(`INSERT INTO settings (key,value) VALUES ('talabat_alert_started_at',?)
+        ON CONFLICT(key) DO UPDATE SET value=excluded.value
+        WHERE CAST(settings.value AS INTEGER) <= ?`).run(String(now), now - 30000);
+      if (claimed.changes || force) await alerts(now);
+      return;
+    }
     if (alertsFlight) { await alertsFlight; if (!force) return; }
     if (!force && now - alertsAt < 30000) return;
     alertsFlight = alerts(now).then(value => { alertsAt = now; return value; }).finally(() => { alertsFlight = null; });

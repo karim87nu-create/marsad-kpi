@@ -1,12 +1,12 @@
 const test = require('node:test'), assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
 const { JSDOM } = require('jsdom');
 const ext = path.join(__dirname, '../../extension-3');
-function background(linked = true, tabs = [{ id: 7, url: 'https://partner-app.talabat.com/orders' }]) {
+function background(linked = true, tabs = [{ id: 7, url: 'https://partner-app.talabat.com/orders' }], responseStatus = () => 200) {
   const data = linked ? { talabatMonitor: { token: 'tal_' + 'a'.repeat(48), extra: linked === 'extra' } } : {};
   const listeners = [], installed = [], startup = [], injected = [], requests = [], created = [];
   const ctx = { URL, URLSearchParams, Date, Intl, performance, AbortController, setTimeout, clearTimeout, setInterval: () => 0,
     console, crypto: globalThis.crypto, structuredClone,
-    fetch: async (url, options) => { requests.push({ url, body: options.body }); return new Response(JSON.stringify({ ok: true, want: ['12345678'] }), { headers: { date: new Date().toUTCString() } }); },
+    fetch: async (url, options) => { requests.push({ url, body: options.body, headers: options.headers }); return new Response(JSON.stringify({ ok: true, want: ['12345678'] }), { status: responseStatus(url, options), headers: { date: new Date().toUTCString() } }); },
     browser: { storage: { local: { get: async k => ({ [k]: data[k] }), set: async x => Object.assign(data, x) } },
       runtime: { onMessage: { addListener: f => listeners.push(f) }, onInstalled: { addListener: f => installed.push(f) }, onStartup: { addListener: f => startup.push(f) }, getURL: p => 'moz-extension://test/' + p },
       tabs: { query: async () => tabs, onRemoved: { addListener() {} },
@@ -19,6 +19,17 @@ function background(linked = true, tabs = [{ id: 7, url: 'https://partner-app.ta
   const send = (type, url = 'https://partner-app.talabat.com/orders', extra = {}) => listeners[0]({ type, ...extra }, { tab: { id: 7 }, url });
   return { send, requests, installed, startup, injected, created };
 }
+test('website panel retries a rejected Talabat link only with the valid device credential', async () => {
+  const central = 'https://eldahan.com.eg/eldahan-operations-central/';
+  const h = background(true, [{ id: 7, url: central }], (url, o) => url.endsWith('/api/site/panel') && o.headers['x-talabat-token'] ? 401 : 200);
+  const push = () => h.send('SITE_PANEL', central, { board: 'central', orders: [{ id: 1 }] });
+  assert.equal((await push()).ok, true);
+  assert.equal((await push()).ok, true);
+  const sent = h.requests.filter(x => x.url.endsWith('/api/site/panel'));
+  assert.equal(sent.length, 3);
+  assert.ok(sent[0].headers['x-talabat-token']);
+  assert.ok(sent.slice(1).every(x => x.headers['x-device-token'] && !x.headers['x-talabat-token'] && x.body === sent[0].body));
+});
 test('Talabat clock reaches the actual background listener and enables a timestamped push', async () => {
   const h = background();
   await assert.rejects(h.send('CLOCK'), /invalid_sender/, 'the generic Arabicss clock remains restricted');
