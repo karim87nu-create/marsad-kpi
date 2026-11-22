@@ -337,17 +337,35 @@ function setup(app) {
       try { site = await app.siteSyncNow(ctx.now); }
       catch { site = { error: true }; }
     }
-    const x = S(day); x.dirty = true; queueCache.delete(day);
-    const base = await rebuild(day), now = app.now();
-    const fresh = await queueFor(day, { now, me, waitUntil: ctx.waitUntil });
-    return { ...fresh, manualRefresh: { at: iso(now), siteOk: !!site && !site.error && !site.skipped, queueAt: iso(base.at) } };
+    const started = app.now(), siteOk = !!site && !site.error && !site.skipped;
+    const saved = db.kind === 'd1' ? await db.prepare('SELECT at FROM transfer_cache WHERE day = ?').get(day) : null;
+    const x = S(day); x.dirty = true;
+    let base;
+    const pending = () => ({ __status: 202, body: { manualRefresh: { pending: true, siteOk } } });
+    try {
+      base = await rebuild(day);
+    } catch (error) {
+      if (error.status !== 503) throw error;
+      const completed = await waitForTransferBuild(db, day, saved?.at ?? 0);
+      if (!completed) return pending();
+      queueCache.set(day, completed);
+      base = completed;
+      if (siteOk && base.at < started) {
+        // A snapshot started before the website sync completed may not contain those changes.
+        try { base = await rebuild(day); }
+        catch (retryError) { if (retryError.status === 503) return pending(); throw retryError; }
+      }
+    }
+    const now = app.now();
+    const fresh = await queueFor(day, { now, me, base, waitUntil: ctx.waitUntil });
+    return { ...fresh, manualRefresh: { at: iso(now), siteOk, queueAt: iso(base.at) } };
   });
   // The page's list, also read by the automatic transfer (autotransfer.js) with no employee.
   async function queueFor(day, ctx) {
     const me = ctx.me || { id: null, name: 'المرصد آلي', staff: false };
     // The day's orders (heavy: Apex snapshot, matching) are built once every few seconds for everyone on the page;
     // only the claims (who has which order) are read fresh for each request.
-    const base = await baseFor(day, ctx.now, ctx.cachedOnly ? { cachedOnly: true } : { allowStale: true });
+    const base = ctx.base ?? await baseFor(day, ctx.now, ctx.cachedOnly ? { cachedOnly: true } : { allowStale: true });
     if (!base) return null;
     // Cancellation is authoritative even when a completed queue snapshot is reused.
     const window = dayWindow(day), cancelled = new Set();

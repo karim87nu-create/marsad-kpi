@@ -792,6 +792,7 @@ $('list').addEventListener('focusout', () => setTimeout(() => { if (render.pendi
 $('list').addEventListener('toggle', e => { const d = e.target.closest?.('[data-pick-box]'); if (d) { const p = picks[d.closest('.card').dataset.k]; if (p && p.open !== d.open) { p.open = d.open; if (d.open) render(true); } } }, true);
 let loadingQueue = null, queueRetryAfter = 0, queueBackoff = 0;
 function load() {
+  if ($('refreshQueue').disabled) return loadingQueue || Promise.resolve();
   if (Date.now() < queueRetryAfter) return Promise.resolve();
   if (loadingQueue) return loadingQueue;
   loadingQueue = loadQueue().finally(() => { loadingQueue = null; });
@@ -813,8 +814,13 @@ $('refreshQueue').onclick = async () => {
   try {
     if (loadingQueue) await loadingQueue;
     const previous = data, d = await api('POST', '/api/transfer/refresh');
+    queueBackoff = 0; queueRetryAfter = 0;
+    if (d.manualRefresh?.pending) {
+      $('queueStatus').textContent = 'قائمة التحويل لسه بتتحدّث. الأرقام الظاهرة من آخر تحديث، والصفحة هتحدّثها تلقائيًا.';
+      return;
+    }
     if (!d.apexItems && previous) { d.apexItems = previous.apexItems; d.locations = previous.locations; d.sections = previous.sections; }
-    queueBackoff = 0; queueRetryAfter = 0; data = d; renderQueueIfChanged();
+    data = d; renderQueueIfChanged();
     $('queueStatus').textContent = d.manualRefresh?.siteOk === false
       ? 'اتحدثت بيانات السيرفر، لكن تعذّر تحديث بيانات الموقع الخارجي. طلبات اتراجعت من آخر بيانات وصلته من شاشة طلبات.'
       : 'تم تحديث السيرفر والطلبات الساعة ' + time(d.manualRefresh?.at);

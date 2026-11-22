@@ -448,6 +448,32 @@ test('worker queue does not await I/O owned by a different request', async () =>
   } finally { release?.(); await t.close(); }
 });
 
+test('manual refresh reuses the completed queue when another Worker owns the build lease', async () => {
+  const now = Date.parse('2026-11-22T23:53:00+02:00'), day = '2026-11-22';
+  const t = await start({ at: now });
+  try {
+    const admin = await t.admin(), db = t.app.db;
+    db.kind = 'd1';
+    db.raw.prepare('INSERT INTO settings (key,value) VALUES (?,?)').run('transfer-build:' + day, String(now + 30000));
+    t.app.siteSyncNow = async () => ({ ok: true });
+    const prepare = db.prepare;
+    let completed = false;
+    db.prepare = sql => {
+      if (!completed && sql === 'SELECT at, data FROM transfer_cache WHERE day = ?') {
+        completed = true;
+        db.raw.prepare('INSERT INTO transfer_cache (day,at,data) VALUES (?,?,?)').run(day, now, JSON.stringify({ at: now, list: [], locations: [] }));
+        db.raw.prepare('DELETE FROM settings WHERE key=?').run('transfer-build:' + day);
+      }
+      return prepare(sql);
+    };
+    const r = await admin('POST', '/api/transfer/refresh');
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.manualRefresh.queueAt, new Date(now).toISOString());
+    assert.equal(r.body.manualRefresh.siteOk, true);
+    assert.deepEqual(r.body.orders, []);
+  } finally { await t.close(); }
+});
+
 test('a weight under the dish is its size, never a paid add-on («1 كيلو» 1,509 under Veal Ribs)', async () => {
   const t0 = cairoToUtc(2026, 10, 22, 20, 0, 0), at = m => new Date(t0 + m * 60000).toISOString();
   const t = await start({ at: t0 + 10 * 60000 });
