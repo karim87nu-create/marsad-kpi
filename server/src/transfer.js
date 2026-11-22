@@ -113,24 +113,24 @@ function sitePayment(p, total) {
   return p.paid ? 'paid' : 'unpaid';
 }
 // Discounts: whose money it is, only when the source says it.
-const AMOUNT = /(-?\s*(?:E£|EGP|£E|ج\.م)?\s*-?\d[\d,]*(?:\.\d+)?)/;
 const DISC_WORDS = /discount|voucher|promo|coupon|خصم|قسيمة|كوبون|ممول|funded/i;
+const bareDiscount = /^(?:discount|خصم)$/i;
+const discountLabel = t => String(t || '').replace(/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '').trim().replace(/[:：]$/, '').trim();
+const discountAmount = t => Math.abs(amountOf(discountLabel(t).replace(/٬/g, '').replace(/٫/g, '.'))) || null;
 const discountWho = t => /(talabat|platform|طلبات)[\s-]*(funded|ممول)|funded by talabat|(?:خصم|discount)\s*(?:من\s*)?(?:طلبات|talabat)|talabat\s*(?:discount|voucher)|(?:ممول|مدعوم|على حساب)\s*(?:من\s*)?(?:قبل\s*)?(?:طلبات|talabat)/i.test(t) ? 'platform'
-  : /(vendor|restaurant|المطعم)[\s-]*(funded|ممول)|funded by (?:the )?(?:vendor|restaurant)|(?:ممول|مدعوم|على حساب)\s*(?:من\s*)?(?:المطعم|الشريك)|ممول\s*من\s*قبلك|funded by you/i.test(t) ? 'restaurant' : null;
+  : /(vendor|restaurant|المطعم)[\s-]*(funded|ممول)|funded by (?:the )?(?:vendor|restaurant)|(?:ممول|مدعوم|على حساب)\s*(?:من\s*)?(?:قبل\s*)?(?:المطعم|الشريك)|ممول\s*من\s*قبلك|funded by you/i.test(t) ? 'restaurant' : null;
 function talabatDiscounts(bill) {
   const out = [];
   for (const x of bill || []) {
-    const t = x.k + ' ' + x.text;
-    if (!/discount|voucher|promo|coupon|خصم|قسيمة|كوبون/i.test(t)) continue;
+    const [rawLabel, ...value] = String(x.text || '').split('|');
+    const key = discountLabel(x.k), label = discountLabel(rawLabel);
+    const t = `${key} ${label}`, who = discountWho(t);
+    if (!who && !/discount|voucher|promo|coupon|خصم|قسيمة|كوبون/i.test(t)) continue;
     // The money is after «|» («خصم 30% على بعض المنتجات | -90.00» is 90, not the 30 of «30%»); a «%» is never money.
-    const val = String(x.text).includes('|') ? String(x.text).split('|').slice(1).join('|') : String(x.text).replace(/\d+(?:\.\d+)?\s*[%٪]/g, '');
-    const m = val.match(AMOUNT), amount = m ? Math.abs(Number(m[1].replace(/[^\d.]/g, ''))) || null : null;
-    // Karim 31-10 took a bill-summary discount as Talabat's; Karim 10-11 (#655, 30% = 15% ours + 15% Talabat's, all of it
-    // taken as Talabat's): a line that does not say who pays is asked (the employee reads «ممول من قبلك» on Talabat).
-    // Karim 11-16: the bare English «Discount» line of the bill is Talabat's («كلمه Discount اه ده خصم علي طلبات»; staff
-    // entered all 6 of 11-15 as «خصم طلبات»). Set after the funded check below, so a total beside its funded parts stays one.
-    const generic = /^\s*discount\s*$/i.test(String(x.text).split('|')[0]) && /^\s*(?:discount)?\s*$/i.test(String(x.k || ''));
-    out.push({ text: x.text, amount, who: discountWho(t), ...(generic ? { generic } : {}) });
+    const amount = discountAmount(value.length ? value.join('|') : label.replace(/[\d٠-٩]+(?:[.٫][\d٠-٩]+)?\s*[%٪]/g, ''));
+    // Talabat's bill uses «Discount» or «خصم» for the same standalone line. Explicit funding and item breakdowns take precedence.
+    const generic = bareDiscount.test(label) && (!key || bareDiscount.test(key));
+    out.push({ text: x.text, amount, who, ...(generic ? { generic } : {}) });
   }
   // The total line next to its funded parts («خصم 90.27» with «ممول من قبلك 45.14» + «ممول من قبل Talabat 45.13») is the same money.
   const funded = out.filter(d => d.who && d.amount), sum = funded.reduce((a, d) => a + d.amount, 0);
@@ -681,9 +681,8 @@ function setup(app) {
         // Under a dish Talabat shows the discount, its description, and who funds which part («ممول من قبلك» = the restaurant,
         // «ممول من قبل Talabat» = Talabat). With the funded parts, those are the discounts; without them the dish's discount
         // (the largest line, so «خصم» and «خصم 30%…» are not counted twice) is the restaurant's.
-        const amountOf = t => { const m = String(t).match(AMOUNT); return m ? Math.abs(Number(m[1].replace(/[^\d.]/g, ''))) || null : null; };
         const found = [...(Array.isArray(x.options) ? x.options : []).filter(isDisc).map(o => ({ label: o.name, amount: o.price != null ? Math.abs(Number(o.price)) : null })),
-          ...(x.discountLines || []).map(t => ({ label: String(t).split('|')[0].trim(), amount: String(t).includes('|') ? amountOf(String(t).split('|').slice(1).join('|')) : null }))];
+          ...(x.discountLines || []).map(t => ({ label: discountLabel(String(t).split('|')[0]), amount: discountAmount(String(t).split('|').slice(1).join('|')) }))];
         const funded = found.filter(d => discountWho(d.label) && d.amount);
         const top = found.filter(d => d.amount).sort((a, b) => b.amount - a.amount)[0];
         // The funded parts must add up to the dish's discount; if they don't, who pays what is not clear (entered by hand).

@@ -60,6 +60,12 @@ test('money to Apex: every kind of Talabat discount, cash and paid', async () =>
     assert.deepEqual([r.rest, r.sign, r.target], [0, 'خصم طلبات 122.00', 340], 'all of Talabat\'s discounts summed');
     r = await run({ bill: B(['Discount', '-100'], total(240)), payment: 'paid' });
     assert.deepEqual([r.rest, r.target], [100, 240]);
+    r = await run({ bill: B(['\u200fخصم:', '−١٬٢٣٤٫٥٠ ج.م.'], total(250)), payment: 'cash' });
+    assert.deepEqual([r.rest, r.sign, r.target], [0, 'خصم طلبات 1234.50', 1484.5]);
+    r = await run({ bill: B(['خصم', '-100'], total(240)), payment: 'paid' });
+    assert.deepEqual([r.rest, r.sign, r.target], [100, 'خصم طلبات 100.00', 240]);
+    r = await run({ bill: B(['خصم', '-90'], ['ممول من قبلك', '-30'], ['ممول من قبل Talabat', '-60'], total(250)), payment: 'cash' });
+    assert.deepEqual([r.rest, r.sign, r.target], [30, 'خصم طلبات 60.00', 310], 'funding labels may omit the word discount');
     // A discount that does not say who: still asked on cash; the split decides.
     r = await run({ bill: B(['خصم 30% على بعض المنتجات', '-100'], total(240)), payment: 'cash' });
     assert.equal(r.status, 400); assert.match(r.error, /حدد الخصم على مين/);
@@ -73,8 +79,8 @@ test('money to Apex: every kind of Talabat discount, cash and paid', async () =>
       discountLines: ['خصم | -90.00 ج.م.', 'خصم 30% على بعض المنتجات | -90.00 ج.م.', 'ممول من قبلك | -45.00 ج.م.', 'ممول من قبل Talabat | -45.00 ج.م.'] }] });
     assert.deepEqual([r.rest, r.sign, r.target], [45, 'خصم طلبات 45.00', 295], 'dish discount split');
     // 7. Under the dish without who: the restaurant's (Karim 31-10).
-    r = await run({ bill: B(total(270)), payment: 'cash', items: [{ qty: 1, name: 'Kofta', price: 300, modifierRead: true, modifierComplete: true, options: [{ qty: 1, name: 'خصم', price: -30 }] }] });
-    assert.deepEqual([r.rest, r.sign, r.target], [30, '', 270]);
+    r = await run({ bill: B(['خصم', '-30'], total(270)), payment: 'cash', items: [{ qty: 1, name: 'Kofta', price: 300, modifierRead: true, modifierComplete: true, options: [{ qty: 1, name: 'خصم', price: -30 }] }] });
+    assert.deepEqual([r.rest, r.sign, r.target], [30, '', 270], 'the summary total repeats the dish discount');
   } finally { await t.close(); }
 });
 
