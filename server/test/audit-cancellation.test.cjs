@@ -6,7 +6,7 @@ test('detail queue never charges retries for more than the four orders the conne
  assert.equal(r.body.want.length,4);assert.equal(t.app.db.raw.prepare("SELECT COUNT(*) n FROM order_ingest WHERE detail_attempts>0").get().n,4);
  }finally{await t.close();}
 });
-test('cancellation waits for owner AND reason, requests only incomplete details, then queues once to branch',async()=>{
+test('cancellation waits for owner AND reason, requests only incomplete details, then queues once to online without an Apex receipt',async()=>{
  const t=await start();try{
   const admin=await t.admin(),token=(await admin('POST','/api/talabat/token')).body.token;
   const push=orders=>t.call('POST','/api/talabat/push',{headers:{'x-talabat-token':token},body:{orders}});
@@ -23,7 +23,7 @@ test('cancellation waits for owner AND reason, requests only incomplete details,
   await push([{id,status:'CANCELLED',detail:{cancelReason:'Customer requested'}}]);
   assert.equal(count(),1);assert.equal((await get()).cancellationReadiness,'READY');
   const row=t.app.db.raw.prepare("SELECT target,branch,text FROM telegram_log WHERE kind='talabatCancel'").get();
-  assert.equal(row.target,'branches');assert.equal(row.branch,'مدينتي');assert.match(row.text,/Customer requested/);
+  assert.equal(row.target,'online');assert.equal(row.branch,'مدينتي');assert.match(row.text,/Customer requested/);
  }finally{await t.close();}
 });
 test('older Talabat observation cannot replace status, customer profile or basket; legacy final status cannot regress',async()=>{
