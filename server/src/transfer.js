@@ -16,7 +16,7 @@ import { parseJson } from './order-match.js';
 import { deliveryPhone, deliveryLabel, deliveryCustomerName, withDeliveryPlaces, formatDeliveryAddress, compactDeliveryComment, deliveryNotes, apexText, splitDeliveryComment, applyChoiceWords } from './delivery-fields.js';
 import { parseApexCustomerNote, normArabic, guessApexItem, usefulCardNotes } from './apex-customer-notes.js';
 import { areaGroups, areaKey, areaInAddress, areaForBranch, PICKUP_AREAS } from './apex-areas.js';
-import { knownNos, itemKey } from './items.js';
+import { knownNos, itemKey, riceItemNo } from './items.js';
 import { APEX_NAMES, APEX_PRICES } from './menu-seed.js';
 import { APEX_SECTIONS } from './apex-sections.js';
 import { siteApexItems, wheelPrizeLabel } from './site-items.js';
@@ -698,6 +698,8 @@ function setup(app) {
       // with exactly that name, or the only one whose name holds it.
       const arKey = v => String(v || '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/[ًٌٍَُِّْ]/g, '').replace(/\s+/g, ' ').trim();
       const suggest = (...names) => {
+        const rice = names.map(riceItemNo).find(Boolean);
+        if (rice) return [rice];
         for (const n of names.filter(Boolean)) { const k = knownNos(n, learned); if (k.length) return k; }
         for (const n of names.filter(n => /[\u0600-\u06ff]/.test(n || ''))) {
           const want = arKey(n), exact = [...apexName].filter(([, nm]) => arKey(nm) === want).map(([no]) => no);
@@ -992,6 +994,8 @@ function setup(app) {
     const line = Number.isInteger(b.line) ? lines[b.line] : null, itemNo = String(b.itemNo || '');
     if (!line || line.choiceKey !== b.choiceKey) fail(409, 'تفاصيل الأوردر اتغيرت — حدّث الصفحة');
     if (!APEX_NAMES[itemNo]) fail(400, 'اختار صنف موجود على Apex');
+    const rice = riceItemNo(line.name) || riceItemNo(line.nameShown);
+    if (rice && itemNo !== rice) fail(409, 'اختار نفس نوع الأرز اللي العميل طلبه');
     const evidence = source + ':' + ref + ':' + b.line;
     await db.batch([
       db.prepare("DELETE FROM learned WHERE kind = 'transfer-item-choice' AND a = ? AND ref = ?").bind(line.choiceKey, evidence),

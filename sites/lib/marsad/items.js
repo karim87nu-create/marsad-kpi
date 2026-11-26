@@ -56,6 +56,14 @@ function wordScore(en, arName) {
     words.reduce((n, w) => n + weight(w), 0);
 }
 
+// These are distinct Apex dishes. A partial Arabic match must not add an ingredient.
+export function riceItemNo(name) {
+  const label = key(ar(name)).replace(/[\p{P}\p{S}]/gu, ' ').replace(/\s+/g, ' ').trim();
+  if (/^(?:ارز|رز) (?:ابيض|ساده)$|^(?:white|plain) rice$/.test(label)) return '0103007';
+  if (/^(?:ارز|رز) ابيض (?:بالكبده|مع الكبده)$|^white rice with liver$/.test(label)) return '0103009';
+  return null;
+}
+
 // talabat: [{ qty, name, price (line total with tax) }], apex: [{ no, name, qty, price (unit, before tax) }]
 // learned: Map(talabat name → Map(apex no → evidence)), ratio: Talabat/Apex price ratio (learned, about 1.13).
 function compareItems(talabat, apex, { learned = new Map(), ratio = 1.13 } = {}) {
@@ -71,6 +79,8 @@ function compareItems(talabat, apex, { learned = new Map(), ratio = 1.13 } = {})
     let best = null, bestScore = 0, tied = false;
     for (const a of A) {
       if (usedA.has(a.i) || Math.abs((a.qty || 1) - (t.qty || 1)) > 0.01) continue;
+      const riceNo = riceItemNo(t.name);
+      if (riceNo && String(a.no).trim() !== riceNo) continue;
       const k = known(t).includes(String(a.no).trim());
       // Talabat can expose Arabic labels too. Match identical normalized names
       // directly, while keeping the same quantity and price checks as other paths.
@@ -98,7 +108,9 @@ function compareItems(talabat, apex, { learned = new Map(), ratio = 1.13 } = {})
         // Karim 31-10: the count Talabat shows is for all the dishes together (it is divided over them), so Apex's add-on
         // row has that same count. A line without a count (older readings) keeps the dish's count.
         const shown = Number(parts?.[1] || parts?.[3]), modifierName = (parts?.[2] || String(modifier)).trim(), modifierQty = shown || Number(t.qty) || 1;
-        const a = A.find(x => !usedA.has(x.i) && Math.abs((x.qty || 1) - modifierQty) <= 0.01 && key(ar(x.name)) === key(ar(modifierName)));
+        const riceNo = riceItemNo(modifierName);
+        const a = A.find(x => !usedA.has(x.i) && Math.abs((x.qty || 1) - modifierQty) <= 0.01 &&
+          (riceNo ? String(x.no).trim() === riceNo : key(ar(x.name)) === key(ar(modifierName))));
         if (a) usedA.add(a.i);
       }
     }
@@ -117,6 +129,10 @@ function compareItems(talabat, apex, { learned = new Map(), ratio = 1.13 } = {})
 }
 
 // The Apex item numbers a Talabat dish name is known to be (learned from sure links, or the starting list).
-const knownNos = (name, learned = new Map()) => [...new Set([...(learned.get(key(name))?.keys() || []), ...(SEED[key(name)] || SEED_VARIANTS.get(variantKey(name)) || [])].map(x => String(x).trim()))];
+function knownNos(name, learned = new Map()) {
+  const rice = riceItemNo(name);
+  if (rice) return [rice];
+  return [...new Set([...(learned.get(key(name))?.keys() || []), ...(SEED[key(name)] || SEED_VARIANTS.get(variantKey(name)) || [])].map(x => String(x).trim()))];
+}
 export { compareItems, wordScore, knownNos, SEED, WORDS, key as itemKey };
 

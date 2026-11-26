@@ -374,3 +374,45 @@ test('auto transfer: an order past 20 minutes that only waited on the system is 
   // Past an hour it is old either way.
   assert.ok(decide({ ...o, at: new Date(now - 65 * 60000).toISOString() }, { now, waitedOnSystem: () => true }).why.includes(old));
 });
+
+test('Talabat plain white rice add-on keeps its Apex code and quantity despite a learned liver variant', async () => {
+  const { compareItems } = await import('../src/items.js');
+  const time = cairoToUtc(2026, 11, 25, 11, 26), t = await start({ at: time });
+  try {
+    const admin = await t.admin();
+    await t.employee(admin, { name: 'سارة', code: 'E1', pin: '1111' });
+    const session = (await t.call('POST', '/api/transfer/login', { body: { pin: '1111' } })).body.token;
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const store = 'الدهان، التجمع الخامس - البنفسج';
+    const id = '4800059261';
+    const rice = { qty: 2, name: 'ارز ابيض', price: 94 };
+    const dish = { qty: 1, name: 'Grilled Chicken Breasts', price: 298, modifierRead: true, modifierComplete: true,
+      modifiers: ['2× ارز ابيض'], options: [{ qty: 1, name: 'Third Kilo', price: 298 }, rice] };
+    await t.call('POST', '/api/talabat/push', { headers: { 'x-talabat-token': token }, body: {
+      codes: [{ id, code: '5926', store }], orders: [{ id, store, status: 'ACCEPTED', placedAt: new Date(time).toISOString(), total: 392,
+        detail: { subtotal: 392, items: [dish] } }],
+    } });
+    await admin('POST', '/api/apex-writer', { action: 'mode', mode: 'test' });
+    const headers = { 'x-transfer-session': session };
+    const fetchOrder = async () => {
+      const r = await t.call('GET', '/api/transfer/queue?day=2026-11-25', { headers });
+      return r.body.orders.find(o => o.ref === id);
+    };
+    t.advance(9000);
+    const addon = (await fetchOrder()).items[0].addons[0];
+    t.app.db.raw.prepare("INSERT INTO learned(kind,a,b,ref,value,at) VALUES('transfer-item-choice',?,?,?,?,?)")
+      .run(addon.choiceKey, '0103009', 'old', 'staff', time);
+    t.advance(9000);
+    const rebuilt = (await fetchOrder()).items[0].addons[0];
+    assert.equal(rebuilt.qty, 2);
+    assert.deepEqual(rebuilt.apex.map(a => a.no), ['0103007']);
+    const rejected = await t.call('POST', '/api/transfer/selection', { headers, body: {
+      source: 'talabat', ref: id, line: 1, choiceKey: addon.choiceKey, itemNo: '0103009',
+    } });
+    assert.equal(rejected.status, 409);
+
+    const chicken = { no: '0107011', name: '1/3ك صدور مشوية', qty: 1 };
+    assert.ok(compareItems([dish], [chicken, { no: '0103007', name: 'ارز سادة', qty: 2 }]).ok);
+    assert.ok(!compareItems([dish], [chicken, { no: '0103009', name: 'ارز ابيض بالكبدة', qty: 2 }]).ok);
+  } finally { await t.close(); }
+});

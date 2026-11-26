@@ -3,6 +3,8 @@
 // «لو مكتوب مدينه نصر ومصر الجديده او عنوان عام ناخد المنطقه من تفاصيل العنوان».
 // «المستقبل اربطها بالشروق بس لازم يكون مكتوب المستقبل في العنوان الي هيتسجل».
 
+import { riceItemNo } from './items.js';
+
 export const norm = s => String(s || '').replace(/[‎‏‪-‮]/g, '').replace(/[ً-ْـ]/g, '').replace(/[أإآ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه')
   .replace(/ڤ/g, 'ف').replace(/\s*-\s*/g, ' - ').replace(/\s+/g, ' ').trim().toLowerCase();
 
@@ -101,6 +103,8 @@ const TALABAT_ITEMS = [
 
 export function itemRule(item, source) {
   const t = norm(item?.name); if (!t) return null;
+  const rice = riceItemNo(t) || riceItemNo(item.nameShown);
+  if (rice) return rice;
   for (const r of extra.items) if (t === r.name) return r.no;
   if (source === 'talabat') for (const [re, no] of TALABAT_ITEMS) if (re.test(t)) return typeof no === 'function' ? no(item) : no;
   for (const [re, no] of ITEMS) if (re.test(t)) return typeof no === 'function' ? no(item) : no;
