@@ -48,7 +48,12 @@ test('add-ons counted for all the dishes (3 pigeons, each with ممبار and و
   const it = [{ qty: 3, name: 'Stuffed Pigeon', price: 762, options: [{ qty: 1, name: 'ممبار', price: 106 }, { qty: 1, name: 'ورق عنب', price: 101 }], modifiers: ['1× ممبار', '1× ورق عنب'] }, { qty: 1, name: 'كفتة', price: 0, options: [{ qty: 1, name: 'ربع كيلو', price: 319 }] }];
   const r = perDish(it, 1702);
   assert.deepEqual(r[0].options.map(o => [o.qty, o.price]), [[3, 318], [3, 303]]);
-  assert.equal(perDish(it, 1288), it, 'already per line: unchanged');
+  assert.deepEqual(perDish(it, 1288)[0].options.map(o => [o.qty, o.price, o.qtyBasis]), [[1, 106, 'line'], [1, 101, 'line']]);
+  const mixed = [it[0], { qty: 2, name: 'كفتة', price: 200, options: [{ qty: 2, name: 'طحينة', price: 30 }] }];
+  const read = perDish(mixed, 1613);
+  assert.deepEqual(read.flatMap(i => i.options.map(o => [o.qty, o.price, o.qtyBasis])), [[3, 318, 'line'], [3, 303, 'line'], [2, 30, 'line']]);
+  const tied = [{ ...mixed[1] }, { ...mixed[1] }];
+  assert.deepEqual(perDish(tied, 490), tied, 'a subtotal that fits either dish does not prove either count');
   assert.equal(perDish(it, 0), it);
 });
 

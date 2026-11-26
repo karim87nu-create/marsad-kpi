@@ -56,6 +56,7 @@ export function reasonKind(r) {
   const s = String(r || '').trim();
   let m = /^(صنف (?:مش معروف على Apex|ليه أكتر من اختيار على Apex)):\s*(.+?)(?:\s*\(\+\d+\))?$/.exec(s); if (m) return [m[1], m[2]];
   if ((m = /^منطقة «(.+)» لسه ما اتعلمتش على Apex$/.exec(s))) return ['منطقة لسه ما اتعلمتش على Apex', m[1]];
+  if ((m = /^عدد إضافة مش واضح(?::\s*(.+))?$/.exec(s))) return ['عدد إضافة مش واضح', m[1] || null];
   if (/^هاشتاج طلبات لسه ماظهرش/.test(s)) return ['هاشتاج طلبات لسه ماظهرش', null];
   if ((m = /^خصم مش واضح مين بيدفعه(?::\s*(.+))?$/.exec(s))) return ['خصم مش واضح مين بيدفعه', m[1] || null];
   return [s.length > 120 ? s.slice(0, 120) + '…' : s, null];
@@ -71,10 +72,16 @@ export function autoReport(rows) {
     if (!all.length && readReasons(r.reasons).includes(LEGACY_NEW_ORDER_HOLD)) continue;
     t.staff++;
     const real = all.filter(x => !BEFORE.has(x)), use = real.length ? real : [all[0] || 'غير معروف'];
-    for (const x of new Set(use)) {
-      const [kind, detail] = reasonKind(x), e = reasons.get(kind) || { reason: kind, orders: 0, talabat: 0, site: 0, details: new Map(), codes: [] };
+    const byKind = new Map();
+    for (const reason of use) {
+      const [kind, detail] = reasonKind(reason);
+      if (!byKind.has(kind)) byKind.set(kind, new Set());
+      if (detail) byKind.get(kind).add(detail);
+    }
+    for (const [kind, details] of byKind) {
+      const e = reasons.get(kind) || { reason: kind, orders: 0, talabat: 0, site: 0, details: new Map(), codes: [] };
       e.orders++; e[r.source] = (e[r.source] || 0) + 1;
-      if (detail) e.details.set(detail, (e.details.get(detail) || 0) + 1);
+      for (const detail of details) e.details.set(detail, (e.details.get(detail) || 0) + 1);
       if (e.codes.length < 8) e.codes.push((r.source === 'talabat' ? 'طلبات #' : 'الموقع #') + (r.code || r.ref));
       reasons.set(kind, e);
     }
@@ -101,16 +108,17 @@ export function decide(o, x) {
   if (o.source === 'talabat' && !String(o.code || '').replace(/\D/g, '')) why.push('هاشتاج طلبات لسه ماظهرش');   // Karim 11-14: never written without it
   if (!o.items?.length) { why.push(o.detailRead ? 'مفيش أصناف' : 'تفاصيل الأوردر لسه ماوصلتش'); return { ok: false, why, quiet: why.every(w => QUIET.has(w)) }; }
   if (o.source === 'talabat' && o.items.some(i => !i.modifiersComplete)) why.push('الإضافات مش ظاهرة كاملة');
-  if (o.items.some(i => (i.addons || []).some(a => a.qty == null))) why.push('عدد إضافة مش واضح');
+  const unclearAddons = [...new Set(o.items.flatMap(i => (i.addons || []).filter(a => a.qty == null).map(a => a.name)))];
+  for (const name of unclearAddons.slice(0, 3)) why.push('عدد إضافة مش واضح: ' + name);
   // Lines: every dish and paid add-on.
   const lines = [];
   for (const i of o.items) {
     lines.push({ name: i.name, qty: Number(i.qty), no: pickOf(i), apex: i.apex || [] });
-    for (const a of i.addons || []) lines.push({ name: a.name, qty: Number(a.qty), no: pickOf(a), apex: a.apex || [] });
+    for (const a of i.addons || []) lines.push({ name: a.name, qty: a.qty == null ? null : Number(a.qty), no: pickOf(a), apex: a.apex || [] });
   }
   const unknown = lines.filter(l => !/^\d{1,10}$/.test(String(l.no || '')));
   if (unknown.length) why.push((unknown[0].apex.length > 1 ? 'صنف ليه أكتر من اختيار على Apex: ' : 'صنف مش معروف على Apex: ') + unknown[0].name + (unknown.length > 1 ? ' (+' + (unknown.length - 1) + ')' : ''));
-  if (lines.some(l => !(l.qty > 0 && l.qty <= 50))) why.push('عدد صنف مش مظبوط');
+  if (lines.some(l => l.qty !== null && !(l.qty > 0 && l.qty <= 50))) why.push('عدد صنف مش مظبوط');
   // Payment.
   const pay = o.payment === 'cash' || o.payment === 'paid' ? o.payment : null;
   if (!pay) why.push(o.source === 'site' ? 'طريقة الدفع على الموقع مش واضحة أو جزء منها كاش' : 'كاش ولا مدفوع مش واضح');
@@ -193,7 +201,11 @@ export function decide(o, x) {
     if (lines.some(l => !(Number(APEX_PRICES[l.no]) > 0))) why.push('صنف ملوش سعر على Apex');
     else if (o.source === 'talabat') {
       const tItems = o.subtotal ?? billAmount(o, /^(?:المجموع الفرعي|subtotal)$/i);
-      if (tItems == null) why.push('مجموع الأصناف على طلبات مش ظاهر');
+      if (tItems == null) {
+        const total = o.target ?? o.total;
+        if (total == null || !Number.isFinite(Number(total)) || Number(total) < 0) why.push('إجمالي طلبات مش ظاهر');
+        else warnings.push('مجموع الأصناف على طلبات مش ظاهر');
+      }
       // Karim 11-19 (#4251: Apex got 1 ممبار and 1 ورق عنب for 3 of each): Apex's lines far under what the customer paid
       // is flagged for review; the writer still registers all known lines. The limit is in «إعدادات التشغيل».
       else if (TUNE.itemsGapPct > 0 && tItems > 0 && T(apexItems) < tItems * (1 - TUNE.itemsGapPct / 100) && tItems - T(apexItems) > 50)
@@ -250,8 +262,12 @@ function setup(app) {
     try {
       const m = await mode(); if (m === 'off') return { mode: m };
       const day = businessDay(now);
-      const cached = await app.transferQueue(day, { now, cachedOnly: true });
-      const q = cached || (cardsReady && await app.transferQueue(day, { now }));
+      let q = await app.transferQueue(day, { now, cachedOnly: true });
+      if (!q && cardsReady) q = await app.transferQueue(day, { now });
+      else if (!q) {
+        await app.warmTransferQueue?.(now);
+        q = await app.transferQueue(day, { now, cachedOnly: true });
+      }
       if (!q || q.stale) return { mode: m, skipped: 'no recent build' };
       const areas = await customerAreas(day);
       const { deliveryPhone } = await import('./delivery-fields.js');

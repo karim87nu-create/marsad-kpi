@@ -41,18 +41,45 @@ function rolled(o) {
   const no = to || String(pick);
   return { ...o, apex: [{ no, name: APEX_NAMES[no] || null }], apexPick: no, freeOptions: (o.freeOptions || []).filter(t => !ROLL_RE.test(t) || String(t).replace(ROLL_RE, '').replace(/عيش|خبز|bread|[\s:،,()-]/gi, '').length > 0), modifiers: (o.modifiers || []).filter(t => !ROLL_RE.test(t) || String(t).replace(ROLL_RE, '').replace(/عيش|خبز|bread|[\s:،,()-]/gi, '').length > 0) };
 }
-// Karim 11-19 (#4251, Apex 706024: 3 «حمام محشو» each with «ممبار» and «ورق عنب» — Talabat 318 and 303 — went as 1 each):
-// Talabat's live screen gives an add-on's count and price for ONE dish, its order page for all of them. When the order's
-// subtotal only adds up with the add-ons times the dishes, they are made per line (count and price × dishes).
+// The Talabat live view can report paid options per dish. Its history can
+// report the same options for the whole line. Reconcile each dish with the
+// platform's subtotal, since one order can contain both kinds of line.
 export function perDish(items, subtotal) {
-  if (!(subtotal > 0) || !Array.isArray(items) || !items.some(x => Number(x?.qty) > 1 && (x.options || []).some(o => Number(o?.price) > 0))) return items;
-  const pos = v => (Number(v) > 0 ? Number(v) : 0);
-  const asIs = items.reduce((t, x) => t + pos(x.price) + (x.options || []).reduce((u, o) => u + pos(o.price), 0), 0);
-  const times = items.reduce((t, x) => t + pos(x.price) + (x.options || []).reduce((u, o) => u + pos(o.price) * (Number(x.qty) || 1), 0), 0);
-  const near = v => Math.abs(v - subtotal) <= Math.max(5, subtotal * 0.01);
-  if (near(asIs) || !near(times)) return items;
-  return items.map(x => (Number(x.qty) > 1 ? { ...x, options: (x.options || []).map(o => Number(o?.price) > 0 ? { ...o, price: Math.round(Number(o.price) * x.qty * 100) / 100, ...(Number(o.qty) > 0 ? { qty: Number(o.qty) * x.qty } : {}) } : o),
-    modifiers: (x.modifiers || []).map(m => String(m).replace(/^(\d+)×\s*/, (_, n) => (Number(n) * x.qty) + '× ')) } : x));
+  if (!(subtotal > 0) || !Array.isArray(items)) return items;
+  const cents = value => Math.max(0, Math.round((Number(value) || 0) * 100));
+  const paid = o => !DISC_WORDS.test(o.name) && cents(o.price) > 0;
+  const weights = o => WEIGHTS.some(w => w[0].test(wName(o.name)));
+  const plans = items.map(x => {
+    const options = (x.options || []).filter(paid);
+    const extras = options.filter(o => !weights(o));
+    const main = cents(x.price) || cents(options.find(weights)?.price);
+    const add = extras.reduce((sum, o) => sum + cents(o.price), 0);
+    return { main, add, dishes: Number(x.qty) || 1 };
+  });
+  if (plans.some(p => !p.main)) return items;
+  const target = cents(subtotal) - plans.reduce((sum, p) => sum + p.main + p.add, 0);
+  const candidates = plans.flatMap((p, i) => p.dishes > 1 && p.add ? [{ i, delta: p.add * (p.dishes - 1) }] : []);
+  if (!candidates.length || candidates.length > 10 || target < -5) return items;
+
+  let resolved = null;
+  for (let mask = 0; mask < 2 ** candidates.length; mask++) {
+    const delta = candidates.reduce((sum, c, bit) => sum + ((mask & (1 << bit)) ? c.delta : 0), 0);
+    if (Math.abs(delta - target) > 5) continue;
+    if (resolved == null) resolved = { perDish: mask, perLine: ~mask };
+    else { resolved.perDish &= mask; resolved.perLine &= ~mask; }
+  }
+  if (!resolved) return items;
+  const basis = new Map(candidates.map(({ i }, bit) => [i, resolved.perDish & (1 << bit) ? 'perDish' : resolved.perLine & (1 << bit) ? 'line' : null]));
+  return items.map((x, i) => {
+    const scope = basis.get(i);
+    if (!scope) return x;
+    const factor = scope === 'perDish' ? plans[i].dishes : 1;
+    const options = (x.options || []).map(o => paid(o) && !weights(o) ? {
+      ...o, qtyBasis: 'line', price: cents(o.price) * factor / 100,
+      ...(Number(o.qty) > 0 ? { qty: Number(o.qty) * factor } : {}),
+    } : o);
+    return { ...x, options };
+  });
 }
 let APEX_ITEM_LIST = Object.entries(APEX_NAMES).map(([no, name]) => ({ no, name, price: APEX_PRICES[no] ?? null }));
 // Karim 11-19 review: a new item on Apex (or one missing from the built-in list) was «صنف مش معروف على Apex» until a code
@@ -793,7 +820,9 @@ function setup(app) {
         // cannot tell, the count is left to a person.
         const addons = opts.filter(o => o !== sizeOpt && !isWeight(o) && Number(o.price) > 0).map(o => {
           const apex = (withApex ? suggest(o.name) : []).map(no => ({ no, name: apexName.get(no) || null }));
-          return { name: o.name, qty: addonCount(o, Number(x.qty) || 1, apex), price: Number(o.price), apex };
+          const sourceQty = Number(o.qty) > 0 ? Number(o.qty) : null;
+          const qtyBasis = isSite ? 'line' : o.qtyBasis;
+          return { name: o.name, qty: addonCount({ ...o, qtyBasis }, Number(x.qty) || 1, apex), sourceQty, qtyBasis, price: Number(o.price), apex };
         });
         const free = opts.filter(o => o !== sizeOpt && !(Number(o.price) > 0)).map(o => (Number(o.qty) > 1 ? o.qty + '× ' : '') + o.name);
         return rolled({ qty: x.qty, name: x.name, ...(isSite && x.wheelPrize ? { wheelPrize: true } : {}), ...(x.nameShown ? { nameShown: x.nameShown } : {}), price: x.price ?? null, ...(x.note ? { note: x.note } : {}), modifiers: x.modifiers || [], modifiersComplete: x.modifierComplete === true || !withApex || isSite, size: size ? size[2] : null, apex, ...(apexPick ? { apexPick } : {}),
@@ -808,7 +837,9 @@ function setup(app) {
       for (const o of tm.rows) {
         if (isCancelled(o.status)) continue;
         const p = tProfiles.get(o.id) || {}, a = tm.matches.get(o.id), bill = p.bill || [];
-        const items = perDish(parseJson(o.items, []), Number(o.subtotal)).map(x => itemOut(x, true));
+        const subtotalLine = bill.find(x => /^(?:المجموع الفرعي|subtotal)$/i.test(String(x.k || '').trim()));
+        const subtotal = o.subtotal ?? amountOf(String(subtotalLine?.text || '').split(' | ').slice(1).join(' | '));
+        const items = perDish(parseJson(o.items, []), Number(subtotal)).map(x => itemOut(x, true));
         // The bill's discount lines are the order's total; the lines under the dishes count only when the bill shows none (never both).
         // Under the dishes = the restaurant's discount (deducted); in the bill summary = Talabat's (special mark).
         // A bill line that only repeats the dishes' discount total is the same money, not a second discount.
@@ -867,6 +898,9 @@ function setup(app) {
           // Karim 11-16: a dish he confirmed (transfer-rules.js).
           // Karim 11-16 «اكيد الي قلته هو الي يمشي»: it comes before what staff chose or what was learned.
           { const no = itemRule(kind === 'item' ? item : { name: line.name }, order.source); if (no && apexName.has(no)) { line.apex = [{ no, name: apexName.get(no) }]; line.byRule = true; delete line.apexPick; } }
+          if (kind === 'addon' && (choices.length || line.byRule)) {
+            line.qty = addonCount({ qty: line.sourceQty, price: line.price, qtyBasis: line.qtyBasis }, Number(item.qty) || 1, line.apex);
+          }
         }
       }
       list.sort((x, y) => (x.apex ? 1 : 0) - (y.apex ? 1 : 0) || String(x.at || '').localeCompare(String(y.at || '')));
@@ -966,19 +1000,18 @@ function setup(app) {
     if (!payload.pickup) await learnTransferArea(source, ref, payload.locationNo, true);
   }
   function addonCount(o, dishes, apex) {
-    const n = Number(o.qty) > 0 ? Number(o.qty) : null, price = Number(o.price);
-    // Every suggested Apex item whose price fits a whole count; taken when they all say the same count.
+    const n = Number(o.qty), count = Number.isInteger(n) && n >= 1 && n <= 50 ? n : null;
+    if (count != null && (dishes === 1 || o.qtyBasis === 'line')) return count;
+    const price = Number(o.price);
     const fits = new Set();
     for (const c of apex.slice(0, 6)) {
-      const unit = Number(APEX_PRICES[c.no]) * 1.14; if (!(unit > 0 && price > 0)) continue;
+      const unit = Number(APEX_PRICES[c.no]) * 1.14;
+      if (!(unit > 0 && price > 0)) continue;
       const k = Math.round(price / unit);
-      if (k >= 1 && k <= 50 && Math.abs(k * unit - price) <= Math.max(0.12 * price, 10)) fits.add(k);
+      if (k < 1 || k > 50 || (count != null && k !== count && k !== count * dishes)) continue;
+      if (Math.abs(k * unit - price) <= Math.max(2, (count == null ? 0.06 : 0.12) * price)) fits.add(k);
     }
-    if (fits.size === 1) return [...fits][0];
-    if (n == null) return null;
-    // Two dishes or more and the price cannot tell: the screens disagree (a count per dish or for the line), so a person
-    // picks it (the page asks «عدد إضافة مش واضح»; the automatic transfer leaves it).
-    return dishes > 1 ? null : n;
+    return fits.size === 1 ? [...fits][0] : null;
   }
   app.route('POST', '/api/transfer/selection', async ctx => {
     const me = await who(ctx), b = ctx.body;

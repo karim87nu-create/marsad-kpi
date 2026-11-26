@@ -325,8 +325,8 @@ test('transfer page: a live order read from the page data (real shape, 01-11-202
     assert.equal(o.note, 'من غير بصل');
     assert.deepEqual(o.items.map(i => i.name), ['Kebab Sandwich', 'Half grilled chicken on charcoal', 'Mombar'], 'menu names from the product number');
     assert.ok(o.items[1].apex.some(a => a.no === '0107001'), 'half chicken suggested');
-    // 3 dishes, «ممبار ×2» for 50 ج: per dish or for the line cannot be told from Apex's price (112 a piece) → a person picks (11-14).
-    assert.deepEqual(o.items[1].addons.map(a => [a.name, a.qty, a.apex.map(x => x.no)]), [['ممبار', null, ['0103001']]], 'paid Arabic add-on → its Apex item');
+    // Talabat's own totals prove its discounted option price and quantity are for the whole line.
+    assert.deepEqual(o.items[1].addons.map(a => [a.name, a.qty, a.apex.map(x => x.no)]), [['ممبار', 2, ['0103001']]], 'paid Arabic add-on → its Apex item and whole-line count');
     assert.deepEqual(o.items[0].freeOptions, ['3× رول']);
     assert.equal(o.items[1].qty, 3); // Two additions in total, not six for three dishes.
   } finally { await t.close(); }

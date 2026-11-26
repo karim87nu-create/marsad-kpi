@@ -24,6 +24,12 @@ test('auto transfer: decides only on certain orders and says why not', () => {
   assert.equal(ok.body.locationNo, 218); assert.equal(ok.body.branchNo, 1); assert.equal(ok.body.payment, 'cash');
   assert.equal(ok.body.customer.nameEn, undefined, 'the machine Arabic is not learned as a staff translation');
   const why = o => decide(base(o), X).why.join(' · ');
+  const missingSubtotal = decide(base({ subtotal: null, target: 285 }), X);
+  assert.equal(missingSubtotal.ok, true);
+  assert.ok(missingSubtotal.warnings.includes('مجموع الأصناف على طلبات مش ظاهر'));
+  assert.match(why({ subtotal: null, total: null }), /إجمالي طلبات مش ظاهر/);
+  const uncertain = base().items.map(i => ({ ...i, addons: [{ name: 'ممبار', qty: null, apex: [{ no: '0103001' }] }] }));
+  assert.equal(why({ items: uncertain }), 'عدد إضافة مش واضح: ممبار');
   // 11-20 (receipt #31675): a delivery whose address is only the area is not written; with a street it is.
   assert.match(why({ customer: { ...base().customer, address: 'التجمع الخامس', talabatArea: 'التجمع الخامس' } }), /العنوان فيه المنطقة بس/);
   assert.doesNotMatch(why(), /العنوان فيه المنطقة بس/);
@@ -99,6 +105,14 @@ test('legacy arrival-only waits are not counted as employee work', () => {
   assert.equal(r.totals.talabat.staff, 0);
   assert.equal(r.staff, 1);
   assert.deepEqual(r.reasons.map(x => x.reason), ['الفرع مش واضح']);
+});
+
+test('transfer report counts one order per reason and shows each unclear add-on', () => {
+  const { autoReport } = require('../src/autotransfer.js');
+  const r = autoReport([{ source: 'talabat', ref: '1', decision: 'wait',
+    reasons: 'عدد إضافة مش واضح: ممبار · عدد إضافة مش واضح: ورق عنب' }]);
+  assert.equal(r.reasons[0].orders, 1);
+  assert.deepEqual(r.reasons[0].details, [{ name: 'ممبار', n: 1 }, { name: 'ورق عنب', n: 1 }]);
 });
 
 test('auto transfer: trial only records, on sends as «المرصد آلي», a waiting order is told to the call center once', async () => {
