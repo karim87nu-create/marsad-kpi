@@ -205,7 +205,8 @@ async function siteMessage(m, sender) {
   if (!sender.tab || host !== 'eldahan.com.eg') throw Error('invalid_sender');
   const dispatchFromApex = m.board === 'branch' && m.dispatchFromApex === true && new URL(sender.url).pathname === '/eldahan-branch-board/';
   const t = await store.get(TALABAT, null);
-  const body = JSON.stringify({ board: m.board === 'central' ? 'central' : 'branch', dispatchFromApex, orders: Array.isArray(m.orders) ? m.orders.slice(0, 300) : [], serverTime: m.serverTime || null });
+  const dispatchActors = dispatchFromApex && Array.isArray(m.dispatchActors) ? m.dispatchActors.slice(0, 50) : [];
+  const body = JSON.stringify({ board: m.board === 'central' ? 'central' : 'branch', dispatchFromApex, orders: Array.isArray(m.orders) ? m.orders.slice(0, 300) : [], ...(dispatchActors.length ? { dispatchActors } : {}), serverTime: m.serverTime || null });
   const push = auth => api('/api/site/panel', { method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body, timeout: 30000 });
   const deviceAuth = { 'x-device-token': globalThis.MARSAD.DEVICE_TOKEN };
   const linkedToken = t?.token && t.token !== siteRejectedLink ? t.token : null;
@@ -226,11 +227,29 @@ async function siteMessage(m, sender) {
     Number.isSafeInteger(a?.orderId) && a.orderId > 0 && typeof a.driver === 'string' && a.driver.length <= 80).slice(0, 20) : [];
   return { ok: true, assign, dispatch };
 }
+browser.tabs.onRemoved.addListener(id => {
+  for (const role of Object.keys(talabatTabs)) if (talabatTabs[role] === id) delete talabatTabs[role];
+});
+let openingTalabatTabs;
+function ensureTalabatTabs(windowId) {
+  if (openingTalabatTabs) return openingTalabatTabs;
+  openingTalabatTabs = (async () => {
+    const tabs = (await browser.tabs.query({ url: 'https://partner-app.talabat.com/*' })).filter(t => !t.incognito);
+    for (const [role, path] of Object.entries({ history: '/orders', live: '/live-orders', menu: '/menu-management-tb/menu-availability', reviews: '/reviews' })) {
+      if (talabatTabs[role] != null) continue;
+      const open = tabs.find(t => { const p = new URL(t.url).pathname; return p === path || p.startsWith(path + '/'); });
+      const tab = open || await browser.tabs.create({ url: 'https://partner-app.talabat.com' + path, active: false, windowId });
+      talabatTabs[role] ??= tab.id;
+    }
+  })().finally(() => { openingTalabatTabs = null; });
+  return openingTalabatTabs;
+}
+
 async function talabatMessage(m, sender) {
   if (m.type === 'TALABAT_LINK' && adminSender(sender)) {
     if (typeof m.token !== 'string' || !/^tal_[a-f0-9]{48}$/.test(m.token)) throw Error('invalid_link');
     await store.set(TALABAT, { token: m.token, linkedAt: new Date().toISOString(), extra: m.extra === true });
-    if (m.extra !== true) ensureSiteBoards().catch(() => {});
+    if (m.extra !== true) { await ensureTalabatTabs(sender.tab.windowId).catch(() => {}); ensureSiteBoards().catch(() => {}); }
     return { ok: true };
   }
   if (m.type === 'TALABAT_STATUS' && adminSender(sender)) { const l = await store.get(TALABAT, null); return { linked: !!l, extra: !!l?.extra, version: VERSION }; }
@@ -240,7 +259,14 @@ async function talabatMessage(m, sender) {
   // branch live screen (its own live tab only: no Order History, no WhatsApp), signed with the extension's device key.
   const linked = await store.get(TALABAT, null);
   const t = linked || (/\/live-orders/.test((() => { try { return new URL(sender.url).pathname; } catch { return ''; } })()) ? { device: true, extra: true } : null);
-  const auth = x => x.device ? { 'x-device-token': globalThis.MARSAD.DEVICE_TOKEN } : { 'x-talabat-token': x.token };
+  const deviceAuth = { 'x-device-token': globalThis.MARSAD.DEVICE_TOKEN };
+  const auth = x => x.device ? deviceAuth : { 'x-talabat-token': x.token };
+  const sendReading = async (path, body) => {
+    const send = (headers, payload) => api(path, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(payload), timeout: 30000 });
+    const result = await send(auth(t), body);
+    if (result.status !== 401 || !t.token || t.extra) return result;
+    return send(deviceAuth, body.screen ? { ...body, screen: { ...body.screen, kind: 'device' } } : body);
+  };
   if (m.type === 'TALABAT_CLOCK') {
     if (!t || new URL(sender.url).hostname !== 'partner-app.talabat.com') throw Error('invalid_sender');
     await clock.ensure();
@@ -250,34 +276,29 @@ async function talabatMessage(m, sender) {
     if (!t) return { active: false };
     // Two tabs on the monitor: Order History (the times) and Live Orders (the short #codes). The second opens by itself.
     const alive = id => browser.tabs.get(id).then(() => true, () => false), tabId = sender.tab.id;
-    for (const r of ['history', 'live']) if (talabatTabs[r] != null && talabatTabs[r] !== tabId && !(await alive(talabatTabs[r]))) delete talabatTabs[r];
+    const u = new URL(sender.url), path = u.pathname.replace(/\/$/, '');
+    for (const r of ['history', 'live', 'menu', 'reviews']) {
+      if (talabatTabs[r] != null && talabatTabs[r] !== tabId && !(await alive(talabatTabs[r]))) delete talabatTabs[r];
+    }
     // An extra profile (one branch's Live Orders): only its live tab works; no Order History, no new tabs, no WhatsApp.
     if (t.extra) {
       if (talabatTabs.live != null && talabatTabs.live !== tabId && !(await alive(talabatTabs.live))) delete talabatTabs.live;
       if (talabatTabs.live == null && /\/live-orders/.test(new URL(sender.url).pathname)) talabatTabs.live = tabId;
       return { active: true, role: talabatTabs.live === tabId ? 'live' : 'extra' };
     }
-    // The main screen also keeps Talabat's «Menu Availability» page open (third tab): it reads which dishes are stopped in
-    // each branch and applies the stops admin queued.
-    if (talabatTabs.menu != null && talabatTabs.menu !== tabId && !(await alive(talabatTabs.menu))) delete talabatTabs.menu;
-    if (talabatTabs.menu == null && /^\/menu-management-tb\/menu-availability/.test(new URL(sender.url).pathname)) talabatTabs.menu = tabId;
-    if (talabatTabs.menu === tabId) return { active: true, role: 'menu' };
-    // Karim 11-16: and the «Reviews» page (fourth tab): the customers' stars and words on each of our stores, for the reports.
-    if (talabatTabs.reviews != null && talabatTabs.reviews !== tabId && !(await alive(talabatTabs.reviews))) delete talabatTabs.reviews;
-    if (talabatTabs.reviews == null && /^\/reviews/.test(new URL(sender.url).pathname)) talabatTabs.reviews = tabId;
-    if (talabatTabs.reviews === tabId) return { active: true, role: 'reviews' };
-    let role = Object.keys(talabatTabs).find(r => talabatTabs[r] === tabId);
-    if (!role) { role = talabatTabs.history == null ? 'history' : talabatTabs.live == null ? 'live' : 'extra'; if (role !== 'extra') talabatTabs[role] = tabId; }
-    if (talabatTabs.history != null && talabatTabs.live == null) { const n = await browser.tabs.create({ url: 'https://partner-app.talabat.com/live-orders', active: false }); talabatTabs.live = n.id; }
-    if (talabatTabs.history != null && talabatTabs.menu == null) { const n = await browser.tabs.create({ url: 'https://partner-app.talabat.com/menu-management-tb/menu-availability', active: false }); talabatTabs.menu = n.id; }
-    if (talabatTabs.history != null && talabatTabs.reviews == null) { const n = await browser.tabs.create({ url: 'https://partner-app.talabat.com/reviews', active: false }); talabatTabs.reviews = n.id; }
+    const roles = { history: '/orders', live: '/live-orders', menu: '/menu-management-tb/menu-availability', reviews: '/reviews' };
+    const here = Object.keys(roles).find(role => path === roles[role] || path.startsWith(roles[role] + '/'));
+    if (!here) return { active: false };
+    talabatTabs[here] ??= tabId;
+    await ensureTalabatTabs(sender.tab.windowId).catch(() => {});
+    const role = talabatTabs[here] === tabId ? here : 'extra';
     return { active: true, role };
   }
   if (m.type === 'TALABAT_PUSH') {
     if (!t) return { ok: false, error: 'not_linked' };
-    const r = await api('/api/talabat/push', { method: 'POST', headers: { 'content-type': 'application/json', ...auth(t) }, body: JSON.stringify({ orders: Array.isArray(m.orders) ? m.orders.slice(0, 800) : [], codes: Array.isArray(m.codes) ? m.codes.slice(0, 200) : [],
+    const r = await sendReading('/api/talabat/push', { orders: Array.isArray(m.orders) ? m.orders.slice(0, 800) : [], codes: Array.isArray(m.codes) ? m.codes.slice(0, 200) : [],
       ...(m.diag ? { screen: { id: await screenId(), version: VERSION, kind: t.device ? 'device' : t.extra ? 'extra' : 'main', ...m.diag } } : {}),
-      ...(Array.isArray(m.availability) ? { availability: m.availability.slice(0, 10) } : {}) }), timeout: 30000 });
+      ...(Array.isArray(m.availability) ? { availability: m.availability.slice(0, 10) } : {}) });
     const d = r.json();
     // WhatsApp messages on: keep one WhatsApp Web tab open on this PC (it sends them).
     if (r.ok && d.phones && !t.extra && !(talabatTabs.wa != null && await browser.tabs.get(talabatTabs.wa).then(() => true, () => false))) {
@@ -299,8 +320,8 @@ async function talabatMessage(m, sender) {
   }
   if (m.type === 'TALABAT_REVIEWS') {
     if (!t || t.device || t.extra) return { ok: false };
-    const r = await api('/api/talabat/reviews', { method: 'POST', headers: { 'content-type': 'application/json', ...auth(t) }, body: JSON.stringify(m.body || {}), timeout: 30000 });
-    return { ok: r.ok };
+    const r = await sendReading('/api/talabat/reviews', m.body || {});
+    return { ok: r.ok, status: r.status };
   }
   if (m.type === 'TALABAT_STOCK_REPORT') {
     if (!t) return { ok: false };
@@ -514,7 +535,7 @@ browser.runtime.onInstalled.addListener(async ({ reason }) => {
       else { await browser.tabs.insertCSS(t.id, { file: 'panel.css' }).catch(() => {}); await browser.tabs.executeScript(t.id, { file: 'config.js' }); await browser.tabs.executeScript(t.id, { file: 'agent.js' }); }
     } catch {}
   }
-  await ensureSiteBoards().catch(() => {});
+  await openSiteBoards().catch(() => {});
 });
 // The website's central panel and branch boards must keep running (Karim 11-19): Firefox may unload a tab left in the
 // background; such a tab is loaded again at once.
@@ -559,7 +580,11 @@ function ensureSiteBoards() {
   })().finally(() => { openingSiteBoards = null; });
   return openingSiteBoards;
 }
-const openSiteBoards = () => ensureSiteBoards().catch(() => {});
+const openSiteBoards = async () => {
+  await ensureSiteBoards().catch(() => {});
+  const monitor = await store.get(TALABAT, null);
+  if (monitor?.token && !monitor.extra) await ensureTalabatTabs().catch(() => {});
+};
 browser.runtime.onStartup?.addListener(openSiteBoards);
 browser.windows?.onCreated.addListener(window => { if (!window.incognito) openSiteBoards(); });
 

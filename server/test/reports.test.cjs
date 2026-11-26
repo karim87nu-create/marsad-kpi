@@ -105,6 +105,7 @@ test('admin «التقارير Excel»: the seven files of a period, right to le
     db.prepare('INSERT INTO site_orders (id,day,status,branch,total,created_at) VALUES (?,?,?,?,?,?)')
       .run(10002, '2026-11-14', 'cancelled', 'مدينتي', 125, t.clock.now);
     db.prepare('INSERT INTO site_channels (id,via) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET via=excluded.via').run(10002, 'checkout');
+    db.prepare('INSERT INTO site_cancel_notes (site_id, reason, at) VALUES (?, ?, ?)').run(10001, 'تم الإلغاء من قبل الفرع: الصنف غير متاح', t.clock.now);
     db.prepare('INSERT INTO site_ratings (order_id,rating,comment,at) VALUES (?,?,?,?)').run(10001, 2, 'تقييم من الموقع', t.clock.now);
     await admin('POST', '/api/cs', { day: '2026-11-14', platform: 'طلبات', branch: 'مدينة نصر', orderNo: '10001', rating: 5, action: 'تمت المتابعة' });
     const lookup = '/api/cs/order?day=2026-11-14&no=10001&platform=';
@@ -139,7 +140,7 @@ test('admin «التقارير Excel»: the seven files of a period, right to le
     const details = cancellationBook[0].rows;
     assert.equal(details[1].length, 9);
     assert.deepEqual(Array.from(details.slice(2), r => [r[3], r[5]]).sort(), [
-      ['Hotline', 'جوده'], ['Talabat', 'جوده'], ['Talabat', 'رفض من المطعم'], ['Talabat', 'المنتج غير متوفر'], ['Whatsapp', 'المنتج غير متوفر'],
+      ['APP', 'المنتج غير متوفر'], ['Hotline', 'جوده'], ['Talabat', 'جوده'], ['Talabat', 'رفض من المطعم'], ['Talabat', 'المنتج غير متوفر'], ['Whatsapp', 'المنتج غير متوفر'],
     ].sort());
     assert.equal(details.find(r => r[3] === 'Whatsapp')[4], 'النزهة');
     const rating = cancellationBook[2].rows;

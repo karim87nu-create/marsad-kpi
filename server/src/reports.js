@@ -89,8 +89,10 @@ function setup(app) {
       db.prepare(`SELECT t.day, t.id, t.code, t.vendor_id, t.store, t.status, t.cancelled_at, t.cancel_owner, t.cancel_reason, t.total, t.subtotal, o.owner AS reviewed_owner
         FROM talabat_orders t LEFT JOIN cancel_owners o ON o.key = 'talabat:' || t.id
         WHERE t.day BETWEEN ? AND ? AND (t.status IN ('CANCELLED','REJECTED','طلب مرفوض','الطلب مرفوض') OR (t.cancelled_at IS NOT NULL AND t.cancel_reason LIKE '%طلب مرفوض%'))`).all(from, to),
-      db.prepare(`SELECT day, id, branch, gone_at, status, total, c.via FROM site_orders
-        LEFT JOIN site_channels c USING (id) WHERE day BETWEEN ? AND ? AND status = 'cancelled'`).all(from, to),
+      db.prepare(`SELECT s.day, s.id, s.branch, s.gone_at, s.modified_at, s.status, s.total, c.via, n.reason, n.at AS cancel_at, o.owner AS reviewed_owner
+        FROM site_orders s LEFT JOIN site_channels c USING (id) LEFT JOIN cancel_owners o ON o.key = 'site:' || s.id
+        LEFT JOIN site_cancel_notes n ON n.site_id = s.id
+        WHERE s.day BETWEEN ? AND ? AND s.status IN ('cancelled','refunded')`).all(from, to),
       db.prepare(`SELECT day, branch, side, rate FROM talabat_ratings
         WHERE day BETWEEN ? AND ? AND rate > 0 AND rate <= 5 ORDER BY day DESC, at DESC`).all(addDays(from, -30), to),
       db.prepare(`SELECT day, json_extract(data, '$.branches') AS branches, json_extract(data, '$.cancels') AS cancels FROM orders_days WHERE day BETWEEN ? AND ?`).all(from, to),
@@ -105,7 +107,8 @@ function setup(app) {
     const list = [
       ...talabatCancels.map(x => ({ day: x.day, orderNo: x.id, code: x.code, branch: talBranch(x), platform: 'Talabat', status: x.status, at: iso(x.cancelled_at),
         amount: x.total ?? x.subtotal, reason: x.cancel_reason, ...cancellationOwner(x.cancel_owner, x.cancel_reason, x.reviewed_owner, x.status) })),
-      ...siteCancels.filter(x => sitePlatform(x) === 'APP').map(x => ({ day: x.day, orderNo: String(x.id), branch: branchName(x.branch), platform: 'APP', status: x.status, amount: x.total, reason: null, owner: null })),
+      ...siteCancels.filter(x => sitePlatform(x) === 'APP').map(x => ({ day: x.day, orderNo: String(x.id), branch: branchName(x.branch), platform: 'APP', status: x.status, at: iso(x.cancel_at || x.gone_at || x.modified_at), amount: x.total, reason: x.reason,
+        ...(x.reviewed_owner ? { owner: ['branch', 'employee'].includes(x.reviewed_owner) ? 'Vendor' : x.reviewed_owner } : cancellationOwner(null, x.reason)) })),
     ];
     const reviewed = new Map(apexReviews.map(x => [x.day + '|' + x.ref, x.owner]));
     for (const { day, branches, cancels } of apexDays) {

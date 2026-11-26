@@ -505,6 +505,11 @@ function setup(app) {
         // A reply stays in the chat which actually received its parent, even after relinking.
         const parent = r.reply_to ? await db.prepare('SELECT * FROM telegram_log WHERE key = ?').get(r.reply_to) : null;
         const target = r.target || (r.kind.startsWith('orders') ? (r.kind.split(':')[0] === 'ordersLate' ? 'branches' : 'online') : null);
+        const toBranch = target === 'branches' || target?.startsWith('branch:');
+        if (toBranch && (r.kind === 'talabatGap' || (['sitePrep', 'talabatCancel', 'siteCancelled'].includes(r.kind) && !/أوردر Apex\s*(?::\s*)?#\d+/u.test(r.text)))) {
+          await db.prepare("UPDATE telegram_log SET sent_at = ?, error = 'skipped:no_apex_reference' WHERE id = ? AND sent_at IS NULL").run(now, r.id);
+          continue;
+        }
         // A branch message goes to that branch's own group only, never to a shared group. A branch with no group
         // linked yet: the message stays in the log, marked not sent.
         if (target === 'branches') {
@@ -528,7 +533,7 @@ function setup(app) {
         if (!claim.changes) continue;
         try {
           const sourceText = platformAlertText(r.text, r.kind, r.key);
-          const text = target === 'branches' || target?.startsWith('branch:') ? branchMessage(sourceText) : sourceText;
+          const text = toBranch ? branchMessage(sourceText) : sourceText;
           const m = await call('sendMessage', { chat_id: chat, text, ...(parent?.message_id ? { reply_parameters: { message_id: parent.message_id, allow_sending_without_reply: true } } : {}) }, c.token);
           await db.prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('telegram_delivery:' + r.key, String(chat));
           await db.prepare('UPDATE telegram_log SET error = NULL, message_id = ? WHERE id = ?').run(m?.message_id ?? null, r.id); sent++;

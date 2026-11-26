@@ -268,6 +268,8 @@ CREATE TABLE IF NOT EXISTS call_assignments (call_key TEXT PRIMARY KEY, employee
 CREATE TABLE IF NOT EXISTS orders_days (day TEXT PRIMARY KEY, data TEXT NOT NULL, received_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS site_orders (id INTEGER PRIMARY KEY, day TEXT NOT NULL, status TEXT, fulfillment TEXT, total REAL, created_at INTEGER NOT NULL, modified_at INTEGER, notes_at INTEGER, received_at INTEGER, transfer_at INTEGER, branch TEXT, out_at INTEGER, driver TEXT, delivered_at INTEGER, scheduled INTEGER NOT NULL DEFAULT 0, scheduled_at INTEGER, transfers INTEGER, gone_at INTEGER);
 CREATE INDEX IF NOT EXISTS site_orders_day ON site_orders(day);
+CREATE TABLE IF NOT EXISTS site_cancel_notes (site_id INTEGER PRIMARY KEY, reason TEXT, at INTEGER);
+CREATE TABLE IF NOT EXISTS site_dispatch_actors (site_id INTEGER PRIMARY KEY, actor TEXT NOT NULL, at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS site_orders_created ON site_orders(created_at);
 CREATE INDEX IF NOT EXISTS site_orders_scheduled ON site_orders(scheduled_at);   -- the transfer page's «day or scheduled in it» reads (338k rows / 30 min, 11-19)
 CREATE TABLE IF NOT EXISTS talabat_orders (id TEXT PRIMARY KEY, day TEXT NOT NULL, vendor_id TEXT, store TEXT, status TEXT, billable TEXT, placed_at INTEGER, total REAL, received_at INTEGER, accept_seconds INTEGER, accepted_at INTEGER, picked_up_at INTEGER, delivered_at INTEGER, cancelled_at INTEGER, cancel_owner TEXT, cancel_reason TEXT, items TEXT, subtotal REAL, delivery_type TEXT, code TEXT, milestones TEXT, detail_at INTEGER, first_seen INTEGER NOT NULL, updated_at INTEGER NOT NULL);
@@ -321,6 +323,7 @@ const REQUIRED_ADDED_COLUMNS = {
   transfer_jobs: ['payload', 'result'],
   talabat_orders: ['code', 'milestones'],
   site_orders: ['transfers', 'total', 'scheduled', 'scheduled_at', 'gone_at'],
+  bot_cases: ['apex_code'],
   wa_messages: ['sending_at'],
   telegram_config: ['branch_chat_id', 'branch_chat_title'],
 };
@@ -343,6 +346,7 @@ const norm = p => p.map(v => (v === undefined ? null : typeof v === 'boolean' ? 
 
 async function migrate(db) {
   await db.batch(SCHEMA_STATEMENTS.map(s => db.prepare(s).bind()));
+  try { await db.prepare('SELECT apex_code FROM bot_cases LIMIT 0').all(); } catch { try { await db.prepare('ALTER TABLE bot_cases ADD COLUMN apex_code TEXT').run(); } catch {} }
   // Older local files: the events.extra column came later.
   try { await db.prepare('SELECT extra FROM events LIMIT 0').all(); } catch { await db.prepare('ALTER TABLE events ADD COLUMN extra TEXT').run(); }
   // Telegram follow-ups are sent as replies to the alert they close.

@@ -200,7 +200,7 @@ window.MarsadInsights = function MarsadInsights(ctx) {
     return box;
   }
   let ownersRows = [];
-  const ownerColumns = O => [{ title: 'اليوم', get: x => x.day }, { title: 'المصدر', get: x => x.source === 'talabat' ? 'طلبات' : 'Apex' }, { title: 'الأوردر', get: x => x.source === 'talabat' ? x.ref + (x.apexNo ? ' · Apex #' + (x.apexSn ?? x.apexNo) : '') : '#' + (x.apexSn ?? x.ref) },
+  const ownerColumns = O => [{ title: 'اليوم', get: x => x.day }, { title: 'المصدر', get: x => x.source === 'talabat' ? 'طلبات' : x.source === 'site' ? 'الموقع' : 'Apex' }, { title: 'الأوردر', get: x => x.source !== 'apex' ? x.ref + (x.apexNo ? ' · Apex #' + (x.apexSn ?? x.apexNo) : '') : '#' + (x.apexSn ?? x.ref) },
     { title: 'الفرع', get: x => x.branch || x.store || '—' }, { title: 'اتلغى', get: x => x.at, type: 'datetime' }, { title: 'ضربه', get: x => x.user || '—' }, { title: 'السبب', get: x => x.reason || '—', cls: () => 'wrap' },
     { title: 'المرصد شايف', get: x => x.why.join(' · ') || '—', cls: () => 'wrap muted' }, { title: 'على مين', get: x => x.final ? O[x.final] + (x.finalName ? ': ' + x.finalName : '') : 'مش واضح', show: x => ownerCell(x, O) },
     { title: 'المبلغ', get: x => x.amount, type: 'number' }];

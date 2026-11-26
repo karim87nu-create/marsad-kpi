@@ -1,6 +1,6 @@
 import { TUNE } from './tune.js';
 import { withDeliveryPlaces } from './delivery-fields.js';
-import { talabatReference } from './order-identifiers.js';
+import { apexOrderNumber, talabatReference } from './order-identifiers.js';
 // طلبات: one monitor screen (Firefox on a PC that stays on, signed in with the call center's Talabat account that sees
 // every branch) reads Order History and each order's details, and pushes them here. Per order we keep the times
 // (received, accepted and how fast, picked up, delivered, cancelled), the cancellation owner and reason, the items and
@@ -386,9 +386,11 @@ function setup(app) {
       const store = o.store ? '\nالفرع: ' + storeName(o.store) : '', ref = o.id; // the short #code staff use; the long id only when there is no code
       if (m.hasApex && o.accepted_at && !m.matches.get(o.id) && o.status !== 'CANCELLED' && now - o.accepted_at > TUNE.talabatNotEnteredMin * 60000 && now - o.accepted_at < 3 * 3600000)
         out.push({ key: 'talabat:notEntered:' + o.id, kind: 'talabatNotEntered', target: 'online', text: '🛵 طلبات | ⚠️ أوردر اتقبل على طلبات ولسه ماتضربش على Apex\n' + talabatReference(o) + store + '\nاتقبل الساعة ' + clock(o.accepted_at) + '، وبقاله ' + Math.round((now - o.accepted_at) / 60000) + ' دقيقة' + (o.subtotal ? '\nقيمة الأوردر: ' + Math.round(o.subtotal) + ' ج' : '') + where(o.id) });
-      if (cancelReady(o) && now - o.cancelled_at < 3 * 3600000)
-        out.push({ key: 'talabat:cancel:' + o.id, kind: 'talabatCancel', target: 'branches', branch: m.matches.get(o.id)?.branch || o.store || null, text: '🛵 طلبات | ❌ أوردر اتلغى على طلبات\n' + talabatReference(o) + store + '\nاتلغى الساعة ' + clock(o.cancelled_at) + (o.cancel_owner ? '\nالإلغاء على: ' + o.cancel_owner : '') + (o.cancel_reason ? '\nالسبب: ' + o.cancel_reason : '') + (o.subtotal ? '\nقيمة الأوردر: ' + Math.round(o.subtotal) + ' ج' : '') +
-          (m.matches.get(o.id) ? det.extra(m.matches.get(o.id).no) : '') });
+      if (cancelReady(o) && now - o.cancelled_at < 3 * 3600000) {
+        const match = m.matches.get(o.id), apex = apexOrderNumber(match);
+        out.push({ key: 'talabat:cancel:' + o.id + (apex ? '' : ':online'), kind: 'talabatCancel', target: apex ? 'branches' : 'online', branch: match?.branch || o.store || null, text: '🛵 طلبات | ❌ أوردر اتلغى على طلبات\n' + (apex ? 'رقم أوردر Apex: #' + apex : talabatReference(o)) + store + '\nاتلغى الساعة ' + clock(o.cancelled_at) + (o.cancel_owner ? '\nالإلغاء على: ' + o.cancel_owner : '') + (o.cancel_reason ? '\nالسبب: ' + o.cancel_reason : '') + (o.subtotal ? '\nقيمة الأوردر: ' + Math.round(o.subtotal) + ' ج' : '') +
+          (match ? det.extra(match.no) : '') });
+      }
     }
     // Karim 11-14: a branch's live screen stopped (its orders do not reach the transfer page): the online group hears it at
     // once, and again when it is back.
@@ -453,7 +455,6 @@ function setup(app) {
       const text = '🛵 طلبات | ⚠️ هاشتاج ناقص في الترتيب: #' + g.code + '\nالفرع: ' + (storeName(g.store) || g.store) +
         '\nأوردرات طلبات للفرع ده جت #' + g.before + ' وبعدها #' + g.after + '، و#' + g.code + ' ماظهرش عندنا خالص' +
         '\nاتأكدوا إنه اتسجل على Apex (أو إنه اتلغى على طلبات)';
-      out.push({ key: 'talabat:gap:' + g.store + ':' + g.code, kind: 'talabatGap', target: 'branches', branch: g.store, text });
       out.push({ key: 'talabat:gap:' + g.store + ':' + g.code + ':online', kind: 'talabatGap', target: 'online', text });
     }
     if (out.length) await db.batch(out.map(a => db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, sent_at, target, reply_to, branch) VALUES (?,?,?,?,?,?,?,?,?)').bind(a.key, a.kind, null, a.text, now, r[a.kind] === false && !a.replyTo ? now : null, a.target, a.replyTo || null, a.branch || null)));

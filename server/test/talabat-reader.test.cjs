@@ -2,7 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),{JSDOM}=require('jsdom');
 test('Talabat detail matching fields stay within the current order and ignore masked phones', () => {
  const s=fs.readFileSync(path.join(__dirname,'../../extension-3/talabat-monitor.js'),'utf8');
- const code=s.slice(s.indexOf('  const T ='),s.indexOf('  // ---------- the operating day'))+'\n'+s.slice(s.indexOf('  function readDetail('),s.indexOf('  // ---------- one cycle'));
+ const code=s.slice(s.indexOf('  const T ='),s.indexOf('  // ---------- the operating day'))+'\n'+s.slice(s.indexOf('  const localizedStatus ='),s.indexOf('  function readList()'))+'\n'+s.slice(s.indexOf('  function readDetail('),s.indexOf('  // ---------- one cycle'));
  const dom=new JSDOM('<aside>Customer name\nOther Person\nPhone number\n01111111111</aside><section><b data-testid="details-order-id">10000001</b><div data-testid="milestone-for__ACCEPTED">12:01</div><div>Customer name\nAhmed Ali\nDelivery address\nNasr Street 20\nPhone number\n01012345678</div></section>',{runScripts:'outside-only',url:'https://partner-app.talabat.com/orders?placedAt=2026-10-22T12:00:00Z'});
  const w=dom.window;
  try {
@@ -22,7 +22,7 @@ test('Talabat detail matching fields stay within the current order and ignore ma
 });
 test('Talabat details: icon-only customer rows are read only inside Customer Details', () => {
  const s=fs.readFileSync(path.join(__dirname,'../../extension-3/talabat-monitor.js'),'utf8');
- const code=s.slice(s.indexOf('  const T ='),s.indexOf('  // ---------- the operating day'))+'\n'+s.slice(s.indexOf('  function readDetail('),s.indexOf('  // ---------- one cycle'));
+ const code=s.slice(s.indexOf('  const T ='),s.indexOf('  // ---------- the operating day'))+'\n'+s.slice(s.indexOf('  const localizedStatus ='),s.indexOf('  function readList()'))+'\n'+s.slice(s.indexOf('  function readDetail('),s.indexOf('  // ---------- one cycle'));
  const dom=new JSDOM('<aside>تفاصيل الزبون\nWrong Person\nWrong Street\n01099999999</aside><section><b data-testid="details-order-id">10000001</b><div data-testid="milestone-for__ACCEPTED">12:01</div><div data-testid="customer-details">تفاصيل الزبون\nperson\nAmr Ali\nplace\nCairo, New Cairo\ncall\n<a href="tel:+201012345678">+201012345678</a></div><h3>الجدول الزمني للطلب</h3></section>',{runScripts:'outside-only',url:'https://partner-app.talabat.com/orders?placedAt=2026-10-22T12:00:00Z'});
  const w=dom.window;
  try {
@@ -92,7 +92,7 @@ test('Talabat history: a table that only draws the rows on screen is scrolled th
   const s = fs.readFileSync(path.join(__dirname, '../../extension-3/talabat-monitor.js'), 'utf8');
   const code = s.slice(s.indexOf('  const sleep ='), s.indexOf('\n', s.indexOf('  const sleep ='))) + '\n' +
     s.slice(s.indexOf('  const lines ='), s.indexOf('  // ---------- a small banner')) +
-    s.slice(s.indexOf('  function readList()'), s.indexOf('  function readDetail(')) +
+    s.slice(s.indexOf('  const localizedStatus ='), s.indexOf('  function readDetail(')) +
     s.slice(s.indexOf('  // The table only draws the rows on screen'), s.indexOf('  async function openDetail('));
   const dom = new JSDOM('<main><div class="MuiDataGrid-virtualScroller"><div id="rows"></div></div></main>', { runScripts: 'outside-only' });
   const w = dom.window, sc = w.document.querySelector('.MuiDataGrid-virtualScroller'), box = w.document.getElementById('rows');
@@ -109,7 +109,7 @@ test('Talabat history: a table that only draws the rows on screen is scrolled th
 });
 test('Talabat details: options are read from their own elements even while the product is collapsed (real page structure, 2026-10-31)', () => {
  const s=fs.readFileSync(path.join(__dirname,'../../extension-3/talabat-monitor.js'),'utf8');
- const code=s.slice(s.indexOf('  const T ='),s.indexOf('  // ---------- the operating day'))+'\n'+s.slice(s.indexOf('  const expandedProductKeys'),s.indexOf('  async function expandProductModifiers'))+'\n'+s.slice(s.indexOf('  function readDetail('),s.indexOf('  // ---------- one cycle'));
+ const code=s.slice(s.indexOf('  const T ='),s.indexOf('  // ---------- the operating day'))+'\n'+s.slice(s.indexOf('  const expandedProductKeys'),s.indexOf('  async function expandProductModifiers'))+'\n'+s.slice(s.indexOf('  const localizedStatus ='),s.indexOf('  function readList()'))+'\n'+s.slice(s.indexOf('  function readDetail('),s.indexOf('  // ---------- one cycle'));
  const html='<div data-testid="order-details-drawer__content"><b data-testid="details-order-id">4687126962</b><div data-testid="milestone-for__ACCEPTED_originally_ACCEPTED">02:00</div>'+
   '<div data-testid="order-content"><div data-testid="existing-product__3114762236"><div tabindex="0" role="button" aria-expanded="false"><p>1×</p><p>Boneless Fawteh Kaware</p><p>E£362.00</p></div><p>كل الوجبات ارز ابيض بدل الاصفر، السلطات ٤ طحينة ٢ مخلل بلدي ٢ خيار مخلل</p></div>'+
   '<div data-testid="existing-product__3114762411"><p>1×</p><p>Grilled Chicken Breasts</p><p>E£285.00</p><button aria-expanded="false">expand_more</button><div hidden>'+

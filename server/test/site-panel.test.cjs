@@ -213,6 +213,7 @@ test('website central panel: an order gone from the board before going out is ca
       items: [{ name: 'طحينة', quantity: 1, total: '25.00 EGP', details: [] }], ...extra });
     await push([order(40001), order(40002), order(40003, { stage: 3, driver: { name: 'علي' } })]);
     t.app.db.raw.prepare("INSERT INTO transfer_jobs (source, ref, day, state, employee_id, employee_name, at, result) VALUES ('site', '40002', '2026-11-10', 'auto_done', NULL, 'المرصد آلي', ?, ?)").run(t.app.now(), JSON.stringify({ orderNo: 777, shiftSerial: 412 }));
+    t.app.db.raw.prepare("UPDATE transfer_jobs SET payload = ? WHERE source='site' AND ref='40002'").run(JSON.stringify({ db: 'live' }));
     const status = id => t.app.db.raw.prepare('SELECT status FROM site_orders WHERE id = ?').get(id).status;
     const keep = order(40099);
     await push([keep]);
@@ -226,7 +227,7 @@ test('website central panel: an order gone from the board before going out is ca
     assert.ok(!q.includes('40001'), 'off the transfer page');
     const msgs = t.app.db.raw.prepare("SELECT key, target, text FROM telegram_log WHERE kind = 'siteCancelled' ORDER BY key").all();
     assert.deepEqual(msgs.map(m => [m.key, m.target]), [['site:cancel:40002', 'branches'], ['site:cancel:40002:online', 'online']]);
-    assert.match(msgs[0].text, /Apex 412/); assert.doesNotMatch(msgs[0].text, /777/, 'the small serial only');
+    assert.match(msgs[0].text, /Apex #412/); assert.doesNotMatch(msgs[0].text, /777/, 'the small serial only');
     await push([keep]); assert.equal(t.app.db.raw.prepare("SELECT COUNT(*) n FROM telegram_log WHERE kind = 'siteCancelled'").get().n, 2, 'once');
   } finally { await t.close(); }
 });
@@ -326,5 +327,25 @@ test('branch board mirrors the driver from a fresh, confirmed Apex website deliv
     ], 'confirmed aliases are limited to their own branch');
     t.advance(6 * 60000);
     assert.deepEqual((await push([first])).body.dispatch, [], 'stale Apex snapshots cannot trigger a dispatch');
+  } finally { await t.close(); }
+});
+
+test('website dispatch keeps the first confirmed source and ignores claims from the central board', async () => {
+  const at = cairoToUtc(2026, 11, 11, 20, 0);
+  const t = await start({ at });
+  try {
+    const admin = await t.admin();
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const o = { id: 31837, status: 'app-out-for-delivery', stage: 3, fulfillment: 'delivery',
+      createdAt: Math.floor(at / 1000), branchId: 'nasr-city', driver: { name: 'علي' } };
+    const push = (board, actor) => t.call('POST', '/api/site/panel', { headers: { 'x-talabat-token': token },
+      body: { board, dispatchFromApex: true, orders: [o], dispatchActors: [{ id: o.id, actor }] } });
+    const read = async () => (await admin('GET', '/api/site/day?day=2026-11-11')).body.orders.find(x => x.id === o.id).dispatchActor;
+    assert.equal((await push('central', 'branch')).status, 200);
+    assert.equal(await read(), null);
+    assert.equal((await push('branch', 'extension')).status, 200);
+    assert.equal(await read(), 'extension');
+    assert.equal((await push('branch', 'branch')).status, 200);
+    assert.equal(await read(), 'extension');
   } finally { await t.close(); }
 });

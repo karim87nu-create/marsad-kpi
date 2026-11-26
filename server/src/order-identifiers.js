@@ -3,6 +3,8 @@ const id = value => {
   return /^\d+$/.test(s) ? s : '';
 };
 export const apexReceipt = order => id(order?.sn) || 'غير متاح';
+export const apexOrderNumber = order => id(String(order?.sn ?? '').replace(/\.0+$/, '')) || id(order?.no) || null;
+export const dispatchActorLabel = actor => ({ extension: 'إضافة مرصد', branch: 'الفرع' }[actor] || null);
 export const talabatReference = order => 'رقم أوردر طلبات: ' + (id(order?.id) || 'غير متاح') +
   '\nهاشتاج طلبات: ' + (id(order?.code) ? '#' + id(order.code) : 'غير متاح');
 export const siteReference = order => 'رقم أوردر الموقع: ' + (id(order?.id) || 'غير متاح');
@@ -29,6 +31,7 @@ export function apexAlertText(text, order) {
 export function platformAlertText(text, kind, key) {
   let value = String(text || '');
   if (!/^talabat|^site/.test(kind || '')) return value;
+  if (/أوردر Apex\s*(?::\s*)?#\d+/u.test(value)) return value;
   value = value.split(/\r?\n/).filter(line => !/^رقمه على Apex:/u.test(line)).join('\n');
   if (/^talabat/.test(kind || '')) {
     const match = /talabat:(?:notEntered|cancel|items):(\d+)/.exec(String(key));

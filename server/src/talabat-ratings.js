@@ -58,7 +58,9 @@ function setup(app) {
   const VENDOR_BRANCH = { 'HF_EG;608556': 'مدينة نصر', 'HF_EG;760858': 'التجمع', 'HF_EG;802223': 'مدينتي' };
   app.route('POST', '/api/talabat/reviews', async ctx => {
     await app.talabatScreen(ctx);
-    const b = ctx.body || {}, vendor = String(b.vendor || ''), branch = VENDOR_BRANCH[vendor];
+    const b = ctx.body || {}, vendorId = /^(?:HF_EG;)?(\d+)$/.exec(String(b.vendor || ''))?.[1];
+    const vendor = 'HF_EG;' + (vendorId || '');
+    const branch = VENDOR_BRANCH[vendor];
     if (!branch) fail(400, 'unknown_vendor');
     const w = [];
     for (const r of (Array.isArray(b.reviews) ? b.reviews : []).slice(0, 300)) {

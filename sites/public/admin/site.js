@@ -11,6 +11,8 @@ window.MarsadSite = function MarsadSite(ctx) {
   const mins = ms => Math.round(ms / MIN) + ' دقيقة';
   const minSec = ms => { const s = Math.max(0, Math.round(ms / 1000)), m = Math.floor(s / 60), x = s % 60; return m ? m + ' دقيقة' + (x ? ' و' + x + ' ثانية' : '') : x + ' ثانية'; };
   const branchOf = o => o.branch || 'من غير فرع';
+  const apexNo = o => o.apex?.sn ?? o.apex?.no ?? null;
+  const dispatchBy = o => ({ extension: 'إضافة مرصد', branch: 'الفرع' }[o.dispatchActor] || (o.outAt ? 'غير مؤكد' : '—'));
 
   let cache = null;
   async function load(force) {
@@ -74,10 +76,10 @@ window.MarsadSite = function MarsadSite(ctx) {
     $('siteBCards').replaceChildren(kpi('أوردرات دليفري', rows.filter(x => !pick || branchOf(x) === pick).length, 'info'), kpi('تجهيز أكتر من 30 دقيقة', n('prepLate'), n('prepLate') ? 'bad' : 'good'),
       kpi('توصيل أكتر من 30 دقيقة', n('delLate'), n('delLate') ? 'bad' : 'good'), kpi('توصيل أقل من 5 دقايق', n('fast'), n('fast') ? 'warn' : '', 'تأكيد التسليم بعد الخروج على طول'),
       kpi('لسه بيتجهز', n('prepOngoing'), '', 'بعد التحويل للفرع'), kpi('لسه مع الطيار', n('delOngoing')));
-    table('siteBTable', [{ title: 'الأوردر', get: x => x.id, show: x => '#' + x.id, type: 'number' }, { title: 'الفرع', get: x => branchOf(x) },
+    table('siteBTable', [{ title: 'أوردر Apex', get: apexNo, show: x => apexNo(x) ? '#' + apexNo(x) : 'غير مؤكد', type: 'number' }, { title: 'الفرع', get: x => branchOf(x) },
       { title: 'وقت استلام الفرع', get: x => x.transferAt, show: x => t12(x.transferAt), type: 'datetime' },
       { title: 'وقت التجهيز', get: x => x.prep, show: prepText, cls: x => x.prepLate ? 'bad' : '' }, { title: 'وقت التوصيل', get: x => x.delivery, show: delText, cls: x => x.delLate ? 'bad' : x.fast ? 'warn' : '' },
-      { title: 'اسم الطيار', get: x => x.driver || '—' }, { title: 'ضربه على Apex', get: x => x.apex?.user || '—' },
+      { title: 'اسم الطيار', get: x => x.driver || '—' }, { title: 'تحميل الطيار في الموقع', get: dispatchBy }, { title: 'ضربه على Apex', get: x => x.apex?.user || '—' },
       { title: 'المراجعة', get: x => x.late ? R().judge(R().items.siteLate(x, d.day)).status : '', show: x => x.late ? R().cell(R().items.siteLate(x, d.day)) : (x.transfers > 1 ? pill('اتحوّل بين ' + x.transfers + ' فروع', 'info') : '') }], list.sort((a, b) => b.worst - a.worst), { empty: d.linked ? (only ? 'مفيش استثناءات' : 'مفيش أوردرات دليفري') : 'الموقع مش متربط لسه' });
   }
   async function renderTransfer(force) {
@@ -109,11 +111,11 @@ window.MarsadSite = function MarsadSite(ctx) {
   // ---------- the Excel files sent to the branches ----------
   function exportBranches() {
     const d = lastBranch; if (!d) return;
-    const until = hhmm(snapOf(d)), cols = [['الأوردر', 11], ['الفرع', 16], ['وقت استلام الفرع', 18], ['وقت التجهيز', 26], ['وقت التوصيل', 28], ['اسم الطيار', 32]].map(([title, width]) => ({ title, width }));
+    const until = hhmm(snapOf(d)), cols = [['أوردر Apex', 14], ['الفرع', 16], ['وقت استلام الفرع', 18], ['وقت التجهيز', 26], ['وقت التوصيل', 28], ['اسم الطيار', 32], ['تحميل الطيار في الموقع', 24]].map(([title, width]) => ({ title, width }));
     window.MarsadXlsx.report('تقرير_أداء_الموقع_للفروع_' + d.day, perBranch(branchRows(d), x => x.worst).map(([b, list]) => ({ name: b,
       title: 'تقرير أداء الموقع للفروع — ' + b + ' — يوم ' + dmy(d.day) + (d.live ? ' (حتى الساعة ' + until + ')' : ''), columns: cols,
-      rows: list.map(x => [{ v: '#' + x.id, fill: x.filler ? 'green' : undefined }, { v: branchOf(x) }, { v: x.transferAt ? t12(x.transferAt) : '—' },
-        { v: prepText(x), fill: x.prepLate ? 'red' : undefined }, { v: delText(x), fill: x.delLate ? 'red' : x.fast ? 'yellow' : undefined }, { v: x.driver || '—' }]) })));
+      rows: list.map(x => [{ v: apexNo(x) ? '#' + apexNo(x) : 'غير مؤكد', fill: x.filler ? 'green' : undefined }, { v: branchOf(x) }, { v: x.transferAt ? t12(x.transferAt) : '—' },
+        { v: prepText(x), fill: x.prepLate ? 'red' : undefined }, { v: delText(x), fill: x.delLate ? 'red' : x.fast ? 'yellow' : undefined }, { v: x.driver || '—' }, { v: dispatchBy(x) }]) })));
   }
   function exportTransfer() {
     const d = lastTransfer; if (!d) return;
@@ -248,7 +250,9 @@ window.MarsadSite = function MarsadSite(ctx) {
       d.orders.filter(x => x.status === 'CANCELLED' && (!pick || x.store === pick)).reverse(), { pageSize: 50, empty: 'مفيش إلغاءات على طلبات' });
   }
   async function renderBranchTalabatCancels() {
-    try { const d = await api('/api/talabat/day?day=' + state.day); $('cancelTalabatPanel').hidden = !d.linked; if (d.linked) renderTalabatCancels(d, 'cancelTalabat'); } catch { $('cancelTalabatPanel').hidden = true; }
+    $('cancelTalabatPanel').hidden = false;
+    try { renderTalabatCancels(await api('/api/talabat/day?day=' + state.day), 'cancelTalabat'); }
+    catch (e) { $('cancelTalabat').textContent = 'تعذر تحميل إلغاءات طلبات: ' + e.message; }
   }
   $('talPick').onchange = () => renderTalabat().catch(ctx.showError);
   function exportTalabat() {
@@ -304,8 +308,10 @@ window.MarsadSite = function MarsadSite(ctx) {
     $('siteKeyPanel').hidden = !isAdmin;
     if (!isAdmin) return;
     const s = await api('/api/site');
-    $('siteKeyStatus').replaceChildren(s.linked ? pill('متربط · المفتاح ينتهي بـ ' + s.keyEnd, 'ok') : pill('مش متربط', 'warn'), ' ',
-      h('span', { className: s.error ? 'error' : 'muted', textContent: s.error ? 'آخر محاولة فشلت: ' + s.error : s.lastSync ? 'آخر قراءة ' + t12(s.lastSync) : '' }));
+    $('siteKeyStatus').replaceChildren(s.keyEnd ? pill('متربط · المفتاح ينتهي بـ ' + s.keyEnd, 'ok') : pill('ربط تقارير الموقع غير متاح', 'warn'), ' ',
+      h('span', { className: s.error ? 'error' : 'muted', textContent: s.error ? 'آخر محاولة فشلت: ' + s.error : s.lastSync ? 'آخر قراءة ' + t12(s.lastSync) : '' }),
+      h('p', { className: s.reviewError ? 'error' : 'muted', textContent: s.reviewError ? 'تعذرت قراءة تقييمات الموقع: ' + s.reviewError : s.reviewsAt ? 'آخر قراءة للتقييمات ' + t12(s.reviewsAt) : 'لسه مفيش قراءة للتقييمات' }),
+      h('p', { className: 'muted', textContent: s.panelAt ? 'آخر وصول من إضافة الموقع ' + t12(s.panelAt) : 'لسه مفيش تحديث من إضافة الموقع' }));
     $('siteSync').hidden = $('siteUnlink').hidden = !s.linked;
   }
   $('siteKeyForm').onsubmit = async e => {

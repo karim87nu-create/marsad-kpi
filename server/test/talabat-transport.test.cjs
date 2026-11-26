@@ -68,7 +68,8 @@ test('the monitor opens missing website boards in the background without duplica
 
   const monitor = background(true);
   await monitor.startup[0]();
-  assert.deepEqual(monitor.created.map(t => t.url), [central, branch + 'tagamoa-cloud', branch + 'nasr-city', branch + 'madinaty-craft-zone']);
+  assert.deepEqual(monitor.created.map(t => t.url), [central, branch + 'tagamoa-cloud', branch + 'nasr-city', branch + 'madinaty-craft-zone',
+    'https://partner-app.talabat.com/live-orders', 'https://partner-app.talabat.com/menu-management-tb/menu-availability', 'https://partner-app.talabat.com/reviews']);
 
   for (const linked of [false, 'extra']) {
     const other = background(linked, [{ id: 9, url: branch + 'tagamoa-cloud' }]);
@@ -83,7 +84,7 @@ test('a connector update resumes the linked WhatsApp sender on an already open t
 });
 test('list status survives changing column order and never becomes an order number', () => {
   const source = fs.readFileSync(path.join(ext, 'talabat-monitor.js'), 'utf8');
-  const read = source.slice(source.indexOf('  function readList()'), source.indexOf('  function readDetail('));
+  const read = source.slice(source.indexOf('  const localizedStatus ='), source.indexOf('  function readDetail('));
   const dom = new JSDOM('<div class="MuiDataGrid-row" data-id="store|12345678"><span>DELIVERED</span><span>12345678</span><span>Today, 20:00</span><span>EGP 100</span></div>', { runScripts: 'outside-only' });
   const w = dom.window; Object.defineProperty(w.HTMLElement.prototype, 'innerText', { get() { return [...this.childNodes].map(n => n.textContent).join('\n'); } });
   const run = () => w.eval('(()=>{ const lines=e=>e.innerText.split("\\n"); const rowTime=()=>1; const money=()=>100;' + read + ';return readList()[0].status; })()');

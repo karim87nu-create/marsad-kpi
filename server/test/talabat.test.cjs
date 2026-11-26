@@ -48,7 +48,7 @@ test('talabat: monitor key, orders with details, Apex match (auto and manual), a
     assert.equal(d.unmatchedApex.length, 0);
     // Alerts: the cancellation to the branches group; 3977400002 was unmatched > 10 min at the earlier push.
     const kinds = t.app.db.raw.prepare("SELECT kind, target FROM telegram_log WHERE kind LIKE 'talabat%' ORDER BY kind").all();
-    assert.deepEqual(kinds.map(k => k.kind + ':' + k.target), ['talabatCancel:branches']);
+    assert.deepEqual(kinds.map(k => k.kind + ':' + k.target), ['talabatCancel:online']);
   } finally { await t.close(); }
 });
 

@@ -299,19 +299,38 @@ function setup(app) {
   }
 
   app.transferWho = who;
-  // The branch bot (11-11): today's (or yesterday's) order by the number the branch has — Talabat's short code, the
-  // website's order number, the order id or the Apex order number.
-  app.transferLookup = async (digits, now) => {
-    const want = String(digits || '').replace(/\D/g, '');
-    if (want.length < 2) return null;
-    const today = businessDay(now);
+  // Branch groups use the Apex receipt or full Apex number. The receipt is scoped to the branch and business day.
+  app.transferLookup = async (digits, now, { branch, day: caseDay, source, ref } = {}) => {
+    const want = String(digits ?? '');
+    if (!source && !/^\d{1,12}$/.test(want)) return null;
+    const today = caseDay || businessDay(now), branchNo = apexBranchOf(branch);
+    if (!branchNo) return null;
     for (const day of [today, addDays(today, -1)]) {
-      let base; try { base = await baseFor(day, now, { allowStale: true }); } catch { continue; }
-      const hit = base.list.find(o => String(o.code || '') === want || String(o.ref || '') === want || (String(o.ref || '').length > 6 && String(o.ref).endsWith(want) && want.length >= 4) || String(o.apex?.no ?? '') === want);
-      if (hit) {
-        const job = await db.prepare('SELECT state, payload, result FROM transfer_jobs WHERE source = ? AND ref = ?').get(hit.source, String(hit.ref));
-        return { ...hit, day, job: job ? { state: job.state, payload: parseJson(job.payload, {}), result: parseJson(job.result, {}) } : null };
-      }
+      const snap = parseJson((await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(day))?.data, {});
+      const rows = new Map();
+      for (const row of [...(snap.open || []), ...(snap.lateOut || []), ...(snap.online || [])]) if (row?.no != null && apexBranchOf(row.branch) === branchNo) rows.set(String(row.no), row);
+      const jobs = (await db.prepare("SELECT source,ref,payload,result FROM transfer_jobs WHERE day = ? AND state = 'auto_done'").all(day)).flatMap(j => {
+        const p = parseJson(j.payload, {}), a = parseJson(j.result, {});
+        if (p.db !== 'live' || (a.db && a.db !== 'live') || a.preview || a.orderNo == null || Number(p.branchNo) !== branchNo) return [];
+        if (!rows.has(String(a.orderNo))) rows.set(String(a.orderNo), { no: a.orderNo, sn: a.shiftSerial, branch });
+        return [{ ...j, no: a.orderNo }];
+      });
+      const candidates = source ? [] : [...rows.values()].filter(a => [a.no, a.sn].some(n => n != null && String(n).replace(/\.0+$/, '') === want));
+      if (candidates.length > 1) return null;
+      if ((!source && !candidates.length) || (source === 'apex' && !rows.has(String(ref)))) continue;
+      const base = await baseFor(day, now, { allowStale: true }).catch(() => null);
+      const list = base?.list || [];
+      const linkedNo = o => o.apex?.no ?? jobs.find(j => j.source === o.source && String(j.ref) === String(o.ref))?.no;
+      const hits = source && source !== 'apex'
+        ? list.filter(o => o.source === source && String(o.ref) === String(ref))
+        : list.filter(o => String(linkedNo(o)) === String(candidates[0]?.no ?? ref));
+      const hit = hits.length === 1 ? hits[0] : null;
+      const a = candidates[0] || rows.get(String(source === 'apex' ? ref : hit && linkedNo(hit)));
+      if (!a) continue;
+      const dispatch = hit?.source === 'site' ? await db.prepare('SELECT actor FROM site_dispatch_actors WHERE site_id = ?').get(Number(hit.ref)) : null;
+      return { source: 'apex', ref: String(a.no), ...hit, apex: { no: a.no, sn: a.sn ?? null }, branch: a.branch || branch,
+        at: hit?.at || a.at || a.entry, out: hit?.out || !!a.out, customer: hit?.customer || a.customer,
+        note: hit?.note || snap.details?.[String(a.no)]?.note, items: hit?.items || a.items, total: hit?.total ?? a.amount, dispatchActor: dispatch?.actor || null };
     }
     return null;
   };

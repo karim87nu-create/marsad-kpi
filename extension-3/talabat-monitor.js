@@ -100,10 +100,12 @@
     const cardOf = el => { let c = el; for (let i = 0; i < 8 && c; i++) { c = c.parentElement; if (c?.querySelector('[data-testid="rating-stars-line"]') && c.querySelectorAll('p').length > 1) return c; } return el.parentElement; };
     const parse = el => {
       const m = /(\d{1,2})\/(\d{1,2})\/(\d{4})\s*•\s*(\d{1,2}):(\d{2})\s*(AM|PM|ص|م)?\s*•\s*(\d{6,})/i.exec(el.textContent || ''); if (!m) return null;
-      let h = +m[4] % 12; if (/PM|م/i.test(m[6] || '')) h += 12;
+      const h = m[6] ? +m[4] % 12 + (/PM|م/i.test(m[6]) ? 12 : 0) : +m[4];
+      const [month, date] = +m[1] > 12 ? [+m[2], +m[1]] : [+m[1], +m[2]];
       const card = cardOf(el), stars = [...(card.querySelector('[data-testid="rating-stars-line"]')?.querySelectorAll('svg') || [])].filter(x => /branded/.test(x.getAttribute('color') || '')).length;
       const text = [...card.querySelectorAll('p')].filter(p => p !== el && !p.closest('button,a') && !/^(?:View order|Dispute|Reply|عرض الطلب|اعتراض|رد)$/i.test((p.innerText || '').trim())).map(p => (p.innerText || '').trim()).filter(Boolean).join(' ');
-      return { orderId: m[7], at: new Date(+m[3], +m[1] - 1, +m[2], h, +m[5]).getTime(), rating: stars || null, text: text.slice(0, 1000) };
+      const time = Date.UTC(+m[3], month - 1, date, h, +m[5]);
+      return { orderId: m[7], at: time - offsetAt(time), rating: stars || null, text: text.slice(0, 1000) };
     };
     const main = () => document.querySelector('main')?.innerText || '';
     for (let i = 0; i < 40 && !dates().length; i++) await sleep(1500);
@@ -119,8 +121,8 @@
       if (dates()[0]?.textContent === first) break;
     }
     const rate = Number((/Store rating\s*([\d.]+)|تقييم المتجر\s*([\d.]+)/.exec(main()) || []).slice(1).find(Boolean)), total = Number((/(\d+)\s*(?:reviews|تقييم)/.exec(main()) || [])[1]);
-    if (seen.size || rate) await bg({ type: 'TALABAT_REVIEWS', body: { vendor, stats: { rating: rate || null, total: total || null }, reviews: [...seen.values()] } }).catch(() => null);
-    say('قرا ' + seen.size + ' تقييم — ' + vendor);
+    const result = seen.size || rate ? await bg({ type: 'TALABAT_REVIEWS', body: { vendor, stats: { rating: rate || null, total: total || null }, reviews: [...seen.values()] } }).catch(() => null) : null;
+    say(result?.ok ? 'بعت ' + seen.size + ' تقييم — ' + vendor : seen.size || rate ? 'تعذر إرسال التقييمات — ' + vendor : 'مفيش تقييمات اتقرت — ' + vendor);
     sessionStorage.setItem('marsadReviewsIdx', String(idx + 1));
     toList(5000);
     return;
@@ -544,6 +546,12 @@
   }
 
   // ---------- reading ----------
+  const localizedStatus = value => {
+    const status = String(value || '').trim().toUpperCase();
+    if (/^(?:الطلب |طلب )?مرفوض$/.test(status)) return 'REJECTED';
+    if (/^(?:الطلب |طلب )?ملغ[ىي]|^تم [إا]لغاء الطلب$/.test(status)) return 'CANCELLED';
+    return status;
+  };
   function readList() {
     const out = [];
     for (const row of document.querySelectorAll('.MuiDataGrid-row')) {
@@ -553,7 +561,7 @@
       const at = rowTime(l);
       // Column positions change between accounts. Never store an ID or amount as an order status.
       const statusCell = row.querySelector('[data-field="status"], [data-field="orderStatus"]');
-      const status = (l.find(x => /^(?:NEW|ACCEPTED|PREORDER ACCEPTED|READY|READY FOR PICKUP|PICKED UP|IN DELIVERY|COMPLETED|DELIVERED|CANCELLED|REJECTED)$/i.test(x)) || statusCell?.innerText?.trim() || '').toUpperCase();
+      const status = localizedStatus(l.find(x => /^(?:NEW|ACCEPTED|PREORDER ACCEPTED|READY|READY FOR PICKUP|PICKED UP|IN DELIVERY|COMPLETED|DELIVERED|CANCELLED|REJECTED)$/.test(localizedStatus(x))) || statusCell?.innerText);
       out.push({ id, at, listAt: at == null ? null : new Date(at).toISOString(), status, store: (l.find(x => /الدهان|el ?dahan/i.test(x)) || '').replace(/^\|\s*/, '') || null, total: money(l.find(x => /E£|EGP|ج\.م/.test(x))) });
     }
     return out;
@@ -589,7 +597,7 @@
     if (shownId ? (shownId.innerText || '').trim() !== id : !(document.body.innerText || '').includes(id)) return null;
     const u = new URL(location.href), placedAt = u.searchParams.get('placedAt'), placed = Date.parse(placedAt || '');
     const vendorId = (u.pathname.match(/;(\d+)\//) || [])[1] || null;
-    const d = { status: (T('details-order-status-holder')?.innerText || '').trim().toUpperCase(), billable: (T('billable-status-holder')?.innerText || '').trim() || null, items: [] };
+    const d = { status: localizedStatus(T('details-order-status-holder')?.innerText), billable: (T('billable-status-holder')?.innerText || '').trim() || null, items: [] };
     for (const m of document.querySelectorAll('[data-testid^="milestone-for__"]')) {
       const key = m.dataset.testid.replace('milestone-for__', '').replace(/_originally_.*$/, ''), l = lines(m).filter(x => !/^(check_circle|close|cancel|schedule)$/.test(x));
       const time = clockAfter(l.find(x => /^\d{1,2}:\d{2}$/.test(x)), placed);
@@ -603,8 +611,9 @@
       else if (key === 'CANCELLED' || key === 'REJECTED') {
         d.cancelledAt = time;
         const after = l.slice(l.findIndex(x => /^\d{1,2}:\d{2}$/.test(x)) + 1);
-        d.cancelOwner = (after.find(x => /^Owner:/i.test(x)) || '').replace(/^Owner:\s*/i, '') || null;
-        d.cancelReason = after.filter(x => !/^Owner:/i.test(x)).join(' — ') || null;
+        const ownerLabel = /^(?:Owner|[إا]لغاء بواسطة|تم [إا]لغاء الطلب بواسطة|صاحب [اﻹل]*[إا]لغاء|المسؤول|ال[إا]لغاء على)\s*[:：]\s*/i;
+        d.cancelOwner = (after.find(x => ownerLabel.test(x)) || '').replace(ownerLabel, '') || null;
+        d.cancelReason = after.filter(x => !ownerLabel.test(x)).join(' — ') || null;
       }
     }
     for (const p of document.querySelectorAll('[data-testid^="existing-product__"]')) {

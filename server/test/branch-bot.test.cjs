@@ -42,6 +42,11 @@ test('branch bot: menu, order status from the Marsad, a call for the call center
       financial: { due: 344, dueLabel: 'المطلوب تحصيله', onlinePaid: 0, rows: [{ amount: 404, label: 'الأصناف' }, { amount: 40, label: 'رسوم التوصيل' }, { amount: -100, label: 'تسويات' }] },
       items: [{ name: 'ورق عنب', quantity: 1, total: '105.00 EGP', details: [] }] }] } });
 
+    await t.call('POST', '/api/orders/push', { headers: { 'x-orders-token': ot }, body: { v: 1, day: '2026-11-11', branches: [{ name: 'مدينة نصر' }], online: [
+      { no: 70123, sn: 412, kind: 'الموقع', branch: 'مدينة نصر', at: new Date(t0).toISOString(), amount: 344,
+        sourceRefs: { site: { orderId: '30831' } }, customer: { name: 'نوره', phone: '01097159082', address: 'شارع مكرم عبيد' } },
+    ] } });
+
     // Off until a supervisor turns it on for the branch: nothing is read.
     msg('/menu'); await tick();
     assert.equal(offsetSeen, null);
@@ -55,17 +60,20 @@ test('branch bot: menu, order status from the Marsad, a call for the call center
     tap('bot:status'); await tick();
     assert.ok(last().markup.force_reply); const ask = 1000 + sent.length;
     msg('30831', ask); await tick();
-    assert.match(last().text, /أوردر الموقع #30831 — مدينة نصر/);
+    assert.match(last().text, /مالقيتش مطابقة مؤكدة لرقم Apex 30831/);
+    tap('bot:status'); await tick(); const apexAsk = 1000 + sent.length;
+    msg('٤١٢', apexAsk); await tick();
+    assert.match(last().text, /أوردر Apex #412 — مدينة نصر/);
     assert.match(last().text, /كاش — يتحصّل 344 ج/);
     assert.match(last().text, /ورق عنب/);
-    assert.match(last().text, /لسه ما اتسجلش/);
-    msg('99999', ask); await tick();
-    assert.match(last().text, /مالقيتش أوردر رقم 99999/);
+    assert.match(last().text, /على Apex: ✅ اتسجل/);
+    msg('99999'); await tick();
+    assert.match(last().text, /مالقيتش مطابقة مؤكدة لرقم Apex 99999/);
 
     // «صنف خلصان» → a call for the call center; the branch is told.
     tap('bot:item_out'); await tick();
-    msg('30831 ورق العنب خلصان، البديل ممبار', 1000 + sent.length); await tick();
-    assert.match(last().text, /الكول سنتر هيكلم العميل \(أوردر #30831\)/);
+    msg('412 ورق العنب خلصان، البديل ممبار', 1000 + sent.length); await tick();
+    assert.match(last().text, /الكول سنتر هيكلم العميل \(أوردر Apex #412\)/);
     await t.employee(admin, { name: 'سارة', code: 'E1', pin: '1111' });
     const sara = (await t.call('POST', '/api/transfer/login', { body: { pin: '1111' } })).body.token;
     const cc = (method, path, body) => t.call(method, path, { body, headers: { 'x-transfer-session': sara } });
@@ -74,16 +82,16 @@ test('branch bot: menu, order status from the Marsad, a call for the call center
     assert.equal((await cc('POST', '/api/bot/calls', { id: calls[0].id, action: 'claim' })).status, 200);
     assert.equal((await cc('POST', '/api/bot/calls', { id: calls[0].id, action: 'outcome', outcome: 'substitute' })).status, 400, 'what the customer said is required');
     assert.equal((await cc('POST', '/api/bot/calls', { id: calls[0].id, action: 'outcome', outcome: 'cancel', note: 'مش عايز بديل' })).status, 200);
-    assert.match(last().text, /العميل عايز يلغي الأوردر #30831 — مش عايز بديل\. مستنيين موافقة المشرف/);
+    assert.match(last().text, /العميل عايز يلغي الأوردر #412 — مش عايز بديل\. مستنيين موافقة المشرف/);
     assert.equal((await cc('GET', '/api/bot/calls')).body.calls.length, 0);
 
     // The supervisor approves in the Marsad; the branch is told.
     const open = (await admin('GET', '/api/bot')).body.open;
-    assert.equal(open.length, 1); assert.equal(open[0].needs, 'approval'); assert.equal(open[0].code, '30831');
+    assert.equal(open.length, 1); assert.equal(open[0].needs, 'approval'); assert.equal(open[0].code, '412');
     assert.equal((await admin('POST', '/api/bot', { id: open[0].id, action: 'reject' })).status, 400, 'a rejection says why');
     assert.equal((await admin('POST', '/api/bot', { id: open[0].id, action: 'approve' })).status, 200);
-    assert.match(last().text, /وافق على إلغاء الأوردر #30831/);
-    assert.match(t.app.db.raw.prepare("SELECT text FROM telegram_log WHERE kind = 'botNew'").get().text, /موافقة مطلوبة: إلغاء أوردر #30831/, 'the supervisors were told at once');
+    assert.match(last().text, /وافق على إلغاء الأوردر #412/);
+    assert.match(t.app.db.raw.prepare("SELECT text FROM telegram_log WHERE kind = 'botNew'").get().text, /موافقة مطلوبة: إلغاء أوردر #412/, 'the supervisors were told at once');
 
     // «حاجة تانية» → the supervisors answer from the Marsad; the branch's reply is added to it.
     tap('bot:other'); await tick();
@@ -99,7 +107,7 @@ test('branch bot: menu, order status from the Marsad, a call for the call center
 
     // A call nobody made in 10 minutes → the supervisors' group.
     tap('bot:call'); await tick();
-    msg('30831 العميل عايز يغير العنوان', 1000 + sent.length); await tick();
+    msg('412 العميل عايز يغير العنوان', 1000 + sent.length); await tick();
     t.advance(11 * 60000); await tick();
     const late = t.app.db.raw.prepare("SELECT * FROM telegram_log WHERE kind = 'botLate'").all();
     assert.equal(late.length, 1); assert.match(late[0].text, /مكالمة للعميل ما اتعملتش/);

@@ -43,7 +43,7 @@
     'madinaty-craft-zone': / (?:فرع )?مد(?:ي)?نتي$/,
   };
   const branchSuffix = branchNameFromUrl[new URLSearchParams(location.search).get('branch')];
-  const rosterName = value => driverName(value.replace(/\s+-\s+\+?[\d٠-٩۰-۹][\d٠-٩۰-۹\s()-]*$/, ''))
+  const rosterName = value => driverName(String(value || '').replace(/\s+-\s+\+?[\d٠-٩۰-۹][\d٠-٩۰-۹\s()-]*$/, ''))
     .replace(/(^| )عبد +(?=\p{Script=Arabic})/gu, '$1عبد');
   function selectDriver(input, driver) {
     const wanted = rosterName(driver);
@@ -60,6 +60,7 @@
   const isEditing = except => (document.activeElement !== except && document.activeElement?.matches('select,input,textarea,[contenteditable="true"]')) ||
     document.querySelector('[role="dialog"]:not([hidden]),.eldahan-ops-modal.show,dialog[open]');
   const dispatchTries = new Map();
+  const dispatchAttempts = new Map(), dispatchActors = new Map();
   const openedDriverForms = new WeakSet(), operatorDriverForms = new WeakSet();
   let dispatching = false, operatorActions = 0, currentOrders = new Map();
   for (const event of ['pointerdown', 'keydown']) {
@@ -74,6 +75,12 @@
     return o && !(Number(o.stage) >= 3) && !o.driver?.name &&
       !(typeof o.driver === 'string' && o.driver.trim()) && !/cancel|refund|failed|deliver(?:ed|ing)/i.test(o.status || '');
   };
+  document.addEventListener('click', e => {
+    const button = e.target?.closest?.('button[data-order][data-action="dispatch-submit"]');
+    if (board !== 'branch' || !e.isTrusted || !button || button.disabled) return;
+    const id = Number(button.dataset.order), input = document.querySelector('input[data-driver-search="' + id + '"]');
+    if (stillOpen(id) && input?.value.trim()) dispatchAttempts.set(id, { actor: 'branch', driver: rosterName(input.value), at: Date.now() });
+  }, true);
   const dispatchOrder = async ({ orderId, driver }) => {
     const focus = document.activeElement;
     const ownFocus = openedDriverForms.has(focus) && !operatorDriverForms.has(focus) ? focus : null;
@@ -139,6 +146,7 @@
         const confirm = button('dispatch-submit');
         if (!confirm) return;
         dispatchTries.set(orderId, Date.now());
+        dispatchAttempts.set(orderId, { actor: 'extension', driver: rosterName(value), at: Date.now() });
         click(confirm);
         // A disabled submit button can just mean the request is in flight. Check the refreshed order.
         await waitFor(() => !stillOpen(orderId));
@@ -152,17 +160,28 @@
     seenAt = Date.now();
     const orders = e.data.data.orders.slice(0, 300);
     currentOrders = new Map(orders.map(o => [Number(o.id), o]));
-    const key = JSON.stringify(orders.map(o => [o.id, o.stage, o.status, o.branchId, o.lastActionAt, o.driver?.name || null, o.total]));
     const now = Date.now();
+    for (const [id, attempt] of dispatchAttempts) {
+      const order = currentOrders.get(id), driver = order?.driver?.name || (typeof order?.driver === 'string' ? order.driver : '');
+      if (now - attempt.at > 60000) { dispatchAttempts.delete(id); continue; }
+      if (order && !stillOpen(id)) {
+        dispatchAttempts.delete(id);
+        if (Number(order.stage) >= 3 && !/cancel|refund|failed/i.test(order.status || '') && rosterName(driver) === attempt.driver)
+          dispatchActors.set(id, { id, actor: attempt.actor });
+      }
+    }
+    const actors = orders.map(o => dispatchActors.get(Number(o.id))).filter(Boolean);
+    const key = JSON.stringify(orders.map(o => [o.id, o.stage, o.status, o.branchId, o.lastActionAt, o.driver?.name || null, o.total]));
     // Every change at once; the same picture again at most once a minute (so delivered = gone from the board stays fresh).
     if (key === last && now - lastAt < 60000) return;
     last = key; lastAt = now;
     // Karim 11-19 «اوردرات الويب سايت بتتأخر … وساعات مش بتظهر»: a picture the Marsad did not take (server busy) used
     // to count as sent, so the same orders waited a minute or more. Now it is sent again with the panel's next refresh.
     const forget = () => { if (last === key) { last = ''; lastAt = 0; } };
-    browser.runtime.sendMessage({ type: 'SITE_PANEL', board, dispatchFromApex: board === 'branch', orders, serverTime: e.data.data.serverTime || null })
+    browser.runtime.sendMessage({ type: 'SITE_PANEL', board, dispatchFromApex: board === 'branch', orders, dispatchActors: actors, serverTime: e.data.data.serverTime || null })
       .then(async r => {
         if (!r?.ok) return forget();
+        for (const a of actors) if (dispatchActors.get(a.id) === a) dispatchActors.delete(a.id);
         if (board === 'central' && Array.isArray(r.assign)) r.assign.forEach(a => assign(a, orders));
         if (board !== 'branch' || !Array.isArray(r.dispatch)) return;
         for (const a of r.dispatch) {

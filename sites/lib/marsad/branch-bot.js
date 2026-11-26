@@ -7,14 +7,15 @@
 // default), a group sends the bot only commands, replies to the bot's own messages and its buttons — the group's own
 // talk never reaches the server.
 import { businessDay, iso } from './time.js';
+import { apexOrderNumber, dispatchActorLabel } from './order-identifiers.js';
 
 const KINDS = {
-  status: { label: '📦 حالة أوردر', ask: 'اكتب رقم الأوردر (رقم طلبات أو الموقع أو Apex):', needs: 'none' },
-  item_out: { label: '🚫 صنف خلصان', ask: 'اكتب رقم الأوردر والصنف اللي خلصان (ولو فيه بديل اكتبه):', needs: 'call', title: 'صنف خلصان' },
-  change: { label: '🔁 العميل عايز يغيّر أو يلغي', ask: 'اكتب رقم الأوردر والعميل عايز إيه بالظبط:', needs: 'call', title: 'العميل عايز يغيّر أو يلغي' },
-  unclear: { label: '📝 ملاحظة أو عنوان مش واضح', ask: 'اكتب رقم الأوردر:', needs: 'none' },
-  call: { label: '📞 محتاجين حد يكلم العميل', ask: 'اكتب رقم الأوردر وعايزين نقول للعميل إيه:', needs: 'call', title: 'مكالمة للعميل' },
-  other: { label: '❓ حاجة تانية', ask: 'اكتب المشكلة (ورقم الأوردر لو فيه):', needs: 'review', title: 'رسالة من الفرع' },
+  status: { label: '📦 حالة أوردر', ask: 'اكتب رقم أوردر Apex:', needs: 'none' },
+  item_out: { label: '🚫 صنف خلصان', ask: 'اكتب رقم أوردر Apex والصنف اللي خلصان (ولو فيه بديل اكتبه):', needs: 'call', title: 'صنف خلصان' },
+  change: { label: '🔁 العميل عايز يغيّر أو يلغي', ask: 'اكتب رقم أوردر Apex والعميل عايز إيه بالظبط:', needs: 'call', title: 'العميل عايز يغيّر أو يلغي' },
+  unclear: { label: '📝 ملاحظة أو عنوان مش واضح', ask: 'اكتب رقم أوردر Apex:', needs: 'none' },
+  call: { label: '📞 محتاجين حد يكلم العميل', ask: 'اكتب رقم أوردر Apex وعايزين نقول للعميل إيه:', needs: 'call', title: 'مكالمة للعميل' },
+  other: { label: '❓ حاجة تانية', ask: 'اكتب المشكلة (ورقم أوردر Apex لو فيه):', needs: 'review', title: 'رسالة من الفرع' },
 };
 // What the call center can answer after the call, per kind.
 const OUTCOMES = {
@@ -24,7 +25,8 @@ const OUTCOMES = {
 const MENU_TEXT = '🤖 بوت مرصد الدهان — اختار:';
 const clock = ms => new Date(ms).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit' });
 const money = v => v == null ? '—' : (Math.round(Number(v) * 100) / 100).toLocaleString('en-US') + ' ج';
-const digitsOf = t => (String(t || '').replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).match(/\d{2,12}/) || [])[0] || null;
+const western = t => String(t || '').replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d));
+const digitsOf = t => western(t).match(/^\s*(?:\/o(?:rder)?\s+)?#?(\d{1,12})(?!\d)/i)?.[1] || null;
 const CALL_OVERDUE_MS = 10 * 60000, REVIEW_OVERDUE_MS = 15 * 60000;
 
 function setup(app) {
@@ -74,7 +76,7 @@ function setup(app) {
     const kind = m[1], ref = m[2] || null;
     // «محتاجين حد يكلم العميل» under an answer about an order: the call is made for that order at once.
     if (kind === 'call' && ref) { await openCase(c, branch, chatId, { kind: 'call', digits: ref, text: 'الفرع طلب مكالمة للعميل بخصوص الأوردر', from: who(q), msgId: q.message.message_id }, now); return; }
-    const sent = await send(c, chatId, KINDS[kind].ask, { reply_markup: { force_reply: true, selective: false, input_field_placeholder: 'رقم الأوردر' } });
+    const sent = await send(c, chatId, KINDS[kind].ask, { reply_markup: { force_reply: true, selective: false, input_field_placeholder: 'رقم أوردر Apex' } });
     await db.prepare('INSERT OR REPLACE INTO bot_prompts (chat_id, message_id, kind, at) VALUES (?,?,?,?)').run(chatId, sent.message_id, kind, now);
   }
 
@@ -84,32 +86,31 @@ function setup(app) {
     // An answer to one of the bot's questions.
     const prompt = parentId ? await db.prepare('SELECT * FROM bot_prompts WHERE chat_id = ? AND message_id = ?').get(chatId, parentId) : null;
     if (prompt?.kind === 'reply' && prompt.case_id) { await caseNote(c, prompt.case_id, 'branch', who(msg), text, now); await send(c, chatId, '✅ وصل — اتضاف على الطلب.', replyTo(msg.message_id)); return; }
-    const kind = prompt?.kind || (/^\/o(rder)?\b/i.test(text) || /^\s*#?\d{2,12}\s*$/.test(text) ? 'status' : null);
+    const kind = prompt?.kind || (/^\/o(rder)?\b/i.test(text) || /^\s*#?\d{1,12}\s*$/.test(western(text)) ? 'status' : null);
     if (kind === 'status' || kind === 'unclear') { await answerOrder(c, branch, chatId, msg, digitsOf(text), kind, now); return; }
     if (kind && KINDS[kind]) { await openCase(c, branch, chatId, { kind, digits: digitsOf(text), text, from: who(msg), msgId: msg.message_id }, now); return; }
     // A reply to any other message of the bot (an alert in the group): kept as a message from the branch for review.
-    if (parentId) { await openCase(c, branch, chatId, { kind: 'other', digits: digitsOf(text) || digitsOf(msg.reply_to_message?.text), text: text + (msg.reply_to_message?.text ? '\n— ردًا على: ' + String(msg.reply_to_message.text).slice(0, 200) : ''), from: who(msg), msgId: msg.message_id }, now); return; }
+    if (parentId) { await openCase(c, branch, chatId, { kind: 'other', digits: digitsOf(text) || western(msg.reply_to_message?.text).match(/أوردر Apex\s*#(\d{1,12})(?!\d)/)?.[1], text: text + (msg.reply_to_message?.text ? '\n— ردًا على: ' + String(msg.reply_to_message.text).slice(0, 200) : ''), from: who(msg), msgId: msg.message_id }, now); return; }
     await send(c, chatId, MENU_TEXT, { ...menuMarkup(), ...replyTo(msg.message_id) });
   }
 
   // ---------- answers from the Marsad ----------
   function orderText(o) {
-    const src = o.source === 'talabat' ? 'طلبات' : 'الموقع', lines = ['📦 أوردر ' + src + (o.code ? ' #' + o.code : '') + (o.branch ? ' — ' + o.branch : '')];
-    const done = o.apex || o.job?.state === 'auto_done';
-    lines.push('• على Apex: ' + (o.apex ? '✅ اتسجل' + (o.apex.sn ? ' (رقم ' + o.apex.sn + ')' : '') : o.job?.state === 'auto_done' ? '✅ اتسجل آلي' : /^auto_(pending|sending)$/.test(o.job?.state || '') ? '⏳ بيتسجل دلوقتي' : '❌ لسه ما اتسجلش'));
+    const lines = ['📦 أوردر Apex #' + apexOrderNumber(o.apex) + (o.branch ? ' — ' + o.branch : '')];
+    lines.push('• على Apex: ✅ اتسجل');
     const pay = o.payment === 'cash' ? 'كاش — يتحصّل ' + money(o.target ?? o.total) : o.payment === 'paid' ? 'مدفوع أونلاين — ما يتحصلش حاجة' : o.payment === 'mixed' ? 'جزء أونلاين والباقي كاش' : o.payment === 'unpaid' ? '⚠️ أونلاين ولسه ما اتدفعش' : 'مش واضح';
     lines.push('• الدفع: ' + pay);
     if (o.fulfillment === 'pickup') lines.push('• استلام من الفرع');
     if (o.items?.length) lines.push('• الأصناف: ' + o.items.slice(0, 15).map(i => i.qty + '× ' + i.name + (i.sizeOption ? ' (' + i.sizeOption + ')' : '')).join('، '));
     if (o.note) lines.push('• ملاحظة العميل: ' + o.note);
     if (o.at) lines.push('• وقت الأوردر: ' + clock(Date.parse(o.at)) + (o.out ? ' — خرج' : ''));
-    void done;
+    if (o.source === 'site' && (o.dispatchActor || o.out) && o.fulfillment !== 'pickup') lines.push('• التحميل على الطيار في الموقع: ' + (dispatchActorLabel(o.dispatchActor) || 'غير مؤكد'));
     return lines.join('\n');
   }
   async function answerOrder(c, branch, chatId, msg, digits, kind, now) {
-    const o = digits && app.transferLookup ? await app.transferLookup(digits, now) : null;
+    const o = digits && app.transferLookup ? await app.transferLookup(digits, now, { branch }) : null;
     let answer;
-    if (!o) answer = digits ? 'مالقيتش أوردر رقم ' + digits + ' النهارده ولا امبارح. ابعت الرقم اللي على شاشة طلبات أو فاتورة الموقع.' : 'ابعت رقم الأوردر.';
+    if (!o) answer = digits ? 'مالقيتش مطابقة مؤكدة لرقم Apex ' + digits + ' في الفرع النهارده أو امبارح. راجع رقم الإيصال.' : 'ابعت رقم أوردر Apex.';
     else if (kind === 'unclear') answer = orderText(o) + '\n\n📍 العنوان كامل: ' + (o.customer?.address || '—') + (o.note ? '\n📝 الملاحظة زي ما العميل كتبها: ' + o.note : '\n📝 مفيش ملاحظة من العميل.');
     else answer = orderText(o);
     const markup = o ? { reply_markup: { inline_keyboard: [[{ text: KINDS.call.label, callback_data: 'bot:call:' + digits }], [{ text: '☰ القايمة', callback_data: 'bot:menu' }]] } } : {};
@@ -119,23 +120,24 @@ function setup(app) {
 
   // ---------- cases: a call to make, an approval, a message to review ----------
   async function openCase(c, branch, chatId, { kind, digits, text, from, msgId }, now) {
-    const o = digits && app.transferLookup ? await app.transferLookup(digits, now) : null;
+    const o = digits && app.transferLookup ? await app.transferLookup(digits, now, { branch }) : null;
+    const code = apexOrderNumber(o?.apex);
     if (KINDS[kind].needs === 'call' && !o) {
-      const a = digits ? 'مالقيتش أوردر رقم ' + digits + ' — ابعت الرقم اللي على شاشة طلبات أو فاتورة الموقع.' : 'محتاج رقم الأوردر عشان نكلم العميل.';
+      const a = digits ? 'مالقيتش مطابقة مؤكدة لرقم Apex ' + digits + ' في الفرع — راجع رقم الإيصال.' : 'محتاج رقم أوردر Apex عشان نكلم العميل.';
       const sent = await send(c, chatId, a, { ...replyTo(msgId), reply_markup: { force_reply: true, selective: false } });
       await db.prepare('INSERT OR REPLACE INTO bot_prompts (chat_id, message_id, kind, at) VALUES (?,?,?,?)').run(chatId, sent.message_id, kind, now);
       await log(now, branch, kind, text, a); return null;
     }
     const needs = KINDS[kind].needs;
-    const r = await db.prepare(`INSERT INTO bot_cases (day, branch, chat_id, kind, needs, state, source, ref, code, text, from_name, msg_id, created_at, updated_at) VALUES (?,?,?,?,?,'open',?,?,?,?,?,?,?,?)`)
-      .run(businessDay(now), branch, chatId, kind, needs, o?.source || null, o ? String(o.ref) : null, o?.code || digits || null, String(text || '').slice(0, 1000), from, msgId, now, now);
+    const r = await db.prepare(`INSERT INTO bot_cases (day, branch, chat_id, kind, needs, state, source, ref, apex_code, text, from_name, msg_id, created_at, updated_at) VALUES (?,?,?,?,?,'open',?,?,?,?,?,?,?,?)`)
+      .run(businessDay(now), branch, chatId, kind, needs, o?.source || null, o ? String(o.ref) : null, code, String(text || '').slice(0, 1000), from, msgId, now, now);
     const id = Number(r.lastInsertRowid);
-    const a = needs === 'call' ? '📞 تمام — الكول سنتر هيكلم العميل' + (o?.code ? ' (أوردر #' + o.code + ')' : '') + ' وهنرد عليكم هنا. رقم الطلب ' + id + '.'
+    const a = needs === 'call' ? '📞 تمام — الكول سنتر هيكلم العميل' + (code ? ' (أوردر Apex #' + code + ')' : '') + ' وهنرد عليكم هنا. رقم طلب المتابعة ' + id + '.'
       : '📨 وصلت للمشرفين وهيردوا هنا. رقم الطلب ' + id + '.';
     const sent = await send(c, chatId, a, replyTo(msgId));
     await db.prepare('INSERT OR REPLACE INTO bot_prompts (chat_id, message_id, kind, case_id, at) VALUES (?,?,?,?,?)').run(chatId, sent.message_id, 'reply', id, now);
     await log(now, branch, kind, text, a, id);
-    if (needs === 'review') await notifySupervisors(id, '📨 رسالة من فرع ' + branch + (o?.code ? ' — أوردر #' + o.code : '') + ': ' + String(text || '').slice(0, 300), now);
+    if (needs === 'review') await notifySupervisors(id, '📨 رسالة من فرع ' + branch + (code ? ' — أوردر Apex #' + code : '') + ': ' + String(text || '').slice(0, 300), now);
     return id;
   }
   // Supervisors hear at once that something waits for them in the Marsad (their group on Telegram).
@@ -159,18 +161,24 @@ function setup(app) {
     for (const k of rows) {
       const what = k.needs === 'call' ? 'مكالمة للعميل ما اتعملتش' : k.needs === 'approval' ? 'موافقة على إلغاء مستنية' : 'رسالة من فرع ما اتردش عليها';
       await db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at) VALUES (?,?,?,?,?)')
-        .run('bot:late:' + k.id, 'botLate', null, '⏰ بوت الفروع: ' + what + ' من ' + Math.round((now - k.created_at) / 60000) + ' دقيقة — ' + (k.branch || '') + (k.code ? ' — أوردر #' + k.code : '') + ' (طلب ' + k.id + ')', now);
+        .run('bot:late:' + k.id, 'botLate', null, '⏰ بوت الفروع: ' + what + ' من ' + Math.round((now - k.created_at) / 60000) + ' دقيقة — ' + (k.branch || '') + (k.apex_code ? ' — أوردر Apex #' + k.apex_code : '') + ' (طلب ' + k.id + ')', now);
       await db.prepare('UPDATE bot_cases SET escalated_at = ? WHERE id = ?').run(now, k.id);
     }
   }
 
   // ---------- the Marsad side ----------
   const caseOut = k => ({ id: k.id, day: k.day, branch: k.branch, kind: k.kind, kindLabel: KINDS[k.kind]?.title || KINDS[k.kind]?.label || k.kind, needs: k.needs, state: k.state,
-    source: k.source, ref: k.ref, code: k.code, text: k.text, from: k.from_name, createdAt: iso(k.created_at), claimedBy: k.claimed_by, claimedAt: iso(k.claimed_at),
+    source: k.source, ref: k.ref, code: k.apex_code, text: k.text, from: k.from_name, createdAt: iso(k.created_at), claimedBy: k.claimed_by, claimedAt: iso(k.claimed_at),
     outcome: k.outcome, outcomeLabel: OUTCOMES[k.outcome] || k.outcome || null, outcomeNote: k.outcome_note, doneBy: k.done_by, doneAt: iso(k.done_at), parentId: k.parent_id });
   async function withOrder(k, now) {
     const out = caseOut(k);
-    if (k.code && app.transferLookup) { const o = await app.transferLookup(k.code, now); if (o) out.order = { code: o.code, source: o.source, customer: o.customer, payment: o.payment, target: o.target ?? o.total, items: (o.items || []).map(i => ({ qty: i.qty, name: i.name, size: i.sizeOption || null })), note: o.note || null }; }
+    if (k.source && k.ref && app.transferLookup) {
+      const o = await app.transferLookup(null, now, { branch: k.branch, day: k.day, source: k.source, ref: k.ref });
+      if (o) {
+        out.code = apexOrderNumber(o.apex);
+        out.order = { code: out.code, source: o.source, customer: o.customer, payment: o.payment, target: o.target ?? o.total, items: (o.items || []).map(i => ({ qty: i.qty, name: i.name, size: i.sizeOption || null })), note: o.note || null };
+      }
+    }
     return out;
   }
 
@@ -205,11 +213,11 @@ function setup(app) {
       await db.prepare("UPDATE bot_cases SET state = 'done', outcome = ?, outcome_note = ?, done_by = ?, done_at = ?, updated_at = ? WHERE id = ?").run(outcome, note || null, me.name, ctx.now, ctx.now, id);
       if (outcome === 'cancel') {
         // Cancelling an order touches money and the restaurant's rating: a supervisor approves first.
-        await db.prepare(`INSERT INTO bot_cases (day, branch, chat_id, kind, needs, state, source, ref, code, text, from_name, msg_id, created_at, updated_at, parent_id) VALUES (?,?,?,?,'approval','open',?,?,?,?,?,?,?,?,?)`)
-          .run(businessDay(ctx.now), k.branch, k.chat_id, 'cancel', k.source, k.ref, k.code, 'العميل عايز يلغي الأوردر' + (note ? ' — ' + note : '') + ' (مكالمة ' + me.name + ')', me.name, k.msg_id, ctx.now, ctx.now, id);
+        await db.prepare(`INSERT INTO bot_cases (day, branch, chat_id, kind, needs, state, source, ref, apex_code, text, from_name, msg_id, created_at, updated_at, parent_id) VALUES (?,?,?,?,'approval','open',?,?,?,?,?,?,?,?,?)`)
+          .run(businessDay(ctx.now), k.branch, k.chat_id, 'cancel', k.source, k.ref, k.apex_code, 'العميل عايز يلغي الأوردر' + (note ? ' — ' + note : '') + ' (مكالمة ' + me.name + ')', me.name, k.msg_id, ctx.now, ctx.now, id);
         const ap = await db.prepare("SELECT id FROM bot_cases WHERE parent_id = ? AND needs = 'approval'").get(id);
-        await notifySupervisors(ap.id, '🟥 موافقة مطلوبة: إلغاء أوردر' + (k.code ? ' #' + k.code : '') + ' — فرع ' + (k.branch || '') + (note ? ' — ' + note : ''), ctx.now);
-        await tellBranch(id, '📞 العميل عايز يلغي الأوردر' + (k.code ? ' #' + k.code : '') + (note ? ' — ' + note : '') + '. مستنيين موافقة المشرف — ماتجهزوش لحد ما نرد.');
+        await notifySupervisors(ap.id, '🟥 موافقة مطلوبة: إلغاء أوردر' + (k.apex_code ? ' #' + k.apex_code : '') + ' — فرع ' + (k.branch || '') + (note ? ' — ' + note : ''), ctx.now);
+        await tellBranch(id, '📞 العميل عايز يلغي الأوردر' + (k.apex_code ? ' #' + k.apex_code : '') + (note ? ' — ' + note : '') + '. مستنيين موافقة المشرف — ماتجهزوش لحد ما نرد.');
       } else await tellBranch(id, '📞 الكول سنتر كلم العميل: ' + OUTCOMES[outcome] + (note ? ' — ' + note : ''));
       await app.audit('bot_call', null, { actor: me.name, id, outcome, note });
       return { ok: true };
@@ -259,7 +267,7 @@ function setup(app) {
       if (k.needs !== 'approval') fail(400, 'invalid_action');
       if (b.action === 'reject' && !note) fail(400, 'اكتب السبب');
       await db.prepare("UPDATE bot_cases SET state = 'done', outcome = ?, outcome_note = ?, done_by = ?, done_at = ?, updated_at = ? WHERE id = ?").run(b.action === 'approve' ? 'approved' : 'rejected', note || null, who.name, ctx.now, ctx.now, id);
-      await tellBranch(id, b.action === 'approve' ? '✅ ' + who.name + ' وافق على إلغاء الأوردر' + (k.code ? ' #' + k.code : '') + ' — وقّفوا تجهيزه.' + (note ? ' ' + note : '') : '↩️ ' + who.name + ' رفض الإلغاء' + (k.code ? ' للأوردر #' + k.code : '') + ': ' + note + ' — كمّلوا الأوردر.');
+      await tellBranch(id, b.action === 'approve' ? '✅ ' + who.name + ' وافق على إلغاء الأوردر' + (k.apex_code ? ' #' + k.apex_code : '') + ' — وقّفوا تجهيزه.' + (note ? ' ' + note : '') : '↩️ ' + who.name + ' رفض الإلغاء' + (k.apex_code ? ' لأوردر Apex #' + k.apex_code : '') + ': ' + note + ' — كمّلوا الأوردر.');
       await app.audit('bot_approval', null, { actor: who.name, id, decision: b.action, note });
       return { ok: true };
     }

@@ -311,7 +311,7 @@ test('auto transfer: Talabat free delivery (Pro) is not a delivery difference', 
 });
 
 // Karim 11-11: a hashtag missing from a branch's sequence → that branch's group and the online group.
-test('talabat: a hashtag missing from the branch sequence is told to the branch and online, once', async () => {
+test('talabat: a Talabat hashtag gap is sent to online only, once', async () => {
   const t0 = cairoToUtc(2026, 10, 22, 20, 0, 0), at = m => new Date(t0 + m * 60000).toISOString();
   const t = await start({ at: t0 });
   try {
@@ -328,15 +328,15 @@ test('talabat: a hashtag missing from the branch sequence is told to the branch 
     t.advance(11 * 60000);
     await t.app.talabat.alerts(t.app.now());
     const g = gaps();
-    assert.deepEqual(g.map(x => [x.key.endsWith(':online') ? 'online' : 'branch', x.target]), [['branch', 'branches'], ['online', 'online']]);
+    assert.deepEqual(g.map(x => [x.key.endsWith(':online') ? 'online' : 'branch', x.target]), [['online', 'online']]);
     assert.match(g[0].text, /#752/); assert.match(g[0].text, /#751 وبعدها #753/);
     await t.app.talabat.alerts(t.app.now() + 60000);
-    assert.equal(gaps().length, 2, 'once; a branch whose hashtags do not run in order is never alerted');
+    assert.equal(gaps().length, 1, 'once; a branch whose hashtags do not run in order is never alerted');
     // An order seen with no hashtag around the gap may be the missing one: not alerted.
     const third = 'الدهان، مدينتي - كرافت زون';
     await push([o('4800000021', 800, third, 1), o('4800000022', 801, third, 2), o('4800000023', null, third, 3), o('4800000024', 803, third, 4), o('4800000025', 804, third, 5), o('4800000026', 805, third, 6)]);
     t.advance(11 * 60000); await t.app.talabat.alerts(t.app.now());
-    assert.equal(gaps().length, 2);
+    assert.equal(gaps().length, 1);
   } finally { await t.close(); }
 });
 

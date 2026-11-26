@@ -1,7 +1,7 @@
 import { TUNE } from './tune.js';
 import { withDeliveryPlaces } from './delivery-fields.js';
 import { wheelPrizeLabel } from './site-items.js';
-import { referenceEvidence, siteReference } from './order-identifiers.js';
+import { apexOrderNumber, dispatchActorLabel, referenceEvidence, siteReference } from './order-identifiers.js';
 // الموقع (eldahan.com.eg): the server reads the WooCommerce orders and their notes with a read-only REST key, every
 // minute, and keeps per order only the times the reports need (received, sent to the branch, out with the driver,
 // delivered) plus the branch and driver names. Matching fields are stored separately for order reconciliation.
@@ -202,7 +202,7 @@ function setup(app) {
     for (let i = 0; i < writes.length; i += 40) await db.batch(writes.slice(i, i + 40));
   }
 
-  async function savePanel(list, board, now) {
+  async function savePanel(list, board, now, dispatchActors = new Map()) {
     const writes = [];
     // The board can contain 300 orders and is resent every minute. Read saved order + profile state together, in bounded
     // groups; the D1 primary key on (source, ref) makes each profile lookup a point read.
@@ -226,6 +226,9 @@ function setup(app) {
       const scheduledAt = scheduledOrderAt(o, created) || old?.scheduled_at || null;
       const scheduled = isScheduledOrder(o) || !!scheduledAt || !!old?.scheduled ? 1 : 0;
       const driver = textOf(o.driver).trim().slice(0, 80) || null;
+      const actor = dispatchActors.get(id);
+      if (actor && !cancelled && stage >= 3 && driver && /^delivery$/i.test(String(o.fulfillment || '')) && Object.hasOwn(APEX_BRANCH_LABELS, o.branchId))
+        writes.push(db.prepare('INSERT OR IGNORE INTO site_dispatch_actors (site_id,actor,at) VALUES (?,?,?)').bind(id, actor, now));
       const outAt = old?.out_at || (stage >= 3 || driver ? now : null), deliveredAt = old?.delivered_at || (done ? now : null);
       const previousProfile = parseJson(profs.get(String(id)), {});
       const f = o.financial || {}, rows = Array.isArray(f.rows) ? f.rows : [];
@@ -291,7 +294,7 @@ function setup(app) {
       // Drive all missing-order checks from the recent indexed order rows, joining profiles by their primary key.
       // The old IN(subquery) form scanned the full profile table on each minute's central-board refresh.
       const today = businessDay(now), window = dayWindow(today);
-      const recent = await db.prepare("SELECT id, fulfillment, out_at, delivered_at, status, gone_at, branch, total, transfers, scheduled, scheduled_at FROM site_orders WHERE (created_at >= ? OR (scheduled_at >= ? AND scheduled_at < ?)) AND delivered_at IS NULL AND status NOT IN ('cancelled','failed','wallet-failed')")
+      const recent = await db.prepare("SELECT id, day, fulfillment, out_at, delivered_at, status, gone_at, branch, total, transfers, scheduled, scheduled_at FROM site_orders WHERE (created_at >= ? OR (scheduled_at >= ? AND scheduled_at < ?)) AND delivered_at IS NULL AND status NOT IN ('cancelled','failed','wallet-failed')")
         .all(now - 14 * 3600000, window.start, window.end);
       const recentProfiles = new Map(), recentIds = recent.map(r => Number(r.id)).filter(n => Number.isInteger(n) && n > 0);
       for (let i = 0; i < recentIds.length; i += 90) {
@@ -330,9 +333,11 @@ function setup(app) {
     const dispatch = canDispatch ? await dispatchFromApex(list, now) : [];
     // The branch already supplied the current order state. It can act on an exact Apex match
     // even if the write for reports has to wait until the next panel refresh.
-    const save = savePanel(list, board, now);
+    const actors = new Map((canDispatch && Array.isArray(ctx.body?.dispatchActors) ? ctx.body.dispatchActors.slice(0, 50) : [])
+      .filter(d => ['extension', 'branch'].includes(d?.actor)).map(d => [Number(d.id), d.actor]));
+    const save = savePanel(list, board, now, actors);
     const warm = changed => changed && !app.config.shadow ? app.warmTransferQueue?.(now) : null;
-    if (canDispatch && db.kind === 'd1') ctx.waitUntil(save.then(warm).catch(e => console.error('Website branch snapshot failed', e?.message)));
+    if (canDispatch && !actors.size && db.kind === 'd1') ctx.waitUntil(save.then(warm).catch(e => console.error('Website branch snapshot failed', e?.message)));
     else if (await save) ctx.waitUntil(Promise.resolve(warm(true)));
     // Karim 11-11: «عايز الاوردر في الصفحه المركزيه برضو يتحول للفرع». An order the Marsad wrote on Apex and that is still
     // without a branch on the central panel: the extension picks that branch in the panel and presses «إرسال للفرع» itself
@@ -400,17 +405,20 @@ function setup(app) {
   async function reviewsSync(c, now) {
     if (now - (Number(await setting('site_reviews_at')) || 0) < 30 * 60000) return;
     const after = new Date((Number(await setting('site_reviews_at')) || now - 3 * 86400000) - 3600000).toISOString().slice(0, 19);
-    const list = await wc(c, 'products/reviews', { per_page: 100, after, orderby: 'date', order: 'asc' }).catch(() => null);
-    if (Array.isArray(list)) {
+    for (let page = 1; ; page++) {
+      const list = await wc(c, 'products/reviews', { per_page: 100, page, after, orderby: 'date', order: 'asc' });
+      if (!Array.isArray(list)) throw Error('رد التقييمات من الموقع غير متوقع');
       const w = [];
       for (const r of list) {
-        const at = Date.parse(String(r.date_created_gmt || r.date_created) + (r.date_created_gmt ? 'Z' : '')); if (!Number.isFinite(at)) continue;
+        const at = Date.parse(r.date_created_gmt ? String(r.date_created_gmt).replace(/Z?$/, 'Z') : String(r.date_created));
+        if (!Number.isFinite(at)) continue;
         const text = String(r.review || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 1000) || null;
         const phone = String(r.reviewer_phone || '').replace(/\D/g, '').slice(-11) || null;
-        w.push(db.prepare('INSERT INTO site_reviews (id, day, product, rating, review, reviewer, email, phone, order_id, at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET rating = excluded.rating, review = excluded.review')
-          .bind(r.id, businessDay(at), String(r.product_name || r.product_id || '').slice(0, 120), Number(r.rating) || null, text, String(r.reviewer || '').slice(0, 80) || null, String(r.reviewer_email || '').slice(0, 120) || null, phone, null, at));
+        w.push(db.prepare('INSERT INTO site_reviews (id, day, product, rating, review, reviewer, email, phone, order_id, at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET rating = excluded.rating, review = excluded.review, order_id = COALESCE(excluded.order_id, site_reviews.order_id)')
+          .bind(r.id, businessDay(at), String(r.product_name || r.product_id || '').slice(0, 120), Number(r.rating) || null, text, String(r.reviewer || '').slice(0, 80) || null, String(r.reviewer_email || '').slice(0, 120) || null, phone, Number.isSafeInteger(Number(r.order_id)) && Number(r.order_id) > 0 ? Number(r.order_id) : null, at));
       }
-      if (w.length) await db.batch(w);
+      await writeBatches(w);
+      if (list.length < 100) break;
     }
     await db.prepare("INSERT INTO settings (key, value) VALUES ('site_reviews_at', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(String(now));
     if (metaSeen.size) await db.prepare("INSERT INTO settings (key, value) VALUES ('site_rating_keys', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(JSON.stringify([...metaSeen].slice(0, 40)));
@@ -525,12 +533,27 @@ function setup(app) {
       }
       await writeBatches(noteWrites);
       await put('site_error', null);
-      await reviewsSync(c, now).catch(() => {});
+      const cancelled = await db.prepare(`SELECT s.id FROM site_orders s LEFT JOIN site_cancel_notes n ON n.site_id = s.id
+        WHERE s.status IN ('cancelled', 'refunded') AND s.created_at >= ? AND n.site_id IS NULL
+        ORDER BY s.created_at DESC LIMIT 4`).all(now - 30 * 86400000);
+      const cancellationWrites = [];
+      for (const { id } of cancelled) {
+        const notes = await wc(c, 'orders/' + id + '/notes', { per_page: 100, _fields: 'date_created_gmt,note' });
+        if (!Array.isArray(notes)) continue;
+        const detail = [...notes].reverse().find(n => /(?:سبب\s*(?:ال[إا]لغاء|رفض)|cancell?ation reason|طلب مرفوض|(?:الغ[يى]|[إا]لغاء|رفض).{0,22}(?:المطعم|الفرع)|cancel(?:led|ed) by)/i.test(String(n.note || '').replace(/<[^>]+>/g, ' ')));
+        const reason = String(detail?.note || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300) || null;
+        const at = Date.parse(String(detail?.date_created_gmt || '').replace(/Z?$/, 'Z')) || null;
+        cancellationWrites.push(db.prepare('INSERT OR IGNORE INTO site_cancel_notes (site_id, reason, at) VALUES (?, ?, ?)').bind(id, reason, at));
+      }
+      await writeBatches(cancellationWrites);
       await alerts(now);
       return { orders: changed.length, notes: due.length };
     } catch (e) {
       await put('site_error', String(e.message).slice(0, 300)); await put('site_error_at', now);
       return { error: e.message };
+    } finally {
+      const c = await creds();
+      if (c) await reviewsSync(c, now).then(() => put('site_reviews_error', null), e => put('site_reviews_error', String(e.message).slice(0, 180))).catch(() => {});
     }
   }
 
@@ -553,19 +576,28 @@ function setup(app) {
     for (const o of rows) {
       if (o.received_at && !o.transfer_at && now - o.received_at > TUNE.siteTransferMin * 60000)
         list.push({ key: 'site:transfer:' + o.id, kind: 'siteTransfer', target: 'online', text: '🌐 الموقع | ⏳ أوردر وصل على الموقع ولسه ماتحوّلش لأي فرع\nرقم أوردر الموقع: #' + o.id + '\nوصل الساعة ' + clock(o.received_at) + '، وبقاله ' + Math.round((now - o.received_at) / 60000) + ' دقيقة' + more(o) + where(o.id) });
-      if (o.fulfillment === 'delivery' && o.transfer_at && !o.out_at && now - o.transfer_at > TUNE.sitePrepMin * 60000)
-        list.push({ key: 'site:prep:' + o.id, kind: 'sitePrep', target: 'branches', branch: o.branch || null, text: '🌐 الموقع | 🟠 أوردر عدّى 30 دقيقة من التحويل ولسه ماخرجش للتوصيل\nالفرع: ' + (o.branch || 'غير معروف') + '\nرقم أوردر الموقع: #' + o.id + '\nاتحوّل للفرع الساعة ' + clock(o.transfer_at) + '، وبقاله ' + Math.round((now - o.transfer_at) / 60000) + ' دقيقة' + more(o) });
+      if (o.fulfillment === 'delivery' && o.transfer_at && !o.out_at && now - o.transfer_at > TUNE.sitePrepMin * 60000) {
+        const apex = apexOrderNumber(mt.get(o.id));
+        list.push({ key: 'site:prep:' + o.id + (apex ? '' : ':online'), kind: 'sitePrep', target: apex ? 'branches' : 'online', branch: o.branch || null, text: '🌐 الموقع | 🟠 أوردر عدّى 30 دقيقة من التحويل ولسه ماخرجش للتوصيل\nالفرع: ' + (o.branch || 'غير معروف') + '\n' + (apex ? 'رقم أوردر Apex: #' + apex : 'رقم أوردر الموقع: #' + o.id) + '\nاتحوّل للفرع الساعة ' + clock(o.transfer_at) + '، وبقاله ' + Math.round((now - o.transfer_at) / 60000) + ' دقيقة' + more(o) });
+      }
     }
     // Each warning is answered when the order moves on: transferred, out for delivery, delivered, or cancelled.
-    const waiting = await db.prepare("SELECT l.key, l.kind, l.target, l.branch FROM telegram_log l WHERE (l.key LIKE 'site:transfer:%' OR l.key LIKE 'site:prep:%') AND l.created_at >= ? AND NOT EXISTS (SELECT 1 FROM telegram_log x WHERE x.key = 'resolved:' || l.key)").all(now - 12 * 3600000);
+    const waiting = await db.prepare("SELECT l.key, l.kind, l.target, l.branch, l.text FROM telegram_log l WHERE (l.key LIKE 'site:transfer:%' OR l.key LIKE 'site:prep:%') AND l.created_at >= ? AND NOT EXISTS (SELECT 1 FROM telegram_log x WHERE x.key = 'resolved:' || l.key)").all(now - 12 * 3600000);
     for (const w of waiting) {
       const o = await db.prepare('SELECT * FROM site_orders WHERE id = ?').get(Number(w.key.split(':')[2])); if (!o) continue;
+      const branchMessage = w.target === 'branches';
+      const apex = branchMessage ? apexOrderNumber(mt.get(o.id)) || /رقم أوردر Apex: #(\d+)/u.exec(w.text)?.[1] : null;
+      if (branchMessage && !apex) continue;
+      const ref = apex ? 'أوردر Apex #' + apex : 'أوردر الموقع #' + o.id;
       const mins = (a, b) => Math.round((b - a) / 60000);
       let text = null;
-      if (EXCLUDED.has(o.status)) text = '🌐 الموقع | 🔄 أوردر الموقع #' + o.id + ' اتلغى على الموقع';
+      if (EXCLUDED.has(o.status)) text = '🌐 الموقع | 🔄 ' + ref + ' اتلغى على الموقع';
       else if (w.kind === 'siteTransfer' && o.transfer_at) text = '🌐 الموقع | ✅ أوردر الموقع #' + o.id + ' اتحوّل لـ ' + (o.branch || 'الفرع') + ' الساعة ' + clock(o.transfer_at) + (o.received_at ? ' (بعد ' + mins(o.received_at, o.transfer_at) + ' دقيقة من الاستلام)' : '');
-      else if (w.kind === 'sitePrep' && o.out_at) text = '🌐 الموقع | ✅ أوردر الموقع #' + o.id + ' خرج للتوصيل الساعة ' + clock(o.out_at) + (o.transfer_at ? ' (بعد ' + mins(o.transfer_at, o.out_at) + ' دقيقة من التحويل)' : '') + (o.driver ? ' · ' + o.driver : '');
-      else if (w.kind === 'sitePrep' && o.delivered_at) text = '🌐 الموقع | ⚠️ أوردر الموقع #' + o.id + ' اتقفل «تم التوصيل» الساعة ' + clock(o.delivered_at) + ' من غير «خروج للتوصيل» — محتاج مراجعة';
+      else if (w.kind === 'sitePrep' && o.out_at) {
+        const actor = (await db.prepare('SELECT actor FROM site_dispatch_actors WHERE site_id = ?').get(o.id))?.actor;
+        text = '🌐 الموقع | ✅ ' + ref + ' خرج للتوصيل الساعة ' + clock(o.out_at) + (o.transfer_at ? ' (بعد ' + mins(o.transfer_at, o.out_at) + ' دقيقة من التحويل)' : '') + (o.driver ? ' · ' + o.driver : '') + '\nالتحميل على الطيار في الموقع: ' + (dispatchActorLabel(actor) || 'غير مؤكد');
+      }
+      else if (w.kind === 'sitePrep' && o.delivered_at) text = '🌐 الموقع | ⚠️ ' + ref + ' اتقفل «تم التوصيل» الساعة ' + clock(o.delivered_at) + ' من غير «خروج للتوصيل» — محتاج مراجعة';
       if (text) list.push({ key: 'resolved:' + w.key, kind: w.kind, target: w.target, branch: w.branch, replyTo: w.key, text });
     }
     if (list.length) await db.batch(list.map(a => db.prepare('INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, sent_at, target, branch, reply_to) VALUES (?,?,?,?,?,?,?,?,?)').bind(a.key, a.kind, null, a.text, now, r[a.kind] === false && !a.replyTo ? now : null, a.target, a.branch || null, a.replyTo || null)));
@@ -579,16 +611,19 @@ function setup(app) {
   });
 
   async function siteCancelledOnApex(r, now, writes) {
-    const j = await db.prepare("SELECT state, result FROM transfer_jobs WHERE source = 'site' AND ref = ? AND state IN ('auto_done', 'entered', 'auto_pending', 'auto_sending')").get(String(r.id));
+    const j = await db.prepare("SELECT state, payload, result FROM transfer_jobs WHERE source = 'site' AND ref = ? AND state IN ('auto_done', 'entered', 'auto_pending', 'auto_sending')").get(String(r.id));
     if (!j) return;
     let res = {}; try { res = JSON.parse(j.result || '{}'); } catch {}
     const p = await db.prepare("SELECT data FROM match_profiles WHERE source = 'site' AND ref = ?").get(String(r.id));
     let num = r.id; try { num = JSON.parse(p?.data || '{}').panel?.number || r.id; } catch {}
-    const text = '🌐 الموقع | ❌ أوردر الموقع #' + num + ' اتلغى على الموقع وهو متسجل على Apex' + (res.shiftSerial != null ? ' (Apex ' + res.shiftSerial + ')' : '') +
+    const saved = parseJson(j.payload, {});
+    const apex = apexOrderNumber(j.state === 'auto_done' && saved.db === 'live' && (!res.db || res.db === 'live') && !res.preview ? { no: res.orderNo, sn: res.shiftSerial } :
+      r.day && (await apexMatch(r.day, await db.prepare('SELECT * FROM site_orders WHERE day = ?').all(r.day))).matches.get(r.id));
+    const text = '🌐 الموقع | ❌ ' + (apex ? 'أوردر Apex #' + apex : 'أوردر الموقع #' + num) + ' اتلغى على الموقع' +
       (r.branch ? '\nالفرع: ' + r.branch : '') + '\nالغوه على Apex وماتطلعوهوش';
     // The same «لاغي» edit as a Talabat cancel when the automatic cancel is on (not once it is with its pilot).
     if (j.state === 'auto_done' || j.state === 'entered') await app.siteCancelNote?.({ orderNo: res.orderNo, ref: r.id, code: num, sn: res.shiftSerial, branch: r.branch, out: !!r.out_at }, now).catch(() => 0);
-    for (const [target, branch, suffix] of [['branches', r.branch || null, ''], ['online', null, ':online']])
+    for (const [target, branch, suffix] of [...(apex ? [['branches', r.branch || null, '']] : []), ['online', null, ':online']])
       writes.push(db.prepare("INSERT OR IGNORE INTO telegram_log (key, kind, employee_id, text, created_at, sent_at, target, branch) VALUES (?, 'siteCancelled', NULL, ?, ?, NULL, ?, ?)").bind('site:cancel:' + r.id + suffix, text, now, target, branch));
   }
 
@@ -598,6 +633,7 @@ function setup(app) {
     const c = await creds();
     const panelAt = Number(await setting('site_panel_at')) || null;
     return { linked: !!c || (panelAt && ctx.now - panelAt < 6 * 3600000), panelAt: iso(panelAt), url: c?.url || 'https://eldahan.com.eg', keyEnd: c ? c.key.slice(-4) : null, lastSync: iso(Number(await setting('site_sync_at')) || null),
+      reviewError: await setting('site_reviews_error'), reviewsAt: iso(Number(await setting('site_reviews_at')) || null),
       error: await setting('site_error'), errorAt: iso(Number(await setting('site_error_at')) || null), serverNow: iso(ctx.now) };
   });
   app.route('POST', '/api/site', async ctx => {
@@ -626,7 +662,8 @@ function setup(app) {
   async function apexMatch(day, rows, { teach = false } = {}) {
     const r = await db.prepare('SELECT data FROM orders_days WHERE day = ?').get(day);
     let d = null; try { d = r ? JSON.parse(r.data) : null; } catch {}
-    const apex = (d?.online || []).filter(a => a.kind === 'الموقع' && a.at).map(a => ({ ...a, t: Date.parse(a.at) }));
+    const candidates = new Map([...(d?.cancels || []).filter(a => a.entry).map(a => ({ ...a, at: a.entry })), ...(d?.online || [])].map(a => [String(a.no), a]));
+    const apex = [...candidates.values()].filter(a => a.kind === 'الموقع' && a.at).map(a => ({ ...a, t: Date.parse(a.at) }));
     const names = app.apexNameMap ? await app.apexNameMap() : {};
     const profiles = new Map(), ids = rows.map(o => Number(o.id)).filter(n => Number.isInteger(n) && n > 0);
     for (let i = 0; i < ids.length; i += 90) {
@@ -678,10 +715,10 @@ function setup(app) {
   app.route('GET', '/api/site/day', async ctx => {
     await app.requireAdmin(ctx);
     const day = validDate(String(ctx.query.day || '')) ? ctx.query.day : businessDay(ctx.now);
-    const rows = await db.prepare('SELECT * FROM site_orders WHERE day = ? ORDER BY id').all(day);
+    const rows = await db.prepare('SELECT s.*, d.actor AS dispatch_actor FROM site_orders s LEFT JOIN site_dispatch_actors d ON d.site_id = s.id WHERE s.day = ? ORDER BY s.id').all(day);
     const m = await apexMatch(day, rows);
     return { day, apex: { linked: m.hasList, count: m.apexCount, unmatched: m.unmatched || [] }, linked: !!await creds() || (Number(await setting('site_panel_at')) || 0) > ctx.now - 6 * 3600000, lastSync: iso(Number(await setting('site_panel_at')) || Number(await setting('site_sync_at')) || null), error: await setting('site_error'), live: day === businessDay(ctx.now),
-      orders: rows.map(o => ({ id: o.id, status: o.status, fulfillment: o.fulfillment, excluded: EXCLUDED.has(o.status), scheduled: !!o.scheduled, branch: o.branch, driver: o.driver,
+      orders: rows.map(o => ({ id: o.id, status: o.status, fulfillment: o.fulfillment, excluded: EXCLUDED.has(o.status), scheduled: !!o.scheduled, branch: o.branch, driver: o.driver, dispatchActor: o.dispatch_actor || null,
         total: o.total, transfers: o.transfers || 0, apex: m.matches.get(o.id) || null, matching: m.states?.get(o.id) || null, createdAt: iso(o.created_at), receivedAt: iso(o.received_at), transferAt: iso(o.transfer_at), outAt: iso(o.out_at), deliveredAt: iso(o.delivered_at), notesRead: !!o.notes_at })),
       rules: { prep: TUNE.sitePrepMin, delivery: DELIVERY_MIN, transfer: TUNE.siteTransferMin }, serverNow: iso(ctx.now) };
   });

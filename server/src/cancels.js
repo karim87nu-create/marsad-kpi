@@ -7,6 +7,7 @@
 // means, so the next cancellation with the same reason is suggested from what was answered (2 answers and up).
 import { businessDay, iso, validDate } from './time.js';
 import { sameBranch } from './talabat.js';
+import { apexOrderNumber } from './order-identifiers.js';
 
 const OWNERS = { employee: 'الموظف اللي ضربه', branch: 'الفرع', pilot: 'الطيار', customer: 'العميل', platform: 'طلبات / المنصة', other: 'سبب تاني' };
 const LATE_ENTRY_MIN = 10, LATE_OUT_MIN = 45;
@@ -16,6 +17,7 @@ const BOOKED_LATE_MIN = 180;
 const norm = s => String(s || '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/[ًٌٍَُِّْ]/g, '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 const reasonKey = s => norm(s).split(' ').filter(w => w.length > 1).slice(0, 8).join(' ') || null;
 const RULES = [
+  [/انسكاب|طلب مرفوض|جوده/, 'branch', 'السبب على المطعم'],
   [/غلط|خطا|خطأ|wrong|غير المطلوب|مش المطلوب|اتضرب|بدل|تبديل|incorrect|missing item/, 'employee', 'السبب بيقول إن الأوردر اتضرب غلط'],
   [/مش متوفر|غير متوفر|خلص|نفذ|ناقص|out of stock|unavailable|not available/, 'branch', 'صنف مش متوفر في الفرع'],
   [/تاخير|اتاخر|متاخر|late|delay|too long|took long/, 'branch', 'تأخير'],
@@ -85,9 +87,22 @@ function setup(app) {
       else if (/vendor/i.test(ownerTxt)) ev.push({ owner: 'branch', text: 'طلبات حاططه على المطعم' });
       // Evidence that names an employee wins over Talabat's own owner.
       ev.sort((x, y) => (y.owner === 'employee') - (x.owner === 'employee'));
-      const s = suggest(o.cancel_reason, ev);
+      const rejected = o.status === 'REJECTED' || /(?:الطلب|طلب) مرفوض/.test(norm(o.cancel_reason));
+      const s = rejected ? { owner: 'branch', why: ['طلب مرفوض على المنصة'] } : suggest(o.cancel_reason, ev);
       out.push({ key: 'talabat:' + o.id, source: 'talabat', ref: o.id, code: o.code, at: iso(o.cancelled_at), store: o.store, branch: a?.branch || null, apexNo: a?.no ?? null, apexSn: a?.sn ?? null, user: a?.user || null,
         pilot: null, amount: o.subtotal ?? o.total ?? null, reason: [ownerTxt, o.cancel_reason].filter(Boolean).join(' — ') || null, reasonKey: reasonKey(o.cancel_reason), ...s });
+    }
+    const website = await db.prepare("SELECT s.id, s.branch, s.total, s.gone_at, s.modified_at, n.reason, n.at FROM site_orders s LEFT JOIN site_cancel_notes n ON n.site_id = s.id WHERE s.day = ? AND s.status IN ('cancelled','refunded')").all(day);
+    if (website.length) {
+      const rows = await db.prepare('SELECT * FROM site_orders WHERE day = ?').all(day);
+      const matches = (await app.site?.apexMatch(day, rows))?.matches;
+      for (const o of website) {
+        const a = matches?.get(o.id);
+        if (a) usedApex.add(String(a.no));
+        out.push({ key: 'site:' + o.id, source: 'site', ref: String(o.id), branch: a?.branch || o.branch,
+          apexNo: a?.no ?? null, apexSn: a?.sn ?? null, at: iso(o.at || o.gone_at || o.modified_at), amount: o.total,
+          reason: o.reason, reasonKey: reasonKey(o.reason), ...suggest(o.reason, []) });
+      }
     }
     // Apex cancellations (after the pilot took the order); a Talabat one already listed above is not listed twice.
     for (const c of d?.cancels || []) {
@@ -139,11 +154,12 @@ function setup(app) {
         if (waited != null && waited >= LATE_OUT_MIN) { owner = 'branch'; why = 'خرج من الفرع بعد ' + waited + ' دقيقة'; }
         else { owner = CODE_OWNER[Number(c.reasonNo)] || null; why = null; }
       }
-      items.push({ owner: owner || null, why, who, no: c.sn ?? c.no, amount: Number(c.amount) || 0, kind: c.kind });
+      items.push({ owner: owner || null, why, who, no: apexOrderNumber(c), amount: Number(c.amount) || 0, kind: c.kind });
     }
     // Talabat cancellations of this branch that never reached Apex.
-    for (const x of known) if (x.source === 'talabat' && x.apexNo == null && sameBranch(x.store, branch))
-      items.push({ owner: x.final || null, why: (x.why[0] || x.reason || '') + ' (مش على Apex)', who: x.user || null, no: 'طلبات ' + (x.code || x.ref), amount: Number(x.amount) || 0 });
+    for (const x of known) if (x.source !== 'apex' && x.apexNo == null && sameBranch(x.branch || x.store, branch))
+      items.push({ owner: x.final || null, why: (x.why[0] || x.reason || '') + ' (مش على Apex)', who: x.user || null,
+        no: (x.source === 'site' ? 'الموقع ' : 'طلبات ') + (x.code || x.ref), amount: Number(x.amount) || 0, platformOnly: true });
     const lines = String(text).split('\n');
     const cut = lines.indexOf(''), head = cut < 0 ? lines : lines.slice(0, cut);
     const tail = lines.filter(l => /^(🔚|🗑️)/.test(l));
@@ -151,7 +167,7 @@ function setup(app) {
     const section = (groups, withWho) => {
       const out = [];
       for (const [key, title] of groups) {
-        const g = items.filter(i => (i.owner || null) === key);
+        const g = items.filter(i => (i.owner || null) === key && (withWho || (!i.platformOnly && i.no)));
         if (!g.length) continue;
         const amt = g.reduce((a, i) => a + i.amount, 0);
         out.push('', title + ': ' + g.length + (all ? ' — ' + Math.round(1000 * g.length / all) / 10 + '%' : '') + (amt > 0 ? ' | ' + Math.round(amt) + ' ج' : ''));
@@ -163,6 +179,8 @@ function setup(app) {
       return out;
     };
     const mine = section(BRANCH_GROUPS, false), center = section(CENTER_GROUPS, true);
+    for (const i of items.filter(x => x.platformOnly && BRANCH_GROUPS.some(([owner]) => owner === x.owner)))
+      center.push('• ' + i.no + ' — ' + i.why);
     const out = [...head, ...(mine.length ? mine : ['', '✅ مفيش إلغاءات على الفرع'])];
     if (tail.length) out.push('', ...tail);
     const branchName = (head[0] || '').replace(/^📊 التقرير الختامي — /, '').trim() || branch || '';
@@ -180,7 +198,7 @@ function setup(app) {
   app.route('POST', '/api/cancels/owner', async ctx => {
     const who = await app.requireAdmin(ctx, 'write');
     const b = ctx.body || {}, key = String(b.key || '').slice(0, 80);
-    if (!/^(apex|talabat):\d+$/.test(key)) fail(400, 'invalid_key');
+    if (!/^(apex|talabat|site):\d+$/.test(key)) fail(400, 'invalid_key');
     const day = validDate(String(b.day || '')) ? b.day : businessDay(ctx.now);
     if (b.owner == null) { await db.prepare('DELETE FROM cancel_owners WHERE key = ?').run(key); await db.prepare("DELETE FROM learned WHERE kind = 'cancel:owner' AND ref = ?").run(key); app.learn?.forget?.(); return { ok: true }; }
     if (!OWNERS[b.owner]) fail(400, 'invalid_owner');

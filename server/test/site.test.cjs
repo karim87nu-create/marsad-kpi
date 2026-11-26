@@ -123,7 +123,7 @@ test('site: prep warnings keep comments but do not append Apex status', async ()
     t.app.apexDetails = async () => ({ extra: () => '', status: () => { throw new Error('Site must not append Apex status'); } });
     const r = await admin('POST', '/api/site', { action: 'key', key: 'ck_' + 'a'.repeat(40), secret: 'cs_' + 'b'.repeat(40) });
     assert.equal(r.status, 200);
-    const warning = t.app.db.raw.prepare("SELECT text FROM telegram_log WHERE key = 'site:prep:101'").get();
+    const warning = t.app.db.raw.prepare("SELECT text FROM telegram_log WHERE key = 'site:prep:101:online'").get();
     assert.ok(warning);
     assert.match(warning.text, /لسه ماخرجش للتوصيل/);
     assert.doesNotMatch(warning.text, /حالة الفرع دلوقتي/);
