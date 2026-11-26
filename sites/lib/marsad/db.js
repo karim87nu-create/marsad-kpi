@@ -223,7 +223,7 @@ CREATE INDEX IF NOT EXISTS qa_scores_day ON qa_scores(day);
 CREATE TABLE IF NOT EXISTS employee_flags (employee_id INTEGER PRIMARY KEY, manager INTEGER NOT NULL DEFAULT 0, at INTEGER NOT NULL);
 -- Karim 11-16: the customer-service sheet (complaints, comments and ratings from Talabat / the website / calls) and each
 -- branch's rating of the day on Talabat (with the competitor's).
-CREATE TABLE IF NOT EXISTS cs_entries (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, platform TEXT NOT NULL, branch TEXT, customer TEXT, phone TEXT, order_no TEXT, rating INTEGER, comment TEXT, complaint TEXT, reached TEXT, action TEXT, by_name TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS cs_entries (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, platform TEXT NOT NULL, branch TEXT, customer TEXT, phone TEXT, order_no TEXT, rating INTEGER, comment TEXT, complaint TEXT, complaint_type TEXT, department TEXT, reached TEXT, action TEXT, by_name TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS cs_entries_day ON cs_entries(day);
 CREATE TABLE IF NOT EXISTS cs_links (entry_id INTEGER PRIMARY KEY, platform TEXT, apex_no TEXT, sn TEXT, branch TEXT, employee TEXT, pilot TEXT, at INTEGER, out_at INTEGER);
 CREATE TABLE IF NOT EXISTS cs_branch_day (day TEXT NOT NULL, branch TEXT NOT NULL, rating REAL, competitor REAL, by_name TEXT, at INTEGER NOT NULL, PRIMARY KEY(day, branch));
@@ -326,6 +326,7 @@ const REQUIRED_ADDED_COLUMNS = {
   talabat_orders: ['code', 'milestones'],
   site_orders: ['transfers', 'total', 'scheduled', 'scheduled_at', 'gone_at'],
   bot_cases: ['apex_code'],
+  cs_entries: ['complaint_type', 'department'],
   wa_messages: ['sending_at'],
   telegram_config: ['branch_chat_id', 'branch_chat_title'],
 };
@@ -349,6 +350,10 @@ const norm = p => p.map(v => (v === undefined ? null : typeof v === 'boolean' ? 
 async function migrate(db) {
   await db.batch(SCHEMA_STATEMENTS.map(s => db.prepare(s).bind()));
   try { await db.prepare('SELECT apex_code FROM bot_cases LIMIT 0').all(); } catch { try { await db.prepare('ALTER TABLE bot_cases ADD COLUMN apex_code TEXT').run(); } catch {} }
+  for (const column of ['complaint_type', 'department']) {
+    try { await db.prepare('SELECT ' + column + ' FROM cs_entries LIMIT 0').all(); }
+    catch { try { await db.prepare('ALTER TABLE cs_entries ADD COLUMN ' + column + ' TEXT').run(); } catch {} }
+  }
   // Older local files: the events.extra column came later.
   try { await db.prepare('SELECT extra FROM events LIMIT 0').all(); } catch { await db.prepare('ALTER TABLE events ADD COLUMN extra TEXT').run(); }
   // Telegram follow-ups are sent as replies to the alert they close.

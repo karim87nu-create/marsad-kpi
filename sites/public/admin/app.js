@@ -138,6 +138,7 @@
   const ROSTER = window.MarsadRoster({ api, h, $, canWrite: () => canWrite(), showError: x => showError(x), cairoToday: () => cairoToday() });
   const QA = window.MarsadQa({ api, h, $, table, pill, kpi, state, canWrite: () => canWrite(), isAdmin: () => isAdmin(), showError: x => showError(x), cairoToday: () => cairoToday() });
   const CS = window.MarsadCs({ api, h, $, table, pill, kpi, state, canWrite: () => canCs(), csOnly: () => csOnly(), me: () => who, isAdmin: () => isAdmin(), showError: x => showError(x), cairoToday: () => cairoToday() });
+  const PERFORMANCE = window.MarsadPerformance({ api, h, $, table, kpi, state, exportSheets, showError });
   const EXP = window.MarsadExports({ api, h, $, state, showError: x => showError(x) });
   for (const b of document.querySelectorAll('[data-qa-export]')) b.onclick = () => EXP.RUN.quality().catch(x => showError(x));
   const FC = window.MarsadForecast({ api, h, $, table, pill, kpi, showError: x => showError(x), cairoToday: () => cairoToday() });
@@ -1041,7 +1042,7 @@
 
   // ---------- navigation ----------
   // Seven sections across the top; each has its own pages as tabs under it. One period (from–to) for every page that has one.
-  const VIEWS = { home: ['الرئيسية', null], daily: ['تقرير اليوم', () => DAILY.render(state.to)], now: ['الكول سنتر الآن', null],
+  const VIEWS = { home: ['الرئيسية', null], performance: ['أداء الفروع والكول سنتر', () => PERFORMANCE.render()], daily: ['تقرير اليوم', () => DAILY.render(state.to)], now: ['الكول سنتر الآن', null],
     day: ['الكول سنتر: اليوم', () => Promise.all([renderDay(), renderHours()])], team: ['أداء الموظفين', renderTeam], profile: ['ملف الموظف', renderProfile],
     breaks: ['البريك والحضور ونهاية الشيفت', () => Promise.all([refreshRequests(), renderAttendance(), renderShifts()])], calls: ['المكالمات', renderCalls], missed: ['المكالمات الفائتة', renderMissed], roster: ['جدول مواعيد الموظفين', () => ROSTER.render()], forecast: ['التوقع والاحتياج', () => FC.render()],
     branchesNow: ['الفروع الآن', null], transferLive: ['التحويلات لايف', () => TL.refresh()], transfer: ['تحويل وضرب الأوردرات: طلبات والموقع', () => Promise.all([SITE.renderTalabat(), SITE.renderTransfer(), OR.renderEntry()])], transferReport: ['مراجعة التحويل الآلي', () => Promise.all([renderAutoReasons(), renderPriceDiffs()])], trend: ['على مدار الوقت', () => TREND.render(state.day, state.to)],
@@ -1052,13 +1053,13 @@
     auto: ['التشغيل الآلي', renderAuto], system: ['حالة النظام', renderSystem], guide: ['طريقة حساب الأرقام', async () => {}] };
   // Old page names (links, other parts of the page) open the page they are part of now.
   const ALIAS = { hours: 'day', requests: 'breaks', attendance: 'breaks', shifts: 'breaks', talabat: 'transfer', siteTransfer: 'transfer', siteBranches: 'branches', branchFile: 'branches', manage: 'people', entry: 'transfer' };
-  const DAY_VIEWS = ['daily', 'trend', 'transferReport', 'day', 'team', 'profile', 'breaks', 'calls', 'missed', 'followup', 'bot', 'transfer', 'qa', 'cs', 'exports', 'sales', 'branches', 'cancels', 'kpi'];
+  const DAY_VIEWS = ['performance', 'daily', 'trend', 'transferReport', 'day', 'team', 'profile', 'breaks', 'calls', 'missed', 'followup', 'bot', 'transfer', 'qa', 'cs', 'exports', 'sales', 'branches', 'cancels', 'kpi'];
   const SECTION_OF = {};
   for (const t of document.querySelectorAll('#nav .tabset')) for (const b of t.querySelectorAll('[data-view]')) SECTION_OF[b.dataset.view] = t.dataset.sec;
   // Karim 11-16 «شيل التكرارات»: the three live pages are on home (its headings open them full size).
   SECTION_OF.home = SECTION_OF.now = SECTION_OF.transferLive = SECTION_OF.branchesNow = 'home';
   // Karim 11-14: home first, then orders; reports with the KPIs and follow-up; the team's pages together.
-  const lastIn = { home: 'home', orders: 'transfer', calls: 'day', reports: 'daily', team: 'roster', settings: 'auto' };
+  const lastIn = { home: 'home', orders: 'transfer', calls: 'day', reports: 'performance', team: 'roster', settings: 'auto' };
   function setSection(sec) {
     state.section = sec;
     for (const b of document.querySelectorAll('#sections [data-section]')) { const on = b.dataset.section === sec; b.classList.toggle('active', on); b.setAttribute('aria-current', on ? 'true' : 'false'); }

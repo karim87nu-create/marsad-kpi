@@ -7,6 +7,7 @@ import { businessDay, addDays, validDate, iso } from './time.js';
 import { parseJson } from './order-match.js';
 import { apexReportCancelOwner } from './cancels.js';
 import { branchName } from './cs.js';
+import { setupComplaintPerformance } from './complaint-performance.js';
 import { BRANCHES as TALABAT_BRANCHES } from './stock.js';
 
 const r2 = v => Math.round((Number(v) || 0) * 100) / 100;
@@ -74,6 +75,7 @@ export async function reportDay(app, day, now) {
 
 function setup(app) {
   const { db } = app;
+  setupComplaintPerformance(app);
   app.route('GET', '/api/reports/platform-cancels', async ctx => {
     await app.requireAdmin(ctx);
     const today = businessDay(ctx.now), to = String(ctx.query.to || ''), from = String(ctx.query.from || '');

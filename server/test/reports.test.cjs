@@ -232,3 +232,69 @@ test('orders monitor (Karim 11-16): Apex\'s day closed and no order yet — the 
     assert.equal(live.ageSeconds, 0);
   } finally { await t.close(); }
 });
+
+test('performance report groups confirmed complaints and suppresses rates when Apex coverage is partial', async () => {
+  const t = await start({ at: cairoToUtc(2026, 11, 16, 12, 0) });
+  try {
+    const admin = await t.admin(), db = t.app.db.raw;
+    db.prepare('INSERT INTO orders_days(day,data,received_at) VALUES (?,?,?)').run('2026-11-14',
+      JSON.stringify({ branches: [{ name: 'فرع مدينة نصر', orders: 100 }, { name: 'التجمع', orders: 50 }, { name: 'مدينتى', orders: 50 }] }), t.clock.now);
+    db.prepare('INSERT INTO orders_days(day,data,received_at) VALUES (?,?,?)').run('2026-11-15',
+      JSON.stringify({ branches: [{ name: 'مدينة نصر', orders: 100 }] }), t.clock.now);
+    const first = { day: '2026-11-14', branch: 'مدينة نصر', platform: 'طلبات', complaint: 'الأكل بارد', complaintType: 'جودة الأكل',
+      department: 'المطبخ', reached: 'تم التواصل', action: 'اعتذار', phone: '01055555555' };
+    const saved = await admin('POST', '/api/cs', first);
+    assert.equal(saved.status, 200);
+    const { complaintType, department, ...oldUi } = first;
+    assert.equal((await admin('PUT', '/api/cs', { ...oldUi, id: saved.body.id })).status, 200, 'old CS client keeps saved classifications');
+    await admin('POST', '/api/cs', { day: '2026-11-14', branch: 'التجمع', platform: 'الموقع', complaint: 'انسكاب' });
+    await admin('POST', '/api/cs', { day: '2026-11-15', branch: 'التجمع', platform: 'الموقع', complaint: 'التأخير في التوصيل' });
+    await admin('POST', '/api/cs', { day: '2026-11-14', branch: 'مدينة نصر', platform: 'طلبات', rating: 1, comment: 'rating only' });
+    db.prepare('INSERT INTO site_orders (id,day,status,fulfillment,branch,out_at,delivered_at,created_at) VALUES (?,?,?,?,?,?,?,?)')
+      .run(32344, '2026-11-14', 'completed', 'delivery', 'مدينة نصر', t.clock.now - 30 * 60000, t.clock.now, t.clock.now - 60 * 60000);
+    db.prepare('INSERT INTO site_dispatch_actors(site_id,actor,at) VALUES (?,?,?)').run(32344, 'extension', t.clock.now);
+    const route = '/api/reports/complaint-performance?from=2026-11-14&to=2026-11-15';
+    assert.equal((await t.call('GET', route)).status, 401);
+    const result = await admin('GET', route);
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    const d = result.body, nasr = d.branches.find(b => b.name === 'مدينة نصر'), tagamoa = d.branches.find(b => b.name === 'التجمع');
+    assert.deepEqual([d.totals.complaints, d.totals.rate, nasr.orders, nasr.rate, tagamoa.rate], [3, null, 200, 0.5, null]);
+    assert.equal(nasr.departments[0].labels[0], 'المطبخ');
+    assert.equal(nasr.types[0].pct, 100);
+    assert.equal(tagamoa.departments[0].labels[0], 'غير محدد');
+    assert.deepEqual(tagamoa.types.map(r => [r.labels[0], r.pct]).sort(), [['تأخير التوصيل', 50], ['تغليف أو انسكاب', 50]].sort());
+    assert.deepEqual(d.daily.map(r => r.rate), [1, null]);
+    assert.deepEqual(d.website.map(r => [r.extensionDispatch, r.unknownDispatch, r.deliveryMinutes]), [[1, 0, 30]]);
+    assert.ok(!JSON.stringify(d).includes(first.phone));
+  } finally { await t.close(); }
+});
+
+test('performance page filters complaint breakdowns and exports separate Excel sheets', async () => {
+  const root = path.join(__dirname, '../../sites/public/admin');
+  const dom = new JSDOM(fs.readFileSync(path.join(root, 'index.html'), 'utf8'), { runScripts: 'outside-only' });
+  const w = dom.window, $ = id => w.document.getElementById(id);
+  try {
+    w.eval(fs.readFileSync(path.join(root, 'performance.js'), 'utf8'));
+    const elem = (tag, attrs = {}, ...children) => { const e = w.document.createElement(tag); Object.assign(e, attrs); e.append(...children); return e; };
+    const no = { name: 'التجمع', complaints: 1, types: [{ labels: ['جودة الأكل'], count: 1, pct: 100 }] };
+    const yes = { name: 'مدينة نصر', complaints: 1, types: [{ labels: ['تأخير التوصيل'], count: 1, pct: 100 }] };
+    const sample = { branches: [no, yes], totals: { complaints: 2, apexDays: 1 }, days: 1, types: [...no.types, ...yes.types] };
+    let exported;
+    const page = w.MarsadPerformance({
+      api: async url => { if (url.includes('complaint-performance')) return sample; if (url.includes('/api/kpi')) return { team: { calls: 10 }, branches: [], employees: [], supervisors: [] }; return {}; },
+      h: elem, $, table: (id, cols, records) => { $(id).textContent = records.map(r => cols.map(c => c.get(r)).join(' ')).join(' '); },
+      kpi: (label, value) => elem('p', { textContent: label + ' ' + value }),
+      exportSheets: (name, sheets) => { exported = [name, sheets]; }, showError: e => { throw e; },
+      state: { day: '2026-11-14', to: '2026-11-14' },
+    });
+    await page.render();
+    assert.match($('performanceTypes').textContent, /جودة الأكل/);
+    $('performanceBranch').value = 'مدينة نصر';
+    $('performanceBranch').dispatchEvent(new w.Event('change'));
+    assert.match($('performanceTypes').textContent, /تأخير التوصيل/);
+    assert.doesNotMatch($('performanceTypes').textContent, /جودة الأكل/);
+    $('performanceExport').click();
+    assert.ok(exported[1].some(([sheet, , rows]) => sheet === 'أنواع الشكاوى' && rows.length === 1));
+    assert.ok(exported[1].some(([sheet, , rows]) => sheet === 'مؤشرات الكول سنتر' && rows[0].calls === 10));
+  } finally { w.close(); }
+});

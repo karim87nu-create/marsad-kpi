@@ -32,17 +32,19 @@ window.MarsadCs = function MarsadCs(ctx) {
     platform.onchange = orderNo.onchange;
     const rating = sel(['5', '4', '3', '2', '1'], e.rating == null ? '' : String(e.rating), 'من غير تقييم');
     const comment = h('textarea', { rows: 2, value: e.comment || '', placeholder: 'تعليق العميل زي ما كتبه' }), complaint = h('input', { value: e.complaint || '', placeholder: 'الشكوى باختصار (بارد، تأخير، جودة الأرز…)' });
+    const complaintType = sel(data.complaintTypes || [], e.complaintType, 'نوع الشكوى');
+    const department = sel(data.departments || [], e.department, 'القسم المعني');
     const reached = sel(data.reached, e.reached, 'اتواصلنا؟'), action = h('input', { value: e.action || '', placeholder: 'اللي اتعمل (اعتذار، خصم 10% الأوردر الجاي…)' });
     const save = h('button', { type: 'button', textContent: editing ? 'حفظ التعديل' : 'إضافة', onclick: async () => {
       try {
         await api('/api/cs', { method: editing ? 'PUT' : 'POST', body: { id: editing?.id, day: day.value, platform: platform.value, branch: branch.value, customer: customer.value, phone: phone.value, orderNo: orderNo.value,
-          rating: rating.value, comment: comment.value, complaint: complaint.value, reached: reached.value, action: action.value } });
+          rating: rating.value, comment: comment.value, complaint: complaint.value, complaintType: complaintType.value, department: department.value, reached: reached.value, action: action.value } });
         $('csMsg').textContent = 'اتحفظ باسم ' + (editing?.by || myName()); editing = null; await render();
       } catch (x) { showError(x); }
     } });
     const cancel = editing ? h('button', { type: 'button', className: 'ghost', textContent: 'إلغاء', onclick: () => { editing = null; form(); } }) : null;
     $('csForm').replaceChildren(h('div', { className: 'fgrid' }, f('اليوم', day), f('المنصة', platform), f('الفرع', branch), f('التقييم', rating), f('اسم العميل', customer), f('رقم العميل', phone), f('رقم الطلب', orderNo), h('div', { className: 'wide' }, found),
-      f('تعليق العميل', comment, 'wide'), f('الشكوى', complaint, 'wide'), f('اتواصلنا؟', reached), f('الإجراء', action, 'wide')), h('div', { className: 'inline' }, save, cancel));
+      f('تعليق العميل', comment, 'wide'), f('الشكوى', complaint, 'wide'), f('نوع الشكوى', complaintType), f('القسم المعني', department), f('اتواصلنا؟', reached), f('الإجراء', action, 'wide')), h('div', { className: 'inline' }, save, cancel));
     $('csForm').closest('.panel').hidden = !canWrite();
   }
 

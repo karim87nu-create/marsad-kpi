@@ -81,7 +81,7 @@ function setup(app) {
   async function callCenter(from, to, now) {
     const r = from === to ? await app.day(from, now) : await app.range(from, to, now);
     const rep = r.history?.report || {};
-    const team = { calls: rep.calls ?? null, answered: rep.answered ?? null, abandoned: rep.abandoned ?? null, sla: r1(rep.sla), abandon: r1(rep.abandonmentRate), asa: r1(rep.asa),
+    const team = { calls: rep.calls ?? null, recordedCalls: rep.recordedCalls ?? rep.calls ?? null, shortAbandoned: rep.shortAbandoned ?? null, answered: rep.answered ?? null, abandoned: rep.abandoned ?? null, sla: r1(rep.sla), abandon: r1(rep.abandonmentRate), asa: r1(rep.asa),
       meanCall: rep.meanCallSeconds != null ? Math.round(rep.meanCallSeconds) : null, complete: !!rep.verifiedTotal };
     const days = Math.max(1, daysOf(from, to).length);
     const employees = (r.employees || []).filter(e => (e.workSeconds || 0) > 0).map(e => {

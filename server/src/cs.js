@@ -5,6 +5,8 @@
 import { businessDay, validDate, iso } from './time.js';
 
 export const PLATFORMS = ['طلبات', 'الموقع', 'الكول سنتر', 'وفرها'];
+export const COMPLAINT_TYPES = ['جودة الأكل', 'تأخير التجهيز', 'تأخير التوصيل', 'تأخير غير محدد', 'صنف ناقص أو غلط', 'تغليف أو انسكاب', 'تعامل وخدمة', 'دفع أو سعر', 'إلغاء الطلب', 'أخرى'];
+export const DEPARTMENTS = ['المطبخ', 'التجهيز والتغليف', 'التوصيل', 'الكاشير', 'الهوت لاين', 'الأونلاين', 'خدمة العملاء', 'الصالة', 'الإدارة'];
 export const REACHED = ['تم التواصل', 'عدم الرد', 'مقفول', 'لا'];
 // The three branches as the page writes them (Apex writes «مدينتى»; Talabat «سيتي ستار»).
 export const branchName = v => { const t = String(v || ''); return /مدينة نصر|سيتي ستار|مكرم|city ?stars|nasr/i.test(t) ? 'مدينة نصر' : /التجمع|البنفسج|tagamo|settlement/i.test(t) ? 'التجمع' : /مدينت[يى]|ساوث بارك|madinaty/i.test(t) ? 'مدينتي' : (t || null); };
@@ -14,7 +16,7 @@ function setup(app) {
   const { db, fail } = app;
   const clean = (v, n) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n) || null;
   const shape = (r, l) => ({ id: r.id, day: r.day, platform: r.platform, branch: r.branch, customer: r.customer, phone: r.phone, orderNo: r.order_no, rating: r.rating,
-    comment: r.comment, complaint: r.complaint, reached: r.reached, action: r.action, by: r.by_name, at: iso(r.updated_at),
+    comment: r.comment, complaint: r.complaint, complaintType: r.complaint_type, department: r.department, reached: r.reached, action: r.action, by: r.by_name, at: iso(r.updated_at),
     link: l ? { platform: l.platform, apexNo: l.apex_no, sn: l.sn, branch: l.branch, employee: l.employee, pilot: l.pilot, at: iso(l.at), out: iso(l.out_at) } : null });
 
   // Karim 11-16 «الشكوى تتربط بالأوردر»: the order number the customer gives (Talabat's number or its #code, the website's
@@ -100,7 +102,7 @@ function setup(app) {
       matched.add(e.id);
       return { ...r, customer: r.customer || e.customer, phone: r.phone || e.phone, complaint: e.complaint, reached: e.reached, action: e.action, followupId: e.id };
     });
-    return { from, to, me: { name: who.name, role: who.role }, platforms: PLATFORMS, reached: REACHED, entries, platformFeedback, positive, talabat, ratings: [...ratings.values()].sort((a, b) => a.day.localeCompare(b.day) || a.branch.localeCompare(b.branch)), site };
+    return { from, to, me: { name: who.name, role: who.role }, platforms: PLATFORMS, reached: REACHED, complaintTypes: COMPLAINT_TYPES, departments: DEPARTMENTS, entries, platformFeedback, positive, talabat, ratings: [...ratings.values()].sort((a, b) => a.day.localeCompare(b.day) || a.branch.localeCompare(b.branch)), site };
   });
 
   const read = (b, now) => {
@@ -110,27 +112,34 @@ function setup(app) {
     if (rating != null && !(Number.isInteger(rating) && rating >= 1 && rating <= 5)) fail(400, 'التقييم من 1 لـ 5');
     const v = { day, platform, branch: clean(b.branch, 60), customer: clean(b.customer, 80), phone: clean(String(b.phone ?? '').replace(/[^\d+]/g, ''), 20), orderNo: clean(b.orderNo, 30), rating,
       comment: clean(b.comment, 1000), complaint: clean(b.complaint, 500), reached: b.reached && REACHED.includes(b.reached) ? b.reached : null, action: clean(b.action, 500) };
+    if (v.complaint) {
+      if (b.complaintType && !COMPLAINT_TYPES.includes(b.complaintType)) fail(400, 'اختار نوع الشكوى');
+      if (b.department && !DEPARTMENTS.includes(b.department)) fail(400, 'اختار القسم المعني');
+      if (Object.hasOwn(b, 'complaintType')) v.complaintType = b.complaintType || null;
+      if (Object.hasOwn(b, 'department')) v.department = b.department || null;
+    }
     if (!v.comment && !v.complaint && v.rating == null) fail(400, 'اكتب التعليق أو الشكوى أو التقييم');
     return v;
   };
   // The order's branch when the employee did not choose one.
   const withBranch = async v => { if (!v.branch && v.orderNo) v.branch = (await orderOf(v.orderNo, v.day, v.platform))?.branch || null; if (!v.branch) fail(400, 'اختار الفرع (أو اكتب رقم أوردر المرصد يعرفه)'); return v; };
   // Each customer-service user changes only their own lines; admin and supervisors any.
-  const own = async (who, id) => { const e = await db.prepare('SELECT by_name FROM cs_entries WHERE id = ?').get(id); if (!e) fail(404, 'السطر مش موجود');
+  const own = async (who, id) => { const e = await db.prepare('SELECT by_name, complaint_type, department FROM cs_entries WHERE id = ?').get(id); if (!e) fail(404, 'السطر مش موجود');
     if (who.role === 'cs' && e.by_name !== who.name) fail(403, 'السطر ده سجّله ' + (e.by_name || 'حد تاني') + '؛ تعدّل سطورك بس'); return e; };
   app.route('POST', '/api/cs', async ctx => {
     const who = await app.requireAdmin(ctx, 'cs'), v = await withBranch(read(ctx.body || {}, ctx.now));
-    const r = await db.prepare('INSERT INTO cs_entries (day, platform, branch, customer, phone, order_no, rating, comment, complaint, reached, action, by_name, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-      .run(v.day, v.platform, v.branch, v.customer, v.phone, v.orderNo, v.rating, v.comment, v.complaint, v.reached, v.action, who.name, ctx.now, ctx.now);
+    const r = await db.prepare('INSERT INTO cs_entries (day, platform, branch, customer, phone, order_no, rating, comment, complaint, complaint_type, department, reached, action, by_name, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run(v.day, v.platform, v.branch, v.customer, v.phone, v.orderNo, v.rating, v.comment, v.complaint, v.complaintType ?? null, v.department ?? null, v.reached, v.action, who.name, ctx.now, ctx.now);
     const link = await saveLink(r.lastInsertRowid, v).catch(() => null);
     return { ok: true, id: r.lastInsertRowid, link };
   });
   app.route('PUT', '/api/cs', async ctx => {
-    const who = await app.requireAdmin(ctx, 'cs'), id = Number(ctx.body?.id); await own(who, id);
+    const who = await app.requireAdmin(ctx, 'cs'), id = Number(ctx.body?.id), previous = await own(who, id);
     const v = await withBranch(read(ctx.body || {}, ctx.now));
     // The line stays under the name of who wrote it.
-    const r = await db.prepare('UPDATE cs_entries SET day=?, platform=?, branch=?, customer=?, phone=?, order_no=?, rating=?, comment=?, complaint=?, reached=?, action=?, updated_at=? WHERE id = ?')
-      .run(v.day, v.platform, v.branch, v.customer, v.phone, v.orderNo, v.rating, v.comment, v.complaint, v.reached, v.action, ctx.now, id);
+    const r = await db.prepare('UPDATE cs_entries SET day=?, platform=?, branch=?, customer=?, phone=?, order_no=?, rating=?, comment=?, complaint=?, complaint_type=?, department=?, reached=?, action=?, updated_at=? WHERE id = ?')
+      .run(v.day, v.platform, v.branch, v.customer, v.phone, v.orderNo, v.rating, v.comment, v.complaint, v.complaint ? (v.complaintType === undefined ? previous.complaint_type : v.complaintType) : null,
+        v.complaint ? (v.department === undefined ? previous.department : v.department) : null, v.reached, v.action, ctx.now, id);
     if (!r.changes) fail(404, 'السطر مش موجود');
     const link = await saveLink(id, v).catch(() => null);
     return { ok: true, link };
