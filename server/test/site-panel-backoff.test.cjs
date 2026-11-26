@@ -44,7 +44,7 @@ test('branch panel selects only a unique Apex pilot and submits through the webs
     { runScripts: 'outside-only', url: 'https://eldahan.com.eg/eldahan-branch-board/?branch=tagamoa-cloud' });
     const { window: w } = dom;
     try {
-      const actions = [], button = action => w.document.querySelector(`[data-action="${action}"]`);
+      const actions = [], recorded = [], button = action => w.document.querySelector(`[data-action="${action}"]`);
       w.setInterval = () => {};
       let now = Date.now(), submits = 0;
       w.Date.now = () => now;
@@ -52,6 +52,7 @@ test('branch panel selects only a unique Apex pilot and submits through the webs
       w.MARSAD = { VERSION: "test" };
       w.browser = { runtime: { getURL: x => '/' + x, sendMessage: async msg => {
         assert.equal(msg.dispatchFromApex, true);
+        if (msg.dispatchEvents) { recorded.push(...msg.dispatchEvents); return { dispatchEventAck: true }; }
         return { ok: true, dispatch: [{ orderId: 31837, driver }] };
       } } };
       button('prepare').onclick = () => {
@@ -83,6 +84,8 @@ test('branch panel selects only a unique Apex pilot and submits through the webs
         w.dispatchEvent(new w.MessageEvent('message', { source: w, data: { __marsadSite: 1, data: { orders: [{ id: 31837 }] } } }));
         await new Promise(resolve => setImmediate(resolve));
       }
+      const presses = actions.filter(action => names.includes(action));
+      assert.deepEqual(recorded.map(e => [e.id, e.actor, e.driver]), presses.map(driver => [31837, 'extension', driver]));
       return actions;
     } finally { w.close(); }
   };

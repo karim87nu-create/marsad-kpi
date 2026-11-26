@@ -270,6 +270,8 @@ CREATE TABLE IF NOT EXISTS site_orders (id INTEGER PRIMARY KEY, day TEXT NOT NUL
 CREATE INDEX IF NOT EXISTS site_orders_day ON site_orders(day);
 CREATE TABLE IF NOT EXISTS site_cancel_notes (site_id INTEGER PRIMARY KEY, reason TEXT, at INTEGER);
 CREATE TABLE IF NOT EXISTS site_dispatch_actors (site_id INTEGER PRIMARY KEY, actor TEXT NOT NULL, at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS site_dispatch_events (site_id INTEGER NOT NULL, branch TEXT NOT NULL, driver TEXT NOT NULL, actor TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (site_id, branch, driver, actor, at));
+CREATE INDEX IF NOT EXISTS site_dispatch_events_at ON site_dispatch_events(at);
 CREATE INDEX IF NOT EXISTS site_orders_created ON site_orders(created_at);
 CREATE INDEX IF NOT EXISTS site_orders_scheduled ON site_orders(scheduled_at);   -- the transfer page's «day or scheduled in it» reads (338k rows / 30 min, 11-19)
 CREATE TABLE IF NOT EXISTS talabat_orders (id TEXT PRIMARY KEY, day TEXT NOT NULL, vendor_id TEXT, store TEXT, status TEXT, billable TEXT, placed_at INTEGER, total REAL, received_at INTEGER, accept_seconds INTEGER, accepted_at INTEGER, picked_up_at INTEGER, delivered_at INTEGER, cancelled_at INTEGER, cancel_owner TEXT, cancel_reason TEXT, items TEXT, subtotal REAL, delivery_type TEXT, code TEXT, milestones TEXT, detail_at INTEGER, first_seen INTEGER NOT NULL, updated_at INTEGER NOT NULL);

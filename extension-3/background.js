@@ -203,10 +203,11 @@ let siteRejectedLink = null;
 async function siteMessage(m, sender) {
   let host = ''; try { host = new URL(sender.url).hostname; } catch {}
   if (!sender.tab || host !== 'eldahan.com.eg') throw Error('invalid_sender');
-  const dispatchFromApex = m.board === 'branch' && m.dispatchFromApex === true && new URL(sender.url).pathname === '/eldahan-branch-board/';
+  const dispatchFromApex = m.board === 'branch' && m.dispatchFromApex === true && new URL(sender.url).pathname.replace(/\/$/, '') === '/eldahan-branch-board';
   const t = await store.get(TALABAT, null);
-  const dispatchActors = dispatchFromApex && Array.isArray(m.dispatchActors) ? m.dispatchActors.slice(0, 50) : [];
-  const body = JSON.stringify({ board: m.board === 'central' ? 'central' : 'branch', dispatchFromApex, orders: Array.isArray(m.orders) ? m.orders.slice(0, 300) : [], ...(dispatchActors.length ? { dispatchActors } : {}), serverTime: m.serverTime || null });
+  const branch = new URL(sender.url).searchParams.get('branch');
+  const dispatchEvents = dispatchFromApex && SITE_BRANCHES.includes(branch) && Array.isArray(m.dispatchEvents) ? m.dispatchEvents.slice(0, 20) : [];
+  const body = JSON.stringify({ board: m.board === 'central' ? 'central' : 'branch', dispatchFromApex, orders: Array.isArray(m.orders) ? m.orders.slice(0, 300) : [], ...(dispatchEvents.length ? { dispatchEvents, branch } : {}), serverTime: m.serverTime || null });
   const push = auth => api('/api/site/panel', { method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body, timeout: 30000 });
   const deviceAuth = { 'x-device-token': globalThis.MARSAD.DEVICE_TOKEN };
   const linkedToken = t?.token && t.token !== siteRejectedLink ? t.token : null;
@@ -225,7 +226,7 @@ async function siteMessage(m, sender) {
   const assign = m.board === 'central' && Array.isArray(d.assign) ? d.assign.filter(a => Number.isInteger(a?.orderId) && /^[a-z0-9-]{2,40}$/.test(a?.branchId || '')).slice(0, 20) : [];
   const dispatch = dispatchFromApex && Array.isArray(d.dispatch) ? d.dispatch.filter(a =>
     Number.isSafeInteger(a?.orderId) && a.orderId > 0 && typeof a.driver === 'string' && a.driver.length <= 80).slice(0, 20) : [];
-  return { ok: true, assign, dispatch };
+  return { ok: true, assign, dispatch, ...(d.dispatchEventAck === true ? { dispatchEventAck: true } : {}) };
 }
 browser.tabs.onRemoved.addListener(id => {
   for (const role of Object.keys(talabatTabs)) if (talabatTabs[role] === id) delete talabatTabs[role];

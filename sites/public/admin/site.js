@@ -12,7 +12,7 @@ window.MarsadSite = function MarsadSite(ctx) {
   const minSec = ms => { const s = Math.max(0, Math.round(ms / 1000)), m = Math.floor(s / 60), x = s % 60; return m ? m + ' دقيقة' + (x ? ' و' + x + ' ثانية' : '') : x + ' ثانية'; };
   const branchOf = o => o.branch || 'من غير فرع';
   const apexNo = o => o.apex?.sn ?? o.apex?.no ?? null;
-  const dispatchBy = o => ({ extension: 'إضافة مرصد', branch: 'الفرع' }[o.dispatchActor] || (o.outAt ? 'غير مؤكد' : '—'));
+  const dispatchBy = o => ({ extension: 'إضافة مرصد', branch: 'الفرع' }[o.dispatchActor] || (o.outAt ? 'المصدر غير مسجّل' : '—'));
 
   let cache = null;
   async function load(force) {

@@ -70,13 +70,16 @@ function readNotes(notes) {
     .filter(n => Number.isFinite(n.at)).sort((a, b) => a.at - b.at);
   const first = f => list.find(f)?.at ?? null, last = f => [...list].reverse().find(f);
   const transferNote = last(n => n.text.includes('تم إرسال الطلب إلى')), outNote = last(n => n.text.includes('خرج الطلب للتوصيل'));
+  const firstOutNote = list.find(n => n.text.includes('خرج الطلب للتوصيل'));
+  const driverOnNote = n => n?.text.match(/مع (.*?)\. وقت/)?.[1]?.trim() || null;
   const scheduledNote = last(n => n.text.includes('موعد التوصيل'));
   return {
     received: first(n => n.text.includes('to تم الاستلام') && !n.text.includes('من الفرع')),
     transfer: first(n => n.text.includes('تم إرسال الطلب إلى')),
     branch: transferNote?.text.match(/إلى (?:فرع )?(.*?) (?:من )?لوحة/)?.[1]?.trim() || null,
-    out: first(n => n.text.includes('خرج الطلب للتوصيل')),
-    driver: outNote?.text.match(/مع (.*?)\. وقت/)?.[1]?.trim() || null,
+    out: firstOutNote?.at ?? null,
+    driver: driverOnNote(outNote),
+    firstDriver: driverOnNote(firstOutNote),
     delivered: first(n => /أكد المندوب تسليم|تم التوصيل/.test(n.text)),
     scheduled: !!scheduledNote,
     scheduledAt: scheduledNote ? scheduledAtFrom(scheduledNote.text, scheduledNote.at) : null,
@@ -129,6 +132,14 @@ const SITE_DRIVER_NAMES = new Map([
 ]);
 const siteCancelled = (status, label) => /cancel|failed|refund/i.test(status) || /ملغ|اتلغ/.test(label);
 const siteDelivered = (stage, status, label) => stage >= 4 || /(?:^|-)(?:complete|completed|delivered)$/i.test(status) || /تم التوصيل|تم التسليم/.test(label);
+
+const DISPATCH_WINDOW = 3 * 60000;
+const normalizeDriver = value => String(value || '').normalize('NFKC')
+  .replace(/\s*[-–—]\s*\+?[\d٠-٩۰-۹][\d٠-٩۰-۹\s()-]*$/, '')
+  .replace(/[\p{M}ـ\u200e\u200f]/gu, '').replace(/[أإآٱ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه')
+  .replace(/(^| )عبد +(?=\p{Script=Arabic})/gu, '$1عبد').replace(/\s+/g, ' ').trim().toLowerCase();
+const siteOut = (stage, status, label) => stage >= 3 || siteDelivered(stage, status, label) ||
+  /out[-_ ]for[-_ ]delivery|on[-_ ]the[-_ ]way/i.test(status) || /خرج .{0,10}للتوصيل|جاري التوصيل/.test(label);
 
 function setup(app) {
   const { db, fail } = app;
@@ -202,8 +213,27 @@ function setup(app) {
     for (let i = 0; i < writes.length; i += 40) await db.batch(writes.slice(i, i + 40));
   }
 
+  async function dispatchEventsSince(now) {
+    const rows = await db.prepare('SELECT site_id,branch,driver,actor,at FROM site_dispatch_events WHERE at >= ?').all(now - 2 * DISPATCH_WINDOW);
+    const byId = new Map();
+    for (const row of rows) {
+      if (!byId.has(row.site_id)) byId.set(row.site_id, []);
+      byId.get(row.site_id).push(row);
+    }
+    return byId;
+  }
+  function confirmDispatch(events, { id, branch, driver, outAt }) {
+    const name = normalizeDriver(driver);
+    if (!name || !outAt) return null;
+    const actors = new Set((events.get(id) || []).filter(e => e.driver === name && (!branch || e.branch === branch) &&
+      outAt >= e.at - 5000 && outAt <= e.at + DISPATCH_WINDOW).map(e => e.actor));
+    if (actors.size !== 1) return null;
+    return db.prepare('INSERT OR IGNORE INTO site_dispatch_actors (site_id,actor,at) VALUES (?,?,?)').bind(id, [...actors][0], outAt);
+  }
+
   async function savePanel(list, board, now, dispatchActors = new Map()) {
     const writes = [];
+    const dispatchEvents = list.some(o => textOf(o?.driver) && siteOut(Number(o.stage), o.status, o.statusLabel)) ? await dispatchEventsSince(now) : new Map();
     // The board can contain 300 orders and is resent every minute. Read saved order + profile state together, in bounded
     // groups; the D1 primary key on (source, ref) makes each profile lookup a point read.
     const ids = [...new Set(list.map(o => Number(o?.id)).filter(n => Number.isInteger(n) && n > 0))];
@@ -229,7 +259,14 @@ function setup(app) {
       const actor = dispatchActors.get(id);
       if (actor && !cancelled && stage >= 3 && driver && /^delivery$/i.test(String(o.fulfillment || '')) && Object.hasOwn(APEX_BRANCH_LABELS, o.branchId))
         writes.push(db.prepare('INSERT OR IGNORE INTO site_dispatch_actors (site_id,actor,at) VALUES (?,?,?)').bind(id, actor, now));
-      const outAt = old?.out_at || (stage >= 3 || driver ? now : null), deliveredAt = old?.delivered_at || (done ? now : null);
+      const out = !cancelled && siteOut(stage, status, label);
+      const outAt = old?.out_at || (out || driver ? now : null), deliveredAt = old?.delivered_at || (done ? now : null);
+      if (!actor && out && driver && !/pick|استلام/i.test(String(o.fulfillment || old?.fulfillment || ''))) {
+        const observedBranch = Object.hasOwn(APEX_BRANCH_LABELS, o.branchId) ? o.branchId :
+          Object.keys(APEX_BRANCH_LABELS).find(b => APEX_BRANCH_LABELS[b].test(String(o.branchName || old?.branch || '').trim()));
+        const confirmed = confirmDispatch(dispatchEvents, { id, branch: observedBranch, driver, outAt });
+        if (confirmed) writes.push(confirmed);
+      }
       const previousProfile = parseJson(profs.get(String(id)), {});
       const f = o.financial || {}, rows = Array.isArray(f.rows) ? f.rows : [];
       const onlinePaid = num(f.onlinePaid) || 0, due = num(f.due) ?? num(o.total) ?? 0;
@@ -330,6 +367,20 @@ function setup(app) {
     await app.extensionAuth(ctx);
     const list = (Array.isArray(ctx.body?.orders) ? ctx.body.orders : []).slice(0, 300), now = ctx.now, board = ctx.body?.board;
     const canDispatch = board === 'branch' && ctx.body?.dispatchFromApex === true;
+    if (Array.isArray(ctx.body?.dispatchEvents)) {
+      const branch = String(ctx.body.branch || '');
+      if (!canDispatch || !Object.hasOwn(APEX_BRANCH_LABELS, branch)) fail(400, 'invalid_branch_board');
+      const writes = [db.prepare('DELETE FROM site_dispatch_events WHERE at < ?').bind(now - 2 * DISPATCH_WINDOW)];
+      for (const e of ctx.body.dispatchEvents.slice(0, 20)) {
+        const id = Number(e?.id), at = Number(e?.at), actor = e?.actor, driver = normalizeDriver(e?.driver);
+        if (!Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(at) || at < now - DISPATCH_WINDOW || at > now + 5000 ||
+          !['extension', 'branch'].includes(actor) || !driver || driver.length > 100) continue;
+        writes.push(db.prepare('INSERT OR IGNORE INTO site_dispatch_events (site_id,branch,driver,actor,at) VALUES (?,?,?,?,?)')
+          .bind(id, branch, driver, actor, at));
+      }
+      await writeBatches(writes);
+      return { ok: true, dispatchEventAck: true };
+    }
     const dispatch = canDispatch ? await dispatchFromApex(list, now) : [];
     // The branch already supplied the current order state. It can act on an exact Apex match
     // even if the write for reports has to wait until the next panel refresh.
@@ -517,13 +568,21 @@ function setup(app) {
         ]);
       }
       // Notes: orders never read since they changed first, then open orders (their notes change without a status change).
-      const due = await db.prepare(`SELECT id FROM site_orders WHERE status NOT IN ('cancelled','failed','wallet-failed') AND
-        ((created_at >= ? AND (notes_at IS NULL OR (delivered_at IS NULL AND notes_at < ?))) OR (scheduled = 1 AND scheduled_at IS NULL AND (notes_at IS NULL OR notes_at < ?)))
-        ORDER BY notes_at IS NOT NULL, notes_at, created_at LIMIT ?`).all(now - OPEN_HOURS * 3600000, now - 50000, now - 50000, NOTES_PER_RUN);
+      const dispatchEvents = await dispatchEventsSince(now);
+      const pendingDispatchIds = [...dispatchEvents.keys()].slice(0, 40);
+      const q = pendingDispatchIds.map(() => '?').join(',');
+      const awaitingActor = pendingDispatchIds.length ? `id IN (${q}) AND NOT EXISTS (SELECT 1 FROM site_dispatch_actors d WHERE d.site_id = site_orders.id)` : 'NULL IS NOT NULL';
+      const due = await db.prepare(`SELECT id FROM site_orders WHERE status NOT IN ('cancelled','failed','wallet-failed','refunded') AND
+        ((created_at >= ? AND (notes_at IS NULL OR (delivered_at IS NULL AND notes_at < ?))) OR (scheduled = 1 AND scheduled_at IS NULL AND (notes_at IS NULL OR notes_at < ?))
+          OR ((${awaitingActor}) AND (notes_at IS NULL OR notes_at < ?)))
+        ORDER BY (${awaitingActor}) DESC, notes_at IS NOT NULL, notes_at, created_at LIMIT ?`).all(now - OPEN_HOURS * 3600000, now - 50000, now - 50000, ...pendingDispatchIds, now - 50000, ...pendingDispatchIds, NOTES_PER_RUN);
       const noteWrites = [];
       for (const { id } of due) {
         const notes = await wc(c, 'orders/' + id + '/notes', { per_page: 100, _fields: 'date_created_gmt,note' });
         const x = readNotes(Array.isArray(notes) ? notes : []);
+        const branch = Object.keys(APEX_BRANCH_LABELS).find(b => APEX_BRANCH_LABELS[b].test(String(x.branch || '').trim()));
+        const confirmed = confirmDispatch(dispatchEvents, { id, branch, driver: x.firstDriver, outAt: x.out });
+        if (confirmed) noteWrites.push(confirmed);
         noteWrites.push(db.prepare(`UPDATE site_orders SET received_at = COALESCE(?, received_at),
           transfer_at = COALESCE(?, transfer_at), branch = COALESCE(?, branch), out_at = COALESCE(?, out_at),
           driver = COALESCE(?, driver), delivered_at = COALESCE(?, delivered_at), scheduled = MAX(scheduled, ?),

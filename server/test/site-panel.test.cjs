@@ -349,3 +349,25 @@ test('website dispatch keeps the first confirmed source and ignores claims from 
     assert.equal(await read(), 'extension');
   } finally { await t.close(); }
 });
+
+test('dispatch evidence survives a separate branch request and confirms from the central website status', async () => {
+  const at = cairoToUtc(2026, 11, 11, 20, 0), t = await start({ at });
+  try {
+    const admin = await t.admin();
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const send = body => t.call('POST', '/api/site/panel', { headers: { 'x-talabat-token': token }, body });
+    const order = { id: 31837, stage: 1, status: 'app-preparing', fulfillment: 'delivery', createdAt: Math.floor(at / 1000), branchId: 'nasr-city' };
+    const second = { ...order, id: 31838 }, ambiguous = { ...order, id: 31839 }, old = { ...order, id: 31840 };
+    const out = o => ({ ...o, stage: undefined, status: 'app-out-for-delivery', driver: { title: 'عمر عبدالرحمن' } });
+    await send({ board: 'central', orders: [order, second, ambiguous, out(old)] });
+    t.advance(15000);
+    const event = (o, actor, driver = 'عمر عبد الرحمن - 01000000000') => ({ id: o.id, actor, driver, at: t.app.now() });
+    const evidence = [event(order, 'extension'), event(second, 'branch'), event(ambiguous, 'branch'), event(ambiguous, 'extension'), event(old, 'branch')];
+    assert.equal((await send({ board: 'central', branch: 'nasr-city', dispatchEvents: evidence })).status, 400);
+    assert.equal((await send({ board: 'branch', dispatchFromApex: true, branch: 'nasr-city', dispatchEvents: evidence })).body.dispatchEventAck, true);
+    t.advance(90000);
+    await send({ board: 'central', orders: [out(order), out(second), out(ambiguous), out(old)] });
+    const result = (await admin('GET', '/api/site/day?day=2026-11-11')).body.orders;
+    assert.deepEqual(result.map(o => o.dispatchActor), ['extension', 'branch', null, null]);
+  } finally { await t.close(); }
+});

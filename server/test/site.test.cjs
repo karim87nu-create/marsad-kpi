@@ -168,3 +168,20 @@ test('site notes preserve dispatch recorded by the branch board while WooCommerc
     assert.deepEqual(get.get(), { branch: 'التجمع الخامس', driver: 'أحمد علي', transfer_at: site.m(20), out_at: site.m(40) });
   } finally { await t.close(); }
 });
+
+test('WooCommerce departure notes confirm the stored dispatch source after the panel row is gone', async () => {
+  const t0 = cairoToUtc(2026, 10, 22, 13, 0, 0), site = fakeSite(t0);
+  const t = await start({ at: site.m(41), config: { siteFetch: site.fetch } });
+  try {
+    const admin = await t.admin();
+    const { token } = (await admin('POST', '/api/talabat/token')).body;
+    const r = await t.call('POST', '/api/site/panel', { headers: { 'x-talabat-token': token }, body: {
+      board: 'branch', dispatchFromApex: true, branch: 'nasr-city',
+      dispatchEvents: [{ id: 101, actor: 'branch', driver: 'أحمد سعيد - 01000000000', at: site.m(39) }],
+    } });
+    assert.equal(r.body.dispatchEventAck, true);
+    await admin('POST', '/api/site', { action: 'key', key: 'ck_' + 'a'.repeat(40), secret: 'cs_' + 'b'.repeat(40) });
+    const orders = (await admin('GET', '/api/site/day?day=2026-10-22')).body.orders;
+    assert.equal(orders.find(o => o.id === 101).dispatchActor, 'branch');
+  } finally { await t.close(); }
+});
